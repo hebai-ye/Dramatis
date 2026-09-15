@@ -1,0 +1,57 @@
+# dependencies
+node_modules/
+.pnpm-store/
+
+# build output
+dist/
+build/
+out/
+*.tsbuildinfo
+
+# Rust / Tauri
+src-tauri/target/
+target/
+
+# Capacitor / Android
+apps/android/android/
+.gradle/
+*.keystore
+*.jks
+local.properties
+
+# env & secrets — 绝不提交模型 API Key
+.env
+.env.*
+!.env.example
+*.pem
+*.p12
+secrets/
+
+# local databases & user data
+*.sqlite
+*.sqlite3
+*.db
+*.db-journal
+*.db-wal
+data/
+backups/
+*.jsonl
+
+# logs
+logs/
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# editor & OS
+.vscode/*
+!.vscode/extensions.json
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# test & coverage
+coverage/
+.nyc_output/

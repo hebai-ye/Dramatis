@@ -1,0 +1,12 @@
+packages:
+  - packages/*
+  - apps/*
+
+minimumReleaseAgeExclude:
+  - '@vitest/mocker@5.0.1'
+  - '@vitest/spy@5.0.1'
+  - vitest@5.0.1
+
+# pnpm 10+ 默认阻止依赖的生命周期脚本，esbuild 需要放行才能装二进制
+onlyBuiltDependencies:
+  - esbuild

@@ -10,9 +10,33 @@
 
 ## 项目状态
 
-**设计阶段（Design Stage）** —— 目前仓库里只有设计文档，还没有可运行的代码。路线图见 [docs/DESIGN.md](docs/DESIGN.md#路线图)。
+**M0 骨架已就绪** —— 兼容层、数据模型与 Prompt 装配可以运行，并带有测试。距离「能日常使用」还有很长的路，路线图见 [docs/DESIGN.md](docs/DESIGN.md#路线图)。
+
+已经能用的：
+
+- 导入 SillyTavern 角色卡：PNG 的 `chara` / `ccv3` 数据块，以及 V1 / V2 / V3 的 JSON。未识别字段原样保留并提示，不静默丢弃
+- 导入世界书（`world_info` JSON）：关键词触发、次级键选择逻辑、概率、排序权重
+- 单人对话，流式输出，兼容一切 OpenAI 协议的接口，自带 Key
+- 入场策略（锁定 / 仅限召唤 / 条件触发 / 自由入场）会作为导演指令写进 prompt
+- 预算守卫：超长时按固定顺序降级，并保证一定产出可用的 prompt
+- 界面里的 Prompt 检查器会显示每次装配的区块与降级情况
+
+还没有的：多角色同场与发言调度、记忆抽取与召回、情绪与关系演化、账号与同步、桌面与 Android 端。
 
 如果你对设计有意见或想法，欢迎直接开 Issue 讨论，这个阶段正是改设计最便宜的时候。
+
+## 快速开始
+
+需要 Node 20+ 与 pnpm。
+
+```bash
+pnpm install
+pnpm dev        # 启动 Web 端，默认 http://localhost:5173
+pnpm typecheck
+pnpm test
+```
+
+打开页面后，在左侧填接口地址、API Key 与模型名。支持 DeepSeek、OpenAI、Kimi、阿里百炼、智谱，以及 Ollama、LM Studio 这类本地服务；只填域名时会自动补 `/v1`。然后导入一张角色卡，就可以开始对话。
 
 ## 这是什么
 
@@ -80,11 +104,11 @@ Dramatis（中文名 **登场**）是一个开源的多角色扮演酒馆前端�
 TypeScript monorepo，平台无关的核心逻辑抽成 `core`：
 
 ```
-packages/core       数据模型 / 调度器 / 记忆检索 / prompt 装配
+packages/core       数据模型 / 兼容层 / Prompt 装配 / 模型接入
 apps/web            React + Vite
-apps/desktop        Tauri
-apps/android        Capacitor（复用同一套 UI）
-services/sync       账号与云同步
+apps/desktop        Tauri（M4）
+apps/android        Capacitor，复用同一套 UI（M4）
+services/sync       账号与云同步（M4）
 ```
 
 - **本地优先**：本地 SQLite 为唯一真相源，云端同步是可选增强。

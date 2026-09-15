@@ -1,0 +1,21 @@
+{
+  "name": "dramatis",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "多角色扮演酒馆 —— 导演你的角色阵容，让每个角色记住属于自己的故事",
+  "packageManager": "pnpm@11.22.0",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "dev": "pnpm --filter @dramatis/web dev",
+    "build": "pnpm -r build",
+    "typecheck": "pnpm -r typecheck",
+    "test": "pnpm -r test"
+  },
+  "devDependencies": {
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.1"
+  }
+}

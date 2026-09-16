@@ -9,7 +9,6 @@ import {
   createOpenAICompatibleProvider,
   createPlayerMessage,
   createTurnId,
-  type ImportWarning,
   type InstanceId,
   importCardFromJson,
   importCardFromPng,
@@ -48,6 +47,12 @@ import { useDatabase, useSession } from './lib/session';
 import { AFFECT_TASK_KIND, MEMORY_BUDGET_TOKENS, MEMORY_TASK_KIND, useBackgroundWorker } from './lib/worker';
 
 const PNG_SIGNATURE = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
+
+/** 界面上的提示条：导入警告与归档结果都走这一种形状。 */
+interface Notice {
+  code: string;
+  message: string;
+}
 
 function looksLikePng(bytes: Uint8Array): boolean {
   return PNG_SIGNATURE.every((byte, index) => bytes[index] === byte);
@@ -105,9 +110,10 @@ export function App() {
   const [sceneOpen, setSceneOpen] = useState(false);
   const [detailId, setDetailId] = useState<InstanceId | null>(null);
 
-  const [warnings, setWarnings] = useState<ImportWarning[]>([]);
+  const [warnings, setWarnings] = useState<Notice[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [streamText, setStreamText] = useState('');
+  const [streamSpeaker, setStreamSpeaker] = useState('');
   const [reasoningText, setReasoningText] = useState('');
   const [busy, setBusy] = useState(false);
   const [lastPrompt, setLastPrompt] = useState<AssembledPrompt | null>(null);
@@ -274,6 +280,7 @@ export function App() {
       setError(null);
       setBusy(true);
       setStreamText('');
+      setStreamSpeaker('');
       setReasoningText('');
 
       const turnId = createTurnId();
@@ -325,6 +332,7 @@ export function App() {
             MEMORY_BUDGET_TOKENS,
           );
 
+          setStreamSpeaker(speaker.displayName);
           const reply = await runGeneration({
             speaker,
             card: speakerCard,
@@ -743,7 +751,7 @@ export function App() {
                   messages={messages}
                   cast={cast}
                   streamText={streamText}
-                  streamSpeaker={instances.find((item) => scene?.cast.includes(item.id))?.displayName ?? ''}
+                  streamSpeaker={streamSpeaker}
                   reasoningText={reasoningText}
                   busy={busy}
                   ready={ready}

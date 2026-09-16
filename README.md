@@ -4,7 +4,7 @@
 
 **TL;DR (English)** — Dramatis is an open-source multi-character AI roleplay tavern for Web, Android and desktop. Direct the cast, lock the scene, and let every character keep their own memory and personality. SillyTavern-compatible character cards and world books. Local-first with optional cloud sync. Bring your own API key.
 
-`sillytavern-compatible` · `ai-roleplay` · `character-card` · `worldbook` · `local-first` · `byok` · `pwa` · `capacitor`
+`sillytavern-compatible` · `ai-roleplay` · `character-card` · `worldbook` · `local-first` · `byok` · `pwa` · `tauri` · `capacitor`
 
 ---
 
@@ -109,7 +109,7 @@ apps/web            React + Vite（Windows 与 Android 共用同一套 UI）
 services/sync       账号与云同步（P2）
 ```
 
-Android 走 PWA 优先路线，不做桌面原生壳，不考虑 iOS。理由见 [docs/ROADMAP.md](docs/ROADMAP.md)。
+Android 与 Windows 桌面都优先走 PWA：一套代码，不需要独立的构建链路。只有当 PWA 出现解决不了的缺口时，才考虑 Tauri 桌面壳或 Capacitor 安卓壳，触发条件见 [docs/ROADMAP.md](docs/ROADMAP.md) 的 P2-9 / P2-10。不考虑 iOS。
 
 - **本地优先**：本地 SQLite 随时可用，云端同步负责多端一致与数据安全。
 - **自带 API Key**：密钥只存在设备本地，不参与同步。

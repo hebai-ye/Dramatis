@@ -8,6 +8,13 @@ export interface Message {
   sceneId: SceneId | null;
   /** 一次玩家输入到角色回应视为同一回合。 */
   turnId: string;
+  /**
+   * 房间内单调递增的序号，由仓储层在落盘时分配。
+   *
+   * 不依赖 createdAt 排序：同一毫秒内落盘的多条消息必须仍有稳定顺序，
+   * 这也是 P2-6 跨设备合并的基础。未落盘的消息此值为 0。
+   */
+  seq: number;
   role: MessageRole;
   speakerInstanceId: InstanceId | null;
   speakerName: string;

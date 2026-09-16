@@ -20,7 +20,7 @@ body {
   margin: 0;
   background: var(--bg);
   color: var(--text);
-  font-family: 'PingFang SC', 'Microsoft YaHei', 'Segoe UI', system-ui, sans-serif;
+  font-family: "PingFang SC", "Microsoft YaHei", "Segoe UI", system-ui, sans-serif;
   font-size: 14px;
   line-height: 1.6;
 }
@@ -138,6 +138,73 @@ button.ghost {
   gap: 8px;
 }
 
+.grid-2 {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.inline {
+  align-items: center;
+  display: flex;
+  gap: 6px;
+}
+
+.inline input {
+  flex: 1;
+}
+
+.room-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.room-list li {
+  align-items: center;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  display: flex;
+  gap: 6px;
+  padding: 4px 6px;
+}
+
+.room-list li.active {
+  background: rgba(217, 164, 65, 0.08);
+  border-color: var(--accent-soft);
+}
+
+.room-open {
+  background: transparent;
+  border: none;
+  color: var(--text);
+  cursor: pointer;
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  font-weight: 400;
+  gap: 2px;
+  padding: 4px;
+  text-align: left;
+}
+
+.room-open:disabled {
+  background: transparent;
+  color: var(--muted-text);
+}
+
+.room-title {
+  font-weight: 600;
+}
+
+.ghost.danger {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
 .hint {
   color: var(--muted-text);
   font-size: 12px;
@@ -207,6 +274,7 @@ button.ghost {
   padding: 9px 12px;
 }
 
+/* biome-ignore lint/style/noDescendingSpecificity: 这两条选择器不会命中同一个元素，声明顺序无影响 */
 .bubble p {
   margin: 0;
   white-space: pre-wrap;

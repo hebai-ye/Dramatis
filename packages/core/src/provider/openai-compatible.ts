@@ -273,9 +273,7 @@ export function createOpenAICompatibleProvider(config: ProviderConfig): ModelPro
       }
 
       const json = (await res.json()) as { data?: Array<{ id?: unknown }> };
-      return (json.data ?? [])
-        .map((item) => item.id)
-        .filter((id): id is string => typeof id === 'string' && id !== '');
+      return (json.data ?? []).map((item) => item.id).filter((id): id is string => typeof id === 'string' && id !== '');
     },
   };
 }

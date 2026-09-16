@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { cardId, instanceId, newId, nowIso, PLAYER, roomId, sceneId } from '../model/ids.js';
-import { neutralTraits, type CharacterInstance } from '../model/instance.js';
 import type { Card } from '../model/card.js';
-import { createPlayerMessage } from '../session/turn.js';
+import { cardId, instanceId, newId, nowIso, PLAYER, roomId, sceneId } from '../model/ids.js';
+import { type CharacterInstance, neutralTraits } from '../model/instance.js';
 import type { Room, Scene } from '../model/room.js';
+import { createPlayerMessage } from '../session/turn.js';
 import { assemblePrompt } from './assemble.js';
 
 function fixtures(castPolicy: Scene['castPolicy'] = 'locked') {

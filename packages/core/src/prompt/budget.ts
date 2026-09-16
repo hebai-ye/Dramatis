@@ -102,9 +102,7 @@ export function applyBudget(blocks: PromptBlock[], options: BudgetOptions): Budg
 
   // 兜底：按优先级从低到高丢弃，保证一定产出
   if (used() > maxTokens) {
-    const candidates = current
-      .filter((block) => block.droppable)
-      .sort((a, b) => a.priority - b.priority);
+    const candidates = current.filter((block) => block.droppable).sort((a, b) => a.priority - b.priority);
     for (const block of candidates) {
       if (used() <= maxTokens) break;
       record('drop-lowest-priority');

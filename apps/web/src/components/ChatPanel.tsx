@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState } from 'react';
 import type { Message } from '@dramatis/core';
+import { useEffect, useRef, useState } from 'react';
 
 interface Props {
   messages: Message[];
@@ -27,9 +27,14 @@ export function ChatPanel({
   const [input, setInput] = useState('');
   const bottomRef = useRef<HTMLDivElement | null>(null);
 
+  // 内容总量变化时把视图滚到底部。用总长度而不是数组本身作为依赖，
+  // 避免仅仅因为重新渲染就触发一次滚动。
+  const contentLength = messages.reduce((total, message) => total + message.content.length, 0) + streamText.length;
+
   useEffect(() => {
+    if (contentLength === 0) return;
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages, streamText]);
+  }, [contentLength]);
 
   const submit = (): void => {
     if (!ready || busy) return;
@@ -49,9 +54,7 @@ export function ChatPanel({
       </header>
 
       <div className="chat-body">
-        {messages.length === 0 && streamText === '' ? (
-          <p className="hint">导入一张角色卡，然后开始说话。</p>
-        ) : null}
+        {messages.length === 0 && streamText === '' ? <p className="hint">导入一张角色卡，然后开始说话。</p> : null}
 
         {messages.map((message) => (
           <article key={message.id} className={`bubble ${message.role}`}>

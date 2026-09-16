@@ -14,7 +14,9 @@ export class InflateUnavailableError extends Error {
   }
 }
 
-type DecompressionStreamCtor = new (format: 'deflate' | 'deflate-raw' | 'gzip') => {
+type DecompressionStreamCtor = new (
+  format: 'deflate' | 'deflate-raw' | 'gzip',
+) => {
   readable: ReadableStream<Uint8Array>;
   writable: WritableStream<Uint8Array>;
 };

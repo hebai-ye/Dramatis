@@ -221,8 +221,8 @@ function buildSceneBlock(scene: Scene | null): PromptBlock | null {
     case 'triggered':
       lines.push('导演指令：只有设定被触发的角色才能进入场景。');
       break;
-    case 'open':
     default:
+      // open 策略不追加额外约束，角色可以自行入场
       break;
   }
 
@@ -242,7 +242,10 @@ function buildWorldBookBlock(matches: WorldBookMatch[]): PromptBlock | null {
   if (matches.length === 0) return null;
 
   const body = matches
-    .map((match) => `【${match.entry.title.trim() === '' ? '未命名条目' : match.entry.title.trim()}】\n${match.entry.content.trim()}`)
+    .map(
+      (match) =>
+        `【${match.entry.title.trim() === '' ? '未命名条目' : match.entry.title.trim()}】\n${match.entry.content.trim()}`,
+    )
     .join('\n\n');
 
   return {
@@ -354,9 +357,7 @@ export function assemblePrompt(input: AssembleInput): AssembledPrompt {
 
   const systemContent =
     options.systemPrompt ??
-    (input.card.systemPrompt.trim() !== ''
-      ? input.card.systemPrompt
-      : defaultSystemPrompt(input.card, playerName));
+    (input.card.systemPrompt.trim() !== '' ? input.card.systemPrompt : defaultSystemPrompt(input.card, playerName));
 
   const blocks: PromptBlock[] = [
     {

@@ -1,79 +1,89 @@
 import {
+  type AssembledPrompt,
+  type Card,
   createCharacterMessage,
   createGreetingMessage,
   createOpenAICompatibleProvider,
   createPlayerMessage,
   createTurnId,
+  type ImportWarning,
   importCardFromJson,
   importCardFromPng,
   runTurn,
-  type AssembledPrompt,
-  type Card,
-  type ImportWarning,
-  type Message,
-  type Scene,
 } from '@dramatis/core';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { CardPanel } from './components/CardPanel';
 import { ChatPanel } from './components/ChatPanel';
 import { PromptInspector } from './components/PromptInspector';
+import { ProviderPanel } from './components/ProviderPanel';
+import { RoomPanel } from './components/RoomPanel';
 import { ScenePanel } from './components/ScenePanel';
-import { SettingsPanel } from './components/SettingsPanel';
-import { loadSettings, saveSettings, type Settings } from './lib/settings';
-import { createWorldFromCard, type World } from './lib/world';
+import { useProviders } from './lib/providers';
+import { useDatabase, useSession } from './lib/session';
 
 const PNG_SIGNATURE = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
+const META_PLAYER_NAME = 'player.name';
 
 function looksLikePng(bytes: Uint8Array): boolean {
   return PNG_SIGNATURE.every((byte, index) => bytes[index] === byte);
 }
 
 export function App() {
-  const [settings, setSettings] = useState<Settings>(() => loadSettings());
-  const [card, setCard] = useState<Card | null>(null);
+  const { db, boot, error: dbError } = useDatabase();
+  const session = useSession(db);
+  const providers = useProviders(db);
+
+  const [importedCard, setImportedCard] = useState<Card | null>(null);
   const [warnings, setWarnings] = useState<ImportWarning[]>([]);
-  const [world, setWorld] = useState<World | null>(null);
-  const [messages, setMessages] = useState<Message[]>([]);
+  const [error, setError] = useState<string | null>(null);
   const [streamText, setStreamText] = useState('');
   const [reasoningText, setReasoningText] = useState('');
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const [lastPrompt, setLastPrompt] = useState<AssembledPrompt | null>(null);
+  const [playerName, setPlayerName] = useState('玩家');
   const abortRef = useRef<AbortController | null>(null);
 
+  const snapshot = session.snapshot;
+  const activeCard = snapshot?.cards.find((item) => item.id === snapshot.room.cardIds[0]) ?? importedCard;
+  const instance = snapshot?.instances[0] ?? null;
+  const scene = session.activeScene;
+  const messages = snapshot?.messages ?? [];
+  const ready = activeCard !== null && instance !== null && scene !== null;
+
+  // 玩家 persona 是跨房间的偏好，存在 meta 里
   useEffect(() => {
-    saveSettings(settings);
-  }, [settings]);
-
-  const updateSettings = useCallback((patch: Partial<Settings>) => {
-    setSettings((previous) => ({ ...previous, ...patch }));
-    if (patch.playerName !== undefined) {
-      setWorld((previous) =>
-        previous === null
-          ? previous
-          : {
-              ...previous,
-              room: {
-                ...previous.room,
-                playerName: patch.playerName?.trim() === '' ? '玩家' : (patch.playerName ?? '玩家'),
-              },
-            },
-      );
-    }
-  }, []);
-
-  const startWorld = useCallback((nextCard: Card, playerName: string) => {
-    const nextWorld = createWorldFromCard(nextCard, playerName);
-    setWorld(nextWorld);
-    const greeting = createGreetingMessage({
-      card: nextCard,
-      instance: nextWorld.instance,
-      room: nextWorld.room,
-      scene: nextWorld.scene,
+    if (!db) return;
+    void db.repository.getMeta<string>(META_PLAYER_NAME).then((value) => {
+      if (typeof value === 'string' && value.trim() !== '') setPlayerName(value);
     });
-    setMessages(greeting ? [greeting] : []);
-    setLastPrompt(null);
-  }, []);
+  }, [db]);
+
+  const handlePlayerNameChange = useCallback(
+    (value: string) => {
+      setPlayerName(value);
+      void db?.repository.setMeta(META_PLAYER_NAME, value);
+    },
+    [db],
+  );
+
+  /** 用一张卡开一条新世界线，并写入角色的开场白。 */
+  const startNewRoom = useCallback(
+    async (target: Card) => {
+      const created = await session.createRoom(target, playerName);
+      const createdInstance = created?.instances[0];
+      if (!created || !createdInstance) return;
+
+      const greeting = createGreetingMessage({
+        card: target,
+        instance: createdInstance,
+        room: created.room,
+        scene: created.scenes.find((item) => item.id === created.room.activeSceneId) ?? null,
+      });
+      if (greeting) await session.appendMessages([greeting]);
+      setLastPrompt(null);
+    },
+    [playerName, session],
+  );
 
   const handleImport = useCallback(
     async (file: File) => {
@@ -84,35 +94,29 @@ export function App() {
           ? await importCardFromPng(bytes, file.name)
           : importCardFromJson(new TextDecoder('utf-8').decode(bytes), file.name);
 
-        setCard(result.card);
+        setImportedCard(result.card);
         setWarnings(result.warnings);
-        startWorld(result.card, settings.playerName);
+        await startNewRoom(result.card);
       } catch (importError) {
         setError(importError instanceof Error ? importError.message : String(importError));
-        setCard(null);
-        setWorld(null);
-        setMessages([]);
       }
     },
-    [settings.playerName, startWorld],
+    [startNewRoom],
   );
-
-  const handleReset = useCallback(() => {
-    if (card) startWorld(card, settings.playerName);
-  }, [card, settings.playerName, startWorld]);
-
-  const handleSceneChange = useCallback((patch: Partial<Scene>) => {
-    setWorld((previous) =>
-      previous === null ? previous : { ...previous, scene: { ...previous.scene, ...patch } },
-    );
-  }, []);
 
   const handleSend = useCallback(
     async (text: string) => {
-      if (card === null || world === null || busy) return;
+      if (!db || !snapshot || !activeCard || !instance || !scene || busy) return;
 
-      const content = text.trim();
-      if (content === '') return;
+      const profile = providers.active;
+      if (!profile) {
+        setError('还没有模型配置');
+        return;
+      }
+      if (providers.apiKey.trim() === '') {
+        setError('还没有填 API Key');
+        return;
+      }
 
       setError(null);
       setBusy(true);
@@ -121,47 +125,40 @@ export function App() {
 
       const turnId = createTurnId();
       const history = messages;
-      setMessages((previous) => [
-        ...previous,
+
+      await session.appendMessages([
         createPlayerMessage({
-          roomId: world.room.id,
-          sceneId: world.scene.id,
+          roomId: snapshot.room.id,
+          sceneId: scene.id,
           turnId,
-          speakerName: world.room.playerName,
-          content,
+          speakerName: snapshot.room.playerName,
+          content: text,
         }),
       ]);
 
       const controller = new AbortController();
       abortRef.current = controller;
-
       let accumulated = '';
 
       try {
         const provider = createOpenAICompatibleProvider({
-          baseUrl: settings.baseUrl,
-          apiKey: settings.apiKey,
-          model: settings.model,
+          baseUrl: profile.baseUrl,
+          apiKey: providers.apiKey,
+          model: profile.model,
         });
 
         for await (const event of runTurn(
           {
-            card,
-            instance: world.instance,
-            room: world.room,
-            scene: world.scene,
+            card: activeCard,
+            instance,
+            room: snapshot.room,
+            scene,
             history,
-            playerInput: content,
-            budget: {
-              maxTokens: settings.maxTokens,
-              reserveForReply: settings.reserveForReply,
-            },
+            playerInput: text,
+            budget: { maxTokens: profile.maxTokens, reserveForReply: profile.reserveForReply },
           },
           provider,
-          {
-            params: { temperature: settings.temperature },
-            signal: controller.signal,
-          },
+          { params: { temperature: profile.temperature }, signal: controller.signal },
         )) {
           switch (event.type) {
             case 'prompt':
@@ -184,16 +181,15 @@ export function App() {
         setError(controller.signal.aborted ? `已停止生成（${message}）` : message);
       } finally {
         if (accumulated.trim() !== '') {
-          const reply = accumulated;
-          setMessages((previous) => [
-            ...previous,
+          // 生成中断时也把已产出的部分落盘，避免用户白等
+          await session.appendMessages([
             createCharacterMessage({
-              roomId: world.room.id,
-              sceneId: world.scene.id,
+              roomId: snapshot.room.id,
+              sceneId: scene.id,
               turnId,
-              speakerInstanceId: world.instance.id,
-              speakerName: world.instance.displayName,
-              content: reply,
+              speakerInstanceId: instance.id,
+              speakerName: instance.displayName,
+              content: accumulated,
             }),
           ]);
         }
@@ -203,31 +199,50 @@ export function App() {
         abortRef.current = null;
       }
     },
-    [busy, card, messages, settings, world],
+    [activeCard, busy, db, instance, messages, providers, scene, session, snapshot],
   );
 
-  const handleStop = useCallback(() => {
-    abortRef.current?.abort();
-  }, []);
+  const handleStop = useCallback(() => abortRef.current?.abort(), []);
+  const displayError = error ?? session.error ?? dbError;
 
   return (
     <div className="app">
       <aside className="sidebar">
         <header className="brand">
           <h1>Dramatis</h1>
-          <span>登场 · M0</span>
+          <span>登场 · P0{boot ? ` · 存储：${boot.backendKind}` : ''}</span>
         </header>
+
+        <RoomPanel
+          rooms={session.rooms}
+          activeRoomId={snapshot?.room.id ?? null}
+          backendKind={boot?.backendKind ?? ''}
+          degraded={boot?.degraded ?? false}
+          playerName={playerName}
+          onPlayerNameChange={handlePlayerNameChange}
+          disabled={busy || !session.ready}
+          onOpen={(id) => {
+            void session.openRoom(id);
+            setLastPrompt(null);
+          }}
+          onDelete={(id) => void session.deleteRoom(id)}
+        />
+
         <CardPanel
-          card={card}
+          card={activeCard}
           warnings={warnings}
-          error={error}
-          disabled={busy}
+          error={displayError}
+          disabled={busy || !session.ready}
           onImport={(file) => {
             void handleImport(file);
           }}
         />
-        {world ? <ScenePanel scene={world.scene} disabled={busy} onChange={handleSceneChange} /> : null}
-        <SettingsPanel settings={settings} disabled={busy} onChange={updateSettings} />
+
+        {scene ? (
+          <ScenePanel scene={scene} disabled={busy} onChange={(patch) => void session.updateScene(patch)} />
+        ) : null}
+
+        <ProviderPanel api={providers} disabled={busy} />
       </aside>
 
       <main className="main">
@@ -236,13 +251,15 @@ export function App() {
           streamText={streamText}
           reasoningText={reasoningText}
           busy={busy}
-          ready={card !== null && world !== null}
-          characterName={world?.instance.displayName ?? ''}
+          ready={ready}
+          characterName={instance?.displayName ?? ''}
           onSend={(text) => {
             void handleSend(text);
           }}
           onStop={handleStop}
-          onReset={handleReset}
+          onReset={() => {
+            if (activeCard) void startNewRoom(activeCard);
+          }}
         />
         <PromptInspector prompt={lastPrompt} />
       </main>

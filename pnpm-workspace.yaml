@@ -6,6 +6,15 @@ minimumReleaseAgeExclude:
   - '@vitest/mocker@5.0.1'
   - '@vitest/spy@5.0.1'
   - vitest@5.0.1
+  - '@biomejs/biome@2.5.14'
+  - '@biomejs/cli-darwin-arm64@2.5.14'
+  - '@biomejs/cli-darwin-x64@2.5.14'
+  - '@biomejs/cli-linux-arm64-musl@2.5.14'
+  - '@biomejs/cli-linux-arm64@2.5.14'
+  - '@biomejs/cli-linux-x64-musl@2.5.14'
+  - '@biomejs/cli-linux-x64@2.5.14'
+  - '@biomejs/cli-win32-arm64@2.5.14'
+  - '@biomejs/cli-win32-x64@2.5.14'
 
 # pnpm 10+ 默认阻止依赖的生命周期脚本，esbuild 需要放行才能装二进制
 onlyBuiltDependencies:

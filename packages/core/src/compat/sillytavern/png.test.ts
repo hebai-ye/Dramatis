@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { importCardFromPng } from './card.js';
-import { PngParseError, crc32, findCardPayload, readPngTextChunks } from './png.js';
+import { crc32, findCardPayload, PngParseError, readPngTextChunks } from './png.js';
 
 function chunk(type: string, data: Uint8Array): Uint8Array {
   const typeBytes = new TextEncoder().encode(type);
@@ -87,13 +87,7 @@ describe('readPngTextChunks', () => {
   });
 
   it('同时读取多个块并保留顺序', async () => {
-    const png = concat([
-      SIGNATURE,
-      ihdr(),
-      textChunk('chara', 'first'),
-      await ztxtChunk('ccv3', 'second'),
-      end(),
-    ]);
+    const png = concat([SIGNATURE, ihdr(), textChunk('chara', 'first'), await ztxtChunk('ccv3', 'second'), end()]);
     const chunks = await readPngTextChunks(png);
 
     expect(chunks.map((item) => item.keyword)).toEqual(['chara', 'ccv3']);

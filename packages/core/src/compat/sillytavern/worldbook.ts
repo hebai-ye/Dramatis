@@ -5,7 +5,7 @@ import {
   type WorldBookEntry,
   type WorldBookPosition,
 } from '../../model/card.js';
-import { worldBookId, type WorldBookId } from '../../model/ids.js';
+import { type WorldBookId, worldBookId } from '../../model/ids.js';
 import type { ImportWarning } from './card.js';
 
 export interface WorldBookImportResult {
@@ -112,8 +112,7 @@ function parseEntry(raw: unknown, fallbackId: string, warnings: ImportWarning[])
     disabled: bool(record.disable, false),
     caseSensitive: bool(record.caseSensitive, false),
     matchWholeWords: bool(record.matchWholeWords, false),
-    scanDepth:
-      typeof record.scanDepth === 'number' && Number.isFinite(record.scanDepth) ? record.scanDepth : null,
+    scanDepth: typeof record.scanDepth === 'number' && Number.isFinite(record.scanDepth) ? record.scanDepth : null,
     preventRecursion: bool(record.preventRecursion, true),
     excludeRecursion: bool(record.excludeRecursion, false),
     group: str(record.group),

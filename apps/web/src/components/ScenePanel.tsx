@@ -20,8 +20,7 @@ export function ScenePanel({ scene, onChange, disabled }: Props) {
     <section className="panel">
       <h2>场景</h2>
       <p className="hint">
-        M0 只有一名角色，入场策略的作用是让模型明确知道「现在不能拉人进来」——它会作为导演指令写进
-        prompt。
+        M0 只有一名角色，入场策略的作用是让模型明确知道「现在不能拉人进来」——它会作为导演指令写进 prompt。
       </p>
 
       <label>

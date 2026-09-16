@@ -242,7 +242,7 @@ services/sync       账号与云同步
 
 ### 7.3 本地存储
 
-统一走 SQLite WASM + OPFS，通过 Drizzle 或 Kysely 维护单一 schema。
+Web 端实际使用 IndexedDB，包在 `core` 的 `EntityStore` 适配层之后。原先计划的 SQLite WASM + OPFS 会引入 WASM 产物与 Worker，且在 Node 单测里无法覆盖；IndexedDB 不增加运行时依赖，过滤与排序语义直接复用 `core`，因此同一个测试套件对内存实现与浏览器实现同时有效。若将来 IndexedDB 成为瓶颈，换回 SQLite 只改适配层一个文件。
 
 **移动端浏览器是脆弱的存储环境**：站点数据可能在存储压力下被系统清理。因此「本地优先」必须配套三件事——申请持久化存储、监控配额并在接近上限时告警、以及一份可导入的封存导出作为兜底。这三项对应 ROADMAP 的 P2-3 与 P2-4。
 

@@ -1,0 +1,332 @@
+import type { Card, WorldBook } from '../model/card.js';
+import type { CardId, MessageId, RoomId, SceneId, WorldBookId } from '../model/ids.js';
+import { nowIso } from '../model/ids.js';
+import type { CharacterInstance } from '../model/instance.js';
+import type { Message } from '../model/message.js';
+import type { ProviderProfile } from '../model/provider.js';
+import type { Room, Scene } from '../model/room.js';
+import type { EntityStore } from '../platform/entity-store.js';
+
+/**
+ * 当前 schema 版本。
+ *
+ * 任何会改变已落盘数据结构的改动都要 +1，并补一条 `Migration`。
+ * 这是「从第一天就留好升级路径」的具体做法（ROADMAP P0-1）。
+ */
+export const SCHEMA_VERSION = 1;
+
+export const COLLECTIONS = {
+  meta: 'meta',
+  rooms: 'rooms',
+  scenes: 'scenes',
+  cards: 'cards',
+  instances: 'instances',
+  worldBooks: 'worldBooks',
+  messages: 'messages',
+  providerProfiles: 'providerProfiles',
+  backgroundTasks: 'backgroundTasks',
+} as const;
+
+export const META_KEYS = {
+  schemaVersion: 'schema.version',
+  lastRoomId: 'session.lastRoomId',
+} as const;
+
+export interface Migration {
+  version: number;
+  describe: string;
+  run(store: EntityStore): Promise<void>;
+}
+
+export interface MigrationReport {
+  from: number;
+  to: number;
+  applied: Migration[];
+}
+
+export interface RoomSummary {
+  id: RoomId;
+  title: string;
+  updatedAt: string;
+  messageCount: number;
+  instanceCount: number;
+}
+
+export interface RoomSnapshot {
+  room: Room;
+  scenes: Scene[];
+  instances: CharacterInstance[];
+  cards: Card[];
+  worldBooks: WorldBook[];
+  messages: Message[];
+}
+
+interface MetaRecord {
+  id: string;
+  value: unknown;
+  updatedAt: string;
+}
+
+/**
+ * 仓储层（ROADMAP P0-1）。
+ *
+ * 所有落盘都经过这里，UI 不直接接触 `EntityStore`。这样换存储后端
+ * （IndexedDB → SQLite）时，只有适配层需要改动。
+ */
+export class Repository {
+  constructor(
+    private readonly store: EntityStore,
+    private readonly migrations: readonly Migration[] = [],
+  ) {}
+
+  get backendKind(): string {
+    return this.store.kind;
+  }
+
+  // ---- meta ----
+
+  async getMeta<T>(key: string): Promise<T | null> {
+    const record = await this.store.get<MetaRecord>(COLLECTIONS.meta, key);
+    return record === null ? null : (record.value as T);
+  }
+
+  async setMeta<T>(key: string, value: T): Promise<void> {
+    await this.store.put<MetaRecord>(COLLECTIONS.meta, { id: key, value, updatedAt: nowIso() });
+  }
+
+  async schemaVersion(): Promise<number> {
+    return (await this.getMeta<number>(META_KEYS.schemaVersion)) ?? 0;
+  }
+
+  async migrate(): Promise<MigrationReport> {
+    const from = await this.schemaVersion();
+    if (from >= SCHEMA_VERSION) {
+      return { from, to: from, applied: [] };
+    }
+
+    const applied: Migration[] = [];
+    const ordered = [...this.migrations].sort((a, b) => a.version - b.version);
+    for (const migration of ordered) {
+      if (migration.version <= from) continue;
+      await migration.run(this.store);
+      applied.push(migration);
+    }
+
+    await this.setMeta(META_KEYS.schemaVersion, SCHEMA_VERSION);
+    return { from, to: SCHEMA_VERSION, applied };
+  }
+
+  // ---- 房间 ----
+
+  async saveRoom(room: Room): Promise<void> {
+    await this.store.put(COLLECTIONS.rooms, { ...room, updatedAt: nowIso() });
+  }
+
+  async getRoom(id: RoomId): Promise<Room | null> {
+    return this.store.get<Room>(COLLECTIONS.rooms, id);
+  }
+
+  async listRooms(): Promise<RoomSummary[]> {
+    const rooms = await this.store.list<Room>(COLLECTIONS.rooms, {
+      orderBy: 'updatedAt',
+      direction: 'desc',
+    });
+
+    const summaries: RoomSummary[] = [];
+    for (const room of rooms) {
+      summaries.push({
+        id: room.id,
+        title: room.title,
+        updatedAt: room.updatedAt,
+        messageCount: await this.store.count(COLLECTIONS.messages, { roomId: room.id }),
+        instanceCount: await this.store.count(COLLECTIONS.instances, { roomId: room.id }),
+      });
+    }
+    return summaries;
+  }
+
+  /**
+   * 删除房间，并级联删除它的场景、角色实例与消息。
+   *
+   * 角色卡与世界书**不删**——它们是可被多个房间共用的资产，
+   * 删掉一个房间不应该连带毁掉用户导入的素材。
+   */
+  async deleteRoom(id: RoomId): Promise<void> {
+    const scenes = await this.store.list<Scene>(COLLECTIONS.scenes, { where: { roomId: id } });
+    const instances = await this.store.list<CharacterInstance>(COLLECTIONS.instances, { where: { roomId: id } });
+    const messages = await this.store.list<Message>(COLLECTIONS.messages, { where: { roomId: id } });
+
+    for (const scene of scenes) await this.store.remove(COLLECTIONS.scenes, scene.id);
+    for (const instance of instances) await this.store.remove(COLLECTIONS.instances, instance.id);
+    for (const message of messages) await this.store.remove(COLLECTIONS.messages, message.id);
+    await this.store.remove(COLLECTIONS.rooms, id);
+  }
+
+  // ---- 场景 ----
+
+  async saveScene(scene: Scene): Promise<void> {
+    await this.store.put(COLLECTIONS.scenes, scene);
+  }
+
+  async getScene(id: SceneId): Promise<Scene | null> {
+    return this.store.get<Scene>(COLLECTIONS.scenes, id);
+  }
+
+  async listScenes(roomId: RoomId): Promise<Scene[]> {
+    return this.store.list<Scene>(COLLECTIONS.scenes, {
+      where: { roomId },
+      orderBy: 'createdAt',
+      direction: 'asc',
+    });
+  }
+
+  // ---- 角色实例 ----
+
+  async saveInstance(instance: CharacterInstance): Promise<void> {
+    await this.store.put(COLLECTIONS.instances, { ...instance, updatedAt: nowIso() });
+  }
+
+  async listInstances(roomId: RoomId): Promise<CharacterInstance[]> {
+    return this.store.list<CharacterInstance>(COLLECTIONS.instances, { where: { roomId } });
+  }
+
+  // ---- 角色卡与世界书（跨房间共用） ----
+
+  async saveCard(card: Card): Promise<void> {
+    await this.store.put(COLLECTIONS.cards, card);
+  }
+
+  async getCard(id: CardId): Promise<Card | null> {
+    return this.store.get<Card>(COLLECTIONS.cards, id);
+  }
+
+  async listCards(): Promise<Card[]> {
+    return this.store.list<Card>(COLLECTIONS.cards, { orderBy: 'name' });
+  }
+
+  async saveWorldBook(book: WorldBook): Promise<void> {
+    await this.store.put(COLLECTIONS.worldBooks, book);
+  }
+
+  async getWorldBook(id: WorldBookId): Promise<WorldBook | null> {
+    return this.store.get<WorldBook>(COLLECTIONS.worldBooks, id);
+  }
+
+  // ---- 消息 ----
+
+  /**
+   * 追加消息并分配房间内单调递增的 `seq`。
+   *
+   * 不依赖时间戳排序：同一毫秒内落盘的多条消息必须仍有稳定顺序，
+   * 这是 P2-6 跨设备合并的前提。
+   */
+  async appendMessages(roomId: RoomId, messages: readonly Message[]): Promise<Message[]> {
+    const counterKey = `seq:${roomId}`;
+    let next = (await this.getMeta<number>(counterKey)) ?? 0;
+
+    const stamped: Message[] = [];
+    for (const message of messages) {
+      next += 1;
+      stamped.push({ ...message, roomId, seq: next });
+    }
+
+    await this.store.bulkPut(COLLECTIONS.messages, stamped);
+    await this.setMeta(counterKey, next);
+    return stamped;
+  }
+
+  /** 返回最近 `limit` 条消息，按时间正序。 */
+  async listMessages(roomId: RoomId, options: { limit?: number } = {}): Promise<Message[]> {
+    if (options.limit === undefined) {
+      return this.store.list<Message>(COLLECTIONS.messages, {
+        where: { roomId },
+        orderBy: 'seq',
+        direction: 'asc',
+      });
+    }
+
+    const recent = await this.store.list<Message>(COLLECTIONS.messages, {
+      where: { roomId },
+      orderBy: 'seq',
+      direction: 'desc',
+      limit: options.limit,
+    });
+    return recent.reverse();
+  }
+
+  async updateMessage(id: MessageId, patch: Partial<Message>): Promise<Message | null> {
+    const existing = await this.store.get<Message>(COLLECTIONS.messages, id);
+    if (!existing) return null;
+    const updated = { ...existing, ...patch, id: existing.id, roomId: existing.roomId, seq: existing.seq };
+    await this.store.put(COLLECTIONS.messages, updated);
+    return updated;
+  }
+
+  /** 删除某个回合产生的全部消息，用于重抽（P0-7）。返回删除数量。 */
+  async removeMessagesByTurn(roomId: RoomId, turnId: string): Promise<number> {
+    const messages = await this.store.list<Message>(COLLECTIONS.messages, {
+      where: { roomId, turnId },
+    });
+    for (const message of messages) {
+      await this.store.remove(COLLECTIONS.messages, message.id);
+    }
+    return messages.length;
+  }
+
+  // ---- 聚合 ----
+
+  async loadRoom(roomId: RoomId): Promise<RoomSnapshot | null> {
+    const room = await this.getRoom(roomId);
+    if (!room) return null;
+
+    const scenes = await this.listScenes(roomId);
+    const instances = await this.listInstances(roomId);
+    const messages = await this.store.list<Message>(COLLECTIONS.messages, {
+      where: { roomId },
+      orderBy: 'seq',
+      direction: 'asc',
+    });
+
+    const cards: Card[] = [];
+    for (const cardIdValue of room.cardIds) {
+      const card = await this.getCard(cardIdValue);
+      if (card) cards.push(card);
+    }
+
+    const worldBooks: WorldBook[] = [];
+    for (const bookId of room.worldBookIds) {
+      const book = await this.getWorldBook(bookId);
+      if (book) worldBooks.push(book);
+    }
+
+    return { room, scenes, instances, cards, worldBooks, messages };
+  }
+
+  async saveSnapshot(snapshot: {
+    room?: Room;
+    scenes?: readonly Scene[];
+    instances?: readonly CharacterInstance[];
+    cards?: readonly Card[];
+    worldBooks?: readonly WorldBook[];
+  }): Promise<void> {
+    if (snapshot.room) await this.saveRoom(snapshot.room);
+    if (snapshot.scenes) for (const scene of snapshot.scenes) await this.saveScene(scene);
+    if (snapshot.instances) for (const instance of snapshot.instances) await this.saveInstance(instance);
+    if (snapshot.cards) for (const card of snapshot.cards) await this.saveCard(card);
+    if (snapshot.worldBooks) for (const book of snapshot.worldBooks) await this.saveWorldBook(book);
+  }
+
+  // ---- 模型服务配置（P0-8） ----
+
+  async listProviderProfiles(): Promise<ProviderProfile[]> {
+    return this.store.list<ProviderProfile>(COLLECTIONS.providerProfiles, { orderBy: 'createdAt' });
+  }
+
+  async saveProviderProfile(profile: ProviderProfile): Promise<void> {
+    await this.store.put(COLLECTIONS.providerProfiles, { ...profile, updatedAt: nowIso() });
+  }
+
+  async deleteProviderProfile(id: string): Promise<void> {
+    await this.store.remove(COLLECTIONS.providerProfiles, id);
+  }
+}

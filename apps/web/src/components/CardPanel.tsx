@@ -1,5 +1,5 @@
-import { useRef } from 'react';
 import type { Card, ImportWarning } from '@dramatis/core';
+import { useRef } from 'react';
 
 interface Props {
   card: Card | null;
@@ -43,8 +43,8 @@ export function CardPanel({ card, warnings, error, onImport, disabled }: Props) 
           {card.tags.length > 0 ? <p className="hint">标签：{card.tags.join('、')}</p> : null}
           {card.creator !== '' ? <p className="hint">作者：{card.creator}</p> : null}
           <p className="hint">
-            描述 {card.description.length} 字 · 性格 {card.personality.length} 字 · 开场白{' '}
-            {card.firstMessage.length} 字 · 备选开场 {card.alternateGreetings.length} 条
+            描述 {card.description.length} 字 · 性格 {card.personality.length} 字 · 开场白 {card.firstMessage.length} 字
+            · 备选开场 {card.alternateGreetings.length} 条
           </p>
         </div>
       ) : null}

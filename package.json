@@ -12,9 +12,13 @@
     "dev": "pnpm --filter @dramatis/web dev",
     "build": "pnpm -r build",
     "typecheck": "pnpm -r typecheck",
-    "test": "pnpm -r test"
+    "test": "pnpm -r test",
+    "lint": "biome check .",
+    "format": "biome format --write .",
+    "check": "biome check --write ."
   },
   "devDependencies": {
+    "@biomejs/biome": "^2.5.14",
     "typescript": "^7.0.2",
     "vitest": "^5.0.1"
   }

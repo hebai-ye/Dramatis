@@ -62,13 +62,7 @@ export const SelectiveLogic = {
 export type SelectiveLogicValue = (typeof SelectiveLogic)[keyof typeof SelectiveLogic];
 
 /** 插入位置，对齐 SillyTavern 的 position 数值。 */
-export type WorldBookPosition =
-  | 'before_char'
-  | 'after_char'
-  | 'before_an'
-  | 'after_an'
-  | 'at_depth'
-  | 'unknown';
+export type WorldBookPosition = 'before_char' | 'after_char' | 'before_an' | 'after_an' | 'at_depth' | 'unknown';
 
 export interface WorldBookEntry {
   id: string;

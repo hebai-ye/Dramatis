@@ -8,13 +8,7 @@ import type { CardId, InstanceId, RelationshipTarget, RoomId } from './ids.js';
 export type Presence = 'onstage' | 'muted' | 'offscreen' | 'absent';
 
 /** 慢变量：从角色卡解析而来，基本恒定（设计文档 §5.1）。 */
-export const TRAIT_AXES = [
-  'extroversion',
-  'aggression',
-  'empathy',
-  'playfulness',
-  'caution',
-] as const;
+export const TRAIT_AXES = ['extroversion', 'aggression', 'empathy', 'playfulness', 'caution'] as const;
 
 export type TraitAxis = (typeof TRAIT_AXES)[number];
 

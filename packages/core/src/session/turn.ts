@@ -1,9 +1,9 @@
 import type { Card } from '../model/card.js';
-import { messageId, newId, nowIso, type InstanceId, type RoomId, type SceneId } from '../model/ids.js';
+import { type InstanceId, messageId, newId, nowIso, type RoomId, type SceneId } from '../model/ids.js';
 import type { CharacterInstance } from '../model/instance.js';
 import type { Message } from '../model/message.js';
 import type { Room, Scene } from '../model/room.js';
-import { assemblePrompt, type AssembleInput, type AssembledPrompt } from '../prompt/assemble.js';
+import { type AssembledPrompt, type AssembleInput, assemblePrompt } from '../prompt/assemble.js';
 import type { ModelParams, ModelProvider } from '../provider/openai-compatible.js';
 
 export type TurnEvent =
@@ -29,12 +29,15 @@ export function createPlayerMessage(input: {
   turnId: string;
   speakerName: string;
   content: string;
+  /** 未落盘时留空，由仓储层的 appendMessages 分配。 */
+  seq?: number;
 }): Message {
   return {
     id: messageId(newId()),
     roomId: input.roomId,
     sceneId: input.sceneId,
     turnId: input.turnId,
+    seq: input.seq ?? 0,
     role: 'player',
     speakerInstanceId: null,
     speakerName: input.speakerName,
@@ -50,12 +53,15 @@ export function createCharacterMessage(input: {
   speakerInstanceId: InstanceId;
   speakerName: string;
   content: string;
+  /** 未落盘时留空，由仓储层的 appendMessages 分配。 */
+  seq?: number;
 }): Message {
   return {
     id: messageId(newId()),
     roomId: input.roomId,
     sceneId: input.sceneId,
     turnId: input.turnId,
+    seq: input.seq ?? 0,
     role: 'character',
     speakerInstanceId: input.speakerInstanceId,
     speakerName: input.speakerName,

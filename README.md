@@ -160,6 +160,18 @@ Android 与 Windows 桌面都优先走 PWA：一套代码，不需要独立的�
 
 评测与验证方式（含自动化基线结果与真实模型的验证步骤）见 [docs/EVAL.md](docs/EVAL.md)。
 
+文档索引：
+
+| 文档 | 用途 |
+| --- | --- |
+| [docs/STATUS.md](docs/STATUS.md) | 此刻做到哪了、下一步做什么（**接手项目先读这份**） |
+| [docs/TASKS.md](docs/TASKS.md) | 下一批功能添加与优化的任务清单 |
+| [docs/ROADMAP.md](docs/ROADMAP.md) | P0–P3 长期路线、依赖、风险与验收标准 |
+| [docs/DESIGN.md](docs/DESIGN.md) | 架构、数据模型与记忆分层的原始设计 |
+| [docs/LAYOUT.md](docs/LAYOUT.md) | 界面与交互规格（含实现时的取舍） |
+| [docs/EVAL.md](docs/EVAL.md) | 评测与验证：自动化基线 + 真模型验证记录 |
+| [docs/FILE-LOG.md](docs/FILE-LOG.md) | 各文件的创建/修改时间日志 |
+
 | 级别 | 内容 | 状态 |
 | --- | --- | --- |
 | M0 | 兼容层、数据模型、Prompt 装配、单人对话 | ✅ 已完成 |

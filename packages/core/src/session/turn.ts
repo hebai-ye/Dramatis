@@ -13,7 +13,22 @@ import type { Message, MessageUsage } from '../model/message.js';
 import type { Room, Scene } from '../model/room.js';
 import { type AssembledPrompt, type AssembleInput, assemblePrompt } from '../prompt/assemble.js';
 import type { ModelParams, ModelProvider } from '../provider/openai-compatible.js';
-import { normalizeActionBreaks } from '../render/segments.js';
+import { normalizeActionBreaks, stripLeadingMarkers } from '../render/segments.js';
+
+/**
+ * 角色消息落库前的清洗。
+ *
+ * 模型会把历史里的 `【名字】` 转写标记抄进自己的回复，而且一旦抄进历史，下一轮就抄得
+ * 更多（真实长跑里从 1 个长到 5 个）。只在显示层剥掉只能解决观感，**历史里仍然留着**，
+ * 于是下一轮继续学。真正该在这一步清掉：存储里没有标记，提示词里自然也没有。
+ */
+function sanitizeCharacterContent(content: string, speakerName: string): string {
+  const withoutMarkers = stripLeadingMarkers(content);
+  const name = speakerName.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const withoutSelfPrefix =
+    name === '' ? withoutMarkers : withoutMarkers.replace(new RegExp(`^\\s*${name}\\s*[:：]\\s*`), '');
+  return normalizeActionBreaks(withoutSelfPrefix);
+}
 
 export type TurnEvent =
   | { type: 'prompt'; prompt: AssembledPrompt }
@@ -89,7 +104,7 @@ export function createCharacterMessage(input: {
     speakerInstanceId: input.speakerInstanceId,
     speakerName: input.speakerName,
     audience: input.audience ?? [input.speakerInstanceId],
-    content: input.content,
+    content: sanitizeCharacterContent(input.content, input.speakerName),
     createdAt: nowIso(),
   };
 }

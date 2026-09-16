@@ -129,6 +129,11 @@ describe('renderMessageContent', () => {
     const pieces = renderMessageContent('【秦娘】# 她把壶放下。', { speakerName: '秦娘' });
     expect(pieces).toEqual([{ kind: 'action', text: '她把壶放下。' }]);
   });
+
+  it('连着抄了多个标记也全部剥掉（长跑里真的长到五个）', () => {
+    const pieces = renderMessageContent('【秦娘】【秦娘】【秦娘】「打烊了。」', { speakerName: '秦娘' });
+    expect(pieces).toEqual([{ kind: 'speech', text: '「打烊了。」' }]);
+  });
 });
 
 describe('normalizeCardExample', () => {

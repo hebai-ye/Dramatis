@@ -54,6 +54,7 @@ export interface ScheduleInput {
 
 export type ScoreReasonCode =
   | 'mentioned'
+  | 'addressed'
   | 'continuation'
   | 'extroversion'
   | 'cooldown'
@@ -89,6 +90,7 @@ export interface ScheduleResult {
 }
 
 const MENTION_BONUS = 100;
+const ADDRESSED_BONUS = 60;
 const NEVER_SPOKE_BONUS = 30;
 const FAIRNESS_PER_TURN = 8;
 const FAIRNESS_CAP = 40;
@@ -128,6 +130,25 @@ function mentions(text: string, names: readonly string[]): string | null {
   for (const name of names) {
     const needle = name.trim().toLowerCase();
     if (needle !== '' && haystack.includes(needle)) return name;
+  }
+  return null;
+}
+
+/**
+ * 句首的称呼。
+ *
+ * 「小满，我和陈九进院子那会儿……」里两个名字都出现了：一个是**对话对象**，
+ * 另一个只是被提到。真实长跑里正是在这里出了岔子——规则给两个名字同样的点名加成，
+ * 结果由冷却惩罚决定了谁接话，回答的人和玩家说话的对象不是同一个（而且模型会把
+ * 前者的动作写在后者的名下）。所以句首那个名字要单独认出来，并享有更高权重。
+ */
+function leadingMention(text: string, names: readonly string[]): string | null {
+  const trimmed = text.trimStart();
+  for (const name of names) {
+    const needle = name.trim();
+    if (needle === '' || !trimmed.startsWith(needle)) continue;
+    const rest = trimmed.slice(needle.length);
+    if (rest === '' || /^[\s，,、：:！!？?]/.test(rest)) return name;
   }
   return null;
 }
@@ -195,8 +216,15 @@ export function scheduleSpeakers(input: ScheduleInput): ScheduleResult {
       reasons.push({ code: 'mentioned', label: `被点名（${hit}）`, delta: MENTION_BONUS });
     }
 
+    // 句首称呼 = 玩家在跟他说话。被点名的另一个人只是被提到，不该把话头抢走
+    const addressed = leadingMention(input.playerInput, names);
+    const isAddressed = addressed !== null;
+    if (isAddressed) {
+      reasons.push({ code: 'addressed', label: `玩家开口就叫了他（${addressed}）`, delta: ADDRESSED_BONUS });
+    }
+
     const isPrevious = instance.id === input.previousSpeakerId;
-    if (isPrevious && continuing) {
+    if (isPrevious && continuing && !isAddressed) {
       reasons.push({
         code: 'continuation',
         label: '玩家在接着说给他听',
@@ -215,8 +243,9 @@ export function scheduleSpeakers(input: ScheduleInput): ScheduleResult {
 
     const sinceSpoke = candidate.turnsSinceSpoke ?? null;
 
-    // 玩家还在跟他说话时不算「抢话」：冷却惩罚在这里会让对话变成答非所问
-    if (isPrevious && continuing) {
+    // 玩家还在跟他说话、或开口就叫了他时，不算「抢话」：
+    // 冷却惩罚在这里只会让回答变成答非所问
+    if ((isPrevious && continuing) || isAddressed) {
       // 不加冷却惩罚
     } else if (sinceSpoke === 0) {
       reasons.push({ code: 'cooldown', label: '上一回合刚发过言', delta: COOLDOWN_LAST_TURN });

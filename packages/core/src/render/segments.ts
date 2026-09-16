@@ -37,15 +37,28 @@ export interface RenderOptions {
 }
 
 function stripLeadingSpeakerPrefix(content: string, speakerName: string | undefined): string {
-  // 转写标记 `【名字】` 是我们写进提示词的，角色自己不会这么说话：只要它出现在
-  // 开头就是模型照抄历史留下的噪声，**不论写的是谁的名字**都剥掉。
-  // （写成别人的名字属于冒充，那是另一个问题，正文内容仍然保留给用户看。）
-  const withoutMarker = content.replace(/^\s*【[^】\n]{1,16}】\s*/, '');
+  const withoutMarker = stripLeadingMarkers(content);
   if (speakerName === undefined || speakerName.trim() === '') return withoutMarker;
 
   const name = speakerName.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   // 「秦娘：」这种自报家门同样是格式噪声（说话人已经由头像与名字行给出）
   return withoutMarker.replace(new RegExp(`^\\s*${name}\\s*[:：]\\s*`), '');
+}
+
+/**
+ * 反复剥掉开头的转写标记 `【名字】`。
+ *
+ * 转写标记是我们写进提示词的，角色自己不会这么说话；模型照抄一次之后，
+ * 这条消息进入历史、又成了下一轮的样板——于是标记会一个、两个、四个地长下去
+ * （真实长跑里真的长到了五个）。所以这里必须**循环剥**，而不是剥一层。
+ */
+export function stripLeadingMarkers(content: string): string {
+  let out = content;
+  for (;;) {
+    const next = out.replace(/^\s*【[^】\n]{1,16}】\s*/, '');
+    if (next === out) return out;
+    out = next;
+  }
 }
 
 export const DEFAULT_MAX_BUBBLE_LENGTH = 110;

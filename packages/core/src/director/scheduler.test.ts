@@ -129,6 +129,25 @@ describe('scheduleSpeakers / 资格', () => {
       result.scores.find((score) => score.instanceId === alice.id)?.reasons.map((reason) => reason.code),
     ).not.toContain('continuation');
   });
+
+  it('一句里同时提到两个人时，句首称呼的那个接话', () => {
+    // 长跑里踩到的：「小满，我和陈九进院子那会儿……」——两个名字都被提到，
+    // 结果冷却决定了一切，回答的人跟被问的人不是同一个
+    const xiaoman = actor('小满');
+    const chenjiu = actor('陈九');
+
+    const result = scheduleSpeakers({
+      playerInput: '小满，我和陈九进院子那会儿，你在哪儿？',
+      candidates: [candidate(xiaoman, 0), candidate(chenjiu, 3)],
+      previousSpeakerId: xiaoman.id,
+      random: noJitter,
+    });
+
+    expect(result.speakers).toEqual([xiaoman.id]);
+    expect(result.scores.find((score) => score.instanceId === chenjiu.id)?.reasons.map((r) => r.code)).toContain(
+      'mentioned',
+    );
+  });
 });
 
 describe('scheduleSpeakers / 打分', () => {

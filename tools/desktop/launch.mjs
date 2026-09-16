@@ -60,11 +60,11 @@ const shouldOpen = !args.has('--no-open') && process.env.DRAMATIS_NO_OPEN !== '1
 const useProductionBuild = args.has('--prod');
 
 const WINDOWS_BROWSERS = [
-  process.env['ProgramFiles'] && `${process.env['ProgramFiles']}\\Microsoft\\Edge\\Application\\msedge.exe`,
+  process.env.ProgramFiles && `${process.env.ProgramFiles}\\Microsoft\\Edge\\Application\\msedge.exe`,
   process.env['ProgramFiles(x86)'] && `${process.env['ProgramFiles(x86)']}\\Microsoft\\Edge\\Application\\msedge.exe`,
-  process.env['ProgramFiles'] && `${process.env['ProgramFiles']}\\Google\\Chrome\\Application\\chrome.exe`,
+  process.env.ProgramFiles && `${process.env.ProgramFiles}\\Google\\Chrome\\Application\\chrome.exe`,
   process.env['ProgramFiles(x86)'] && `${process.env['ProgramFiles(x86)']}\\Google\\Chrome\\Application\\chrome.exe`,
-  process.env['LOCALAPPDATA'] && `${process.env['LOCALAPPDATA']}\\Google\\Chrome\\Application\\chrome.exe`,
+  process.env.LOCALAPPDATA && `${process.env.LOCALAPPDATA}\\Google\\Chrome\\Application\\chrome.exe`,
 ];
 
 function findBrowser() {

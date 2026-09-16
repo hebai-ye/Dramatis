@@ -4,7 +4,7 @@
 
 **TL;DR (English)** — Dramatis is an open-source multi-character AI roleplay tavern for Web, Android and desktop. Direct the cast, lock the scene, and let every character keep their own memory and personality. SillyTavern-compatible character cards and world books. Local-first with optional cloud sync. Bring your own API key.
 
-`sillytavern-compatible` · `ai-roleplay` · `character-card` · `worldbook` · `local-first` · `byok` · `tauri` · `capacitor`
+`sillytavern-compatible` · `ai-roleplay` · `character-card` · `worldbook` · `local-first` · `byok` · `pwa` · `capacitor`
 
 ---
 
@@ -105,14 +105,14 @@ TypeScript monorepo，平台无关的核心逻辑抽成 `core`：
 
 ```
 packages/core       数据模型 / 兼容层 / Prompt 装配 / 模型接入
-apps/web            React + Vite
-apps/desktop        Tauri（M4）
-apps/android        Capacitor，复用同一套 UI（M4）
-services/sync       账号与云同步（M4）
+apps/web            React + Vite（Windows 与 Android 共用同一套 UI）
+services/sync       账号与云同步（P2）
 ```
 
-- **本地优先**：本地 SQLite 为唯一真相源，云端同步是可选增强。
-- **自带 API Key**：密钥只存在设备安全存储（Keychain / Keystore / DPAPI），不参与同步。
+Android 走 PWA 优先路线，不做桌面原生壳，不考虑 iOS。理由见 [docs/ROADMAP.md](docs/ROADMAP.md)。
+
+- **本地优先**：本地 SQLite 随时可用，云端同步负责多端一致与数据安全。
+- **自带 API Key**：密钥只存在设备本地，不参与同步。
 - **端到端加密**：开启同步时，用同步密码派生密钥加密后再上传，服务端不碰明文。
 
 详细设计见 [docs/DESIGN.md](docs/DESIGN.md)。
@@ -126,7 +126,7 @@ services/sync       账号与云同步（M4）
 | M0 | 兼容层、数据模型、Prompt 装配、单人对话 | ✅ 已完成 |
 | P0 | 持久化与多角色阵容（拉人 / 锁场 / 驱逐 / 发言调度） | 待开始 |
 | P1 | 记忆系统与可干预性（视角化记忆 / 召回 / 情绪关系） | 待开始 |
-| P2 | 多端与同步（Android / 桌面 / 账号 / 云同步） | 待开始 |
+| P2 | 多端与同步（响应式 / PWA / 账号 / 云同步） | 待开始 |
 | P3 | 生态与打磨（导出 / 预设导入 / 正则 / 分享） | 待开始 |
 
 ## 参与

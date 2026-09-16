@@ -26,11 +26,144 @@ body {
 }
 
 .app {
-  display: grid;
-  grid-template-columns: 360px minmax(0, 1fr);
-  gap: 16px;
+  display: flex;
+  flex-direction: column;
   height: 100vh;
   padding: 16px;
+  gap: 12px;
+}
+
+.app-body {
+  display: grid;
+  grid-template-columns: 340px minmax(0, 1fr) 360px;
+  gap: 12px;
+  flex: 1;
+  min-height: 0;
+}
+
+.topbar {
+  align-items: center;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 8px 14px;
+}
+
+.brand-inline {
+  align-items: baseline;
+  display: flex;
+  gap: 8px;
+}
+
+.brand-inline h1 {
+  font-size: 16px;
+  letter-spacing: 0.06em;
+  margin: 0;
+}
+
+.topbar-field {
+  align-items: center;
+  display: flex;
+  flex-direction: row;
+  gap: 6px;
+  font-size: 12px;
+}
+
+.topbar-spacer {
+  flex: 1;
+}
+
+.danger-tag {
+  background: rgba(217, 112, 95, 0.18);
+  color: var(--danger);
+}
+
+.design-sidebar.collapsed {
+  align-items: flex-start;
+  padding-top: 8px;
+}
+
+.design-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.tab {
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--muted-text);
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 400;
+  padding: 4px 10px;
+}
+
+.tab.active {
+  background: rgba(217, 164, 65, 0.14);
+  border-color: var(--accent-soft);
+  color: var(--accent);
+}
+
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.list-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.inline-check {
+  align-items: center;
+  display: flex;
+  flex-direction: row;
+  gap: 6px;
+  font-size: 12px;
+}
+
+.entry-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.entry-list li {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 6px 8px;
+}
+
+.entry-head {
+  align-items: center;
+  display: flex;
+  gap: 6px;
+}
+
+.entry-editor {
+  border-top: 1px dashed var(--line);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 6px;
+  padding-top: 8px;
+}
+
+.brand {
+  align-items: center;
+  display: flex;
+  justify-content: space-between;
 }
 
 .sidebar,
@@ -148,10 +281,6 @@ button.ghost {
   align-items: center;
   display: flex;
   gap: 6px;
-}
-
-.inline input {
-  flex: 1;
 }
 
 .room-list {
@@ -321,6 +450,21 @@ button.ghost {
   margin-top: 6px;
   padding-top: 8px;
   border-top: 1px dashed var(--line);
+}
+
+/* 放在基础表单样式之后：这两条比 input/select 更具体，
+   写在使用它们的元素之前会让层叠顺序变得难以推理。 */
+.topbar-field select {
+  min-width: 140px;
+  width: auto;
+}
+
+.inline input {
+  flex: 1;
+}
+
+.inline-check input {
+  width: auto;
 }
 
 .hint {

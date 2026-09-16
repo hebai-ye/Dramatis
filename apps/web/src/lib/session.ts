@@ -1,5 +1,6 @@
 import {
   type Card,
+  type CardId,
   type CharacterInstance,
   type EventId,
   type InstanceId,
@@ -110,6 +111,12 @@ export interface SessionApi {
   attachWorldBook: (book: WorldBook) => Promise<void>;
   /** 只解绑，不删库——世界书可能被别的房间共用。 */
   detachWorldBook: (id: WorldBookId) => Promise<void>;
+  /** 素材库（全局，不属于任何房间），侧边栏的设计功能用。 */
+  library: { cards: Card[]; worldBooks: WorldBook[] };
+  saveCard: (card: Card) => Promise<void>;
+  deleteCard: (id: CardId) => Promise<void>;
+  saveWorldBook: (book: WorldBook) => Promise<void>;
+  deleteWorldBook: (id: WorldBookId) => Promise<void>;
   /**
    * 切换这个房间使用的玩家身份（P0-3）。
    *
@@ -118,6 +125,8 @@ export interface SessionApi {
    */
   setPersona: (persona: Persona) => Promise<void>;
   savePersona: (persona: Persona) => Promise<void>;
+  /** 删除身份；引用它的房间会退回内联字段，不会被连带删除。 */
+  deletePersona: (id: string) => Promise<void>;
   listPersonas: () => Promise<Persona[]>;
   deleteRoom: (id: RoomId) => Promise<void>;
   appendMessages: (messages: readonly Message[]) => Promise<void>;
@@ -130,6 +139,10 @@ export function useSession(db: DramatisDb | null): SessionApi {
   const [ready, setReady] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [rooms, setRooms] = useState<RoomSummary[]>([]);
+  const [library, setLibrary] = useState<{ cards: Card[]; worldBooks: WorldBook[] }>({
+    cards: [],
+    worldBooks: [],
+  });
   const [snapshot, setSnapshotState] = useState<RoomSnapshot | null>(null);
 
   // 用一个 ref 跟随快照，避免每个回调都依赖 snapshot 而频繁重建
@@ -144,6 +157,12 @@ export function useSession(db: DramatisDb | null): SessionApi {
     setRooms(await db.repository.listRooms());
   }, [db]);
 
+  const refreshLibrary = useCallback(async () => {
+    if (!db) return;
+    const [cards, worldBooks] = await Promise.all([db.repository.listCards(), db.repository.listWorldBooks()]);
+    setLibrary({ cards, worldBooks });
+  }, [db]);
+
   useEffect(() => {
     if (!db) return;
     let cancelled = false;
@@ -156,6 +175,7 @@ export function useSession(db: DramatisDb | null): SessionApi {
           if (loaded && !cancelled) setSnapshot(loaded);
         }
         await refreshRooms();
+        await refreshLibrary();
       } catch (sessionError) {
         if (!cancelled) {
           setError(sessionError instanceof Error ? sessionError.message : String(sessionError));
@@ -168,7 +188,7 @@ export function useSession(db: DramatisDb | null): SessionApi {
     return () => {
       cancelled = true;
     };
-  }, [db, refreshRooms, setSnapshot]);
+  }, [db, refreshLibrary, refreshRooms, setSnapshot]);
 
   const openRoom = useCallback(
     async (id: RoomId) => {
@@ -485,6 +505,20 @@ export function useSession(db: DramatisDb | null): SessionApi {
     return db ? db.repository.listPersonas() : [];
   }, [db]);
 
+  const deletePersona = useCallback(
+    async (id: string) => {
+      const current = snapshotRef.current;
+      if (!db) return;
+      await db.repository.deletePersona(id);
+      if (!current) return;
+
+      const personas = current.personas.filter((persona) => persona.id !== id);
+      const room = current.room.personaId === id ? { ...current.room, personaId: null } : current.room;
+      setSnapshot({ ...current, personas, room });
+    },
+    [db, setSnapshot],
+  );
+
   const revertTurn = useCallback(
     async (turnId: string) => {
       const current = snapshotRef.current;
@@ -516,6 +550,7 @@ export function useSession(db: DramatisDb | null): SessionApi {
       if (!db || !current) return;
 
       await db.repository.saveWorldBook(book);
+      await refreshLibrary();
       if (current.room.worldBookIds.includes(book.id)) return;
 
       const room = {
@@ -526,7 +561,7 @@ export function useSession(db: DramatisDb | null): SessionApi {
       await db.repository.saveRoom(room);
       setSnapshot({ ...current, room, worldBooks: [...current.worldBooks, book] });
     },
-    [db, setSnapshot],
+    [db, refreshLibrary, setSnapshot],
   );
 
   const detachWorldBook = useCallback(
@@ -543,6 +578,76 @@ export function useSession(db: DramatisDb | null): SessionApi {
       setSnapshot({ ...current, room, worldBooks: current.worldBooks.filter((book) => book.id !== id) });
     },
     [db, setSnapshot],
+  );
+
+  const saveCard = useCallback(
+    async (card: Card) => {
+      if (!db) return;
+      await db.repository.saveCard(card);
+      await refreshLibrary();
+
+      // 房间快照里的卡也要跟着更新，否则界面上还是旧的
+      const current = snapshotRef.current;
+      if (current?.cards.some((item) => item.id === card.id)) {
+        setSnapshot({
+          ...current,
+          cards: current.cards.map((item) => (item.id === card.id ? card : item)),
+        });
+      }
+    },
+    [db, refreshLibrary, setSnapshot],
+  );
+
+  const deleteCard = useCallback(
+    async (id: CardId) => {
+      if (!db) return;
+      await db.repository.deleteCard(id);
+      await refreshLibrary();
+    },
+    [db, refreshLibrary],
+  );
+
+  const saveWorldBook = useCallback(
+    async (book: WorldBook) => {
+      if (!db) return;
+      await db.repository.saveWorldBook(book);
+      await refreshLibrary();
+
+      // 挂在这个房间上的世界书改了内容，prompt 里用的也得是新版本
+      const current = snapshotRef.current;
+      if (current?.worldBooks.some((item) => item.id === book.id)) {
+        setSnapshot({
+          ...current,
+          worldBooks: current.worldBooks.map((item) => (item.id === book.id ? book : item)),
+        });
+      }
+    },
+    [db, refreshLibrary, setSnapshot],
+  );
+
+  const deleteWorldBook = useCallback(
+    async (id: WorldBookId) => {
+      const current = snapshotRef.current;
+      if (!db || !current) return;
+
+      await db.repository.deleteWorldBook(id);
+      // 删书顺带解绑，否则房间上会留下指向不存在世界书的引用
+      if (current.room.worldBookIds.includes(id)) {
+        const room = {
+          ...current.room,
+          worldBookIds: current.room.worldBookIds.filter((item) => item !== id),
+          updatedAt: nowIso(),
+        };
+        await db.repository.saveRoom(room);
+        setSnapshot({
+          ...current,
+          room,
+          worldBooks: current.worldBooks.filter((book) => book.id !== id),
+        });
+      }
+      await refreshLibrary();
+    },
+    [db, refreshLibrary, setSnapshot],
   );
 
   const reloadRoom = useCallback(async () => {
@@ -624,8 +729,14 @@ export function useSession(db: DramatisDb | null): SessionApi {
     revertTurn,
     attachWorldBook,
     detachWorldBook,
+    library,
+    saveCard,
+    deleteCard,
+    saveWorldBook,
+    deleteWorldBook,
     setPersona,
     savePersona,
+    deletePersona,
     listPersonas,
     clearError: () => setError(null),
   };

@@ -25,14 +25,10 @@ import {
   turnsSinceLastSpoke,
 } from '@dramatis/core';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { CardPanel } from './components/CardPanel';
-import { CastPanel } from './components/CastPanel';
 import { ChatPanel } from './components/ChatPanel';
-import { MemoryPanel } from './components/MemoryPanel';
-import { PromptInspector } from './components/PromptInspector';
-import { ProviderPanel } from './components/ProviderPanel';
-import { RoomPanel } from './components/RoomPanel';
-import { ScenePanel } from './components/ScenePanel';
+import { DesignSidebar } from './components/DesignSidebar';
+import { RuntimePanel } from './components/RuntimePanel';
+import { TopBar } from './components/TopBar';
 import { useProviders } from './lib/providers';
 import { useDatabase, useSession } from './lib/session';
 import { AFFECT_TASK_KIND, MEMORY_BUDGET_TOKENS, MEMORY_TASK_KIND, useBackgroundWorker } from './lib/worker';
@@ -64,7 +60,6 @@ export function App() {
   const session = useSession(db);
   const providers = useProviders(db);
 
-  // 记忆抽取与情绪推演都跑在后台队列里，写完通知 session 重新载入房间
   const worker = useBackgroundWorker({
     db,
     provider: providers.background,
@@ -73,7 +68,6 @@ export function App() {
     },
   });
 
-  const [importedCard, setImportedCard] = useState<Card | null>(null);
   const [warnings, setWarnings] = useState<ImportWarning[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [streamText, setStreamText] = useState('');
@@ -87,7 +81,7 @@ export function App() {
   const messages = useMemo(() => snapshot?.messages ?? [], [snapshot]);
   const personas = snapshot?.personas ?? [];
   const activePersona = personas.find((persona) => persona.id === snapshot?.room.personaId) ?? null;
-  const activeCard = snapshot?.cards.find((item) => item.id === snapshot.room.cardIds[0]) ?? importedCard;
+  const activeCard = snapshot?.cards.find((item) => item.id === snapshot.room.cardIds[0]) ?? null;
   const ready = snapshot !== null && scene !== null;
 
   // 没有身份就先造一个，否则新世界无从创建
@@ -120,8 +114,7 @@ export function App() {
         model: profile.model,
       });
 
-      // 世界书按关键词命中插入。扫描范围是玩家输入加最近几轮，
-      // 与设计文档 §6 的「常驻 + 触发」一致
+      // 世界书按关键词命中插入，扫描范围是玩家输入加最近几轮
       const scanText = [options.playerInput, ...options.history.slice(-8).map((message) => message.content)].join('\n');
       const worldBookMatches = snapshot.worldBooks.flatMap((book) => matchWorldBookEntries(book, { scanText }));
 
@@ -180,8 +173,11 @@ export function App() {
   /** 用一张卡开一条新世界线，并写入角色的开场白。 */
   const startNewRoom = useCallback(
     async (target: Card) => {
-      const persona = activePersona ?? createPersona({ name: '玩家' });
-      if (!activePersona) await session.savePersona(persona);
+      const persona = activePersona ?? personas[0];
+      if (!persona) {
+        setError('先创建一个玩家身份');
+        return;
+      }
 
       const created = await session.createRoom(target, persona);
       const createdInstance = created?.instances[0];
@@ -198,7 +194,7 @@ export function App() {
       if (greeting) await session.appendMessages([greeting]);
       setLastPrompt(null);
     },
-    [activePersona, session],
+    [activePersona, personas, session],
   );
 
   const handleImport = useCallback(
@@ -207,14 +203,13 @@ export function App() {
       try {
         const bytes = new Uint8Array(await file.arrayBuffer());
 
-        // JSON 里既有角色卡也有世界书，先按结构分辨
         if (!looksLikePng(bytes)) {
           const text = new TextDecoder('utf-8').decode(bytes);
           const parsed = JSON.parse(text) as unknown;
 
           if (looksLikeWorldBook(parsed)) {
             const { book, warnings: bookWarnings } = parseWorldBook(parsed, file.name.replace(/\.json$/i, ''));
-            await session.attachWorldBook(book);
+            await session.saveWorldBook(book);
             setWarnings(bookWarnings);
             return;
           }
@@ -224,30 +219,18 @@ export function App() {
           ? await importCardFromPng(bytes, file.name)
           : importCardFromJson(new TextDecoder('utf-8').decode(bytes), file.name);
 
-        setImportedCard(result.card);
+        // 先入库，再决定要不要马上用
+        await session.saveCard(result.card);
         setWarnings(result.warnings);
 
-        // 已经有房间就把他拉进当前场景，否则开一条新世界线
-        if (snapshot && scene) {
-          const instance = await session.addInstance(result.card);
-          if (instance) {
-            const greeting = createGreetingMessage({
-              card: result.card,
-              instance,
-              room: snapshot.room,
-              scene,
-              audience: [...scene.cast, instance.id],
-            });
-            if (greeting) await session.appendMessages([greeting]);
-          }
-        } else {
+        if (!snapshot || !scene) {
           await startNewRoom(result.card);
         }
 
-        // 卡内嵌的世界书自动挂上，省得用户再导一次
         if (result.card.embeddedWorldBook !== null) {
           const { book } = parseWorldBook(result.card.embeddedWorldBook, `${result.card.name} 的内嵌世界书`);
-          await session.attachWorldBook(book);
+          await session.saveWorldBook(book);
+          if (snapshot) await session.attachWorldBook(book);
         }
       } catch (importError) {
         setError(importError instanceof Error ? importError.message : String(importError));
@@ -291,9 +274,6 @@ export function App() {
 
       const controller = new AbortController();
       abortRef.current = controller;
-
-      // 第一位发言者用不含本条玩家消息的历史 + playerInput；
-      // 后续发言者改用含玩家消息与前一角色回应的时间线，且不再重复插入玩家输入
       let continuedHistory: Message[] = [...history, playerMessage];
 
       try {
@@ -311,11 +291,10 @@ export function App() {
         for (const speakerId of schedule.speakers) {
           const speaker = snapshot.instances.find((item) => item.id === speakerId);
           if (!speaker) continue;
-          const speakerCard = snapshot.cards.find((item) => item.id === speaker.cardId) ?? activeCard;
+          const speakerCard = snapshot.cards.find((item) => item.id === speaker.cardId);
           if (!speakerCard) continue;
 
-          // 只召回这个人自己的视角条目——这是「多角色」与「一个角色的多个分身」
-          // 之间的分界线，也是 P1-3 的接入点
+          // 只召回这个人自己的视角条目
           const now = new Date().toISOString();
           const recalled = selectWithinBudget(
             recallMemories(snapshot.memories, {
@@ -375,15 +354,14 @@ export function App() {
         abortRef.current = null;
       }
     },
-    [activeCard, busy, db, makeCharacterLine, messages, providers, runGeneration, scene, session, snapshot, worker],
+    [busy, db, makeCharacterLine, messages, providers, runGeneration, scene, session, snapshot, worker],
   );
 
   /**
-   * 重抽（P0-7）。
+   * 重抽。
    *
-   * 关键不是「再生成一次」，而是**把这一轮的记忆写入撤销掉**：
-   * 先取消这个回合排队中的后台任务，再删掉旧的回复，否则角色会同时
-   * 记得两个互相矛盾的版本。
+   * 关键是**把这一轮的后台写入一起撤销**：取消排队中的任务，删掉旧回复，
+   * 再把已经落盘的情绪变化反向还原。只删消息不撤状态，关系会越抽越高。
    */
   const handleRegenerate = useCallback(
     async (id: MessageId) => {
@@ -412,10 +390,10 @@ export function App() {
       setReasoningText('');
 
       await db.queue.cancelByTurn(target.turnId);
-      await session.revertTurn(target.turnId);
       for (const message of turnMessages) {
         if (message.role === 'character') await session.deleteMessage(message.id);
       }
+      await session.revertTurn(target.turnId);
 
       const earlierHistory = messages.filter((message) => message.turnId !== target.turnId);
       const controller = new AbortController();
@@ -452,7 +430,6 @@ export function App() {
       const target = messages.find((message) => message.id === id);
       if (!target) return;
 
-      // 删掉角色的回复，就等于这一轮没有发生过，排队的记忆抽取也要一起撤销
       if (target.role === 'character' && db) {
         await db.queue.cancelByTurn(target.turnId);
         await session.revertTurn(target.turnId);
@@ -463,116 +440,111 @@ export function App() {
   );
 
   const handleStop = useCallback(() => abortRef.current?.abort(), []);
-  const displayError = error ?? session.error ?? dbError;
+  const disabled = busy || !session.ready;
 
   return (
     <div className="app">
-      <aside className="sidebar">
-        <header className="brand">
-          <h1>Dramatis</h1>
-          <span>登场 · P0{boot ? ` · 存储：${boot.backendKind}` : ''}</span>
-        </header>
+      <TopBar
+        rooms={session.rooms}
+        activeRoomId={snapshot?.room.id ?? null}
+        personas={personas}
+        activePersonaId={activePersona?.id ?? null}
+        backendKind={boot?.backendKind ?? ''}
+        degraded={boot?.degraded ?? false}
+        canStartNewWorld={activeCard !== null}
+        disabled={disabled}
+        onOpenRoom={(id) => {
+          void session.openRoom(id);
+          setLastPrompt(null);
+        }}
+        onDeleteRoom={(id) => void session.deleteRoom(id)}
+        onNewWorld={() => {
+          if (activeCard) void startNewRoom(activeCard);
+        }}
+        onSelectPersona={(persona) => void session.setPersona(persona)}
+        onReset={() => {
+          if (activeCard) void startNewRoom(activeCard);
+        }}
+      />
 
-        <RoomPanel
-          rooms={session.rooms}
-          activeRoomId={snapshot?.room.id ?? null}
-          backendKind={boot?.backendKind ?? ''}
-          degraded={boot?.degraded ?? false}
+      <div className="app-body">
+        <DesignSidebar
+          cards={session.library.cards}
+          worldBooks={session.library.worldBooks}
+          attachedWorldBookIds={snapshot?.room.worldBookIds ?? []}
           personas={personas}
           activePersonaId={activePersona?.id ?? null}
-          onUsePersona={(id) => {
-            const persona = personas.find((item) => item.id === id);
-            if (persona) void session.setPersona(persona);
-          }}
-          onCreatePersona={() => {
-            const persona = createPersona({ name: '新身份' });
-            void session.savePersona(persona).then(() => session.setPersona(persona));
-          }}
-          onUpdatePersona={(patch) => {
-            if (activePersona) void session.savePersona({ ...activePersona, ...patch });
-          }}
-          onOpenRoom={(id) => {
-            void session.openRoom(id);
-            setLastPrompt(null);
-          }}
-          onDeleteRoom={(id) => void session.deleteRoom(id)}
-          onNewWorld={() => {
-            if (activeCard) void startNewRoom(activeCard);
-          }}
-          canStartNewWorld={activeCard !== null}
-          disabled={busy || !session.ready}
-        />
-
-        <CardPanel
-          card={activeCard}
-          warnings={warnings}
-          error={displayError}
-          worldBooks={snapshot?.worldBooks ?? []}
-          onDetachWorldBook={(id) => void session.detachWorldBook(id)}
-          disabled={busy || !session.ready}
-          importHint={snapshot ? '导入的角色会加入当前房间' : '导入的角色会开一条新世界线'}
-          onImport={(file) => {
+          providers={providers}
+          disabled={disabled}
+          onSaveCard={(card) => void session.saveCard(card)}
+          onDeleteCard={(id) => void session.deleteCard(id)}
+          onSaveWorldBook={(book) => void session.saveWorldBook(book)}
+          onDeleteWorldBook={(id) => void session.deleteWorldBook(id)}
+          onAttachWorldBook={(book) => void session.attachWorldBook(book)}
+          onSelectPersona={(persona) => void session.setPersona(persona)}
+          onSavePersona={(persona) => void session.savePersona(persona)}
+          onDeletePersona={(id) => void session.deletePersona(id)}
+          onImportFile={(file) => {
             void handleImport(file);
           }}
+          notice={{ warnings: warnings.map((item) => item.message), error: error ?? session.error ?? dbError }}
         />
 
-        {scene && snapshot ? (
-          <CastPanel
-            instances={snapshot.instances}
-            scene={scene}
-            disabled={busy}
-            onSetPresence={(id, presence) => void session.setPresence(id, presence)}
-            onRename={(id, name) => void session.updateInstance(id, { displayName: name })}
-            onRemove={(id) => void session.removeInstance(id)}
+        <main className="main">
+          <ChatPanel
+            messages={messages}
+            streamText={streamText}
+            reasoningText={reasoningText}
+            busy={busy}
+            ready={ready}
+            characterName={snapshot?.instances[0]?.displayName ?? ''}
+            onSend={(text) => {
+              void handleSend(text);
+            }}
+            onStop={handleStop}
+            onReset={() => {
+              if (activeCard) void startNewRoom(activeCard);
+            }}
+            onRegenerate={(id) => void handleRegenerate(id)}
+            onEdit={(id, content) => void session.updateMessage(id, { content })}
+            onDelete={(id) => void handleDeleteMessage(id)}
           />
-        ) : null}
+        </main>
 
-        {scene ? (
-          <ScenePanel
-            scene={scene}
-            disabled={busy}
-            onChange={(patch) => void session.updateScene(patch)}
-            onStartNewScene={(title) => void session.startNewScene(title)}
-          />
-        ) : null}
-
-        {snapshot ? (
-          <MemoryPanel
-            memories={snapshot.memories}
-            instances={snapshot.instances}
-            pending={worker.pending}
-            completed={worker.completed}
-            workerError={worker.lastError}
-            disabled={busy}
-            onUpdate={(id, patch) => void session.updateMemory(id, patch)}
-            onDelete={(id) => void session.deleteMemory(id)}
-          />
-        ) : null}
-
-        <ProviderPanel api={providers} disabled={busy} />
-      </aside>
-
-      <main className="main">
-        <ChatPanel
-          messages={messages}
-          streamText={streamText}
-          reasoningText={reasoningText}
-          busy={busy}
-          ready={ready}
-          characterName={snapshot?.instances[0]?.displayName ?? ''}
-          onSend={(text) => {
-            void handleSend(text);
+        <RuntimePanel
+          scene={scene}
+          instances={snapshot?.instances ?? []}
+          memories={snapshot?.memories ?? []}
+          attachedWorldBooks={snapshot?.worldBooks ?? []}
+          libraryCards={session.library.cards}
+          prompt={lastPrompt}
+          pending={worker.pending}
+          completed={worker.completed}
+          workerError={worker.lastError}
+          disabled={disabled}
+          onSceneChange={(patch) => void session.updateScene(patch)}
+          onStartNewScene={(title) => void session.startNewScene(title)}
+          onSetPresence={(id, presence) => void session.setPresence(id, presence)}
+          onRenameInstance={(id, name) => void session.updateInstance(id, { displayName: name })}
+          onRemoveInstance={(id) => void session.removeInstance(id)}
+          onAddInstance={(card) => {
+            void session.addInstance(card).then(async (instance) => {
+              if (!instance || !snapshot || !scene) return;
+              const greeting = createGreetingMessage({
+                card,
+                instance,
+                room: snapshot.room,
+                scene,
+                audience: [...scene.cast, instance.id],
+              });
+              if (greeting) await session.appendMessages([greeting]);
+            });
           }}
-          onStop={handleStop}
-          onReset={() => {
-            if (activeCard) void startNewRoom(activeCard);
-          }}
-          onRegenerate={(id) => void handleRegenerate(id)}
-          onEdit={(id, content) => void session.updateMessage(id, { content })}
-          onDelete={(id) => void handleDeleteMessage(id)}
+          onDetachWorldBook={(id) => void session.detachWorldBook(id)}
+          onUpdateMemory={(id, patch) => void session.updateMemory(id, patch)}
+          onDeleteMemory={(id) => void session.deleteMemory(id)}
         />
-        <PromptInspector prompt={lastPrompt} />
-      </main>
+      </div>
     </div>
   );
 }

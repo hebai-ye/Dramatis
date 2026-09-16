@@ -252,12 +252,24 @@ export class Repository {
     return this.store.list<Card>(COLLECTIONS.cards, { orderBy: 'name' });
   }
 
+  async deleteCard(id: CardId): Promise<void> {
+    await this.store.remove(COLLECTIONS.cards, id);
+  }
+
   async saveWorldBook(book: WorldBook): Promise<void> {
     await this.store.put(COLLECTIONS.worldBooks, book);
   }
 
   async getWorldBook(id: WorldBookId): Promise<WorldBook | null> {
     return this.store.get<WorldBook>(COLLECTIONS.worldBooks, id);
+  }
+
+  async listWorldBooks(): Promise<WorldBook[]> {
+    return this.store.list<WorldBook>(COLLECTIONS.worldBooks, { orderBy: 'name' });
+  }
+
+  async deleteWorldBook(id: WorldBookId): Promise<void> {
+    await this.store.remove(COLLECTIONS.worldBooks, id);
   }
 
   // ---- 消息 ----

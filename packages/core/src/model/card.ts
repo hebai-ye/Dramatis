@@ -1,4 +1,5 @@
 import type { CardId, WorldBookId } from './ids.js';
+import { newId, nowIso } from './ids.js';
 
 /**
  * 角色卡 —— 模板层（设计文档 §2.1）。
@@ -90,4 +91,75 @@ export interface WorldBookEntry {
   excludeRecursion: boolean;
   group: string;
   extensions: Record<string, unknown>;
+}
+
+/**
+ * 从零创建一张角色卡（ROADMAP P3 的编辑器需要）。
+ *
+ * 与导入路径共用同一个模型，所以手写的卡和导入的卡在系统里没有区别，
+ * 将来导出时也不需要特殊处理。
+ */
+export function createBlankCard(overrides: Partial<Card> = {}): Card {
+  const now = nowIso();
+  return {
+    id: newId() as CardId,
+    name: '未命名角色',
+    nickname: '',
+    description: '',
+    personality: '',
+    scenario: '',
+    firstMessage: '',
+    alternateGreetings: [],
+    exampleMessages: '',
+    systemPrompt: '',
+    postHistoryInstructions: '',
+    creator: '',
+    creatorNotes: '',
+    characterVersion: '',
+    tags: [],
+    embeddedWorldBook: null,
+    extensions: {},
+    source: { kind: 'manual', spec: 'dramatis', specVersion: '1', importedAt: now },
+    ...overrides,
+  };
+}
+
+export interface WorldBookEntryDraft {
+  title?: string;
+  keys?: string[];
+  content?: string;
+  constant?: boolean;
+  order?: number;
+  probability?: number;
+}
+
+/** 新建一条世界书条目，默认是「关键词触发、顺序 100、必然插入」。 */
+export function createWorldBookEntry(draft: WorldBookEntryDraft = {}): WorldBookEntry {
+  return {
+    id: newId(),
+    title: draft.title ?? '新条目',
+    keys: draft.keys ?? [],
+    secondaryKeys: [],
+    content: draft.content ?? '',
+    constant: draft.constant ?? false,
+    selective: true,
+    selectiveLogic: SelectiveLogic.AND_ANY,
+    order: draft.order ?? 100,
+    position: 'before_char',
+    depth: 4,
+    probability: draft.probability ?? 100,
+    useProbability: true,
+    disabled: false,
+    caseSensitive: false,
+    matchWholeWords: false,
+    scanDepth: null,
+    preventRecursion: true,
+    excludeRecursion: false,
+    group: '',
+    extensions: {},
+  };
+}
+
+export function createBlankWorldBook(name = '未命名世界书'): WorldBook {
+  return { id: newId() as WorldBookId, name, entries: [], extensions: {} };
 }

@@ -29,18 +29,58 @@ export interface AdminPromptInput {
   pendingDrafts?: readonly string[];
 }
 
+/** 单条设定/字段的展示上限。给模型的上下文要有用，但不能把预算吃光。 */
+const FIELD_PREVIEW = 160;
+/** 最多列出几条素材，避免素材库变大后提示词无限膨胀。 */
+const MAX_LISTED = 12;
+
+function preview(value: string): string {
+  const flat = value.trim().replace(/\s*\n\s*/g, ' ');
+  return flat.length <= FIELD_PREVIEW ? flat : `${flat.slice(0, FIELD_PREVIEW)}……`;
+}
+
+/**
+ * 把素材库摊开给管理员看。
+ *
+ * 这里必须给出**原有内容**，不能只给「有几条」：修改是整本替换（工具语义如此），
+ * 模型看不到旧条目就会把原设定弄丢——这正是真实模型验证里第一次跑出来的问题。
+ */
 function describeLibrary(cards: readonly Card[], worldBooks: readonly WorldBook[]): string {
   const cardLines =
     cards.length === 0
       ? '（还没有角色卡）'
       : cards
-          .map((card) => `- ${card.name}（id: ${card.id}）：${card.description.replace(/\s*\n\s*/g, ' ').slice(0, 60)}`)
+          .slice(0, MAX_LISTED)
+          .map((card) => {
+            const fields = [
+              card.nickname.trim() === '' ? '' : `自称 ${card.nickname.trim()}`,
+              preview(card.description),
+              card.personality.trim() === '' ? '' : `性格 ${preview(card.personality)}`,
+              card.firstMessage.trim() === '' ? '' : `开场白 ${preview(card.firstMessage)}`,
+            ].filter((item) => item !== '');
+            return `- ${card.name}（id: ${card.id}）：${fields.join('；')}`;
+          })
           .join('\n');
 
   const bookLines =
     worldBooks.length === 0
       ? '（还没有世界书）'
-      : worldBooks.map((book) => `- ${book.name}（id: ${book.id}）：${String(book.entries.length)} 条`).join('\n');
+      : worldBooks
+          .slice(0, MAX_LISTED)
+          .map((book) => {
+            const entries =
+              book.entries.length === 0
+                ? '（空）'
+                : book.entries
+                    .slice(0, MAX_LISTED)
+                    .map((entry) => {
+                      const keys = entry.constant ? '常驻' : entry.keys.join('/');
+                      return `    · ${entry.title.trim() === '' ? '未命名条目' : entry.title.trim()}（${keys}）：${preview(entry.content)}`;
+                    })
+                    .join('\n');
+            return `- ${book.name}（id: ${book.id}）：${String(book.entries.length)} 条\n${entries}`;
+          })
+          .join('\n');
 
   return [`角色卡：\n${cardLines}`, `世界书：\n${bookLines}`].join('\n\n');
 }
@@ -69,7 +109,16 @@ export function buildAdminMessages(input: AdminPromptInput): ChatMessage[] {
 
   const messages: ChatMessage[] = [
     { role: 'system', content: SYSTEM_PROMPT },
-    { role: 'system', content: `当前素材：\n${describeLibrary(input.cards, input.worldBooks)}\n\n${context}` },
+    {
+      role: 'system',
+      content: [
+        `当前素材：\n${describeLibrary(input.cards, input.worldBooks)}`,
+        '',
+        '注意：修改角色卡与世界书是**整份替换**——你必须把原有内容一并写回去，',
+        '再在此基础上增补，不要只写你新加的那部分，也不要在用户没要求时删掉已有设定。',
+        context,
+      ].join('\n'),
+    },
   ];
 
   if (input.pendingDrafts !== undefined && input.pendingDrafts.length > 0) {

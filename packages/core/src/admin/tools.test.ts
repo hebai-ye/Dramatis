@@ -76,6 +76,22 @@ describe('upsert_character_card', () => {
     if (broken.ok) return;
     expect(broken.error).toContain('不是合法 JSON');
   });
+
+  it('多行字段被写成数组时按行拼回来，而不是静默丢掉', () => {
+    // 真实模型验证里 exampleMessages 就是数组形态，丢掉它用户是看不见的
+    const result = parseAdminToolCall(
+      call('upsert_character_card', {
+        name: '老周',
+        description: ['摆渡人，五十多岁。', '白天撑船，天黑后停在东岸。'],
+        exampleMessages: ['「河上今晚没人。」他慢慢说。', '「你要过河，等天亮。」'],
+      }),
+    );
+
+    if (!result.ok) throw new Error(result.error);
+    if (result.draft.kind !== 'character-card') throw new Error('类型不对');
+    expect(result.draft.card.description).toBe('摆渡人，五十多岁。\n白天撑船，天黑后停在东岸。');
+    expect(result.draft.card.exampleMessages).toBe('「河上今晚没人。」他慢慢说。\n「你要过河，等天亮。」');
+  });
 });
 
 describe('upsert_world_book', () => {

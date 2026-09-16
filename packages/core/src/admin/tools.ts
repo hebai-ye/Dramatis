@@ -54,7 +54,8 @@ export const ADMIN_TOOLS: readonly ToolDefinition[] = [
       name: 'upsert_world_book',
       description:
         '起草或修改一本世界书（也就是世界卡）。关键词触发时才会插入提示词，' +
-        'constant 为 true 的条目每轮都在。修改已有的书时必须带上 bookId。',
+        'constant 为 true 的条目每轮都在。修改已有的书时必须带上 bookId，' +
+        '并且 entries 是**整本替换**：原有条目要一并写回，不要只交新增的那几条。',
       parameters: {
         type: 'object',
         properties: {
@@ -84,7 +85,9 @@ export const ADMIN_TOOLS: readonly ToolDefinition[] = [
     type: 'function',
     function: {
       name: 'set_scene',
-      description: '设置当前场景：地点、世界内时间、场景设定或入场策略。只写要改的字段。',
+      description:
+        '设置当前场景：地点、世界内时间、场景设定或入场策略。**只写用户明确要求改的字段**，' +
+        '没有提到的不要顺手改（尤其是 castPolicy：把锁定的场子改成 open 等于允许 AI 自行拉角色入场）。',
       parameters: {
         type: 'object',
         properties: {
@@ -143,6 +146,23 @@ function text(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
 }
 
+/**
+ * 取一段自由文本，容忍模型把多行内容写成数组。
+ *
+ * 真实模型验证里 `exampleMessages` 就被写成了字符串数组（其实是它更自然的表达）。
+ * 严格只认字符串的话，这段内容会被**静默丢掉**——用户看不到，也不会报错，
+ * 这是最坏的一种失败方式。所以这里把数组按行拼回来，而不是挑剔它的形状。
+ */
+function longText(value: unknown): string {
+  if (Array.isArray(value)) {
+    return value
+      .map((item) => text(item))
+      .filter((item) => item !== '')
+      .join('\n');
+  }
+  return text(value);
+}
+
 function parseJsonArguments(raw: string): { ok: true; value: Record<string, unknown> } | { ok: false; error: string } {
   if (raw.trim() === '') return { ok: true, value: {} };
   try {
@@ -159,7 +179,7 @@ const CAST_POLICIES: readonly CastPolicy[] = ['open', 'locked', 'invite_only', '
 
 function parseCardDraft(args: Record<string, unknown>, context: AdminToolContext): AdminToolParseResult {
   const name = text(args.name);
-  const description = text(args.description);
+  const description = longText(args.description);
   if (name === '') return { ok: false, error: 'name 不能为空' };
   if (description === '') return { ok: false, error: 'description 不能为空' };
 
@@ -176,14 +196,14 @@ function parseCardDraft(args: Record<string, unknown>, context: AdminToolContext
 
   const overrides: Partial<Card> = {
     name,
-    nickname: text(args.nickname),
+    nickname: longText(args.nickname),
     description,
-    personality: text(args.personality),
-    scenario: text(args.scenario),
-    firstMessage: text(args.firstMessage),
+    personality: longText(args.personality),
+    scenario: longText(args.scenario),
+    firstMessage: longText(args.firstMessage),
     alternateGreetings,
-    exampleMessages: text(args.exampleMessages),
-    systemPrompt: text(args.systemPrompt),
+    exampleMessages: longText(args.exampleMessages),
+    systemPrompt: longText(args.systemPrompt),
     tags,
     source: { kind: 'manual', spec: 'dramatis', specVersion: '1', importedAt: new Date().toISOString() },
   };
@@ -220,7 +240,7 @@ function parseWorldBookDraft(args: Record<string, unknown>, context: AdminToolCo
     const record = asRecord(item);
     if (!record) return { ok: false, error: `entries[${String(index)}] 必须是对象` };
 
-    const content = text(record.content);
+    const content = longText(record.content);
     if (content === '') return { ok: false, error: `entries[${String(index)}].content 不能为空` };
 
     const keys = Array.isArray(record.keys) ? record.keys.map((key) => text(key)).filter((key) => key !== '') : [];

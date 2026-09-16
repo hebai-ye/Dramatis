@@ -290,8 +290,8 @@ describe('真实模型验证取样器', () => {
   /**
    * 把真实模型的回答贴回这里，确认解析器吃得下。
    *
-   * 用法：跑 `pnpm --filter @dramatis/core test real-model` 时把回答写进
-   * `real-model-responses.ts`（同一目录），下面这条会逐一校验。
+   * 回答记录在 `real-model-responses.ts`（同一目录）。这一步把「模型的输出
+   * 能不能被解析」变成可重跑的断言：改了提示词就重跑一次、贴回新的输出。
    */
   it('真实回答能被解析器吃下（回答为空时跳过）', () => {
     const responses = REAL_MODEL_RESPONSES;
@@ -306,23 +306,32 @@ describe('真实模型验证取样器', () => {
 
     const updates = parseAffectUpdates(responses.affect);
     expect(updates.length).toBeGreaterThan(0);
+    // 只该出现被触动的角色，且变化量都在抗漂移的上限之内
+    for (const update of updates) {
+      expect(Math.abs(update.deltaValence)).toBeLessThanOrEqual(0.3);
+      expect(Math.abs(update.deltaArousal)).toBeLessThanOrEqual(0.3);
+      for (const edge of update.relationship) {
+        expect(Math.abs(edge.delta)).toBeLessThanOrEqual(0.3);
+      }
+    }
 
-    const toolCall = responses.toolCall;
-    if (toolCall !== null) {
+    for (const [index, toolCall] of responses.toolCalls.entries()) {
       const parsed = parseAdminToolCall({
-        id: 'manual-check',
+        id: `manual-check-${String(index)}`,
         type: 'function',
-        function: { name: toolCall.name, arguments: toolCall.arguments },
+        // 接口里 arguments 是序列化后的字符串，这里照同样的形状喂进去
+        function: { name: toolCall.name, arguments: JSON.stringify(toolCall.arguments) },
       });
+      if (!parsed.ok) throw new Error(`${toolCall.name} 没被接受：${parsed.error}`);
       expect(parsed.ok).toBe(true);
     }
 
-    if (responses.roleplay !== '') {
-      const segments = renderMessageContent(responses.roleplay);
-      // 动作必须与对白分开：全挤进气泡就说明 `#` 约定没被遵守
-      expect(segments.some((segment) => segment.kind === 'action')).toBe(true);
-      expect(segments.some((segment) => segment.kind === 'speech')).toBe(true);
-    }
+    const segments = renderMessageContent(responses.roleplay);
+    // 动作必须与对白分开：全挤进气泡就说明 `#` 约定没被遵守
+    expect(segments.filter((segment) => segment.kind === 'action').length).toBeGreaterThan(0);
+    expect(segments.filter((segment) => segment.kind === 'speech').length).toBeGreaterThan(0);
+    // 不许替别人发言：输出里不该出现别名开头的一行
+    expect(responses.roleplay).not.toMatch(/^(Alice|旅人)[:：]/m);
   });
 });
 

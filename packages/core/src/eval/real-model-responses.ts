@@ -14,13 +14,92 @@ export interface RealModelResponses {
   extraction: string;
   /** ③ 情绪与关系推演的完整回答。 */
   affect: string;
-  /** ④ 副对话：模型请求调用的工具与它的参数。 */
-  toolCall: { name: string; arguments: string } | null;
+  /** ④ 副对话：模型请求调用的工具与它们的参数。 */
+  toolCalls: Array<{ name: string; arguments: unknown }>;
 }
 
 export const REAL_MODEL_RESPONSES: RealModelResponses = {
-  roleplay: '',
-  extraction: '',
-  affect: '',
-  toolCall: null,
+  roleplay: [
+    '# 我愣了一下，抬手挠了挠后脑勺，咧嘴笑了一声',
+    '写给谁的？嘿，你这问得我心里发毛。我一个走货的，信多得是，账目、订单、催款，哪天不写个三五封。',
+    '# 我端起酒喝了一口，眼神却往Alice那边飘了一下',
+    '不过嘛……北边那支商队，我确实托他们捎过东西。不是信，是货。一箱子南边的香料，说好到地方给我结银子。人没了，银子也没影了。',
+    '# 我把杯子往桌上一顿，声音压低了些',
+    '你要打听，我陪你打听。但先说好，我可不是为了那箱香料——我是真觉得这事不对劲。',
+  ].join('\n'),
+
+  extraction:
+    '{"summary":"旅人询问北边失踪商队的事。Alice 表示不愿谈论，放下杯子时手指停在杯沿。Bob 透露 Alice 上个月曾托那支商队捎过一封信，让旅人去问她。","importance":0.7,"location":"","observations":[{"speaker":"Alice","perception":"她注意到旅人直接问起商队的事，感到被触及不愿谈的话题；Bob 把信的事说出来让她不快。"},{"speaker":"Bob","perception":"他注意到 Alice 在回避，认为那封信是关键，于是把话题引向她，让她来解释。"}]}',
+
+  affect:
+    '{"updates":[{"observer":"Alice","deltaValence":-0.15,"deltaArousal":0.15,"reason":"被问及商队失踪的事，不愿谈起却被迫面对与那封信相关的隐忧。","relationship":[{"field":"tension","delta":0.15},{"field":"trust","delta":-0.05}]},{"observer":"Bob","deltaValence":-0.05,"deltaArousal":0.1,"reason":"主动把Alice和商队的关联说出来，令气氛紧张，也让自己有些不安。","relationship":[{"field":"tension","delta":0.1}]}]}',
+
+  toolCalls: [
+    {
+      name: 'upsert_world_book',
+      arguments: {
+        bookId: 'book-0003',
+        name: '旧城设定',
+        entries: [
+          {
+            // 原有条目被完整写回来了：这是第一轮验证暴露的问题（模型看不到旧条目，
+            // 于是把整本书换成了自己新编的内容），改提示词后复验通过
+            title: '旧城',
+            keys: ['旧城'],
+            content: '旧城分东西两半，中间隔着一条河。',
+            constant: true,
+            order: 1,
+          },
+          {
+            title: '河与桥',
+            keys: ['河', '桥', '摆渡', '东西两岸'],
+            content:
+              '旧城的河不宽，但水流急，只有三座桥：上游的石拱桥最老，走车马；中游的铁索桥最险，夜里少有人过；下游的木桥最近，涨水时会被封。河上另有两条摆渡船，撑船的老周只在白天摆渡，天黑后停在东岸。东西两岸的人来往不多，东岸多酒馆、书铺与夜摊，西岸多货栈、旧宅与关门的铺子。',
+            constant: false,
+            order: 2,
+          },
+          {
+            title: '夜禁与灯',
+            keys: ['夜禁', '灯', '巡夜', '打更'],
+            content:
+              '旧城没有明文夜禁，但入夜后巡夜人会在东西两岸各走两趟，打更报时。东岸的巷口挂纸灯笼，灯亮着说明店里还有人；灯灭了再敲门，多半没人应。西岸的灯少，入夜后巷子黑得快，行商和生人一般不愿往那边去。雨天巡夜会少走一趟，酒馆里的人也坐得更久。',
+            constant: false,
+            order: 3,
+          },
+        ],
+      },
+    },
+    {
+      name: 'upsert_character_card',
+      arguments: {
+        name: '老周',
+        nickname: '撑船的',
+        description:
+          '五十多岁的摆渡人，白天在旧城河上撑船，天黑后把船停靠在东岸。常在东岸的夜间酒馆里喝一碗热酒再回去。皮肤晒得发黑，手掌粗糙，说话慢，爱看雨。',
+        personality:
+          '沉静、耐心、话不多但句句实在；对河上的事知道得清楚，对别人的私事不主动打听。喝了酒会多讲几句旧城的掌故。',
+        scenario:
+          '雨夜，旧城东侧的夜间酒馆。老周收了船，坐在靠门的位置喝热酒，看着外面的雨。他认识 Alice，也见过几个像 Bob 那样的行商。',
+        firstMessage: '（他抬眼看你，把碗往桌上放了放）雨不小。坐吧，门口那位置漏风。',
+        // 模型把多行示例写成了数组——真实模型验证发现的第二处形态差异，
+        // 校验器现在会按行拼回字符串，而不是静默丢掉
+        exampleMessages: [
+          '「河上今晚没人。」他慢慢说，「铁索桥湿了滑，木桥早封了。」',
+          '「你要过河，等天亮。老周不夜里撑船。」',
+          '「东岸的酒便宜，西岸的货便宜。就这一点不一样。」',
+        ],
+        systemPrompt:
+          '你是老周，旧城的摆渡人。说话慢、句子短，不主动打探别人的事。知道旧城河、桥、摆渡和两岸的旧事，提到时会讲，但不说没根据的话。不替玩家做决定，不推动剧情。',
+        tags: ['旧城', '摆渡人', '酒馆常客', 'NPC'],
+      },
+    },
+    {
+      name: 'set_scene',
+      arguments: {
+        // 只带用户明确要求的两个字段：第一轮它顺手把 castPolicy 改成了 open
+        location: '旧城东侧的夜间酒馆',
+        worldTime: '第三日 · 黄昏',
+      },
+    },
+  ],
 };

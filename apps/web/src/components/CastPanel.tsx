@@ -1,4 +1,4 @@
-import type { CharacterInstance, InstanceId, Presence, Scene } from '@dramatis/core';
+import { type CharacterInstance, type InstanceId, PLAYER, type Presence, type Scene } from '@dramatis/core';
 
 interface Props {
   instances: CharacterInstance[];
@@ -19,6 +19,32 @@ function describe(instance: CharacterInstance, scene: Scene): string {
   const inCast = scene.cast.includes(instance.id);
   if (!inCast && instance.presence === 'onstage') return '名单与状态不一致：点了在场但不在名单里';
   return PRESENCE_OPTIONS.find((option) => option.value === instance.presence)?.note ?? '';
+}
+
+function signed(value: number): string {
+  return `${value >= 0 ? '+' : '-'}${Math.abs(value).toFixed(2)}`;
+}
+
+function describeState(instance: CharacterInstance): string {
+  const { valence, arousal } = instance.affect;
+  const mood =
+    valence >= 0.5
+      ? '心情很好'
+      : valence >= 0.15
+        ? '心情不错'
+        : valence <= -0.5
+          ? '情绪低落'
+          : valence <= -0.15
+            ? '有些不快'
+            : '情绪平稳';
+  const energy = arousal >= 0.7 ? '很激动' : arousal >= 0.4 ? '有点起伏' : '比较平静';
+
+  const towardPlayer = instance.relationships.find((edge) => edge.target === PLAYER);
+  const relationship = towardPlayer
+    ? ` · 对玩家 信任 ${signed(towardPlayer.trust)} 好感 ${signed(towardPlayer.affinity)} 敬重 ${signed(towardPlayer.respect)} 紧张 ${signed(towardPlayer.tension)}`
+    : '';
+
+  return `${mood}，${energy}（${signed(valence)} / ${arousal.toFixed(2)}）${relationship}`;
 }
 
 /**
@@ -73,6 +99,23 @@ export function CastPanel({ instances, scene, disabled, onSetPresence, onRename,
               </button>
             </div>
             <p className="hint">{describe(instance, scene)}</p>
+            <p className="hint">{describeState(instance)}</p>
+            {instance.affect.history.length > 0 ? (
+              <details>
+                <summary>最近的状态变化</summary>
+                <ul className="hint">
+                  {instance.affect.history
+                    .slice(-3)
+                    .reverse()
+                    .map((change, index) => (
+                      <li key={`${change.turnId}-${String(index)}`}>
+                        {change.reason || '未记录原因'}（情绪 {signed(change.deltaValence)} /{' '}
+                        {signed(change.deltaArousal)}）
+                      </li>
+                    ))}
+                </ul>
+              </details>
+            ) : null}
           </li>
         ))}
       </ul>

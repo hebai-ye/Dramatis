@@ -13,6 +13,7 @@ import {
   type RoomId,
   type RoomSnapshot,
   type RoomSummary,
+  revertAffectForTurn,
   type Scene,
   type WorldBook,
   type WorldBookId,
@@ -99,8 +100,12 @@ export interface SessionApi {
   updateMemory: (id: EventId, patch: Partial<MemoryEvent>) => Promise<void>;
   deleteMemory: (id: EventId) => Promise<void>;
   markRecalled: (events: readonly MemoryEvent[], now: string) => Promise<void>;
-  /** 撤销某个回合的记忆写入，重抽与删除消息时使用（P0-7 的回滚）。 */
-  deleteMemoriesByTurn: (turnId: string) => Promise<void>;
+  /**
+   * 撤销一个回合的全部后台写入：记忆条目与情绪关系变化。
+   *
+   * 只删记忆是不够的——重抽五次而每次都叠加情绪，关系会单向漂移。
+   */
+  revertTurn: (turnId: string) => Promise<void>;
   /** 把一本世界书挂到当前房间。core 早就实现了匹配，这里补上入口。 */
   attachWorldBook: (book: WorldBook) => Promise<void>;
   /** 只解绑，不删库——世界书可能被别的房间共用。 */
@@ -480,14 +485,26 @@ export function useSession(db: DramatisDb | null): SessionApi {
     return db ? db.repository.listPersonas() : [];
   }, [db]);
 
-  const deleteMemoriesByTurn = useCallback(
+  const revertTurn = useCallback(
     async (turnId: string) => {
       const current = snapshotRef.current;
       if (!db || !current) return;
+
       await db.repository.deleteMemoriesByTurn(current.room.id, turnId);
+
+      const stored = await db.repository.listInstances(current.room.id);
+      const reverted = stored.map((instance) => revertAffectForTurn(instance, turnId));
+      for (let index = 0; index < reverted.length; index += 1) {
+        if (reverted[index] !== stored[index]) {
+          const next = reverted[index];
+          if (next) await db.repository.saveInstance(next);
+        }
+      }
+
       setSnapshot({
         ...current,
         memories: current.memories.filter((memory) => !memory.sourceTurnIds.includes(turnId)),
+        instances: current.instances.map((instance) => reverted.find((item) => item.id === instance.id) ?? instance),
       });
     },
     [db, setSnapshot],
@@ -604,7 +621,7 @@ export function useSession(db: DramatisDb | null): SessionApi {
     updateMemory,
     deleteMemory,
     markRecalled,
-    deleteMemoriesByTurn,
+    revertTurn,
     attachWorldBook,
     detachWorldBook,
     setPersona,

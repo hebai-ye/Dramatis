@@ -5,6 +5,8 @@ interface Props {
   memories: MemoryEvent[];
   instances: CharacterInstance[];
   pending: number;
+  /** 本次会话完成的后台调用次数，用来观察真实开销。 */
+  completed: number;
   workerError: string | null;
   disabled: boolean;
   onUpdate: (id: EventId, patch: Partial<MemoryEvent>) => void;
@@ -25,7 +27,16 @@ function formatTime(iso: string): string {
  * 这是本项目相对 SillyTavern 最直观的差异：角色记错了，你能直接改，
  * 而不是重开一局。所以每条记忆都必须可见、可改、可删、可置顶。
  */
-export function MemoryPanel({ memories, instances, pending, workerError, disabled, onUpdate, onDelete }: Props) {
+export function MemoryPanel({
+  memories,
+  instances,
+  pending,
+  completed,
+  workerError,
+  disabled,
+  onUpdate,
+  onDelete,
+}: Props) {
   const [filter, setFilter] = useState<Filter>('all');
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
@@ -46,7 +57,8 @@ export function MemoryPanel({ memories, instances, pending, workerError, disable
       <header className="memory-header">
         <h2>记忆</h2>
         <span className="hint">
-          {memories.length} 条{pending > 0 ? ` · 抽取中 ${pending}` : ''}
+          {memories.length} 条{pending > 0 ? ` · 排队 ${pending}` : ''}
+          {completed > 0 ? ` · 后台调用 ${completed} 次` : ''}
         </span>
       </header>
 

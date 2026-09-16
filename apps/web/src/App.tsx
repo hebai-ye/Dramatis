@@ -33,9 +33,9 @@ import { PromptInspector } from './components/PromptInspector';
 import { ProviderPanel } from './components/ProviderPanel';
 import { RoomPanel } from './components/RoomPanel';
 import { ScenePanel } from './components/ScenePanel';
-import { MEMORY_BUDGET_TOKENS, MEMORY_TASK_KIND, useMemoryWorker } from './lib/memory';
 import { useProviders } from './lib/providers';
 import { useDatabase, useSession } from './lib/session';
+import { AFFECT_TASK_KIND, MEMORY_BUDGET_TOKENS, MEMORY_TASK_KIND, useBackgroundWorker } from './lib/worker';
 
 const PNG_SIGNATURE = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
 
@@ -64,11 +64,11 @@ export function App() {
   const session = useSession(db);
   const providers = useProviders(db);
 
-  // 记忆抽取跑在后台队列里，写完通知 session 重新载入房间
-  const worker = useMemoryWorker({
+  // 记忆抽取与情绪推演都跑在后台队列里，写完通知 session 重新载入房间
+  const worker = useBackgroundWorker({
     db,
     provider: providers.background,
-    onIngested: () => {
+    onChanged: () => {
       void session.reloadRoom();
     },
   });
@@ -353,14 +353,17 @@ export function App() {
           }
         }
 
-        // 抽成一块后台任务，不阻塞对话；负载只存 id，内容现取
-        await db.queue.enqueue({
-          kind: MEMORY_TASK_KIND,
-          idempotencyKey: `${MEMORY_TASK_KIND}:${turnId}`,
-          roomId: snapshot.room.id,
-          turnId,
-          payload: { roomId: snapshot.room.id, sceneId: scene.id, turnId },
-        });
+        // 抽成两块后台任务，不阻塞对话；负载只存 id，内容现取
+        const payload = { roomId: snapshot.room.id, sceneId: scene.id, turnId };
+        for (const kind of [MEMORY_TASK_KIND, AFFECT_TASK_KIND]) {
+          await db.queue.enqueue({
+            kind,
+            idempotencyKey: `${kind}:${turnId}`,
+            roomId: snapshot.room.id,
+            turnId,
+            payload,
+          });
+        }
         worker.kick();
       } catch (sendError) {
         const message = sendError instanceof Error ? sendError.message : String(sendError);
@@ -409,7 +412,7 @@ export function App() {
       setReasoningText('');
 
       await db.queue.cancelByTurn(target.turnId);
-      await session.deleteMemoriesByTurn(target.turnId);
+      await session.revertTurn(target.turnId);
       for (const message of turnMessages) {
         if (message.role === 'character') await session.deleteMessage(message.id);
       }
@@ -452,7 +455,7 @@ export function App() {
       // 删掉角色的回复，就等于这一轮没有发生过，排队的记忆抽取也要一起撤销
       if (target.role === 'character' && db) {
         await db.queue.cancelByTurn(target.turnId);
-        await session.deleteMemoriesByTurn(target.turnId);
+        await session.revertTurn(target.turnId);
       }
       await session.deleteMessage(id);
     },
@@ -538,6 +541,7 @@ export function App() {
             memories={snapshot.memories}
             instances={snapshot.instances}
             pending={worker.pending}
+            completed={worker.completed}
             workerError={worker.lastError}
             disabled={busy}
             onUpdate={(id, patch) => void session.updateMemory(id, patch)}

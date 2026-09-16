@@ -1,5 +1,6 @@
 export * from './compat/sillytavern/index.js';
 export * from './director/scheduler.js';
+export * from './memory/affect.js';
 export * from './memory/extract.js';
 export * from './memory/ingest.js';
 export * from './memory/recall.js';

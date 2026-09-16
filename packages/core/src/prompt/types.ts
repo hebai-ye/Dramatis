@@ -1,8 +1,33 @@
-export type ChatRole = 'system' | 'user' | 'assistant';
+export type ChatRole = 'system' | 'user' | 'assistant' | 'tool';
+
+/** 模型请求调用某个工具（OpenAI 兼容协议里的 tool_call）。 */
+export interface ChatToolCall {
+  id: string;
+  type: 'function';
+  function: {
+    name: string;
+    /** 未解析的 JSON 字符串，由执行方负责校验。 */
+    arguments: string;
+  };
+}
+
+/** 可用工具的声明，直接对应接口的 `tools` 字段。 */
+export interface ToolDefinition {
+  type: 'function';
+  function: {
+    name: string;
+    description: string;
+    parameters: Record<string, unknown>;
+  };
+}
 
 export interface ChatMessage {
   role: ChatRole;
   content: string;
+  /** assistant 消息里请求调用的工具。 */
+  toolCalls?: ChatToolCall[];
+  /** role 为 tool 时的对应请求 id。 */
+  toolCallId?: string;
 }
 
 export type PromptBlockKind =

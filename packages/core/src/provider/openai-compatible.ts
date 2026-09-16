@@ -1,4 +1,4 @@
-import type { ChatMessage } from '../prompt/types.js';
+import type { ChatMessage, ChatToolCall, ToolDefinition } from '../prompt/types.js';
 
 export interface ModelParams {
   temperature?: number;
@@ -7,6 +7,14 @@ export interface ModelParams {
   stop?: string[];
   presencePenalty?: number;
   frequencyPenalty?: number;
+  /**
+   * 可用工具（副对话的真实工具调用，LAYOUT「副对话状态」）。
+   *
+   * 只有声明了 tools 的请求才有可能拿到 tool_calls；普通角色扮演回合
+   * 不声明，模型也就不会去做工具调用。
+   */
+  tools?: readonly ToolDefinition[];
+  toolChoice?: 'auto' | 'none' | 'required';
 }
 
 export interface TokenUsage {
@@ -17,7 +25,7 @@ export interface TokenUsage {
 export type ChatStreamEvent =
   | { type: 'reasoning'; text: string }
   | { type: 'text'; text: string }
-  | { type: 'done'; usage: TokenUsage | null };
+  | { type: 'done'; usage: TokenUsage | null; toolCalls?: ChatToolCall[] };
 
 export interface ModelProvider {
   readonly id: string;
@@ -98,15 +106,71 @@ function toUsage(raw: unknown): TokenUsage | null {
 
 interface DeltaPayload {
   choices?: Array<{
-    delta?: { content?: unknown; reasoning_content?: unknown; reasoning?: unknown };
-    message?: { content?: unknown };
+    delta?: {
+      content?: unknown;
+      reasoning_content?: unknown;
+      reasoning?: unknown;
+      tool_calls?: unknown;
+    };
+    message?: { content?: unknown; tool_calls?: unknown };
   }>;
   usage?: unknown;
   error?: { message?: unknown };
 }
 
+interface RawToolCall {
+  id?: unknown;
+  type?: unknown;
+  function?: { name?: unknown; arguments?: unknown };
+}
+
+/**
+ * 累积中的工具调用。
+ *
+ * 流式返回时工具调用是**按片段拼出来的**：先给 index 与函数名，
+ * 参数 JSON 再一段一段地流过来。必须按 index 归并，否则参数会被拼坏。
+ */
+type ToolCallBuffer = Map<number, { id: string; name: string; arguments: string }>;
+
+function mergeToolCalls(buffer: ToolCallBuffer, raw: unknown): void {
+  if (!Array.isArray(raw)) return;
+
+  for (const [fallbackIndex, item] of raw.entries()) {
+    if (typeof item !== 'object' || item === null) continue;
+    const call = item as RawToolCall;
+    const index =
+      typeof (item as { index?: unknown }).index === 'number' ? (item as { index: number }).index : fallbackIndex;
+
+    const existing = buffer.get(index) ?? { id: '', name: '', arguments: '' };
+    if (typeof call.id === 'string' && call.id !== '') existing.id = call.id;
+    if (typeof call.function?.name === 'string' && call.function.name !== '') existing.name = call.function.name;
+    if (typeof call.function?.arguments === 'string') existing.arguments += call.function.arguments;
+    buffer.set(index, existing);
+  }
+}
+
+function finishToolCalls(buffer: ToolCallBuffer): ChatToolCall[] {
+  return [...buffer.entries()]
+    .sort((left, right) => left[0] - right[0])
+    .flatMap(([, call], index) =>
+      call.name === ''
+        ? []
+        : [
+            {
+              id: call.id === '' ? `call_${String(index)}` : call.id,
+              type: 'function' as const,
+              function: { name: call.name, arguments: call.arguments === '' ? '{}' : call.arguments },
+            },
+          ],
+    );
+}
+
 /** 从一份 SSE 事件块里抽出文本增量。 */
-function parseChunk(payload: string, raw: string): { content: string; reasoning: string; usage: TokenUsage | null } {
+function parseChunk(
+  payload: string,
+  raw: string,
+  toolCalls: ToolCallBuffer,
+): { content: string; reasoning: string; usage: TokenUsage | null } {
   let json: DeltaPayload;
   try {
     json = JSON.parse(payload) as DeltaPayload;
@@ -121,6 +185,8 @@ function parseChunk(payload: string, raw: string): { content: string; reasoning:
 
   const choice = json.choices?.[0];
   const delta = choice?.delta;
+
+  mergeToolCalls(toolCalls, delta?.tool_calls ?? choice?.message?.tool_calls);
 
   const content =
     typeof delta?.content === 'string'
@@ -189,6 +255,21 @@ export function createOpenAICompatibleProvider(config: ProviderConfig): ModelPro
     return headers;
   };
 
+  /**
+   * 把内部消息翻译成接口认的形状。
+   *
+   * 大部分字段同名，只有工具相关的是特例：请求工具用 `tool_calls`，
+   * 回填结果用 `tool_call_id`。这一步不能省——直接 JSON 序列化内部结构
+   * 会把这两个字段悄悄丢掉，模型就会一直重复调用同一个工具。
+   */
+  const toWireMessages = (messages: readonly ChatMessage[]): Array<Record<string, unknown>> =>
+    messages.map((message) => {
+      const wire: Record<string, unknown> = { role: message.role, content: message.content };
+      if (message.toolCalls !== undefined && message.toolCalls.length > 0) wire.tool_calls = message.toolCalls;
+      if (message.toolCallId !== undefined) wire.tool_call_id = message.toolCallId;
+      return wire;
+    });
+
   return {
     id: config.id ?? 'openai-compatible',
     model: config.model,
@@ -196,7 +277,7 @@ export function createOpenAICompatibleProvider(config: ProviderConfig): ModelPro
     async *chat(messages: ChatMessage[], params: ModelParams = {}, signal?: AbortSignal) {
       const body: Record<string, unknown> = {
         model: config.model,
-        messages,
+        messages: toWireMessages(messages),
         stream: true,
       };
 
@@ -206,6 +287,8 @@ export function createOpenAICompatibleProvider(config: ProviderConfig): ModelPro
       if (params.stop !== undefined && params.stop.length > 0) body.stop = params.stop;
       if (params.presencePenalty !== undefined) body.presence_penalty = params.presencePenalty;
       if (params.frequencyPenalty !== undefined) body.frequency_penalty = params.frequencyPenalty;
+      if (params.tools !== undefined && params.tools.length > 0) body.tools = params.tools;
+      if (params.toolChoice !== undefined) body.tool_choice = params.toolChoice;
       if (config.includeUsage === true) body.stream_options = { include_usage: true };
 
       const init: RequestInit = {
@@ -230,12 +313,20 @@ export function createOpenAICompatibleProvider(config: ProviderConfig): ModelPro
         const json = (await res.json()) as DeltaPayload;
         const choice = json.choices?.[0];
         const text = typeof choice?.message?.content === 'string' ? choice.message.content : '';
+        const nonStreamCalls: ToolCallBuffer = new Map();
+        mergeToolCalls(nonStreamCalls, choice?.message?.tool_calls);
+        const calls = finishToolCalls(nonStreamCalls);
         if (text !== '') yield { type: 'text' as const, text };
-        yield { type: 'done' as const, usage: toUsage(json.usage) };
+        yield {
+          type: 'done' as const,
+          usage: toUsage(json.usage),
+          ...(calls.length > 0 ? { toolCalls: calls } : {}),
+        };
         return;
       }
 
       let emittedDone = false;
+      const toolCallBuffer: ToolCallBuffer = new Map();
 
       for await (const event of iterateSse(res)) {
         for (const line of event.split('\n')) {
@@ -246,11 +337,12 @@ export function createOpenAICompatibleProvider(config: ProviderConfig): ModelPro
           const payload = trimmed.slice(5).trim();
           if (payload === '[DONE]') {
             emittedDone = true;
-            yield { type: 'done' as const, usage };
+            const calls = finishToolCalls(toolCallBuffer);
+            yield { type: 'done' as const, usage, ...(calls.length > 0 ? { toolCalls: calls } : {}) };
             return;
           }
 
-          const chunk = parseChunk(payload, event);
+          const chunk = parseChunk(payload, event, toolCallBuffer);
           if (chunk.usage) usage = chunk.usage;
           if (chunk.reasoning !== '') yield { type: 'reasoning' as const, text: chunk.reasoning };
           if (chunk.content !== '') yield { type: 'text' as const, text: chunk.content };
@@ -258,7 +350,8 @@ export function createOpenAICompatibleProvider(config: ProviderConfig): ModelPro
       }
 
       if (!emittedDone) {
-        yield { type: 'done' as const, usage };
+        const calls = finishToolCalls(toolCallBuffer);
+        yield { type: 'done' as const, usage, ...(calls.length > 0 ? { toolCalls: calls } : {}) };
       }
     },
 

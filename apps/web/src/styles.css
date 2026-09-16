@@ -467,6 +467,143 @@ button.ghost {
   width: auto;
 }
 
+/* ---------- 布局规划页 ---------- */
+
+.plan-page {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  height: 100vh;
+  padding: 12px;
+}
+
+.plan-toolbar {
+  align-items: center;
+  display: flex;
+  gap: 10px;
+}
+
+.plan-frame {
+  border: 2px solid var(--text);
+  border-radius: 8px;
+  display: grid;
+  flex: 1;
+  gap: 8px;
+  grid-template-rows: 11% 1fr;
+  min-height: 0;
+  padding: 8px;
+}
+
+.plan-topbar {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: 96px 1fr;
+}
+
+.plan-body {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: 27% 1fr;
+  min-height: 0;
+}
+
+.plan-left {
+  display: grid;
+  gap: 8px;
+  grid-template-rows: 25% 1fr 9%;
+  min-height: 0;
+}
+
+.plan-right {
+  display: grid;
+  gap: 8px;
+  grid-template-rows: 10% 1fr;
+  min-height: 0;
+}
+
+.plan-main-header {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: 1fr 96px;
+}
+
+.plan-main-area {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: 1fr 11%;
+  min-height: 0;
+}
+
+.plan-main {
+  display: grid;
+  gap: 8px;
+  grid-template-rows: 1fr auto;
+  min-height: 0;
+}
+
+.plan-composer-wrap {
+  display: flex;
+  justify-content: center;
+  padding: 0 0 4px;
+}
+
+.plan-composer {
+  height: 16vh;
+  width: 78%;
+}
+
+.plan-region {
+  background: rgba(255, 255, 255, 0.015);
+  border: 1px dashed var(--line);
+  border-radius: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-height: 0;
+  padding: 4px 6px;
+}
+
+.plan-label {
+  color: var(--accent);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+}
+
+.plan-region textarea {
+  background: transparent;
+  border: none;
+  flex: 1;
+  font-size: 12px;
+  line-height: 1.55;
+  min-height: 0;
+  padding: 2px 0;
+  resize: none;
+  width: 100%;
+}
+
+.plan-region textarea:focus {
+  background: rgba(217, 164, 65, 0.07);
+  outline: none;
+}
+
+.plan-region textarea::placeholder {
+  color: #6b6058;
+}
+
+.plan-extra {
+  min-height: 120px;
+}
+
+.plan-report pre {
+  background: var(--panel-soft);
+  border-radius: 6px;
+  font-size: 12px;
+  max-height: 260px;
+  overflow: auto;
+  padding: 10px;
+  white-space: pre-wrap;
+}
+
 .hint {
   color: var(--muted-text);
   font-size: 12px;

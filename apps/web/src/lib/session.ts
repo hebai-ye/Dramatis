@@ -14,6 +14,8 @@ import {
   type RoomSnapshot,
   type RoomSummary,
   type Scene,
+  type WorldBook,
+  type WorldBookId,
 } from '@dramatis/core';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { type DramatisDb, openDramatisDb } from './db';
@@ -99,6 +101,10 @@ export interface SessionApi {
   markRecalled: (events: readonly MemoryEvent[], now: string) => Promise<void>;
   /** 撤销某个回合的记忆写入，重抽与删除消息时使用（P0-7 的回滚）。 */
   deleteMemoriesByTurn: (turnId: string) => Promise<void>;
+  /** 把一本世界书挂到当前房间。core 早就实现了匹配，这里补上入口。 */
+  attachWorldBook: (book: WorldBook) => Promise<void>;
+  /** 只解绑，不删库——世界书可能被别的房间共用。 */
+  detachWorldBook: (id: WorldBookId) => Promise<void>;
   /**
    * 切换这个房间使用的玩家身份（P0-3）。
    *
@@ -487,6 +493,41 @@ export function useSession(db: DramatisDb | null): SessionApi {
     [db, setSnapshot],
   );
 
+  const attachWorldBook = useCallback(
+    async (book: WorldBook) => {
+      const current = snapshotRef.current;
+      if (!db || !current) return;
+
+      await db.repository.saveWorldBook(book);
+      if (current.room.worldBookIds.includes(book.id)) return;
+
+      const room = {
+        ...current.room,
+        worldBookIds: [...current.room.worldBookIds, book.id],
+        updatedAt: nowIso(),
+      };
+      await db.repository.saveRoom(room);
+      setSnapshot({ ...current, room, worldBooks: [...current.worldBooks, book] });
+    },
+    [db, setSnapshot],
+  );
+
+  const detachWorldBook = useCallback(
+    async (id: WorldBookId) => {
+      const current = snapshotRef.current;
+      if (!db || !current) return;
+
+      const room = {
+        ...current.room,
+        worldBookIds: current.room.worldBookIds.filter((item) => item !== id),
+        updatedAt: nowIso(),
+      };
+      await db.repository.saveRoom(room);
+      setSnapshot({ ...current, room, worldBooks: current.worldBooks.filter((book) => book.id !== id) });
+    },
+    [db, setSnapshot],
+  );
+
   const reloadRoom = useCallback(async () => {
     const current = snapshotRef.current;
     if (!db || !current) return;
@@ -564,6 +605,8 @@ export function useSession(db: DramatisDb | null): SessionApi {
     deleteMemory,
     markRecalled,
     deleteMemoriesByTurn,
+    attachWorldBook,
+    detachWorldBook,
     setPersona,
     savePersona,
     listPersonas,

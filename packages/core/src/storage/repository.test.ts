@@ -1,8 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { Card } from '../model/card.js';
-import { cardId, instanceId, messageId, newId, nowIso, roomId, sceneId, worldBookId } from '../model/ids.js';
+import { cardId, eventId, instanceId, messageId, newId, nowIso, roomId, sceneId, worldBookId } from '../model/ids.js';
 import { type CharacterInstance, neutralTraits } from '../model/instance.js';
 import type { Room, Scene } from '../model/room.js';
+import { createBackgroundRunner } from '../platform/background-runner.js';
 import { createMemoryKeyStore } from '../platform/key-store.js';
 import { createMemoryEntityStore } from '../platform/memory-store.js';
 import { createPlayerMessage } from '../session/turn.js';
@@ -237,6 +238,42 @@ describe('Repository / 房间', () => {
   it('不存在的房间返回 null', async () => {
     const repo = new Repository(createMemoryEntityStore());
     expect(await repo.loadRoom(roomId('missing'))).toBeNull();
+  });
+
+  it('删除房间会连记忆与后台任务一起清理', async () => {
+    const store = createMemoryEntityStore();
+    const repo = new Repository(store);
+    const queue = createBackgroundRunner(store);
+    const { room, scene, instance, card, book } = fixtures();
+
+    await repo.saveSnapshot({ room, scenes: [scene], instances: [instance], cards: [card], worldBooks: [book] });
+    await repo.saveMemories([
+      {
+        id: eventId(newId()),
+        roomId: room.id,
+        sceneId: scene.id,
+        timeline: { worldTime: '第一日', sequence: 1 },
+        location: '',
+        participants: [instance.id],
+        summary: '一件会被一起删掉的事',
+        observerId: instance.id,
+        perception: '',
+        importance: 0.5,
+        pinned: false,
+        importanceLocked: false,
+        affects: [],
+        sourceTurnIds: ['turn-1'],
+        createdAt: nowIso(),
+        lastRecalledAt: null,
+        recallCount: 0,
+      },
+    ]);
+    await queue.enqueue({ kind: 'memory.extract', payload: {}, idempotencyKey: 'k', roomId: room.id });
+
+    await repo.deleteRoom(room.id);
+
+    expect(await repo.listMemories(room.id)).toHaveLength(0);
+    expect(await queue.list()).toHaveLength(0);
   });
 });
 

@@ -1,3 +1,4 @@
+import type { ProviderRole } from '@dramatis/core';
 import { useState } from 'react';
 import { describeKeyStore } from '../lib/keystore';
 import type { ProvidersApi } from '../lib/providers';
@@ -95,6 +96,23 @@ export function ProviderPanel({ api, disabled }: Props) {
               </option>
             ))}
           </datalist>
+
+          <label>
+            用途
+            <select
+              value={active.role}
+              disabled={disabled}
+              onChange={(event) => void api.updateProfile(active.id, { role: event.target.value as ProviderRole })}
+            >
+              <option value="both">对话与后台都用</option>
+              <option value="main">只用于对话</option>
+              <option value="background">只用于后台任务</option>
+            </select>
+          </label>
+          <p className="hint">
+            后台任务（记忆抽取、情绪推演）可以单独配一个更便宜的模型。标了「只用于后台任务」的配置会成为
+            这些调用专用的通道。
+          </p>
 
           <label>
             API Key

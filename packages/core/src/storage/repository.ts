@@ -193,10 +193,15 @@ export class Repository {
     const scenes = await this.store.list<Scene>(COLLECTIONS.scenes, { where: { roomId: id } });
     const instances = await this.store.list<CharacterInstance>(COLLECTIONS.instances, { where: { roomId: id } });
     const messages = await this.store.list<Message>(COLLECTIONS.messages, { where: { roomId: id } });
+    const memories = await this.store.list<MemoryEvent>(COLLECTIONS.memories, { where: { roomId: id } });
+    // 后台任务也要清掉：留下指向已删除房间的任务，只会在下次启动时反复失败
+    const tasks = await this.store.list<{ id: string }>(COLLECTIONS.backgroundTasks, { where: { roomId: id } });
 
     for (const scene of scenes) await this.store.remove(COLLECTIONS.scenes, scene.id);
     for (const instance of instances) await this.store.remove(COLLECTIONS.instances, instance.id);
     for (const message of messages) await this.store.remove(COLLECTIONS.messages, message.id);
+    for (const memory of memories) await this.store.remove(COLLECTIONS.memories, memory.id);
+    for (const task of tasks) await this.store.remove(COLLECTIONS.backgroundTasks, task.id);
     await this.store.remove(COLLECTIONS.rooms, id);
   }
 

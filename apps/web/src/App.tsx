@@ -13,7 +13,9 @@ import {
   importCardFromPng,
   type Message,
   type MessageId,
+  matchWorldBookEntries,
   type PromptMemory,
+  parseWorldBook,
   type RecalledMemory,
   recallMemories,
   runTurn,
@@ -39,6 +41,11 @@ const PNG_SIGNATURE = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
 
 function looksLikePng(bytes: Uint8Array): boolean {
   return PNG_SIGNATURE.every((byte, index) => bytes[index] === byte);
+}
+
+/** 世界书与角色卡都是 JSON，用有没有 `entries` 来区分。 */
+function looksLikeWorldBook(value: unknown): boolean {
+  return typeof value === 'object' && value !== null && 'entries' in value;
 }
 
 function toPromptMemory(recalled: RecalledMemory): PromptMemory {
@@ -113,6 +120,11 @@ export function App() {
         model: profile.model,
       });
 
+      // 世界书按关键词命中插入。扫描范围是玩家输入加最近几轮，
+      // 与设计文档 §6 的「常驻 + 触发」一致
+      const scanText = [options.playerInput, ...options.history.slice(-8).map((message) => message.content)].join('\n');
+      const worldBookMatches = snapshot.worldBooks.flatMap((book) => matchWorldBookEntries(book, { scanText }));
+
       let accumulated = '';
       for await (const event of runTurn(
         {
@@ -123,6 +135,7 @@ export function App() {
           cast: snapshot.instances,
           history: options.history,
           playerInput: options.playerInput,
+          worldBookMatches,
           memories: options.memories === undefined ? [] : [...options.memories],
           budget: { maxTokens: profile.maxTokens, reserveForReply: profile.reserveForReply },
         },
@@ -193,6 +206,20 @@ export function App() {
       setError(null);
       try {
         const bytes = new Uint8Array(await file.arrayBuffer());
+
+        // JSON 里既有角色卡也有世界书，先按结构分辨
+        if (!looksLikePng(bytes)) {
+          const text = new TextDecoder('utf-8').decode(bytes);
+          const parsed = JSON.parse(text) as unknown;
+
+          if (looksLikeWorldBook(parsed)) {
+            const { book, warnings: bookWarnings } = parseWorldBook(parsed, file.name.replace(/\.json$/i, ''));
+            await session.attachWorldBook(book);
+            setWarnings(bookWarnings);
+            return;
+          }
+        }
+
         const result = looksLikePng(bytes)
           ? await importCardFromPng(bytes, file.name)
           : importCardFromJson(new TextDecoder('utf-8').decode(bytes), file.name);
@@ -215,6 +242,12 @@ export function App() {
           }
         } else {
           await startNewRoom(result.card);
+        }
+
+        // 卡内嵌的世界书自动挂上，省得用户再导一次
+        if (result.card.embeddedWorldBook !== null) {
+          const { book } = parseWorldBook(result.card.embeddedWorldBook, `${result.card.name} 的内嵌世界书`);
+          await session.attachWorldBook(book);
         }
       } catch (importError) {
         setError(importError instanceof Error ? importError.message : String(importError));
@@ -471,6 +504,8 @@ export function App() {
           card={activeCard}
           warnings={warnings}
           error={displayError}
+          worldBooks={snapshot?.worldBooks ?? []}
+          onDetachWorldBook={(id) => void session.detachWorldBook(id)}
           disabled={busy || !session.ready}
           importHint={snapshot ? '导入的角色会加入当前房间' : '导入的角色会开一条新世界线'}
           onImport={(file) => {

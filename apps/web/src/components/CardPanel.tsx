@@ -1,4 +1,4 @@
-import type { Card, ImportWarning } from '@dramatis/core';
+import type { Card, ImportWarning, WorldBook, WorldBookId } from '@dramatis/core';
 import { useRef } from 'react';
 
 interface Props {
@@ -7,11 +7,22 @@ interface Props {
   error: string | null;
   /** 说明导入会落在哪里，避免用户不知道会新建世界还是加入当前房间。 */
   importHint?: string;
+  worldBooks: WorldBook[];
+  onDetachWorldBook: (id: WorldBookId) => void;
   onImport: (file: File) => void;
   disabled: boolean;
 }
 
-export function CardPanel({ card, warnings, error, importHint, onImport, disabled }: Props) {
+export function CardPanel({
+  card,
+  warnings,
+  error,
+  importHint,
+  worldBooks,
+  onDetachWorldBook,
+  onImport,
+  disabled,
+}: Props) {
   const inputRef = useRef<HTMLInputElement | null>(null);
 
   return (
@@ -31,9 +42,33 @@ export function CardPanel({ card, warnings, error, importHint, onImport, disable
       />
 
       <button type="button" disabled={disabled} onClick={() => inputRef.current?.click()}>
-        导入角色卡（PNG / JSON）
+        导入素材（角色卡 / 世界书）
       </button>
       {importHint !== undefined ? <p className="hint">{importHint}</p> : null}
+
+      {worldBooks.length > 0 ? (
+        <div className="card-summary">
+          <h3>已挂载的世界书</h3>
+          <ul className="room-list">
+            {worldBooks.map((book) => (
+              <li key={book.id}>
+                <span className="room-title">{book.name || '未命名世界书'}</span>
+                <span className="hint">{book.entries.length} 条</span>
+                <button
+                  type="button"
+                  className="ghost danger"
+                  disabled={disabled}
+                  title="解绑（不会删除世界书本身）"
+                  onClick={() => onDetachWorldBook(book.id)}
+                >
+                  解绑
+                </button>
+              </li>
+            ))}
+          </ul>
+          <p className="hint">关键词命中时才会插入 prompt；常驻条目每轮都在。</p>
+        </div>
+      ) : null}
 
       {card ? (
         <div className="card-summary">

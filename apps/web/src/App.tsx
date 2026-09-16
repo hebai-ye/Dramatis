@@ -523,6 +523,54 @@ export function App() {
     [db, messages, session],
   );
 
+  /**
+   * 改归属（T18）：这条回复其实是别人说的。
+   *
+   * 不只是换个名字——**这一轮的后台写入要重算**：谁说的话，抽取出来的视角记忆
+   * 与关系变化都不一样。所以按重抽那条路径来：清掉该回合的队列记录、撤销已写入的
+   * 记忆与情绪变化，改完归属再重新排队。
+   */
+  const handleReassignMessage = useCallback(
+    async (id: MessageId, instanceId: InstanceId) => {
+      if (!db || !world || !conversation) return;
+      const target = messages.find((message) => message.id === id);
+      const speaker = session.instances.find((instance) => instance.id === instanceId);
+      if (!target || !speaker || target.speakerInstanceId === instanceId) return;
+
+      setError(null);
+      await session.updateMessage(id, { speakerInstanceId: speaker.id, speakerName: speaker.displayName });
+
+      await db.queue.clearTurn(target.turnId);
+      await session.revertTurn(target.turnId);
+      await db.queue.enqueue({
+        kind: MEMORY_TASK_KIND,
+        idempotencyKey: `${MEMORY_TASK_KIND}:${target.turnId}:${String(Date.now())}`,
+        roomId: world.id,
+        turnId: target.turnId,
+        payload: {
+          roomId: world.id,
+          sceneId: target.sceneId,
+          turnId: target.turnId,
+          conversationId: conversation.id,
+        },
+      });
+      await db.queue.enqueue({
+        kind: AFFECT_TASK_KIND,
+        idempotencyKey: `${AFFECT_TASK_KIND}:${target.turnId}:${String(Date.now())}`,
+        roomId: world.id,
+        turnId: target.turnId,
+        payload: {
+          roomId: world.id,
+          sceneId: target.sceneId,
+          turnId: target.turnId,
+          conversationId: conversation.id,
+        },
+      });
+      worker.kick();
+    },
+    [conversation, db, messages, session, worker, world],
+  );
+
   /** 切换场景：开一场新的，并留下一条旁白式动作（谁跟谁去了哪里）。 */
   const handleStartNewScene = useCallback(
     async (input: { title: string; location: string; worldTime: string }) => {
@@ -809,6 +857,7 @@ export function App() {
                   onToggleMode={handleToggleMode}
                   onOpenScene={() => setSceneOpen(true)}
                   onDropInstance={(id) => void session.setPresence(id, 'onstage')}
+                  onReassign={(id, instanceId) => void handleReassignMessage(id, instanceId)}
                 />
               )}
 

@@ -1,4 +1,5 @@
 import {
+  assessAttribution,
   type CharacterInstance,
   type Conversation,
   type ConversationModes,
@@ -32,6 +33,8 @@ interface Props {
   onOpenScene: () => void;
   /** 从右栏把角色拖进来：进入当前场景。 */
   onDropInstance: (id: InstanceId) => void;
+  /** 改归属：这条其实是别人说的（T18）。 */
+  onReassign: (id: MessageId, instanceId: InstanceId) => void;
 }
 
 const MODE_LABELS: Array<{ key: keyof ConversationModes; label: string; note: string }> = [
@@ -81,6 +84,7 @@ export function MainChat({
   onToggleMode,
   onOpenScene,
   onDropInstance,
+  onReassign,
 }: Props) {
   const [input, setInput] = useState('');
   const [editingId, setEditingId] = useState<MessageId | null>(null);
@@ -112,6 +116,22 @@ export function MainChat({
     const speaker = cast.find((instance) => instance.id === message.speakerInstanceId);
     return speaker?.displayName ?? message.speakerName;
   };
+
+  /**
+   * 归属评估（T18）。
+   *
+   * 纯规则、不调模型；结果只用来提示。每次渲染都算一遍是刻意的——评估很便宜
+   * （几次字符串匹配），而缓存它只会让「改了归属之后提示不刷新」这类 bug 有机会出现。
+   */
+  const attributionOf = (message: Message) =>
+    assessAttribution({
+      content: message.content,
+      speaker: {
+        instanceId: message.speakerInstanceId ?? ('' as InstanceId),
+        displayName: nameOf(message),
+      },
+      cast,
+    });
 
   return (
     // biome-ignore lint/a11y/noStaticElementInteractions: 拖拽天生是鼠标动作；键盘路径在角色详情里（在场状态可切换）
@@ -152,6 +172,30 @@ export function MainChat({
             <div className="message-column">
               {message.role === 'character' ? <span className="message-name">{nameOf(message)}</span> : null}
 
+              {/*
+                归属可疑提示（T18）。只提示、不自动改：硬改归属比错位更糟，
+                所以把「更像是谁说的」摆出来，用户点一下才动数据。
+              */}
+              {message.role === 'character' && attributionOf(message).suspicious ? (
+                <div className="attr-warn">
+                  <span>
+                    ⚠ 这条可能不是「{nameOf(message)}」说的：{attributionOf(message).reasons[0]}
+                  </span>
+                  {attributionOf(message).candidates.map((candidate) => (
+                    <button
+                      key={candidate.instanceId}
+                      type="button"
+                      className="ghost"
+                      disabled={busy || archived}
+                      title={candidate.reason}
+                      onClick={() => onReassign(message.id, candidate.instanceId)}
+                    >
+                      改成「{candidate.displayName}」说的
+                    </button>
+                  ))}
+                </div>
+              ) : null}
+
               {editingId === message.id ? (
                 <>
                   <textarea rows={4} value={editingText} onChange={(event) => setEditingText(event.target.value)} />
@@ -186,6 +230,22 @@ export function MainChat({
                   {formatUsage(message.usage) === '' ? null : (
                     <span className="hint usage-hint">{formatUsage(message.usage)}</span>
                   )}
+                  {cast.length > 1 && message.role === 'character' ? (
+                    <label className="attr-pick">
+                      改归属
+                      <select
+                        value={message.speakerInstanceId ?? ''}
+                        disabled={busy || archived}
+                        onChange={(event) => onReassign(message.id, event.target.value as InstanceId)}
+                      >
+                        {cast.map((member) => (
+                          <option key={member.id} value={member.id}>
+                            {member.displayName}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  ) : null}
                   <button
                     type="button"
                     className="ghost"

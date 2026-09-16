@@ -1104,6 +1104,39 @@ details summary {
   white-space: nowrap;
 }
 
+/* 归属可疑提示（T18）：只在真的可疑时出现，点按钮才改数据 */
+.attr-warn {
+  align-items: center;
+  background: rgba(217, 164, 65, 0.1);
+  border: 1px solid var(--accent-soft);
+  border-radius: 6px;
+  color: var(--accent);
+  display: flex;
+  flex-wrap: wrap;
+  font-size: 11px;
+  gap: 8px;
+  padding: 5px 8px;
+}
+
+.attr-pick {
+  align-items: center;
+  color: var(--muted-text);
+  display: inline-flex;
+  flex-direction: row;
+  font-size: 10px;
+  gap: 4px;
+}
+
+.attr-pick select {
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  color: var(--muted-text);
+  font-size: 10px;
+  padding: 1px 4px;
+  width: auto;
+}
+
 /* 草稿式表单的保存条：改完点保存才落库 */
 .save-bar {
   align-items: center;

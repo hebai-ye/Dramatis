@@ -20,6 +20,7 @@ export * from './prompt/history.js';
 export * from './prompt/types.js';
 export * from './provider/collect.js';
 export * from './provider/openai-compatible.js';
+export * from './render/attribution.js';
 export * from './render/narration.js';
 export * from './render/segments.js';
 export * from './session/setup.js';

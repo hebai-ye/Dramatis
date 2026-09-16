@@ -7,6 +7,8 @@ interface Props {
   pending: number;
   /** 本次会话完成的后台调用次数，用来观察真实开销。 */
   completed: number;
+  /** 后台任务的真实 token 合计（服务商没返回时是 0）。 */
+  usage: { promptTokens: number; completionTokens: number };
   workerError: string | null;
   disabled: boolean;
   onUpdate: (id: EventId, patch: Partial<MemoryEvent>) => void;
@@ -32,6 +34,7 @@ export function MemoryPanel({
   instances,
   pending,
   completed,
+  usage,
   workerError,
   disabled,
   onUpdate,
@@ -59,6 +62,9 @@ export function MemoryPanel({
         <span className="hint">
           {memories.length} 条{pending > 0 ? ` · 排队 ${pending}` : ''}
           {completed > 0 ? ` · 后台调用 ${completed} 次` : ''}
+          {usage.promptTokens + usage.completionTokens > 0
+            ? ` · ${String(usage.promptTokens + usage.completionTokens)} token`
+            : ''}
         </span>
       </header>
 

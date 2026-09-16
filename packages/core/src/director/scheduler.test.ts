@@ -63,6 +63,23 @@ describe('scheduleSpeakers / 资格', () => {
 
     expect(result.scores[0]?.excluded).toContain('muted');
   });
+
+  it('名单外的角色不能接话，哪怕他的 presence 是在场', () => {
+    // 世界拆成多条对话之后会真的发生：陈九的 presence 还是 onstage，
+    // 但他不在这条线的场景名单里。只按 presence 过滤的话他会凭空上台。
+    const onstage = actor('陈九', 'onstage');
+    const inCast = actor('秦娘', 'onstage');
+
+    const result = scheduleSpeakers({
+      playerInput: '陈九要是真带我去，你会拦着吗？',
+      candidates: [candidate(onstage, null), candidate(inCast, null)],
+      cast: [inCast.id],
+      random: noJitter,
+    });
+
+    expect(result.speakers).toEqual([inCast.id]);
+    expect(result.scores.find((score) => score.instanceId === onstage.id)?.excluded).toContain('不在当前场景名单');
+  });
 });
 
 describe('scheduleSpeakers / 打分', () => {

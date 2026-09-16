@@ -45,6 +45,18 @@ function shorten(text: string, max: number): string {
 }
 
 /**
+ * 一条回复的用量。
+ *
+ * 显示成「提示 1.2k / 输出 240」而不是一个总数：BYOK 用户看的是钱，
+ * 输入与输出的单价常常不一样（P3-7）。
+ */
+function formatUsage(usage: Message['usage']): string {
+  if (usage === undefined) return '';
+  const compact = (value: number): string => (value >= 1000 ? `${(value / 1000).toFixed(1)}k` : String(value));
+  return `提示 ${compact(usage.promptTokens)} / 输出 ${compact(usage.completionTokens)} token`;
+}
+
+/**
  * 主对话（LAYOUT「主对话状态」）。
  *
  * 形态是**群聊**：圆形头像、名字、聊天气泡，动作另起一段且不进气泡。
@@ -171,6 +183,9 @@ export function MainChat({
                       重抽
                     </button>
                   ) : null}
+                  {formatUsage(message.usage) === '' ? null : (
+                    <span className="hint usage-hint">{formatUsage(message.usage)}</span>
+                  )}
                   <button
                     type="button"
                     className="ghost"

@@ -4,13 +4,14 @@ import {
   buildExtractionMessages,
   buildMemoryEvents,
   type ConversationId,
-  collectCompletion,
+  collectCompletionWithTools,
   createOpenAICompatibleProvider,
   type ModelProvider,
   parseAffectUpdates,
   parseExtraction,
   type RoomId,
   type SceneId,
+  type TokenUsage,
 } from '@dramatis/core';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { DramatisDb } from './db';
@@ -42,6 +43,13 @@ export interface BackgroundWorkerApi {
   lastError: string | null;
   /** 本次会话完成的调用次数，用于观察后台开销。 */
   completed: number;
+  /**
+   * 本次会话后台调用的真实用量合计。
+   *
+   * provider 只有在 `includeUsage` 打开时才会返回 usage，缺了就记 0；
+   * 这里给的是账单口径的数字，不是启发式估算（P3-7）。
+   */
+  usage: { promptTokens: number; completionTokens: number };
   /** 立刻尝试清空队列。每轮对话结束后调用。 */
   kick: () => void;
 }
@@ -51,6 +59,8 @@ function makeProvider(config: BackgroundProviderConfig): ModelProvider {
     baseUrl: config.baseUrl,
     apiKey: config.apiKey,
     model: config.model,
+    // 后台任务也要算得清成本：抽取与推演是每回合固定两次调用
+    includeUsage: true,
   });
 }
 
@@ -75,6 +85,7 @@ export function useBackgroundWorker(options: {
   const [running, setRunning] = useState(false);
   const [lastError, setLastError] = useState<string | null>(null);
   const [completed, setCompleted] = useState(0);
+  const [usage, setUsage] = useState({ promptTokens: 0, completionTokens: 0 });
 
   const drainingRef = useRef(false);
   const onChangedRef = useRef(onChanged);
@@ -115,12 +126,12 @@ export function useBackgroundWorker(options: {
   );
 
   const runMemoryExtraction = useCallback(
-    async (payload: TurnTaskPayload, config: BackgroundProviderConfig): Promise<void> => {
-      if (!db) return;
+    async (payload: TurnTaskPayload, config: BackgroundProviderConfig): Promise<TokenUsage | null> => {
+      if (!db) return null;
       const context = await loadTurn(payload);
-      if (!context) return;
+      if (!context) return null;
 
-      const raw = await collectCompletion(
+      const completion = await collectCompletionWithTools(
         makeProvider(config),
         buildExtractionMessages({
           scene: context.scene,
@@ -130,6 +141,7 @@ export function useBackgroundWorker(options: {
         }),
         { temperature: 0.2 },
       );
+      const raw = completion.text;
 
       const extraction = parseExtraction(raw);
       const sequence = await db.repository.nextMemorySequence(payload.roomId);
@@ -147,23 +159,24 @@ export function useBackgroundWorker(options: {
       // 先清掉这一轮可能残留的旧记忆，让重试天然幂等
       await db.repository.deleteMemoriesByTurn(payload.roomId, payload.turnId);
       await db.repository.saveMemories(events);
+      return completion.usage;
     },
     [db, loadTurn],
   );
 
   const runAffectUpdate = useCallback(
-    async (payload: TurnTaskPayload, config: BackgroundProviderConfig): Promise<void> => {
-      if (!db) return;
+    async (payload: TurnTaskPayload, config: BackgroundProviderConfig): Promise<TokenUsage | null> => {
+      if (!db) return null;
       const context = await loadTurn(payload);
-      if (!context) return;
+      if (!context) return null;
 
       // 幂等：同一个回合已经推演过就不再叠加，否则重试会让关系翻倍
       const already = context.participants.some((instance) =>
         instance.affect.history.some((change) => change.turnId === payload.turnId),
       );
-      if (already) return;
+      if (already) return null;
 
-      const raw = await collectCompletion(
+      const completion = await collectCompletionWithTools(
         makeProvider(config),
         buildAffectMessages({
           cast: context.participants,
@@ -173,13 +186,14 @@ export function useBackgroundWorker(options: {
         { temperature: 0.2 },
       );
 
-      const { applied } = applyAffectUpdates(context.participants, parseAffectUpdates(raw), {
+      const { applied } = applyAffectUpdates(context.participants, parseAffectUpdates(completion.text), {
         at: new Date().toISOString(),
         turnId: payload.turnId,
       });
       for (const item of applied) {
         await db.repository.saveInstance(item.next);
       }
+      return completion.usage;
     },
     [db, loadTurn],
   );
@@ -201,14 +215,21 @@ export function useBackgroundWorker(options: {
           }
 
           const payload = task.payload as TurnTaskPayload;
+          let usage: TokenUsage | null = null;
           if (task.kind === MEMORY_TASK_KIND) {
-            await runMemoryExtraction(payload, config);
+            usage = await runMemoryExtraction(payload, config);
           } else if (task.kind === AFFECT_TASK_KIND) {
-            await runAffectUpdate(payload, config);
+            usage = await runAffectUpdate(payload, config);
           }
 
           await db.queue.complete(task.id);
           setCompleted((value) => value + 1);
+          if (usage !== null) {
+            setUsage((previous) => ({
+              promptTokens: previous.promptTokens + (usage?.promptTokens ?? 0),
+              completionTokens: previous.completionTokens + (usage?.completionTokens ?? 0),
+            }));
+          }
           setLastError(null);
           onChangedRef.current();
         } catch (error) {
@@ -238,5 +259,5 @@ export function useBackgroundWorker(options: {
     return () => clearInterval(timer);
   }, [db, kick, provider, refreshPending]);
 
-  return { pending, running, lastError, completed, kick };
+  return { pending, running, lastError, completed, usage, kick };
 }

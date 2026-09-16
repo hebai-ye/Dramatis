@@ -1,9 +1,11 @@
 import type { ChatMessage, ChatToolCall } from '../prompt/types.js';
-import type { ModelParams, ModelProvider } from './openai-compatible.js';
+import type { ModelParams, ModelProvider, TokenUsage } from './openai-compatible.js';
 
 export interface CompletionResult {
   text: string;
   toolCalls: ChatToolCall[];
+  /** 服务商返回的真实用量；没返回时为 null，不要用估算值顶替。 */
+  usage: TokenUsage | null;
 }
 
 /**
@@ -19,13 +21,17 @@ export async function collectCompletionWithTools(
 ): Promise<CompletionResult> {
   let text = '';
   let toolCalls: ChatToolCall[] = [];
+  let usage: TokenUsage | null = null;
 
   for await (const event of provider.chat([...messages], params, signal)) {
     if (event.type === 'text') text += event.text;
-    if (event.type === 'done' && event.toolCalls !== undefined) toolCalls = event.toolCalls;
+    if (event.type === 'done') {
+      if (event.toolCalls !== undefined) toolCalls = event.toolCalls;
+      if (event.usage !== null) usage = event.usage;
+    }
   }
 
-  return { text, toolCalls };
+  return { text, toolCalls, usage };
 }
 
 /**

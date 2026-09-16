@@ -1,6 +1,17 @@
 import type { ConversationId, EventId, InstanceId, MessageId, RoomId, SceneId } from './ids.js';
 
 /**
+ * 一次模型调用的真实用量（服务商在流末尾返回）。
+ *
+ * 两个字段都可能缺失：有的服务商不返回 usage，有的只给总数。缺的时候按 0 记，
+ * 而不是编一个估算值混进去——估算值不能用来算钱（P3-7）。
+ */
+export interface MessageUsage {
+  promptTokens: number;
+  completionTokens: number;
+}
+
+/**
  * 消息的说话人类型。
  *
  * `admin` 是副对话里的「世界管理员」——它不扮演任何角色，产出的是
@@ -61,6 +72,13 @@ export interface Message {
   content: string;
   /** 副对话里管理员这次产出的草稿；主对话的消息不带这个字段。 */
   artifacts?: AdminArtifact[];
+  /**
+   * 生成这条消息的实际用量。
+   *
+   * 存到消息上而不是只放在内存里：刷新之后仍然能看到「这一轮花了多少」，
+   * 这是 P3-7 按回合统计的最小形态，也是 P1-9 设熔断阈值的依据。
+   */
+  usage?: MessageUsage;
   createdAt: string;
 }
 

@@ -131,4 +131,38 @@ describe('工具调用', () => {
       if (event.type === 'done') expect(event.toolCalls).toBeUndefined();
     }
   });
+
+  it('打开 includeUsage 时请求里带上 stream_options，并把用量带回来', async () => {
+    const seen = { value: null as Record<string, unknown> | null };
+    const provider = createOpenAICompatibleProvider({
+      baseUrl: 'https://example.com/v1',
+      apiKey: 'sk-test',
+      model: 'test-model',
+      includeUsage: true,
+      fetchImpl: async (_input, init) => {
+        seen.value = JSON.parse(String(init?.body)) as Record<string, unknown>;
+        return sseResponse([
+          { choices: [{ delta: { content: '好' } }] },
+          { choices: [{ delta: {} }], usage: { prompt_tokens: 1200, completion_tokens: 45 } },
+        ]);
+      },
+    });
+
+    let usage: unknown = null;
+    for await (const event of provider.chat([{ role: 'user', content: 'x' }])) {
+      if (event.type === 'done') usage = event.usage;
+    }
+
+    expect(seen.value?.stream_options).toEqual({ include_usage: true });
+    expect(usage).toEqual({ promptTokens: 1200, completionTokens: 45 });
+  });
+
+  it('服务商不返回用量时是 null，不用估算值顶替', async () => {
+    const seen = { value: null as Record<string, unknown> | null };
+    const provider = providerReturning([{ choices: [{ delta: { content: '好' } }] }], seen);
+
+    for await (const event of provider.chat([{ role: 'user', content: 'x' }])) {
+      if (event.type === 'done') expect(event.usage).toBeNull();
+    }
+  });
 });

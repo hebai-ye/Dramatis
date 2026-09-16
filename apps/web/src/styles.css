@@ -1098,6 +1098,12 @@ details summary {
   margin-top: 0;
 }
 
+.usage-hint {
+  align-self: center;
+  font-size: 10px;
+  white-space: nowrap;
+}
+
 /* ---------- 输入区 ---------- */
 
 .composer-tools {

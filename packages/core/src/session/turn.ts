@@ -9,7 +9,7 @@ import {
   type SceneId,
 } from '../model/ids.js';
 import type { CharacterInstance } from '../model/instance.js';
-import type { Message } from '../model/message.js';
+import type { Message, MessageUsage } from '../model/message.js';
 import type { Room, Scene } from '../model/room.js';
 import { type AssembledPrompt, type AssembleInput, assemblePrompt } from '../prompt/assemble.js';
 import type { ModelParams, ModelProvider } from '../provider/openai-compatible.js';
@@ -18,7 +18,11 @@ export type TurnEvent =
   | { type: 'prompt'; prompt: AssembledPrompt }
   | { type: 'reasoning'; text: string }
   | { type: 'text'; text: string }
-  | { type: 'done'; text: string };
+  /**
+   * `usage` 是这一次调用的真实用量。服务商没返回时是 null——
+   * 宁可显示「未知」，也不要把启发式估算当成账单（P3-7）。
+   */
+  | { type: 'done'; text: string; usage: MessageUsage | null };
 
 export interface RunTurnOptions {
   params?: ModelParams;
@@ -162,6 +166,7 @@ export async function* runTurn(
 
   let full = '';
   let done = false;
+  let usage: MessageUsage | null = null;
 
   for await (const event of provider.chat(prompt.messages, options.params ?? {}, options.signal)) {
     switch (event.type) {
@@ -174,12 +179,16 @@ export async function* runTurn(
         break;
       case 'done':
         done = true;
-        yield { type: 'done', text: full };
+        usage =
+          event.usage === null
+            ? null
+            : { promptTokens: event.usage.promptTokens ?? 0, completionTokens: event.usage.completionTokens ?? 0 };
+        yield { type: 'done', text: full, usage };
         break;
     }
   }
 
   if (!done) {
-    yield { type: 'done', text: full };
+    yield { type: 'done', text: full, usage };
   }
 }

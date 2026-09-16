@@ -27,6 +27,8 @@ interface Props {
   prompt: AssembledPrompt | null;
   pending: number;
   completed: number;
+  /** 后台任务的真实 token 合计。 */
+  backgroundUsage: { promptTokens: number; completionTokens: number };
   workerError: string | null;
   disabled: boolean;
   onSceneChange: (patch: Partial<Scene>) => void;
@@ -152,6 +154,7 @@ export function RuntimePanel(props: Props) {
           instances={props.instances}
           pending={props.pending}
           completed={props.completed}
+          usage={props.backgroundUsage}
           workerError={props.workerError}
           disabled={props.disabled}
           onUpdate={props.onUpdateMemory}

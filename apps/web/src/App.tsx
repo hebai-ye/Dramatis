@@ -14,6 +14,7 @@ import {
   importCardFromPng,
   type Message,
   type MessageId,
+  type MessageUsage,
   matchWorldBookEntries,
   type PromptMemory,
   parseWorldBook,
@@ -152,14 +153,16 @@ export function App() {
       memories?: readonly PromptMemory[];
       showStream: boolean;
       signal: AbortSignal;
-    }): Promise<string> => {
+    }): Promise<{ text: string; usage: MessageUsage | null }> => {
       const profile = providers.active;
-      if (!profile || !world || !scene) return '';
+      if (!profile || !world || !scene) return { text: '', usage: null };
 
       const provider = createOpenAICompatibleProvider({
         baseUrl: profile.baseUrl,
         apiKey: providers.apiKey,
         model: profile.model,
+        // 要真实用量：这是 P3-7 的成本统计，也是 P1-9 设熔断阈值的依据
+        includeUsage: true,
       });
 
       // 世界书按关键词命中插入，扫描范围是玩家输入加最近几轮
@@ -167,6 +170,7 @@ export function App() {
       const worldBookMatches = session.worldBooks.flatMap((book) => matchWorldBookEntries(book, { scanText }));
 
       let accumulated = '';
+      let usage: MessageUsage | null = null;
       for await (const event of runTurn(
         {
           card: options.card,
@@ -197,10 +201,11 @@ export function App() {
             break;
           case 'done':
             accumulated = event.text;
+            usage = event.usage;
             break;
         }
       }
-      return accumulated;
+      return { text: accumulated, usage };
     },
     [conversation, instances, providers, scene, session.worldBooks, world],
   );
@@ -309,6 +314,9 @@ export function App() {
             instance,
             turnsSinceSpoke: since.get(instance.id) ?? null,
           })),
+          // 名单以当前场景为准：presence 是「他在这个世界的状态」，
+          // 而多条对话并存时，onstage 的角色未必在这条线的这场戏里
+          cast: scene.cast,
           maxSpeakers: 1,
         });
 
@@ -333,7 +341,7 @@ export function App() {
           );
 
           setStreamSpeaker(speaker.displayName);
-          const reply = await runGeneration({
+          const generation = await runGeneration({
             speaker,
             card: speakerCard,
             history: first ? history : continuedHistory,
@@ -342,6 +350,7 @@ export function App() {
             showStream: true,
             signal: controller.signal,
           });
+          const reply = generation.text;
           first = false;
 
           if (recalled.length > 0) {
@@ -352,7 +361,11 @@ export function App() {
           }
 
           if (reply.trim() !== '') {
-            const line = makeCharacterLine(speaker, reply, turnId, scene);
+            const line: Message = {
+              ...makeCharacterLine(speaker, reply, turnId, scene),
+              // 用量挂在消息上：刷新之后仍然能看见这一轮花了多少
+              ...(generation.usage === null ? {} : { usage: generation.usage }),
+            };
             await session.appendMessages([line]);
             continuedHistory = [...continuedHistory, line];
           }
@@ -441,7 +454,7 @@ export function App() {
       abortRef.current = controller;
 
       try {
-        const reply = await runGeneration({
+        const generation = await runGeneration({
           speaker,
           card: speakerCard,
           history: earlierHistory,
@@ -450,8 +463,13 @@ export function App() {
           signal: controller.signal,
         });
 
-        if (reply.trim() !== '') {
-          await session.appendMessages([makeCharacterLine(speaker, reply, target.turnId, scene)]);
+        if (generation.text.trim() !== '') {
+          await session.appendMessages([
+            {
+              ...makeCharacterLine(speaker, generation.text, target.turnId, scene),
+              ...(generation.usage === null ? {} : { usage: generation.usage }),
+            },
+          ]);
         }
 
         // 重抽撤销了这一轮的后台任务，必须重新排一次队。
@@ -801,6 +819,7 @@ export function App() {
                     prompt={lastPrompt}
                     pending={worker.pending}
                     completed={worker.completed}
+                    backgroundUsage={worker.usage}
                     workerError={worker.lastError}
                     disabled={disabled}
                     onSceneChange={(patch) => void session.updateScene(patch)}

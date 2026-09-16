@@ -31,6 +31,15 @@ export interface ScheduleInput {
   candidates: readonly ScheduleCandidate[];
   /** 最多让几名角色接话，默认 1。 */
   maxSpeakers?: number;
+  /**
+   * 当前场景的名单。
+   *
+   * presence 与「在不在这场」是两件事：世界拆成多条对话之后，一个角色的
+   * presence 可能是 onstage（他正在这个世界的某处），但并不在这条对话的场景里。
+   * 只按 presence 过滤的话，场景外的角色会被调度上台——真实使用中踩到过。
+   * 传了名单就以此为准，不在名单里的一律不接话。
+   */
+  cast?: readonly InstanceId[];
   /** 注入随机源便于测试；默认 Math.random。 */
   random?: () => number;
 }
@@ -125,6 +134,19 @@ export function scheduleSpeakers(input: ScheduleInput): ScheduleResult {
         reasons,
         selected: false,
         excluded: presenceIssue,
+      };
+    }
+
+    // 名单是更强的一道闸：presence 说的是「他在这个世界的状态」，
+    // 名单说的是「他此刻在这场戏里」
+    if (input.cast !== undefined && !input.cast.includes(instance.id)) {
+      return {
+        instanceId: instance.id,
+        displayName: instance.displayName,
+        score: 0,
+        reasons,
+        selected: false,
+        excluded: '不在当前场景名单里',
       };
     }
 

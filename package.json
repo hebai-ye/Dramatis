@@ -10,6 +10,8 @@
   },
   "scripts": {
     "dev": "pnpm --filter @dramatis/web dev",
+    "desktop": "node tools/desktop/launch.mjs",
+    "desktop:prod": "node tools/desktop/launch.mjs --prod",
     "build": "pnpm -r build",
     "typecheck": "pnpm -r typecheck",
     "test": "pnpm -r test",

@@ -27,7 +27,14 @@ export interface Scene {
 export interface Room {
   id: RoomId;
   title: string;
-  /** 玩家 persona。 */
+  /** 玩家身份的标识；为空时退回下面的冗余字段。 */
+  personaId: string | null;
+  /**
+   * 玩家 persona 的冗余副本。
+   *
+   * 从 persona 同步而来，让 prompt 装配不必再查一次库。冗余的代价是
+   * 要记得更新，所以只在「切换 persona」与「编辑 persona」两个入口写它。
+   */
   playerName: string;
   playerPersona: string;
   cardIds: CardId[];

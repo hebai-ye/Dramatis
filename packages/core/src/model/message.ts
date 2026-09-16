@@ -18,6 +18,14 @@ export interface Message {
   role: MessageRole;
   speakerInstanceId: InstanceId | null;
   speakerName: string;
+  /**
+   * 这条消息发生时在场的角色实例。
+   *
+   * 空数组表示「所有人都能看到」，用于旁白与系统消息。有了它，
+   * 每个角色看到的上下文才是各自视角的（P0-5）；记忆抽取也才知道
+   * 该给谁写记忆（P1-2）——离开场景期间发生的事，角色本就不该记得。
+   */
+  audience: InstanceId[];
   content: string;
   createdAt: string;
 }

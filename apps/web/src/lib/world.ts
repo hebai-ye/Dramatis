@@ -1,12 +1,15 @@
 import {
   type Card,
   type CharacterInstance,
+  type InstanceId,
   instanceId,
   neutralTraits,
   newId,
   nowIso,
+  type Persona,
   PLAYER,
   type Room,
+  type RoomId,
   roomId,
   type Scene,
   sceneId,
@@ -18,33 +21,19 @@ export interface World {
   instance: CharacterInstance;
 }
 
-/**
- * 从一张角色卡建立最小可用的世界：一名角色、一个场景、一名玩家。
- *
- * M0 固定为单人对话，因此场景默认 `locked`——即使模型想拉人进来也不会发生。
- * 多角色阵容与入场策略的完整控制是 M1 的内容。
- */
-export function createWorldFromCard(card: Card, playerName: string): World {
-  const roomIdValue = roomId(newId());
-  const instanceIdValue = instanceId(newId());
-  const sceneIdValue = sceneId(newId());
+/** 依据角色卡创建一个角色实例（P0-3）。 */
+export function createInstanceFor(card: Card, roomIdValue: RoomId, displayName?: string): CharacterInstance {
   const now = nowIso();
+  const name = displayName?.trim();
 
-  const displayName = card.nickname.trim() !== '' ? card.nickname.trim() : card.name;
-
-  const instance: CharacterInstance = {
-    id: instanceIdValue,
+  return {
+    id: instanceId(newId()),
     roomId: roomIdValue,
     cardId: card.id,
-    displayName,
+    displayName: name !== undefined && name !== '' ? name : card.nickname.trim() || card.name,
     presence: 'onstage',
     traits: neutralTraits(),
-    affect: {
-      valence: 0,
-      arousal: 0,
-      updatedAt: now,
-      history: [],
-    },
+    affect: { valence: 0, arousal: 0, updatedAt: now, history: [] },
     relationships: [
       {
         target: PLAYER,
@@ -61,30 +50,53 @@ export function createWorldFromCard(card: Card, playerName: string): World {
     createdAt: now,
     updatedAt: now,
   };
+}
 
-  const scene: Scene = {
-    id: sceneIdValue,
+/** 创建一个新场景（P0-6）。 */
+export function createSceneFor(
+  roomIdValue: RoomId,
+  cast: InstanceId[],
+  options?: { title?: string; summary?: string },
+): Scene {
+  return {
+    id: sceneId(newId()),
     roomId: roomIdValue,
-    title: '开场',
+    title: options?.title ?? '新场景',
     location: '',
     worldTime: '',
     castPolicy: 'locked',
-    cast: [instanceIdValue],
-    // M2 起由压缩流水线接管；M0 用来装载角色卡里的场景设定
-    summary: card.scenario.trim(),
-    createdAt: now,
+    cast,
+    // M2 起由压缩流水线接管；现在用来装载角色卡里的场景设定
+    summary: options?.summary ?? '',
+    createdAt: nowIso(),
     endedAt: null,
   };
+}
+
+/**
+ * 从一张角色卡开一条新的世界线：一名角色、一个场景、一名玩家。
+ *
+ * 场景默认 `locked`：单人开场时锁场是正确默认值，用户随时能在场景面板改。
+ */
+export function createWorldFromCard(card: Card, persona: Persona): World {
+  const roomIdValue = roomId(newId());
+  const instance = createInstanceFor(card, roomIdValue);
+  const scene = createSceneFor(roomIdValue, [instance.id], {
+    title: '开场',
+    summary: card.scenario.trim(),
+  });
+  const now = nowIso();
 
   const room: Room = {
     id: roomIdValue,
     title: card.name,
-    playerName: playerName.trim() === '' ? '玩家' : playerName.trim(),
-    playerPersona: '',
+    personaId: persona.id,
+    playerName: persona.name,
+    playerPersona: persona.description,
     cardIds: [card.id],
-    instanceIds: [instanceIdValue],
+    instanceIds: [instance.id],
     worldBookIds: [],
-    activeSceneId: sceneIdValue,
+    activeSceneId: scene.id,
     createdAt: now,
     updatedAt: now,
   };

@@ -29,6 +29,8 @@ export function createPlayerMessage(input: {
   turnId: string;
   speakerName: string;
   content: string;
+  /** 在场角色实例；留空表示所有人可见。 */
+  audience?: InstanceId[];
   /** 未落盘时留空，由仓储层的 appendMessages 分配。 */
   seq?: number;
 }): Message {
@@ -41,6 +43,7 @@ export function createPlayerMessage(input: {
     role: 'player',
     speakerInstanceId: null,
     speakerName: input.speakerName,
+    audience: input.audience ?? [],
     content: input.content,
     createdAt: nowIso(),
   };
@@ -53,6 +56,8 @@ export function createCharacterMessage(input: {
   speakerInstanceId: InstanceId;
   speakerName: string;
   content: string;
+  /** 在场角色实例；留空表示只有说话者可见。 */
+  audience?: InstanceId[];
   /** 未落盘时留空，由仓储层的 appendMessages 分配。 */
   seq?: number;
 }): Message {
@@ -65,6 +70,7 @@ export function createCharacterMessage(input: {
     role: 'character',
     speakerInstanceId: input.speakerInstanceId,
     speakerName: input.speakerName,
+    audience: input.audience ?? [input.speakerInstanceId],
     content: input.content,
     createdAt: nowIso(),
   };
@@ -78,6 +84,8 @@ export function createGreetingMessage(input: {
   scene: Scene | null;
   /** 选择第几条开场白，0 为主开场白。 */
   greetingIndex?: number;
+  /** 开场时的在场角色；留空表示所有人都可见。 */
+  audience?: InstanceId[];
 }): Message | null {
   const greetings = [input.card.firstMessage, ...input.card.alternateGreetings];
   const greeting = greetings[input.greetingIndex ?? 0] ?? input.card.firstMessage;
@@ -90,6 +98,7 @@ export function createGreetingMessage(input: {
     speakerInstanceId: input.instance.id,
     speakerName: input.instance.displayName,
     content: greeting.trim(),
+    audience: input.audience ?? [input.instance.id],
   });
 }
 

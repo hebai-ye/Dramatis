@@ -205,6 +205,50 @@ button.ghost {
   color: var(--danger);
 }
 
+.cast-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.cast-row {
+  align-items: center;
+  display: flex;
+  gap: 6px;
+}
+
+.cast-name {
+  flex: 1;
+  min-width: 0;
+}
+
+.cast-row select {
+  width: auto;
+}
+
+.cast-list li p {
+  margin: 2px 0 0;
+}
+
+.bubble-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 6px;
+  opacity: 0.55;
+}
+
+.bubble:hover .bubble-actions {
+  opacity: 1;
+}
+
+.bubble-actions button {
+  font-size: 11px;
+  padding: 2px 8px;
+}
+
 .hint {
   color: var(--muted-text);
   font-size: 12px;

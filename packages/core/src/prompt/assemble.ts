@@ -1,11 +1,12 @@
 import type { WorldBookMatch } from '../compat/sillytavern/worldbook.js';
 import type { Card } from '../model/card.js';
-import { PLAYER } from '../model/ids.js';
+import { type InstanceId, PLAYER } from '../model/ids.js';
 import type { Affect, CharacterInstance, TraitAxis } from '../model/instance.js';
 import type { Message } from '../model/message.js';
 import type { Room, Scene } from '../model/room.js';
 import { heuristicTokenCounter, type TokenCounter } from '../token/estimate.js';
 import { applyBudget } from './budget.js';
+import { selectHistoryFor } from './history.js';
 import type { BudgetReport, ChatMessage, PromptBlock } from './types.js';
 
 /**
@@ -33,6 +34,8 @@ export interface AssembleInput {
   playerInput: string;
   worldBookMatches?: WorldBookMatch[];
   memories?: PromptMemory[];
+  /** 场景内的角色，用于让模型知道还有谁在场（P0-6）。 */
+  cast?: readonly CharacterInstance[];
   budget: {
     /** 模型的上下文窗口。 */
     maxTokens: number;
@@ -55,6 +58,8 @@ export interface AssembledPrompt {
   messages: ChatMessage[];
   report: BudgetReport;
   tokenEstimate: number;
+  /** 本次装配按视角裁剪了多少历史，供检查器展示（P0-5）。 */
+  historyStats: { total: number; visible: number };
 }
 
 /** 越大越不可丢弃。 */
@@ -205,7 +210,24 @@ function buildRelationshipBlock(instance: CharacterInstance): PromptBlock | null
  * 入场策略会被翻译成给模型的明确指令——这是「锁场」从 UI 落到
  * 实际行为的关键，光有开关而模型不知道，等于没有。
  */
-function buildSceneBlock(scene: Scene | null): PromptBlock | null {
+function describePresence(presence: CharacterInstance['presence']): string {
+  switch (presence) {
+    case 'onstage':
+      return '在场';
+    case 'muted':
+      return '在场但一直没说话';
+    case 'offscreen':
+      return '不在这场，人在别处';
+    default:
+      return '已离场';
+  }
+}
+
+function buildSceneBlock(
+  scene: Scene | null,
+  cast: readonly CharacterInstance[],
+  speakerId: InstanceId,
+): PromptBlock | null {
   if (!scene) return null;
 
   const lines = [`地点：${scene.location.trim() === '' ? '未指定' : scene.location.trim()}`];
@@ -227,6 +249,16 @@ function buildSceneBlock(scene: Scene | null): PromptBlock | null {
   }
 
   if (scene.summary.trim() !== '') lines.push(`场景摘要：${scene.summary.trim()}`);
+
+  if (cast.length > 0) {
+    const roster = cast
+      .map(
+        (member) =>
+          `${member.displayName}（${member.id === speakerId ? '正在与你对话' : describePresence(member.presence)}）`,
+      )
+      .join('、');
+    lines.push(`在场角色：${roster}`);
+  }
 
   return {
     id: `scene:${scene.id}`,
@@ -285,13 +317,20 @@ function buildMemoryBlocks(memories: PromptMemory[]): PromptBlock[] {
   });
 }
 
-function buildHistoryBlocks(history: Message[], limit: number): PromptBlock[] {
+/**
+ * 历史消息块。
+ *
+ * `prefixSpeaker` 在多角色场景下必开：对话消息的 assistant 角色分不出是谁说的，
+ * 不标名字模型就会把几个角色混成一个声音。
+ */
+function buildHistoryBlocks(history: Message[], limit: number, prefixSpeaker: boolean): PromptBlock[] {
   const recent = history.slice(-limit);
   return recent.map((message, index) => ({
     id: `history:${message.id}`,
     kind: 'history',
     label: message.speakerName,
-    content: message.content,
+    content:
+      prefixSpeaker && message.role !== 'player' ? `${message.speakerName}：${message.content}` : message.content,
     priority: PRIORITY.history,
     droppable: true,
     sequence: index,
@@ -380,10 +419,23 @@ export function assemblePrompt(input: AssembleInput): AssembledPrompt {
 
   blocks.push(...buildMemoryBlocks(input.memories ?? []));
 
-  const sceneBlock = buildSceneBlock(input.scene);
+  const cast = input.cast ?? [];
+  const sceneBlock = buildSceneBlock(input.scene, cast, input.instance.id);
   if (sceneBlock) blocks.push(sceneBlock);
 
-  blocks.push(...buildHistoryBlocks(input.history, options.historyLimit ?? 40));
+  // 多人同场时才需要标名字，单人场景标了只是浪费 token
+  const onstageCount = cast.filter((member) => member.presence === 'onstage').length;
+  const prefixSpeaker = onstageCount > 1;
+
+  // 按视角裁剪：角色看不到自己不在场时发生的事（P0-5）
+  const visibleHistory = selectHistoryFor(input.history, input.instance.id);
+  blocks.push(...buildHistoryBlocks(visibleHistory, options.historyLimit ?? 40, prefixSpeaker));
+
+  // 让发言者知道场上还有谁，否则多角色场景里模型会替别人说话
+  const otherSpeakers = cast
+    .filter((member) => member.id !== input.instance.id && member.presence === 'onstage')
+    .map((member) => member.displayName);
+  const othersClause = otherSpeakers.length === 0 ? '' : `场景中还有 ${otherSpeakers.join('、')}，不要替他们发言。`;
 
   blocks.push({
     id: 'instruction',
@@ -391,19 +443,24 @@ export function assemblePrompt(input: AssembleInput): AssembledPrompt {
     label: '本轮指令',
     content:
       `现在轮到你发言。请以「${input.instance.displayName}」的身份回应，保持角色不跳出。` +
+      othersClause +
       '不要代替玩家行动，也不要描写玩家的内心想法。',
     priority: PRIORITY.instruction,
     droppable: false,
   });
 
-  blocks.push({
-    id: 'player',
-    kind: 'player',
-    label: playerName,
-    content: input.playerInput,
-    priority: PRIORITY.player,
-    droppable: false,
-  });
+  // 同一回合里第二名角色发言时 playerInput 为空——玩家的话已经在历史里了，
+  // 再插一次会把同一句台词说两遍。
+  if (input.playerInput.trim() !== '') {
+    blocks.push({
+      id: 'player',
+      kind: 'player',
+      label: playerName,
+      content: input.playerInput,
+      priority: PRIORITY.player,
+      droppable: false,
+    });
+  }
 
   const available = Math.max(MIN_PROMPT_TOKENS, input.budget.maxTokens - input.budget.reserveForReply);
   const { blocks: kept, report } = applyBudget(blocks, { maxTokens: available, counter });
@@ -413,5 +470,6 @@ export function assemblePrompt(input: AssembleInput): AssembledPrompt {
     messages: toChatMessages(kept),
     report,
     tokenEstimate: report.usedTokens,
+    historyStats: { total: input.history.length, visible: visibleHistory.length },
   };
 }

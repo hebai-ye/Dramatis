@@ -3,6 +3,7 @@ import type { CastPolicy, Scene } from '@dramatis/core';
 interface Props {
   scene: Scene;
   onChange: (patch: Partial<Scene>) => void;
+  onStartNewScene: (title: string) => void;
   disabled: boolean;
 }
 
@@ -13,7 +14,7 @@ const CAST_POLICY_OPTIONS: Array<{ value: CastPolicy; label: string; note: strin
   { value: 'open', label: '自由入场', note: '符合条件的角色可自行登场' },
 ];
 
-export function ScenePanel({ scene, onChange, disabled }: Props) {
+export function ScenePanel({ scene, onChange, onStartNewScene, disabled }: Props) {
   const current = CAST_POLICY_OPTIONS.find((option) => option.value === scene.castPolicy);
 
   return (
@@ -70,6 +71,19 @@ export function ScenePanel({ scene, onChange, disabled }: Props) {
           onChange={(event) => onChange({ summary: event.target.value })}
         />
       </label>
+
+      <button
+        type="button"
+        className="ghost"
+        disabled={disabled}
+        title="结束当前场景并开一个新的，过去的场景会被保留"
+        onClick={() => {
+          const title = window.prompt('新场景的名字', '新场景');
+          if (title !== null) onStartNewScene(title.trim() === '' ? '新场景' : title.trim());
+        }}
+      >
+        结束本场，开新场景
+      </button>
     </section>
   );
 }

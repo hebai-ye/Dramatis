@@ -3,6 +3,7 @@ import type { CardId, MessageId, RoomId, SceneId, WorldBookId } from '../model/i
 import { nowIso } from '../model/ids.js';
 import type { CharacterInstance } from '../model/instance.js';
 import type { Message } from '../model/message.js';
+import { createPersona, type Persona } from '../model/persona.js';
 import type { ProviderProfile } from '../model/provider.js';
 import type { Room, Scene } from '../model/room.js';
 import type { EntityStore } from '../platform/entity-store.js';
@@ -13,7 +14,7 @@ import type { EntityStore } from '../platform/entity-store.js';
  * 任何会改变已落盘数据结构的改动都要 +1，并补一条 `Migration`。
  * 这是「从第一天就留好升级路径」的具体做法（ROADMAP P0-1）。
  */
-export const SCHEMA_VERSION = 1;
+export const SCHEMA_VERSION = 2;
 
 export const COLLECTIONS = {
   meta: 'meta',
@@ -23,6 +24,7 @@ export const COLLECTIONS = {
   instances: 'instances',
   worldBooks: 'worldBooks',
   messages: 'messages',
+  personas: 'personas',
   providerProfiles: 'providerProfiles',
   backgroundTasks: 'backgroundTasks',
 } as const;
@@ -59,7 +61,40 @@ export interface RoomSnapshot {
   cards: Card[];
   worldBooks: WorldBook[];
   messages: Message[];
+  /** persona 是跨房间共用的身份表，一并返回方便 UI 直接切换。 */
+  personas: Persona[];
 }
+
+/**
+ * 内建迁移。
+ *
+ * v2 把原本内联在房间上的玩家身份抽成独立的 persona 实体。
+ * 这是第一次真正用到迁移机制——也说明它不是空架子。
+ */
+export const MIGRATIONS: readonly Migration[] = [
+  {
+    version: 2,
+    describe: '把房间内联的玩家身份抽出为独立的 persona 实体',
+    run: async (store) => {
+      const rooms = await store.list<Record<string, unknown>>(COLLECTIONS.rooms);
+      for (const room of rooms) {
+        const roomId = typeof room.id === 'string' ? room.id : '';
+        if (roomId === '') continue;
+        if (typeof room.personaId === 'string' && room.personaId !== '') continue;
+
+        const name = typeof room.playerName === 'string' ? room.playerName.trim() : '';
+        if (name === '') continue;
+
+        const persona = createPersona({
+          name,
+          description: typeof room.playerPersona === 'string' ? room.playerPersona : '',
+        });
+        await store.put(COLLECTIONS.personas, persona);
+        await store.put(COLLECTIONS.rooms, { ...room, id: roomId, personaId: persona.id });
+      }
+    },
+  },
+];
 
 interface MetaRecord {
   id: string;
@@ -76,7 +111,7 @@ interface MetaRecord {
 export class Repository {
   constructor(
     private readonly store: EntityStore,
-    private readonly migrations: readonly Migration[] = [],
+    private readonly migrations: readonly Migration[] = MIGRATIONS,
   ) {}
 
   get backendKind(): string {
@@ -190,6 +225,11 @@ export class Repository {
     return this.store.list<CharacterInstance>(COLLECTIONS.instances, { where: { roomId } });
   }
 
+  /** 删除角色实例。角色卡是共用资产，不跟着删。 */
+  async deleteInstance(id: string): Promise<void> {
+    await this.store.remove(COLLECTIONS.instances, id);
+  }
+
   // ---- 角色卡与世界书（跨房间共用） ----
 
   async saveCard(card: Card): Promise<void> {
@@ -262,6 +302,11 @@ export class Repository {
     return updated;
   }
 
+  /** 删除单条消息，用于消息编辑与重抽（P0-7）。 */
+  async deleteMessage(id: MessageId): Promise<void> {
+    await this.store.remove(COLLECTIONS.messages, id);
+  }
+
   /** 删除某个回合产生的全部消息，用于重抽（P0-7）。返回删除数量。 */
   async removeMessagesByTurn(roomId: RoomId, turnId: string): Promise<number> {
     const messages = await this.store.list<Message>(COLLECTIONS.messages, {
@@ -299,7 +344,37 @@ export class Repository {
       if (book) worldBooks.push(book);
     }
 
-    return { room, scenes, instances, cards, worldBooks, messages };
+    const personas = await this.listPersonas();
+    return { room, scenes, instances, cards, worldBooks, messages, personas };
+  }
+
+  // ---- 玩家身份（P0-3） ----
+
+  async listPersonas(): Promise<Persona[]> {
+    return this.store.list<Persona>(COLLECTIONS.personas, { orderBy: 'createdAt' });
+  }
+
+  async getPersona(id: string): Promise<Persona | null> {
+    return this.store.get<Persona>(COLLECTIONS.personas, id);
+  }
+
+  async savePersona(persona: Persona): Promise<void> {
+    await this.store.put(COLLECTIONS.personas, { ...persona, updatedAt: nowIso() });
+  }
+
+  /**
+   * 删除 persona，并把引用它的房间退回内联字段。
+   *
+   * 不做级联删除房间：房间里的对话与角色状态比一份身份描述贵重得多。
+   * 返回受影响的房间数，便于 UI 提示。
+   */
+  async deletePersona(id: string): Promise<number> {
+    await this.store.remove(COLLECTIONS.personas, id);
+    const rooms = await this.store.list<Room>(COLLECTIONS.rooms, { where: { personaId: id } });
+    for (const room of rooms) {
+      await this.store.put(COLLECTIONS.rooms, { ...room, personaId: null });
+    }
+    return rooms.length;
   }
 
   async saveSnapshot(snapshot: {

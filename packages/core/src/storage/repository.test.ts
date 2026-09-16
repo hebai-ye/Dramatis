@@ -19,6 +19,7 @@ function fixtures() {
   const room: Room = {
     id: roomIdValue,
     title: '雨夜酒馆',
+    personaId: null,
     playerName: '旅人',
     playerPersona: '',
     cardIds: [cardIdValue],
@@ -99,13 +100,36 @@ function message(room: Room, scene: Scene, content: string, turnId = newId()) {
 
 describe('Repository / schema', () => {
   it('全新数据库迁移后写入 schema 版本', async () => {
-    const repo = new Repository(createMemoryEntityStore());
+    const repo = new Repository(createMemoryEntityStore(), []);
 
     expect(await repo.schemaVersion()).toBe(0);
     const report = await repo.migrate();
 
     expect(report).toEqual({ from: 0, to: SCHEMA_VERSION, applied: [] });
     expect(await repo.schemaVersion()).toBe(SCHEMA_VERSION);
+  });
+
+  it('内建迁移把房间内联的玩家身份抽出为 persona 实体', async () => {
+    const store = createMemoryEntityStore();
+    await store.put(COLLECTIONS.rooms, {
+      id: 'room-legacy',
+      title: '旧房间',
+      playerName: '旅人',
+      playerPersona: '四处漂泊的旅人',
+    });
+
+    const repo = new Repository(store);
+    const report = await repo.migrate();
+
+    expect(report.applied.map((migration) => migration.version)).toEqual([2]);
+
+    const personas = await repo.listPersonas();
+    expect(personas).toHaveLength(1);
+    expect(personas[0]?.name).toBe('旅人');
+    expect(personas[0]?.description).toBe('四处漂泊的旅人');
+
+    const room = await repo.getRoom(roomId('room-legacy'));
+    expect(room?.personaId).toBe(personas[0]?.id);
   });
 
   it('已是最新版本时重复迁移不做任何事', async () => {

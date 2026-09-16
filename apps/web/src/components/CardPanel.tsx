@@ -5,11 +5,13 @@ interface Props {
   card: Card | null;
   warnings: ImportWarning[];
   error: string | null;
+  /** 说明导入会落在哪里，避免用户不知道会新建世界还是加入当前房间。 */
+  importHint?: string;
   onImport: (file: File) => void;
   disabled: boolean;
 }
 
-export function CardPanel({ card, warnings, error, onImport, disabled }: Props) {
+export function CardPanel({ card, warnings, error, importHint, onImport, disabled }: Props) {
   const inputRef = useRef<HTMLInputElement | null>(null);
 
   return (
@@ -31,6 +33,7 @@ export function CardPanel({ card, warnings, error, onImport, disabled }: Props) 
       <button type="button" disabled={disabled} onClick={() => inputRef.current?.click()}>
         导入角色卡（PNG / JSON）
       </button>
+      {importHint !== undefined ? <p className="hint">{importHint}</p> : null}
 
       {card ? (
         <div className="card-summary">

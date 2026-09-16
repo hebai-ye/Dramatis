@@ -1,8 +1,8 @@
 @echo off
-chcp 65001 >nul
+rem Only three things: enter this directory, hand off to Node, keep the window.
+rem No branching and no non-ASCII on purpose. Batch files are fragile about line
+rem endings and code pages, so every diagnostic lives in the Node launcher.
 cd /d "%~dp0"
-echo 正在启动 Dramatis，请稍候……
-call pnpm desktop
+node "tools\desktop\launch.mjs" %*
 echo.
-echo 服务已停止。按任意键关闭这个窗口。
-pause >nul
+pause

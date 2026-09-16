@@ -49,7 +49,9 @@ pnpm desktop:prod   # 先构建再启动，更接近真实运行
 
 ## 快速开始
 
-需要 Node 20+ 与 pnpm。
+需要 Node 20+。**桌面入口不需要 pnpm** —— 它直接调用 Node 与 Vite。
+
+如果要从命令行跑开发服务器，本项目用 pnpm 管理依赖：
 
 ```bash
 pnpm install
@@ -57,6 +59,8 @@ pnpm dev        # 启动 Web 端，默认 http://localhost:5173
 pnpm typecheck
 pnpm test
 ```
+
+没装 pnpm 也能装依赖：`npx --yes pnpm install`。
 
 打开页面后，在左侧填接口地址、API Key 与模型名。支持 DeepSeek、OpenAI、Kimi、阿里百炼、智谱，以及 Ollama、LM Studio 这类本地服务；只填域名时会自动补 `/v1`。然后导入一张角色卡，就可以开始对话。
 

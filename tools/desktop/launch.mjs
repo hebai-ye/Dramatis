@@ -123,6 +123,15 @@ async function main() {
   console.log(`地址：${ORIGIN}`);
   console.log(`数据保存在这个地址下（换端口等于换一个空数据库，所以端口是固定的）\n`);
 
+  // 依赖没装时给出可执行的命令，而不是让 Vite 抛一堆解析错误
+  if (!existsSync(resolve(WEB_APP_DIR, 'node_modules'))) {
+    console.error('还没安装依赖。在项目目录里执行其中一条：');
+    console.error('  npx --yes pnpm install');
+    console.error('  corepack enable && pnpm install');
+    process.exitCode = 1;
+    return;
+  }
+
   if (await isServing(ORIGIN)) {
     console.log('这个地址上已经有一个实例在跑了，直接打开它。');
     if (shouldOpen) console.log(openWindow(ORIGIN));
@@ -177,6 +186,12 @@ async function main() {
     console.log('\n关掉应用窗口不会停止服务；在这个终端按 Ctrl+C 才是关闭。');
   } else {
     console.log('（--no-open：只起服务，不打开窗口）');
+    const browser = findBrowser();
+    console.log(
+      browser !== null
+        ? `检测到可用于应用窗口的浏览器：${browser}`
+        : '没有找到 Edge 或 Chrome，正式启动时会退回系统默认浏览器（没有独立窗口效果）',
+    );
   }
 }
 

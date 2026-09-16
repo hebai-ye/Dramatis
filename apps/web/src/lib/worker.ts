@@ -3,6 +3,7 @@ import {
   buildAffectMessages,
   buildExtractionMessages,
   buildMemoryEvents,
+  type ConversationId,
   collectCompletion,
   createOpenAICompatibleProvider,
   type ModelProvider,
@@ -23,6 +24,8 @@ export const MEMORY_BUDGET_TOKENS = 800;
 export interface TurnTaskPayload {
   roomId: RoomId;
   sceneId: SceneId | null;
+  /** 归属的对话；归档一条对话时要按它整批撤销记忆。 */
+  conversationId: ConversationId | null;
   turnId: string;
 }
 
@@ -133,6 +136,7 @@ export function useBackgroundWorker(options: {
       const { events } = buildMemoryEvents({
         roomId: payload.roomId,
         sceneId: payload.sceneId,
+        conversationId: payload.conversationId,
         worldTime: context.scene?.worldTime ?? '',
         sequence,
         participants: context.participants,

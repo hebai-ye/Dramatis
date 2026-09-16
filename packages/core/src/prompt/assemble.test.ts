@@ -366,4 +366,36 @@ describe('assemblePrompt / 多角色场景', () => {
     expect(rendered).not.toContain('只有 Alice 在场时说的');
     expect(prompt.historyStats).toEqual({ total: 2, visible: 1 });
   });
+
+  it('会话级模式会落成 prompt 里的指令，而不只是界面上的开关', () => {
+    const { card, instance, room, scene } = fixtures();
+
+    const plain = assemblePrompt({
+      card,
+      instance,
+      room,
+      scene,
+      history: [],
+      playerInput: '你还在吗',
+      budget: baseBudget,
+    });
+    expect(plain.messages[0]?.content).not.toContain('静默');
+
+    const silent = assemblePrompt({
+      card,
+      instance,
+      room,
+      scene,
+      history: [],
+      playerInput: '你还在吗',
+      modes: { playerFirst: true, silent: true },
+      budget: baseBudget,
+    });
+    const system = silent.messages[0]?.content ?? '';
+
+    expect(system).toContain('只有玩家先开口');
+    expect(system).toContain('静默');
+    // 静默模式下连动作的写法也要交代清楚，否则模型会干脆什么都不输出
+    expect(system).toContain('`#`');
+  });
 });

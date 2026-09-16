@@ -1,92 +1,41 @@
-import type { Persona, RoomId, RoomSummary } from '@dramatis/core';
-
 interface Props {
-  rooms: RoomSummary[];
-  activeRoomId: RoomId | null;
-  personas: Persona[];
-  activePersonaId: string | null;
+  collapsed: boolean;
+  onToggleCollapsed: () => void;
   backendKind: string;
   degraded: boolean;
-  canStartNewWorld: boolean;
-  disabled: boolean;
-  onOpenRoom: (id: RoomId) => void;
-  onDeleteRoom: (id: RoomId) => void;
-  onNewWorld: () => void;
-  onSelectPersona: (persona: Persona) => void;
-  onReset: () => void;
+  backgroundPending: number;
 }
 
 /**
- * 顶部栏：世界切换与「我是谁」。
+ * 顶栏（LAYOUT「顶栏」）。
  *
- * 这两件事既不属于设定也不属于运行时——它们是**会话导航**，
- * 所以单独放在顶上，随时可达。
+ * 规格里写得很清楚：左上角是**折叠左栏**，其余部分目前不设功能，
+ * 预留给未来的「世界视图」——以节点网络显示角色、物品、事件之间的联系。
+ *
+ * 所以这条栏是窄的，而且大部分是空的：宁可为将来的蓝图留一块干净的画布，
+ * 也不要把导航再塞回来。世界切换与素材管理都在左栏，不在顶上。
  */
-export function TopBar({
-  rooms,
-  activeRoomId,
-  personas,
-  activePersonaId,
-  backendKind,
-  degraded,
-  canStartNewWorld,
-  disabled,
-  onOpenRoom,
-  onDeleteRoom,
-  onNewWorld,
-  onSelectPersona,
-  onReset,
-}: Props) {
-  const active = rooms.find((room) => room.id === activeRoomId) ?? null;
-
+export function TopBar({ collapsed, onToggleCollapsed, backendKind, degraded, backgroundPending }: Props) {
   return (
     <header className="topbar">
-      <div className="brand-inline">
-        <h1>Dramatis</h1>
-        <span className="hint">登场</span>
-      </div>
-
-      <label className="topbar-field">
-        世界
-        <select
-          value={activeRoomId ?? ''}
-          disabled={disabled}
-          onChange={(event) => {
-            if (event.target.value !== '') onOpenRoom(event.target.value as RoomId);
-          }}
-        >
-          {rooms.length === 0 ? <option value="">还没有世界</option> : null}
-          {rooms.map((room) => (
-            <option key={room.id} value={room.id}>
-              {room.title}（{room.messageCount} 条 · {room.instanceCount} 人）
-            </option>
-          ))}
-        </select>
-      </label>
-
-      <button type="button" className="ghost" disabled={disabled || !canStartNewWorld} onClick={onNewWorld}>
-        用当前卡开新世界
+      <button
+        type="button"
+        className="ghost rail-toggle"
+        title={collapsed ? '展开左栏' : '折叠左栏'}
+        aria-expanded={!collapsed}
+        onClick={onToggleCollapsed}
+      >
+        {collapsed ? '≫' : '≪'}
       </button>
 
-      <label className="topbar-field">
-        你是
-        <select
-          value={activePersonaId ?? ''}
-          disabled={disabled}
-          onChange={(event) => {
-            const next = personas.find((item) => item.id === event.target.value);
-            if (next) onSelectPersona(next);
-          }}
-        >
-          {personas.map((item) => (
-            <option key={item.id} value={item.id}>
-              {item.name}
-            </option>
-          ))}
-        </select>
-      </label>
+      <span className="brand-inline">
+        <strong>Dramatis</strong>
+        <span className="hint">世界视图预留</span>
+      </span>
 
       <div className="topbar-spacer" />
+
+      {backgroundPending > 0 ? <span className="tag">后台任务 {backgroundPending}</span> : null}
 
       {degraded ? (
         <span className="tag danger-tag" title="当前浏览器不允许使用 IndexedDB，数据只存在内存里">
@@ -95,26 +44,6 @@ export function TopBar({
       ) : (
         <span className="hint">存储：{backendKind || '…'}</span>
       )}
-
-      {active ? (
-        <button
-          type="button"
-          className="ghost danger"
-          disabled={disabled}
-          title="删除这个世界（素材库里的角色卡与世界书会保留）"
-          onClick={() => {
-            if (window.confirm(`确定删除「${active.title}」？全部对话、角色状态与记忆都会被清空。`)) {
-              onDeleteRoom(active.id);
-            }
-          }}
-        >
-          删除世界
-        </button>
-      ) : null}
-
-      <button type="button" className="ghost" disabled={disabled} onClick={onReset}>
-        重开
-      </button>
     </header>
   );
 }

@@ -8,6 +8,25 @@ import type { ConversationId, EventId, InstanceId, MessageId, RoomId, SceneId } 
  */
 export type MessageRole = 'player' | 'character' | 'system' | 'narration' | 'admin';
 
+/**
+ * 管理员产出的素材草稿（LAYOUT「管理员产出的角色卡、世界卡由用户决定去留」）。
+ *
+ * 草稿挂在消息上：副对话刷新后仍要能看见「当时起草了什么」，而用户还没
+ * 决定的东西不能直接进素材库——否则素材库会堆满没人要的废稿。
+ */
+export interface AdminArtifact {
+  id: string;
+  kind: 'character-card' | 'world-book' | 'scene';
+  title: string;
+  summary: string;
+  status: 'pending' | 'adopted' | 'discarded' | 'applied';
+  /** 待采纳的实体内容（序列化后的角色卡 / 世界书）。 */
+  payload: unknown;
+  /** 采纳后落库得到的 id；场景类草稿在执行时就写入，直接记目标场景。 */
+  targetId: string | null;
+  createdAt: string;
+}
+
 export interface Message {
   id: MessageId;
   roomId: RoomId;
@@ -40,6 +59,8 @@ export interface Message {
    */
   audience: InstanceId[];
   content: string;
+  /** 副对话里管理员这次产出的草稿；主对话的消息不带这个字段。 */
+  artifacts?: AdminArtifact[];
   createdAt: string;
 }
 

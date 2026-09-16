@@ -15,7 +15,7 @@ import {
   type WorldBookId,
 } from '../model/ids.js';
 import type { CharacterInstance } from '../model/instance.js';
-import type { MemoryEvent, Message } from '../model/message.js';
+import type { AdminArtifact, MemoryEvent, Message } from '../model/message.js';
 import { createPersona, type Persona } from '../model/persona.js';
 import type { ProviderProfile } from '../model/provider.js';
 import type { Room, Scene } from '../model/room.js';
@@ -512,6 +512,60 @@ export class Repository {
   /** 删除单条消息，用于消息编辑与重抽（P0-7）。 */
   async deleteMessage(id: MessageId): Promise<void> {
     await this.store.remove(COLLECTIONS.messages, id);
+  }
+
+  /**
+   * 采纳一条管理员草稿：把草稿内容真正写进素材库。
+   *
+   * 「采纳」是用户的动作，所以草稿在起草时只挂在消息上；只有走到这里
+   * 才会出现一张新的角色卡或一本新的世界书。已经处理过的草稿不会被
+   * 二次采纳——重复点击不该产生第二份一模一样的素材。
+   */
+  async adoptAdminArtifact(
+    messageId: MessageId,
+    artifactId: string,
+  ): Promise<{ message: Message; artifact: AdminArtifact | null } | null> {
+    const message = await this.store.get<Message>(COLLECTIONS.messages, messageId);
+    if (!message || message.artifacts === undefined) return null;
+
+    const target = message.artifacts.find((item) => item.id === artifactId);
+    if (target?.status !== 'pending') return { message, artifact: target ?? null };
+
+    let targetId: string | null = null;
+    if (target.kind === 'character-card') {
+      const card = target.payload as Card;
+      await this.saveCard(card);
+      targetId = card.id;
+    } else if (target.kind === 'world-book') {
+      const book = target.payload as WorldBook;
+      await this.saveWorldBook(book);
+      targetId = book.id;
+    } else {
+      targetId = target.targetId;
+    }
+
+    const adopted: AdminArtifact = { ...target, status: 'adopted', targetId };
+    const updated: Message = {
+      ...message,
+      artifacts: message.artifacts.map((item) => (item.id === artifactId ? adopted : item)),
+    };
+    await this.store.put(COLLECTIONS.messages, updated);
+    return { message: updated, artifact: adopted };
+  }
+
+  /** 丢弃一条草稿：只改状态，不删记录——用户可能过一会儿又想要它。 */
+  async discardAdminArtifact(messageId: MessageId, artifactId: string): Promise<Message | null> {
+    const message = await this.store.get<Message>(COLLECTIONS.messages, messageId);
+    if (!message || message.artifacts === undefined) return null;
+
+    const updated: Message = {
+      ...message,
+      artifacts: message.artifacts.map((item) =>
+        item.id === artifactId && item.status === 'pending' ? { ...item, status: 'discarded' } : item,
+      ),
+    };
+    await this.store.put(COLLECTIONS.messages, updated);
+    return updated;
   }
 
   /** 删除某个回合产生的全部消息，用于重抽（P0-7）。返回删除数量。 */

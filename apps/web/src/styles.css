@@ -25,31 +25,44 @@ body {
   line-height: 1.6;
 }
 
+/* ---------- 骨架（LAYOUT） ---------- */
+
 .app {
   display: flex;
   flex-direction: column;
+  gap: 8px;
   height: 100vh;
-  padding: 16px;
-  gap: 12px;
+  padding: 10px;
 }
 
 .app-body {
   display: grid;
-  grid-template-columns: 340px minmax(0, 1fr) 360px;
-  gap: 12px;
   flex: 1;
+  gap: 8px;
+  grid-template-columns: 300px minmax(0, 1fr);
   min-height: 0;
 }
 
+/* 折叠后只剩主区 */
+.app-body.collapsed {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+/* 顶栏是窄的：左上角折叠，其余留给未来的世界视图 */
 .topbar {
   align-items: center;
   background: var(--panel);
   border: 1px solid var(--line);
   border-radius: var(--radius);
   display: flex;
-  flex-wrap: wrap;
-  gap: 12px;
-  padding: 8px 14px;
+  gap: 10px;
+  min-height: 40px;
+  padding: 4px 10px;
+}
+
+.rail-toggle {
+  font-size: 14px;
+  padding: 4px 10px;
 }
 
 .brand-inline {
@@ -58,18 +71,8 @@ body {
   gap: 8px;
 }
 
-.brand-inline h1 {
-  font-size: 16px;
-  letter-spacing: 0.06em;
-  margin: 0;
-}
-
-.topbar-field {
-  align-items: center;
-  display: flex;
-  flex-direction: row;
-  gap: 6px;
-  font-size: 12px;
+.brand-inline {
+  letter-spacing: 0.04em;
 }
 
 .topbar-spacer {
@@ -79,11 +82,6 @@ body {
 .danger-tag {
   background: rgba(217, 112, 95, 0.18);
   color: var(--danger);
-}
-
-.design-sidebar.collapsed {
-  align-items: flex-start;
-  padding-top: 8px;
 }
 
 .design-tabs {
@@ -108,6 +106,11 @@ body {
   background: rgba(217, 164, 65, 0.14);
   border-color: var(--accent-soft);
   color: var(--accent);
+}
+
+.tab:disabled,
+.ghost:disabled {
+  opacity: 0.5;
 }
 
 .stack {
@@ -164,26 +167,6 @@ body {
   align-items: center;
   display: flex;
   justify-content: space-between;
-}
-
-.sidebar,
-.main {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-  min-height: 0;
-  overflow-y: auto;
-}
-
-.brand h1 {
-  margin: 0;
-  font-size: 20px;
-  letter-spacing: 0.06em;
-}
-
-.brand span {
-  color: var(--muted-text);
-  font-size: 12px;
 }
 
 .panel {
@@ -452,13 +435,6 @@ button.ghost {
   border-top: 1px dashed var(--line);
 }
 
-/* 放在基础表单样式之后：这两条比 input/select 更具体，
-   写在使用它们的元素之前会让层叠顺序变得难以推理。 */
-.topbar-field select {
-  min-width: 140px;
-  width: auto;
-}
-
 .inline input {
   flex: 1;
 }
@@ -652,24 +628,20 @@ button.ghost {
   min-height: 420px;
 }
 
-.chat-header {
-  align-items: center;
-  display: flex;
-  justify-content: space-between;
-}
-
 .chat-body {
   display: flex;
   flex-direction: column;
   gap: 10px;
   flex: 1;
-  min-height: 200px;
+  min-height: 0;
   overflow-y: auto;
+  padding: 12px 14px;
 }
 
 .bubble {
   border-radius: var(--radius);
-  max-width: 82%;
+  /* 列宽已经限过一次（.message-column），这里再限一次会让长句提前折行 */
+  max-width: 100%;
   padding: 9px 12px;
 }
 
@@ -723,14 +695,15 @@ button.ghost {
 }
 
 .composer {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  border-top: 1px solid var(--line);
+  display: flex;
+  flex-direction: column;
   gap: 8px;
-  align-items: end;
+  padding: 10px 14px 12px;
 }
 
 .composer textarea {
-  min-height: 62px;
+  min-height: 56px;
 }
 
 .stats {
@@ -792,4 +765,593 @@ details summary {
     grid-template-columns: minmax(0, 1fr);
     height: auto;
   }
+}
+
+/* ---------- 左栏：顶部按钮 / 中部列表 / 底部设置 ---------- */
+
+.left-rail {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 0;
+  padding: 10px;
+}
+
+.rail-actions {
+  display: grid;
+  gap: 6px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.hidden-file {
+  display: none;
+}
+
+.rail-actions button {
+  font-size: 12px;
+  padding: 7px 8px;
+}
+
+.rail-actions .ghost.active,
+.rail-foot .ghost.active {
+  background: rgba(217, 164, 65, 0.14);
+  border-color: var(--accent-soft);
+  color: var(--accent);
+}
+
+.rail-body {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.rail-panel-head {
+  align-items: baseline;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.rail-panel-head button {
+  align-self: flex-start;
+}
+
+.rail-foot {
+  border-top: 1px dashed var(--line);
+  padding-top: 8px;
+}
+
+.rail-foot button {
+  width: 100%;
+}
+
+.rail-caption {
+  color: var(--muted-text);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+}
+
+.rail-empty {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+/* ---------- 世界与对话列表 ---------- */
+
+.world-list,
+.conversation-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.world {
+  border: 1px solid transparent;
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 4px;
+}
+
+.world.active {
+  background: rgba(217, 164, 65, 0.06);
+  border-color: var(--accent-soft);
+}
+
+.world-row {
+  align-items: center;
+  display: flex;
+  gap: 4px;
+}
+
+.world-open,
+.conversation-open {
+  background: transparent;
+  border: none;
+  color: var(--text);
+  cursor: pointer;
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  font-weight: 400;
+  gap: 2px;
+  min-width: 0;
+  padding: 4px;
+  text-align: left;
+}
+
+.world-title {
+  font-weight: 600;
+}
+
+.conversation-list {
+  border-left: 1px dashed var(--line);
+  margin-left: 6px;
+  padding-left: 6px;
+}
+
+.conversation-list li {
+  align-items: center;
+  border-radius: 6px;
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+}
+
+.conversation-list li.active {
+  background: rgba(217, 164, 65, 0.1);
+}
+
+.conversation-open {
+  align-items: center;
+  flex-direction: row;
+  gap: 6px;
+}
+
+.conversation-open span:first-child {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.conversation-list .ghost {
+  font-size: 11px;
+  padding: 2px 6px;
+}
+
+/* ---------- 主区 ---------- */
+
+.workspace {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-rows: auto minmax(0, 1fr);
+  min-height: 0;
+}
+
+.main-header {
+  align-items: center;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  grid-column: 1 / -1;
+  padding: 6px 12px;
+}
+
+.main-title {
+  align-items: baseline;
+  display: flex;
+  gap: 6px;
+  min-width: 0;
+}
+
+.world-name {
+  font-weight: 600;
+}
+
+.dot {
+  color: var(--muted-text);
+}
+
+.conversation-name {
+  background: transparent;
+  border: 1px dashed transparent;
+  color: var(--accent);
+  font: inherit;
+  font-weight: 600;
+  padding: 2px 4px;
+  width: auto;
+  min-width: 8rem;
+  max-width: 16rem;
+}
+
+.conversation-name:hover,
+.conversation-name:focus {
+  border-color: var(--line);
+}
+
+.cast-inline {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.cast-chip {
+  background: var(--panel-soft);
+  border-radius: 10px;
+  font-size: 12px;
+  padding: 2px 8px;
+}
+
+.kind-switch {
+  display: flex;
+  gap: 4px;
+}
+
+.workspace-body {
+  display: flex;
+  gap: 8px;
+  grid-column: 1;
+  grid-row: 2;
+  min-height: 0;
+  min-width: 0;
+}
+
+.chat-surface {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+}
+
+.chat-surface.empty {
+  align-items: flex-start;
+  gap: 6px;
+  grid-column: 1 / -1;
+  padding: 16px;
+}
+
+.chat-surface.drop-active {
+  border-color: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+/* ---------- 消息 ---------- */
+
+.message-row {
+  align-items: flex-start;
+  display: flex;
+  gap: 8px;
+}
+
+.message-row.player {
+  flex-direction: row-reverse;
+}
+
+.message-column {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-width: 78%;
+  min-width: 0;
+}
+
+.message-row.player .message-column {
+  align-items: flex-end;
+}
+
+.message-name {
+  color: var(--muted-text);
+  font-size: 11px;
+}
+
+.avatar {
+  align-items: center;
+  border-radius: 50%;
+  color: #fff;
+  display: flex;
+  flex: 0 0 auto;
+  font-size: 14px;
+  justify-content: center;
+}
+
+/* 动作不在气泡里：它是描写，不是谁说的话 */
+.action-line {
+  color: var(--muted-text);
+  font-style: italic;
+  margin: 0;
+  padding-left: 4px;
+}
+
+.narration-line {
+  align-self: center;
+  border-top: 1px dashed var(--line);
+  border-bottom: 1px dashed var(--line);
+  color: var(--muted-text);
+  font-size: 12px;
+  margin: 0;
+  padding: 4px 10px;
+  text-align: center;
+}
+
+.bubble-actions.action-only {
+  margin-top: 0;
+}
+
+/* ---------- 输入区 ---------- */
+
+.composer-tools {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.composer-tools .ghost {
+  font-size: 12px;
+  padding: 5px 10px;
+}
+
+.mode-anchor {
+  position: relative;
+}
+
+.mode-menu {
+  background: var(--panel-soft);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  bottom: calc(100% + 6px);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  left: 0;
+  min-width: 260px;
+  padding: 10px 12px;
+  position: absolute;
+  z-index: 5;
+}
+
+.mode-option {
+  align-items: flex-start;
+  cursor: pointer;
+  display: flex;
+  flex-direction: row;
+  gap: 8px;
+}
+
+.mode-option input {
+  width: auto;
+}
+
+.mode-option span {
+  display: flex;
+  flex-direction: column;
+}
+
+/* ---------- 右缘窄栏 ---------- */
+
+.cast-rail {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  grid-column: 2;
+  grid-row: 2;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 8px 6px;
+  width: 104px;
+}
+
+.cast-rail-list,
+.cast-rail-extra {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.cast-card {
+  align-items: center;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  color: var(--text);
+  cursor: grab;
+  display: flex;
+  flex-direction: column;
+  font-weight: 400;
+  gap: 2px;
+  padding: 6px 4px;
+}
+
+.cast-card.onstage {
+  background: rgba(217, 164, 65, 0.1);
+  border-color: var(--accent-soft);
+}
+
+.cast-card.dim {
+  opacity: 0.55;
+}
+
+.cast-card-name {
+  font-size: 11px;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cast-card-state {
+  color: var(--muted-text);
+  font-size: 10px;
+}
+
+/* ---------- 运行时面板（抽屉） ---------- */
+
+.runtime-drawer {
+  display: none;
+}
+
+.runtime-drawer.open {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 0;
+  overflow-y: auto;
+  width: 340px;
+}
+
+/* ---------- 副对话 ---------- */
+
+.admin-hint {
+  border-bottom: 1px dashed var(--line);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-bottom: 8px;
+}
+
+.admin-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.admin-role {
+  color: var(--muted-text);
+  font-size: 11px;
+}
+
+.admin-text {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.admin-row.player .admin-text {
+  color: var(--accent);
+}
+
+.admin-text.streaming {
+  opacity: 0.85;
+}
+
+.artifact {
+  background: var(--panel-soft);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px;
+}
+
+.artifact.adopted {
+  border-color: var(--accent-soft);
+}
+
+.artifact.discarded {
+  opacity: 0.5;
+}
+
+.artifact-head {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+/* ---------- 对话框 ---------- */
+
+.modal-backdrop {
+  align-items: center;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex;
+  inset: 0;
+  justify-content: center;
+  padding: 24px;
+  position: fixed;
+  z-index: 20;
+}
+
+.modal {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-height: 100%;
+  max-width: 560px;
+  padding: 14px 16px;
+  position: relative;
+  width: 100%;
+  z-index: 1;
+}
+
+/* 点空白处关闭：用一块铺满的透明按钮，键盘用户也有可聚焦的关闭途径 */
+.modal-scrim {
+  background: transparent;
+  border: none;
+  cursor: default;
+  inset: 0;
+  padding: 0;
+  position: absolute;
+}
+
+.modal-head {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.modal-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  overflow-y: auto;
+}
+
+.modal-foot {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.picker {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 8px 10px;
+}
+
+.picker legend {
+  color: var(--muted-text);
+  font-size: 12px;
+  padding: 0 4px;
 }

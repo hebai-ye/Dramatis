@@ -1,16 +1,26 @@
 import {
+  type ArchiveReport,
+  conversationId as asConversationId,
+  roomId as asRoomId,
   type Card,
   type CardId,
   type CharacterInstance,
+  type Conversation,
+  type ConversationId,
+  createGreetingMessage,
+  createPersona,
   type EventId,
   type InstanceId,
   META_KEYS,
   type MemoryEvent,
   type Message,
   type MessageId,
+  newId,
   nowIso,
   type Persona,
   type Presence,
+  planNewConversation,
+  type Room,
   type RoomId,
   type RoomSnapshot,
   type RoomSummary,
@@ -21,7 +31,7 @@ import {
 } from '@dramatis/core';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { type DramatisDb, openDramatisDb } from './db';
-import { createInstanceFor, createSceneFor, createWorldFromCard } from './world';
+import { createInstanceFor, createSceneFor } from './world';
 
 export interface BootReport {
   backendKind: string;
@@ -77,27 +87,84 @@ export function useDatabase(): {
   return { db, boot, error };
 }
 
+export interface StartConversationInput {
+  title: string;
+  /** 这条线开始时投入的角色卡；已有实例的卡不会被重复派生。 */
+  cards: Card[];
+  worldBookIds?: WorldBookId[];
+  sceneTitle?: string;
+  sceneSummary?: string;
+  location?: string;
+  worldTime?: string;
+}
+
 export interface SessionApi {
   ready: boolean;
   error: string | null;
-  rooms: RoomSummary[];
-  snapshot: RoomSnapshot | null;
-  activeScene: Scene | null;
-  openRoom: (id: RoomId) => Promise<void>;
-  /** 返回新建房间的快照，便于调用方接着写入开场白。 */
-  createRoom: (card: Card, persona: Persona) => Promise<RoomSnapshot | null>;
-  /** 把手里的角色卡加入当前房间，成为新的角色实例（P0-3）。 */
+  clearError: () => void;
+
+  /** 世界列表（左栏中部）。 */
+  worlds: RoomSummary[];
+  world: Room | null;
+  /** 当前世界的对话，已归档的单独一份。 */
+  conversations: Conversation[];
+  archivedConversations: Conversation[];
+  /** 当前打开的对话。 */
+  conversation: Conversation | null;
+  scene: Scene | null;
+  /** 当前对话的消息；副对话用它渲染管理员工作流。 */
+  messages: Message[];
+  instances: CharacterInstance[];
+  cards: Card[];
+  worldBooks: WorldBook[];
+  memories: MemoryEvent[];
+  personas: Persona[];
+  library: { cards: Card[]; worldBooks: WorldBook[] };
+
+  openWorld: (id: RoomId) => Promise<void>;
+  createWorld: (input: {
+    title: string;
+    persona: Persona | null;
+    cards: Card[];
+    worldBookIds?: WorldBookId[];
+  }) => Promise<RoomId | null>;
+  deleteWorld: (id: RoomId) => Promise<void>;
+  renameWorld: (title: string) => Promise<void>;
+
+  openConversation: (id: ConversationId) => Promise<void>;
+  startConversation: (input: StartConversationInput) => Promise<Conversation | null>;
+  /** 打开（或新建）这个世界的副对话。 */
+  openSideConversation: () => Promise<Conversation | null>;
+  updateConversation: (patch: Partial<Conversation>) => Promise<void>;
+  archiveConversation: (id: ConversationId) => Promise<ArchiveReport | null>;
+  deleteConversation: (id: ConversationId) => Promise<void>;
+
   addInstance: (card: Card) => Promise<CharacterInstance | null>;
   removeInstance: (id: InstanceId) => Promise<void>;
   updateInstance: (id: InstanceId, patch: Partial<CharacterInstance>) => Promise<void>;
-  /** 切换在场状态，并同步场景名单（P0-6）。 */
   setPresence: (id: InstanceId, presence: Presence) => Promise<void>;
-  /** 结束当前场景并开一个新的（P0-6）。 */
-  startNewScene: (title: string) => Promise<void>;
+
+  /** 结束当前场景并开一个新的；返回新场景，便于接着写换场旁白。 */
+  startNewScene: (input: {
+    title: string;
+    location?: string;
+    worldTime?: string;
+    summary?: string;
+  }) => Promise<Scene | null>;
+  updateScene: (patch: Partial<Scene>) => Promise<void>;
+  /**
+   * 在世界层面设置当前场景，作用于这个世界最近的主对话。
+   *
+   * 副对话自己没有场景线（管理员不参与剧情），所以它的 `set_scene` 工具
+   * 必须落到主对话上——否则「设置当前场景」会写进一条没有场景的对话里，
+   * 用户什么也看不到。
+   */
+  setWorldScene: (patch: Partial<Scene>) => Promise<Scene | null>;
+
   deleteMessage: (id: MessageId) => Promise<void>;
-  updateMessage: (id: MessageId, patch: Partial<Message>) => Promise<void>;
-  /** 重新从存储载入当前房间；后台任务写入记忆后调用。 */
-  reloadRoom: () => Promise<void>;
+  updateMessage: (id: MessageId, patch: Partial<Message>) => Promise<Message | null>;
+  /** 重新从存储载入当前世界；后台任务写入记忆后调用。 */
+  reloadWorld: () => Promise<void>;
   updateMemory: (id: EventId, patch: Partial<MemoryEvent>) => Promise<void>;
   deleteMemory: (id: EventId) => Promise<void>;
   markRecalled: (events: readonly MemoryEvent[], now: string) => Promise<void>;
@@ -107,38 +174,35 @@ export interface SessionApi {
    * 只删记忆是不够的——重抽五次而每次都叠加情绪，关系会单向漂移。
    */
   revertTurn: (turnId: string) => Promise<void>;
-  /** 把一本世界书挂到当前房间。core 早就实现了匹配，这里补上入口。 */
+  /** 把一本世界书挂到当前世界。core 早就实现了匹配，这里补上入口。 */
   attachWorldBook: (book: WorldBook) => Promise<void>;
-  /** 只解绑，不删库——世界书可能被别的房间共用。 */
+  /** 只解绑，不删库——世界书可能被别的世界共用。 */
   detachWorldBook: (id: WorldBookId) => Promise<void>;
-  /** 素材库（全局，不属于任何房间），侧边栏的设计功能用。 */
-  library: { cards: Card[]; worldBooks: WorldBook[] };
   saveCard: (card: Card) => Promise<void>;
   deleteCard: (id: CardId) => Promise<void>;
   saveWorldBook: (book: WorldBook) => Promise<void>;
   deleteWorldBook: (id: WorldBookId) => Promise<void>;
+  /** 采纳 / 丢弃管理员起草的素材（副对话）。 */
+  adoptArtifact: (messageId: MessageId, artifactId: string) => Promise<void>;
+  discardArtifact: (messageId: MessageId, artifactId: string) => Promise<void>;
   /**
-   * 切换这个房间使用的玩家身份（P0-3）。
+   * 切换这个世界使用的玩家身份（P0-3）。
    *
    * 刻意不叫 `usePersona`：以 `use` 开头的名字会被 lint 当成 React Hook，
    * 于是每次在事件回调里调用都会报「Hook 不能在非顶层调用」。
    */
   setPersona: (persona: Persona) => Promise<void>;
   savePersona: (persona: Persona) => Promise<void>;
-  /** 删除身份；引用它的房间会退回内联字段，不会被连带删除。 */
+  /** 删除身份；引用它的世界会退回内联字段，不会被连带删除。 */
   deletePersona: (id: string) => Promise<void>;
   listPersonas: () => Promise<Persona[]>;
-  deleteRoom: (id: RoomId) => Promise<void>;
   appendMessages: (messages: readonly Message[]) => Promise<void>;
-  updateScene: (patch: Partial<Scene>) => Promise<void>;
-  renameRoom: (title: string) => Promise<void>;
-  clearError: () => void;
 }
 
 export function useSession(db: DramatisDb | null): SessionApi {
   const [ready, setReady] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [rooms, setRooms] = useState<RoomSummary[]>([]);
+  const [worlds, setWorlds] = useState<RoomSummary[]>([]);
   const [library, setLibrary] = useState<{ cards: Card[]; worldBooks: WorldBook[] }>({
     cards: [],
     worldBooks: [],
@@ -152,9 +216,9 @@ export function useSession(db: DramatisDb | null): SessionApi {
     setSnapshotState(next);
   }, []);
 
-  const refreshRooms = useCallback(async () => {
+  const refreshWorlds = useCallback(async () => {
     if (!db) return;
-    setRooms(await db.repository.listRooms());
+    setWorlds(await db.repository.listRooms());
   }, [db]);
 
   const refreshLibrary = useCallback(async () => {
@@ -162,6 +226,41 @@ export function useSession(db: DramatisDb | null): SessionApi {
     const [cards, worldBooks] = await Promise.all([db.repository.listCards(), db.repository.listWorldBooks()]);
     setLibrary({ cards, worldBooks });
   }, [db]);
+
+  /**
+   * 开一条新对话时，让场上的角色先开口。
+   *
+   * 卡从仓储层现取而不是从 React 状态取：刚导入的卡可能还没进 state，
+   * 而开场白写不写得起取决于能不能拿到那张卡。
+   */
+  const buildGreetings = useCallback(
+    async (room: Room, scene: Scene | null, instances: readonly CharacterInstance[]): Promise<Message[]> => {
+      if (!db) return [];
+
+      const greetings: Message[] = [];
+      for (const instance of instances) {
+        const card = await db.repository.getCard(instance.cardId);
+        if (!card) continue;
+        const greeting = createGreetingMessage({
+          card,
+          instance,
+          room,
+          scene,
+          audience: scene?.cast ?? [instance.id],
+        });
+        if (greeting) greetings.push(greeting);
+      }
+      return greetings;
+    },
+    [db],
+  );
+
+  const reloadWorld = useCallback(async () => {
+    const current = snapshotRef.current;
+    if (!db || !current) return;
+    const loaded = await db.repository.loadRoom(current.room.id);
+    if (loaded) setSnapshot(loaded);
+  }, [db, setSnapshot]);
 
   useEffect(() => {
     if (!db) return;
@@ -174,7 +273,7 @@ export function useSession(db: DramatisDb | null): SessionApi {
           const loaded = await db.repository.loadRoom(lastRoomId);
           if (loaded && !cancelled) setSnapshot(loaded);
         }
-        await refreshRooms();
+        await refreshWorlds();
         await refreshLibrary();
       } catch (sessionError) {
         if (!cancelled) {
@@ -188,45 +287,93 @@ export function useSession(db: DramatisDb | null): SessionApi {
     return () => {
       cancelled = true;
     };
-  }, [db, refreshLibrary, refreshRooms, setSnapshot]);
+  }, [db, refreshLibrary, refreshWorlds, setSnapshot]);
 
-  const openRoom = useCallback(
+  // 没有身份就先造一个，否则新世界无从创建
+  useEffect(() => {
+    if (!db || !ready) return;
+    void (async () => {
+      const list = await db.repository.listPersonas();
+      if (list.length > 0) return;
+      await db.repository.savePersona(createPersona({ name: '玩家' }));
+      await reloadWorld();
+    })();
+  }, [db, ready, reloadWorld]);
+
+  const openWorld = useCallback(
     async (id: RoomId) => {
       if (!db) return;
       const loaded = await db.repository.loadRoom(id);
       if (!loaded) {
-        setError('这个房间已经不存在了');
+        setError('这个世界已经不存在了');
         return;
       }
       setSnapshot(loaded);
       await db.repository.setMeta(META_KEYS.lastRoomId, id);
-      await refreshRooms();
+      await refreshWorlds();
     },
-    [db, refreshRooms, setSnapshot],
+    [db, refreshWorlds, setSnapshot],
   );
 
-  const createRoom = useCallback(
-    async (card: Card, persona: Persona): Promise<RoomSnapshot | null> => {
+  const createWorld = useCallback(
+    async (input: {
+      title: string;
+      persona: Persona | null;
+      cards: Card[];
+      worldBookIds?: WorldBookId[];
+    }): Promise<RoomId | null> => {
       if (!db) return null;
-      const world = createWorldFromCard(card, persona);
+      const now = nowIso();
+      const cards = input.cards;
+      const persona = input.persona;
+
+      const emptyRoom: Room = {
+        id: asRoomId(newId()),
+        title: input.title.trim() === '' ? '新世界' : input.title.trim(),
+        personaId: persona?.id ?? null,
+        playerName: persona?.name ?? '玩家',
+        playerPersona: persona?.description ?? '',
+        cardIds: [],
+        instanceIds: [],
+        worldBookIds: input.worldBookIds ?? [],
+        activeConversationId: null,
+        createdAt: now,
+        updatedAt: now,
+      };
+
+      // 空白世界也要有一条对话线，否则用户进来看到的是一个无处落脚的壳
+      const plan = planNewConversation({
+        room: emptyRoom,
+        existingInstances: [],
+        title: '开场',
+        cards,
+        sceneTitle: '开场',
+        sceneSummary: cards[0]?.scenario.trim() ?? '',
+      });
 
       await db.repository.saveSnapshot({
-        room: world.room,
-        scenes: [world.scene],
-        instances: [world.instance],
-        cards: [card],
+        room: plan.room,
+        conversations: [plan.conversation],
+        scenes: [plan.scene],
+        instances: plan.createdInstances,
+        cards,
       });
-      await db.repository.setMeta(META_KEYS.lastRoomId, world.room.id);
+      await db.repository.setMeta(META_KEYS.lastRoomId, plan.room.id);
 
-      const loaded = await db.repository.loadRoom(world.room.id);
+      for (const greeting of await buildGreetings(plan.room, plan.scene, plan.createdInstances)) {
+        await db.repository.appendMessages(plan.room.id, [greeting]);
+      }
+
+      const loaded = await db.repository.loadRoom(plan.room.id);
       setSnapshot(loaded);
-      await refreshRooms();
-      return loaded;
+      await refreshWorlds();
+      await refreshLibrary();
+      return plan.room.id;
     },
-    [db, refreshRooms, setSnapshot],
+    [buildGreetings, db, refreshLibrary, refreshWorlds, setSnapshot],
   );
 
-  const deleteRoom = useCallback(
+  const deleteWorld = useCallback(
     async (id: RoomId) => {
       if (!db) return;
       await db.repository.deleteRoom(id);
@@ -236,9 +383,157 @@ export function useSession(db: DramatisDb | null): SessionApi {
         setSnapshot(null);
         await db.repository.setMeta(META_KEYS.lastRoomId, null);
       }
-      await refreshRooms();
+      await refreshWorlds();
     },
-    [db, refreshRooms, setSnapshot],
+    [db, refreshWorlds, setSnapshot],
+  );
+
+  const renameWorld = useCallback(
+    async (title: string) => {
+      const current = snapshotRef.current;
+      if (!db || !current) return;
+
+      const room = { ...current.room, title };
+      await db.repository.saveRoom(room);
+      setSnapshot({ ...current, room });
+      await refreshWorlds();
+    },
+    [db, refreshWorlds, setSnapshot],
+  );
+
+  const openConversation = useCallback(
+    async (id: ConversationId) => {
+      const current = snapshotRef.current;
+      if (!db || !current) return;
+      if (current.room.activeConversationId === id) return;
+
+      const room: Room = { ...current.room, activeConversationId: id, updatedAt: nowIso() };
+      await db.repository.saveRoom(room);
+      setSnapshot({ ...current, room });
+    },
+    [db, setSnapshot],
+  );
+
+  const startConversation = useCallback(
+    async (input: StartConversationInput): Promise<Conversation | null> => {
+      const current = snapshotRef.current;
+      if (!db || !current) return null;
+
+      const cards = input.cards;
+      const plan = planNewConversation({
+        room: current.room,
+        existingInstances: current.instances,
+        title: input.title,
+        cards,
+        sceneTitle: input.sceneTitle,
+        sceneSummary: input.sceneSummary,
+        location: input.location,
+        worldTime: input.worldTime,
+      });
+
+      const worldBookIds = [...new Set([...plan.room.worldBookIds, ...(input.worldBookIds ?? [])])];
+      const room: Room = { ...plan.room, worldBookIds, updatedAt: nowIso() };
+
+      await db.repository.saveSnapshot({
+        room,
+        conversations: [plan.conversation],
+        scenes: [plan.scene],
+        instances: plan.createdInstances,
+        cards,
+      });
+      await db.repository.setMeta(META_KEYS.lastRoomId, room.id);
+
+      // 开幕由场上的角色开场：新对话是一片空白的白纸，什么都不摆会更让人无措
+      const openingCast = [...current.instances, ...plan.createdInstances].filter((instance) =>
+        plan.scene.cast.includes(instance.id),
+      );
+      const greetings = await buildGreetings(room, plan.scene, openingCast);
+      for (const greeting of greetings) {
+        await db.repository.appendMessages(room.id, [greeting]);
+      }
+
+      const loaded = await db.repository.loadRoom(room.id);
+      setSnapshot(loaded);
+      await refreshWorlds();
+      await refreshLibrary();
+      return plan.conversation;
+    },
+    [buildGreetings, db, refreshLibrary, refreshWorlds, setSnapshot],
+  );
+
+  const openSideConversation = useCallback(async (): Promise<Conversation | null> => {
+    const current = snapshotRef.current;
+    if (!db || !current) return null;
+
+    const existing = current.conversations.find((item) => item.kind === 'side' && item.archivedAt === null);
+    if (existing) {
+      await openConversation(existing.id);
+      return existing;
+    }
+
+    const now = nowIso();
+    const conversation: Conversation = {
+      id: asConversationId(newId()),
+      roomId: current.room.id,
+      kind: 'side',
+      title: '世界管理',
+      activeSceneId: null,
+      modes: { playerFirst: false, silent: false },
+      archivedAt: null,
+      stateSnapshot: [],
+      createdAt: now,
+      updatedAt: now,
+    };
+    const room: Room = { ...current.room, activeConversationId: conversation.id, updatedAt: now };
+
+    await db.repository.saveConversation(conversation);
+    await db.repository.saveRoom(room);
+    setSnapshot({ ...current, room, conversations: [...current.conversations, conversation] });
+    return conversation;
+  }, [db, openConversation, setSnapshot]);
+
+  const updateConversation = useCallback(
+    async (patch: Partial<Conversation>) => {
+      const current = snapshotRef.current;
+      if (!db || !current) return;
+      const target = current.conversations.find((item) => item.id === current.room.activeConversationId);
+      if (!target) return;
+
+      const next: Conversation = { ...target, ...patch, id: target.id, roomId: target.roomId, updatedAt: nowIso() };
+      await db.repository.saveConversation(next);
+      setSnapshot({
+        ...current,
+        conversations: current.conversations.map((item) => (item.id === next.id ? next : item)),
+      });
+    },
+    [db, setSnapshot],
+  );
+
+  const archiveConversation = useCallback(
+    async (id: ConversationId): Promise<ArchiveReport | null> => {
+      const current = snapshotRef.current;
+      if (!db || !current) return null;
+
+      const report = await db.repository.archiveConversation(id);
+      const loaded = await db.repository.loadRoom(current.room.id);
+      if (loaded) setSnapshot(loaded);
+      await refreshWorlds();
+      return report;
+    },
+    [db, refreshWorlds, setSnapshot],
+  );
+
+  const deleteConversation = useCallback(
+    async (id: ConversationId) => {
+      const current = snapshotRef.current;
+      if (!db || !current) return;
+
+      await db.repository.deleteConversation(id);
+      const loaded = await db.repository.loadRoom(current.room.id);
+      if (loaded) setSnapshot(loaded);
+      await refreshWorlds();
+    },
+    [db, refreshWorlds, setSnapshot],
   );
 
   const appendMessages = useCallback(
@@ -248,9 +543,24 @@ export function useSession(db: DramatisDb | null): SessionApi {
 
       const stamped = await db.repository.appendMessages(current.room.id, messages);
       setSnapshot({ ...current, messages: [...current.messages, ...stamped] });
-      await refreshRooms();
+      await refreshWorlds();
     },
-    [db, refreshRooms, setSnapshot],
+    [db, refreshWorlds, setSnapshot],
+  );
+
+  const updateMessage = useCallback(
+    async (id: MessageId, patch: Partial<Message>): Promise<Message | null> => {
+      const current = snapshotRef.current;
+      if (!db || !current) return null;
+      const updated = await db.repository.updateMessage(id, patch);
+      if (!updated) return null;
+      setSnapshot({
+        ...current,
+        messages: current.messages.map((message) => (message.id === id ? updated : message)),
+      });
+      return updated;
+    },
+    [db, setSnapshot],
   );
 
   const updateScene = useCallback(
@@ -258,10 +568,11 @@ export function useSession(db: DramatisDb | null): SessionApi {
       const current = snapshotRef.current;
       if (!db || !current) return;
 
-      const scene = current.scenes.find((item) => item.id === current.room.activeSceneId);
+      const conversation = current.conversations.find((item) => item.id === current.room.activeConversationId);
+      const scene = current.scenes.find((item) => item.id === conversation?.activeSceneId);
       if (!scene) return;
 
-      const next: Scene = { ...scene, ...patch };
+      const next: Scene = { ...scene, ...patch, id: scene.id, roomId: scene.roomId };
       await db.repository.saveScene(next);
       setSnapshot({
         ...current,
@@ -271,17 +582,113 @@ export function useSession(db: DramatisDb | null): SessionApi {
     [db, setSnapshot],
   );
 
-  const renameRoom = useCallback(
-    async (title: string) => {
+  const setWorldScene = useCallback(
+    async (patch: Partial<Scene>): Promise<Scene | null> => {
       const current = snapshotRef.current;
-      if (!db || !current) return;
+      if (!db || !current) return null;
 
-      const room = { ...current.room, title };
-      await db.repository.saveRoom(room);
-      setSnapshot({ ...current, room });
-      await refreshRooms();
+      const mains = current.conversations
+        .filter((item) => item.kind === 'main' && item.archivedAt === null)
+        .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+      const target =
+        current.conversations.find((item) => item.id === current.room.activeConversationId && item.kind === 'main') ??
+        mains[0] ??
+        null;
+      if (!target) return null;
+
+      const existing = current.scenes.find((item) => item.id === target.activeSceneId) ?? null;
+      const now = nowIso();
+
+      // 主对话还没有场景时顺手开一个：管理员说「把地点设成酒馆」，
+      // 用户应该马上看到场景存在，而不是收到一句「没有场景可改」
+      const next: Scene =
+        existing === null
+          ? createSceneFor(
+              current.room.id,
+              target.id,
+              target.stateSnapshot.map((item) => item.instanceId),
+              {
+                title: patch.title ?? '开场',
+                summary: patch.summary ?? '',
+                location: patch.location ?? '',
+                worldTime: patch.worldTime ?? '',
+              },
+            )
+          : {
+              ...existing,
+              ...patch,
+              id: existing.id,
+              roomId: existing.roomId,
+              conversationId: existing.conversationId,
+            };
+
+      await db.repository.saveScene(next);
+      if (existing === null) {
+        await db.repository.saveConversation({ ...target, activeSceneId: next.id, updatedAt: now });
+      }
+
+      setSnapshot({
+        ...current,
+        scenes:
+          existing === null
+            ? [...current.scenes, next]
+            : current.scenes.map((item) => (item.id === next.id ? next : item)),
+        conversations:
+          existing === null
+            ? current.conversations.map((item) => (item.id === target.id ? { ...item, activeSceneId: next.id } : item))
+            : current.conversations,
+      });
+      return next;
     },
-    [db, refreshRooms, setSnapshot],
+    [db, setSnapshot],
+  );
+
+  const startNewScene = useCallback(
+    async (input: {
+      title: string;
+      location?: string;
+      worldTime?: string;
+      summary?: string;
+    }): Promise<Scene | null> => {
+      const current = snapshotRef.current;
+      if (!db || !current) return null;
+
+      const active = current.conversations.find((item) => item.id === current.room.activeConversationId);
+      if (!active) return null;
+
+      const previous = current.scenes.find((item) => item.id === active.activeSceneId) ?? null;
+      const cast = (previous?.cast ?? current.room.instanceIds).filter((id) =>
+        current.instances.some(
+          (instance) => instance.id === id && (instance.presence === 'onstage' || instance.presence === 'muted'),
+        ),
+      );
+
+      const now = nowIso();
+      const nextScene = createSceneFor(current.room.id, active.id, cast, {
+        title: input.title,
+        // 没填的地点与时间沿用上一场：换场通常只是换一段剧情，不是换掉整个世界
+        summary: input.summary ?? previous?.summary ?? '',
+        location: (input.location ?? '').trim() === '' ? (previous?.location ?? '') : (input.location ?? ''),
+        worldTime: (input.worldTime ?? '').trim() === '' ? (previous?.worldTime ?? '') : (input.worldTime ?? ''),
+      });
+      const closedScene: Scene | null = previous ? { ...previous, endedAt: now } : null;
+      const conversation: Conversation = { ...active, activeSceneId: nextScene.id, updatedAt: now };
+
+      if (closedScene) await db.repository.saveScene(closedScene);
+      await db.repository.saveScene(nextScene);
+      await db.repository.saveConversation(conversation);
+
+      setSnapshot({
+        ...current,
+        scenes: [
+          ...current.scenes.map((scene) => (closedScene && scene.id === closedScene.id ? closedScene : scene)),
+          nextScene,
+        ],
+        conversations: current.conversations.map((item) => (item.id === conversation.id ? conversation : item)),
+      });
+      return nextScene;
+    },
+    [db, setSnapshot],
   );
 
   const addInstance = useCallback(
@@ -289,37 +696,43 @@ export function useSession(db: DramatisDb | null): SessionApi {
       const current = snapshotRef.current;
       if (!db || !current) return null;
 
-      const instance = createInstanceFor(card, current.room.id);
-      const room = {
+      // 世界里已经有过这个角色的实例就复用：同一个角色在世界里只应该存在一份
+      const existing = current.instances.find((instance) => instance.cardId === card.id) ?? null;
+      const instance = existing ?? createInstanceFor(card, current.room.id);
+
+      const room: Room = {
         ...current.room,
         cardIds: current.room.cardIds.includes(card.id) ? current.room.cardIds : [...current.room.cardIds, card.id],
-        instanceIds: [...current.room.instanceIds, instance.id],
+        instanceIds: current.room.instanceIds.includes(instance.id)
+          ? current.room.instanceIds
+          : [...current.room.instanceIds, instance.id],
         updatedAt: nowIso(),
       };
 
-      const active = current.scenes.find((scene) => scene.id === room.activeSceneId);
+      const active = current.conversations.find((item) => item.id === room.activeConversationId);
+      const activeScene = current.scenes.find((item) => item.id === active?.activeSceneId);
       let scenes = current.scenes;
-      if (active) {
-        const nextScene: Scene = { ...active, cast: [...active.cast, instance.id] };
+      if (activeScene && !activeScene.cast.includes(instance.id)) {
+        const nextScene: Scene = { ...activeScene, cast: [...activeScene.cast, instance.id] };
         await db.repository.saveScene(nextScene);
         scenes = current.scenes.map((scene) => (scene.id === nextScene.id ? nextScene : scene));
       }
 
       await db.repository.saveCard(card);
-      await db.repository.saveInstance(instance);
+      if (!existing) await db.repository.saveInstance(instance);
       await db.repository.saveRoom(room);
 
       setSnapshot({
         ...current,
         room,
         scenes,
-        instances: [...current.instances, instance],
+        instances: existing ? current.instances : [...current.instances, instance],
         cards: current.cards.some((item) => item.id === card.id) ? current.cards : [...current.cards, card],
       });
-      await refreshRooms();
+      await refreshWorlds();
       return instance;
     },
-    [db, refreshRooms, setSnapshot],
+    [db, refreshWorlds, setSnapshot],
   );
 
   const removeInstance = useCallback(
@@ -327,7 +740,7 @@ export function useSession(db: DramatisDb | null): SessionApi {
       const current = snapshotRef.current;
       if (!db || !current) return;
 
-      const room = { ...current.room, instanceIds: current.room.instanceIds.filter((item) => item !== id) };
+      const room: Room = { ...current.room, instanceIds: current.room.instanceIds.filter((item) => item !== id) };
       let scenes = current.scenes;
 
       // 从所有场景的名单里摘掉，而不只是当前场景：
@@ -348,9 +761,9 @@ export function useSession(db: DramatisDb | null): SessionApi {
         scenes,
         instances: current.instances.filter((item) => item.id !== id),
       });
-      await refreshRooms();
+      await refreshWorlds();
     },
-    [db, refreshRooms, setSnapshot],
+    [db, refreshWorlds, setSnapshot],
   );
 
   const updateInstance = useCallback(
@@ -380,18 +793,19 @@ export function useSession(db: DramatisDb | null): SessionApi {
       const next: CharacterInstance = { ...instance, presence, updatedAt: nowIso() };
       await db.repository.saveInstance(next);
 
-      const active = current.scenes.find((scene) => scene.id === current.room.activeSceneId);
+      const active = current.conversations.find((item) => item.id === current.room.activeConversationId);
+      const activeScene = current.scenes.find((item) => item.id === active?.activeSceneId);
       let scenes = current.scenes;
 
-      if (active) {
+      if (activeScene) {
         const shouldBeInCast = presence === 'onstage' || presence === 'muted';
-        if (shouldBeInCast !== active.cast.includes(id)) {
+        if (shouldBeInCast !== activeScene.cast.includes(id)) {
           const nextScene: Scene = {
-            ...active,
-            cast: shouldBeInCast ? [...active.cast, id] : active.cast.filter((item) => item !== id),
+            ...activeScene,
+            cast: shouldBeInCast ? [...activeScene.cast, id] : activeScene.cast.filter((item) => item !== id),
           };
           await db.repository.saveScene(nextScene);
-          scenes = scenes.map((scene) => (scene.id === nextScene.id ? nextScene : scene));
+          scenes = current.scenes.map((scene) => (scene.id === nextScene.id ? nextScene : scene));
         }
       }
 
@@ -404,69 +818,22 @@ export function useSession(db: DramatisDb | null): SessionApi {
     [db, setSnapshot],
   );
 
-  const startNewScene = useCallback(
-    async (title: string) => {
-      const current = snapshotRef.current;
-      if (!db || !current) return;
-
-      const active = current.scenes.find((scene) => scene.id === current.room.activeSceneId);
-      const cast = (active?.cast ?? current.room.instanceIds).filter((id) =>
-        current.instances.some(
-          (instance) => instance.id === id && (instance.presence === 'onstage' || instance.presence === 'muted'),
-        ),
-      );
-
-      const now = nowIso();
-      const nextScene = createSceneFor(current.room.id, cast, { title });
-      const closedScene: Scene | null = active ? { ...active, endedAt: now } : null;
-      const room = { ...current.room, activeSceneId: nextScene.id, updatedAt: now };
-
-      if (closedScene) await db.repository.saveScene(closedScene);
-      await db.repository.saveScene(nextScene);
-      await db.repository.saveRoom(room);
-
-      setSnapshot({
-        ...current,
-        room,
-        scenes: [
-          ...current.scenes.map((scene) => (closedScene && scene.id === closedScene.id ? closedScene : scene)),
-          nextScene,
-        ],
-      });
-    },
-    [db, setSnapshot],
-  );
-
   const deleteMessage = useCallback(
     async (id: MessageId) => {
       const current = snapshotRef.current;
       if (!db || !current) return;
       await db.repository.deleteMessage(id);
       setSnapshot({ ...current, messages: current.messages.filter((message) => message.id !== id) });
-      await refreshRooms();
+      await refreshWorlds();
     },
-    [db, refreshRooms, setSnapshot],
-  );
-
-  const updateMessage = useCallback(
-    async (id: MessageId, patch: Partial<Message>) => {
-      const current = snapshotRef.current;
-      if (!db || !current) return;
-      const updated = await db.repository.updateMessage(id, patch);
-      if (!updated) return;
-      setSnapshot({
-        ...current,
-        messages: current.messages.map((message) => (message.id === id ? updated : message)),
-      });
-    },
-    [db, setSnapshot],
+    [db, refreshWorlds, setSnapshot],
   );
 
   const setPersona = useCallback(
     async (persona: Persona) => {
       const current = snapshotRef.current;
       if (!db || !current) return;
-      const room = {
+      const room: Room = {
         ...current.room,
         personaId: persona.id,
         playerName: persona.name,
@@ -490,7 +857,7 @@ export function useSession(db: DramatisDb | null): SessionApi {
         ? current.personas.map((item) => (item.id === persona.id ? persona : item))
         : [...current.personas, persona];
 
-      // 改了当前 persona 的名字或设定，房间上的冗余副本也要跟着走
+      // 改了当前 persona 的名字或设定，世界上的冗余副本也要跟着走
       const room =
         current.room.personaId === persona.id
           ? { ...current.room, playerName: persona.name, playerPersona: persona.description }
@@ -544,6 +911,50 @@ export function useSession(db: DramatisDb | null): SessionApi {
     [db, setSnapshot],
   );
 
+  const updateMemory = useCallback(
+    async (id: EventId, patch: Partial<MemoryEvent>) => {
+      const current = snapshotRef.current;
+      if (!db || !current) return;
+      const updated = await db.repository.updateMemory(id, patch);
+      if (!updated) return;
+      setSnapshot({
+        ...current,
+        memories: current.memories.map((memory) => (memory.id === id ? updated : memory)),
+      });
+    },
+    [db, setSnapshot],
+  );
+
+  const deleteMemory = useCallback(
+    async (id: EventId) => {
+      const current = snapshotRef.current;
+      if (!db || !current) return;
+      await db.repository.deleteMemory(id);
+      setSnapshot({ ...current, memories: current.memories.filter((memory) => memory.id !== id) });
+    },
+    [db, setSnapshot],
+  );
+
+  /** 被回想过的记忆累计次数，「越想越牢」参与后续评分。 */
+  const markRecalled = useCallback(
+    async (events: readonly MemoryEvent[], now: string) => {
+      const current = snapshotRef.current;
+      if (!db || !current || events.length === 0) return;
+
+      const touched = events.map((event) => ({
+        ...event,
+        lastRecalledAt: now,
+        recallCount: event.recallCount + 1,
+      }));
+      await db.repository.saveMemories(touched);
+      setSnapshot({
+        ...current,
+        memories: current.memories.map((memory) => touched.find((item) => item.id === memory.id) ?? memory),
+      });
+    },
+    [db, setSnapshot],
+  );
+
   const attachWorldBook = useCallback(
     async (book: WorldBook) => {
       const current = snapshotRef.current;
@@ -553,7 +964,7 @@ export function useSession(db: DramatisDb | null): SessionApi {
       await refreshLibrary();
       if (current.room.worldBookIds.includes(book.id)) return;
 
-      const room = {
+      const room: Room = {
         ...current.room,
         worldBookIds: [...current.room.worldBookIds, book.id],
         updatedAt: nowIso(),
@@ -569,7 +980,7 @@ export function useSession(db: DramatisDb | null): SessionApi {
       const current = snapshotRef.current;
       if (!db || !current) return;
 
-      const room = {
+      const room: Room = {
         ...current.room,
         worldBookIds: current.room.worldBookIds.filter((item) => item !== id),
         updatedAt: nowIso(),
@@ -586,7 +997,7 @@ export function useSession(db: DramatisDb | null): SessionApi {
       await db.repository.saveCard(card);
       await refreshLibrary();
 
-      // 房间快照里的卡也要跟着更新，否则界面上还是旧的
+      // 世界快照里的卡也要跟着更新，否则界面上还是旧的
       const current = snapshotRef.current;
       if (current?.cards.some((item) => item.id === card.id)) {
         setSnapshot({
@@ -613,7 +1024,7 @@ export function useSession(db: DramatisDb | null): SessionApi {
       await db.repository.saveWorldBook(book);
       await refreshLibrary();
 
-      // 挂在这个房间上的世界书改了内容，prompt 里用的也得是新版本
+      // 挂在这个世界上的世界书改了内容，prompt 里用的也得是新版本
       const current = snapshotRef.current;
       if (current?.worldBooks.some((item) => item.id === book.id)) {
         setSnapshot({
@@ -631,9 +1042,9 @@ export function useSession(db: DramatisDb | null): SessionApi {
       if (!db || !current) return;
 
       await db.repository.deleteWorldBook(id);
-      // 删书顺带解绑，否则房间上会留下指向不存在世界书的引用
+      // 删书顺带解绑，否则世界上会留下指向不存在世界书的引用
       if (current.room.worldBookIds.includes(id)) {
-        const room = {
+        const room: Room = {
           ...current.room,
           worldBookIds: current.room.worldBookIds.filter((item) => item !== id),
           updatedAt: nowIso(),
@@ -650,94 +1061,108 @@ export function useSession(db: DramatisDb | null): SessionApi {
     [db, refreshLibrary, setSnapshot],
   );
 
-  const reloadRoom = useCallback(async () => {
-    const current = snapshotRef.current;
-    if (!db || !current) return;
-    const loaded = await db.repository.loadRoom(current.room.id);
-    if (loaded) setSnapshot(loaded);
-  }, [db, setSnapshot]);
-
-  const updateMemory = useCallback(
-    async (id: EventId, patch: Partial<MemoryEvent>) => {
+  const adoptArtifact = useCallback(
+    async (messageId: MessageId, artifactId: string) => {
       const current = snapshotRef.current;
       if (!db || !current) return;
-      const updated = await db.repository.updateMemory(id, patch);
+      const result = await db.repository.adoptAdminArtifact(messageId, artifactId);
+      if (!result) return;
+      setSnapshot({
+        ...current,
+        messages: current.messages.map((message) => (message.id === messageId ? result.message : message)),
+      });
+      await refreshLibrary();
+    },
+    [db, refreshLibrary, setSnapshot],
+  );
+
+  const discardArtifact = useCallback(
+    async (messageId: MessageId, artifactId: string) => {
+      const current = snapshotRef.current;
+      if (!db || !current) return;
+      const updated = await db.repository.discardAdminArtifact(messageId, artifactId);
       if (!updated) return;
       setSnapshot({
         ...current,
-        memories: current.memories.map((memory) => (memory.id === id ? updated : memory)),
+        messages: current.messages.map((message) => (message.id === messageId ? updated : message)),
       });
     },
     [db, setSnapshot],
   );
 
-  const deleteMemory = useCallback(
-    async (id: EventId) => {
-      const current = snapshotRef.current;
-      if (!db || !current) return;
-      await db.repository.deleteMemory(id);
-      setSnapshot({ ...current, memories: current.memories.filter((memory) => memory.id !== id) });
-    },
-    [db, setSnapshot],
-  );
+  const conversation =
+    snapshot === null
+      ? null
+      : (snapshot.conversations.find((item) => item.id === snapshot.room.activeConversationId) ??
+        snapshot.conversations.find((item) => item.archivedAt === null) ??
+        null);
 
-  const markRecalled = useCallback(
-    async (events: readonly MemoryEvent[], now: string) => {
-      const current = snapshotRef.current;
-      if (!db || !current || events.length === 0) return;
+  const scene =
+    snapshot === null
+      ? null
+      : (snapshot.scenes.find((item) => item.id === conversation?.activeSceneId && item.endedAt === null) ??
+        snapshot.scenes.find((item) => item.id === conversation?.activeSceneId) ??
+        null);
 
-      const touched = events.map((event) => ({
-        ...event,
-        lastRecalledAt: now,
-        recallCount: event.recallCount + 1,
-      }));
-      await db.repository.saveMemories(touched);
-      setSnapshot({
-        ...current,
-        memories: current.memories.map((memory) => touched.find((item) => item.id === memory.id) ?? memory),
-      });
-    },
-    [db, setSnapshot],
-  );
-
-  const activeScene =
-    snapshot === null ? null : (snapshot.scenes.find((scene) => scene.id === snapshot.room.activeSceneId) ?? null);
+  // 只渲染当前对话的消息：主对话与副对话是两条独立记录
+  const messages =
+    snapshot === null || conversation === null
+      ? []
+      : snapshot.messages.filter((message) => message.conversationId === conversation.id);
 
   return {
     ready,
     error,
-    rooms,
-    snapshot,
-    activeScene,
-    openRoom,
-    createRoom,
-    deleteRoom,
-    appendMessages,
-    updateScene,
-    renameRoom,
+    clearError: () => setError(null),
+    worlds,
+    world: snapshot?.room ?? null,
+    conversations: snapshot === null ? [] : snapshot.conversations.filter((item) => item.archivedAt === null),
+    archivedConversations: snapshot === null ? [] : snapshot.conversations.filter((item) => item.archivedAt !== null),
+    conversation,
+    scene,
+    messages,
+    instances: snapshot?.instances ?? [],
+    cards: snapshot?.cards ?? [],
+    worldBooks: snapshot?.worldBooks ?? [],
+    memories: snapshot?.memories ?? [],
+    personas: snapshot?.personas ?? [],
+    library,
+    openWorld,
+    createWorld,
+    deleteWorld,
+    renameWorld,
+    openConversation,
+    startConversation,
+    openSideConversation,
+    updateConversation,
+    archiveConversation,
+    deleteConversation,
     addInstance,
     removeInstance,
     updateInstance,
     setPresence,
     startNewScene,
+    updateScene,
+    setWorldScene,
     deleteMessage,
     updateMessage,
-    reloadRoom,
+    reloadWorld,
     updateMemory,
     deleteMemory,
     markRecalled,
     revertTurn,
     attachWorldBook,
     detachWorldBook,
-    library,
     saveCard,
     deleteCard,
     saveWorldBook,
     deleteWorldBook,
+    adoptArtifact,
+    discardArtifact,
     setPersona,
     savePersona,
     deletePersona,
     listPersonas,
-    clearError: () => setError(null),
+    appendMessages,
   };
 }

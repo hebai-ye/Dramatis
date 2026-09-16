@@ -1,14 +1,16 @@
 import {
   type AssembledPrompt,
+  buildSceneTransitionNarration,
   type Card,
   type CharacterInstance,
+  type ConversationModes,
   createCharacterMessage,
-  createGreetingMessage,
+  createNarrationMessage,
   createOpenAICompatibleProvider,
-  createPersona,
   createPlayerMessage,
   createTurnId,
   type ImportWarning,
+  type InstanceId,
   importCardFromJson,
   importCardFromPng,
   type Message,
@@ -21,14 +23,26 @@ import {
   runTurn,
   type Scene,
   scheduleSpeakers,
+  selectSceneMembers,
   selectWithinBudget,
   turnsSinceLastSpoke,
 } from '@dramatis/core';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ChatPanel } from './components/ChatPanel';
-import { DesignSidebar } from './components/DesignSidebar';
+import { CardDesigner } from './components/CardDesigner';
+import { CastDetail } from './components/CastDetail';
+import { CastRail } from './components/CastRail';
+import { LeftRail, type RailPane } from './components/LeftRail';
+import { MainChat } from './components/MainChat';
+import { MainHeader } from './components/MainHeader';
+import { NewConversationDialog } from './components/NewConversationDialog';
 import { RuntimePanel } from './components/RuntimePanel';
+import { SceneDialog } from './components/SceneDialog';
+import { SettingsPanel } from './components/SettingsPanel';
+import { SideChat } from './components/SideChat';
 import { TopBar } from './components/TopBar';
+import { WorldDesigner } from './components/WorldDesigner';
+import { WorldTree } from './components/WorldTree';
+import { useAdminChat } from './lib/admin';
 import { useProviders } from './lib/providers';
 import { useDatabase, useSession } from './lib/session';
 import { AFFECT_TASK_KIND, MEMORY_BUDGET_TOKENS, MEMORY_TASK_KIND, useBackgroundWorker } from './lib/worker';
@@ -55,6 +69,13 @@ function toPromptMemory(recalled: RecalledMemory): PromptMemory {
   };
 }
 
+/**
+ * 应用外壳（LAYOUT 的骨架）。
+ *
+ * 顶栏只放折叠按钮，其余留给未来的世界视图；左栏分三段；主区是
+ * 「标题栏 + 对话 + 输入区」加右缘的角色栏。会话状态与回合逻辑都留在这里，
+ * 各区域各自只管自己那一块。
+ */
 export function App() {
   const { db, boot, error: dbError } = useDatabase();
   const session = useSession(db);
@@ -64,9 +85,25 @@ export function App() {
     db,
     provider: providers.background,
     onChanged: () => {
-      void session.reloadRoom();
+      void session.reloadWorld();
     },
   });
+
+  const admin = useAdminChat({
+    db,
+    session,
+    providers,
+    onChanged: () => {
+      void session.reloadWorld();
+    },
+  });
+
+  const [collapsed, setCollapsed] = useState(false);
+  const [pane, setPane] = useState<RailPane>('list');
+  const [panelOpen, setPanelOpen] = useState(false);
+  const [newConversationOpen, setNewConversationOpen] = useState(false);
+  const [sceneOpen, setSceneOpen] = useState(false);
+  const [detailId, setDetailId] = useState<InstanceId | null>(null);
 
   const [warnings, setWarnings] = useState<ImportWarning[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -76,23 +113,28 @@ export function App() {
   const [lastPrompt, setLastPrompt] = useState<AssembledPrompt | null>(null);
   const abortRef = useRef<AbortController | null>(null);
 
-  const snapshot = session.snapshot;
-  const scene = session.activeScene;
-  const messages = useMemo(() => snapshot?.messages ?? [], [snapshot]);
-  const personas = snapshot?.personas ?? [];
-  const activePersona = personas.find((persona) => persona.id === snapshot?.room.personaId) ?? null;
-  const activeCard = snapshot?.cards.find((item) => item.id === snapshot.room.cardIds[0]) ?? null;
-  const ready = snapshot !== null && scene !== null;
+  const world = session.world;
+  const conversation = session.conversation;
+  const scene = session.scene;
+  const messages = session.messages;
+  const instances = session.instances;
+  const personas = session.personas;
 
-  // 没有身份就先造一个，否则新世界无从创建
-  useEffect(() => {
-    if (!db || !session.ready) return;
-    void (async () => {
-      const list = await session.listPersonas();
-      if (list.length > 0) return;
-      await session.savePersona(createPersona({ name: '玩家' }));
-    })();
-  }, [db, session]);
+  const activePersona = personas.find((persona) => persona.id === world?.personaId) ?? null;
+  const ready = world !== null && conversation !== null;
+  const archived = conversation?.archivedAt != null;
+  const isSide = conversation?.kind === 'side';
+
+  /** 此刻在场的人，标题栏与旁白都用它。 */
+  const cast = useMemo(
+    () => (scene === null ? [] : instances.filter((instance) => scene.cast.includes(instance.id))),
+    [instances, scene],
+  );
+
+  const availableCards = useMemo(
+    () => session.library.cards.filter((card) => !instances.some((instance) => instance.cardId === card.id)),
+    [instances, session.library.cards],
+  );
 
   /** 跑一次生成，返回角色说出的完整内容。 */
   const runGeneration = useCallback(
@@ -106,7 +148,7 @@ export function App() {
       signal: AbortSignal;
     }): Promise<string> => {
       const profile = providers.active;
-      if (!profile || !snapshot || !scene) return '';
+      if (!profile || !world || !scene) return '';
 
       const provider = createOpenAICompatibleProvider({
         baseUrl: profile.baseUrl,
@@ -116,20 +158,21 @@ export function App() {
 
       // 世界书按关键词命中插入，扫描范围是玩家输入加最近几轮
       const scanText = [options.playerInput, ...options.history.slice(-8).map((message) => message.content)].join('\n');
-      const worldBookMatches = snapshot.worldBooks.flatMap((book) => matchWorldBookEntries(book, { scanText }));
+      const worldBookMatches = session.worldBooks.flatMap((book) => matchWorldBookEntries(book, { scanText }));
 
       let accumulated = '';
       for await (const event of runTurn(
         {
           card: options.card,
           instance: options.speaker,
-          room: snapshot.room,
+          room: world,
           scene,
-          cast: snapshot.instances,
+          cast: instances,
           history: options.history,
           playerInput: options.playerInput,
           worldBookMatches,
           memories: options.memories === undefined ? [] : [...options.memories],
+          modes: conversation?.modes,
           budget: { maxTokens: profile.maxTokens, reserveForReply: profile.reserveForReply },
         },
         provider,
@@ -153,13 +196,14 @@ export function App() {
       }
       return accumulated;
     },
-    [providers, scene, snapshot],
+    [conversation, instances, providers, scene, session.worldBooks, world],
   );
 
   const makeCharacterLine = useCallback(
     (speaker: CharacterInstance, content: string, turnId: string, sceneValue: Scene): Message =>
       createCharacterMessage({
         roomId: sceneValue.roomId,
+        conversationId: sceneValue.conversationId,
         sceneId: sceneValue.id,
         turnId,
         speakerInstanceId: speaker.id,
@@ -168,33 +212,6 @@ export function App() {
         audience: sceneValue.cast,
       }),
     [],
-  );
-
-  /** 用一张卡开一条新世界线，并写入角色的开场白。 */
-  const startNewRoom = useCallback(
-    async (target: Card) => {
-      const persona = activePersona ?? personas[0];
-      if (!persona) {
-        setError('先创建一个玩家身份');
-        return;
-      }
-
-      const created = await session.createRoom(target, persona);
-      const createdInstance = created?.instances[0];
-      if (!created || !createdInstance) return;
-
-      const createdScene = created.scenes.find((item) => item.id === created.room.activeSceneId) ?? null;
-      const greeting = createGreetingMessage({
-        card: target,
-        instance: createdInstance,
-        room: created.room,
-        scene: createdScene,
-        audience: createdScene?.cast ?? [createdInstance.id],
-      });
-      if (greeting) await session.appendMessages([greeting]);
-      setLastPrompt(null);
-    },
-    [activePersona, personas, session],
   );
 
   const handleImport = useCallback(
@@ -223,25 +240,26 @@ export function App() {
         await session.saveCard(result.card);
         setWarnings(result.warnings);
 
-        if (!snapshot || !scene) {
-          await startNewRoom(result.card);
+        // 一张卡都没有的时候，导入即开一条新世界线，省掉一步
+        if (session.world === null) {
+          await session.createWorld({ title: result.card.name, persona: activePersona, cards: [result.card] });
         }
 
         if (result.card.embeddedWorldBook !== null) {
           const { book } = parseWorldBook(result.card.embeddedWorldBook, `${result.card.name} 的内嵌世界书`);
           await session.saveWorldBook(book);
-          if (snapshot) await session.attachWorldBook(book);
+          await session.attachWorldBook(book);
         }
       } catch (importError) {
         setError(importError instanceof Error ? importError.message : String(importError));
       }
     },
-    [scene, session, snapshot, startNewRoom],
+    [activePersona, session],
   );
 
   const handleSend = useCallback(
     async (text: string) => {
-      if (!db || !snapshot || !scene || busy) return;
+      if (!db || !world || !scene || !conversation || busy) return;
 
       const profile = providers.active;
       if (!profile) {
@@ -260,15 +278,15 @@ export function App() {
 
       const turnId = createTurnId();
       const history = messages;
-      const audience = scene.cast;
 
       const playerMessage = createPlayerMessage({
-        roomId: snapshot.room.id,
+        roomId: world.id,
+        conversationId: conversation.id,
         sceneId: scene.id,
         turnId,
-        speakerName: snapshot.room.playerName,
+        speakerName: world.playerName,
         content: text,
-        audience,
+        audience: scene.cast,
       });
       await session.appendMessages([playerMessage]);
 
@@ -280,7 +298,7 @@ export function App() {
         const since = turnsSinceLastSpoke(history, turnId);
         const schedule = scheduleSpeakers({
           playerInput: text,
-          candidates: snapshot.instances.map((instance) => ({
+          candidates: instances.map((instance) => ({
             instance,
             turnsSinceSpoke: since.get(instance.id) ?? null,
           })),
@@ -289,15 +307,15 @@ export function App() {
 
         let first = true;
         for (const speakerId of schedule.speakers) {
-          const speaker = snapshot.instances.find((item) => item.id === speakerId);
+          const speaker = instances.find((item) => item.id === speakerId);
           if (!speaker) continue;
-          const speakerCard = snapshot.cards.find((item) => item.id === speaker.cardId);
+          const speakerCard = session.cards.find((item) => item.id === speaker.cardId);
           if (!speakerCard) continue;
 
           // 只召回这个人自己的视角条目
           const now = new Date().toISOString();
           const recalled = selectWithinBudget(
-            recallMemories(snapshot.memories, {
+            recallMemories(session.memories, {
               observerId: speaker.id,
               text: [text, ...history.slice(-6).map((message) => message.content)].join('\n'),
               participantIds: scene.cast,
@@ -333,12 +351,12 @@ export function App() {
         }
 
         // 抽成两块后台任务，不阻塞对话；负载只存 id，内容现取
-        const payload = { roomId: snapshot.room.id, sceneId: scene.id, turnId };
+        const payload = { roomId: world.id, sceneId: scene.id, turnId, conversationId: conversation.id };
         for (const kind of [MEMORY_TASK_KIND, AFFECT_TASK_KIND]) {
           await db.queue.enqueue({
             kind,
             idempotencyKey: `${kind}:${turnId}`,
-            roomId: snapshot.room.id,
+            roomId: world.id,
             turnId,
             payload,
           });
@@ -354,7 +372,20 @@ export function App() {
         abortRef.current = null;
       }
     },
-    [busy, db, makeCharacterLine, messages, providers, runGeneration, scene, session, snapshot, worker],
+    [
+      busy,
+      conversation,
+      db,
+      instances,
+      makeCharacterLine,
+      messages,
+      providers,
+      runGeneration,
+      scene,
+      session,
+      worker,
+      world,
+    ],
   );
 
   /**
@@ -365,7 +396,7 @@ export function App() {
    */
   const handleRegenerate = useCallback(
     async (id: MessageId) => {
-      if (!db || !snapshot || !scene || busy) return;
+      if (!db || !world || !scene || busy) return;
 
       const target = messages.find((message) => message.id === id);
       if (!target) return;
@@ -377,8 +408,8 @@ export function App() {
         return;
       }
 
-      const speaker = snapshot.instances.find((item) => item.id === target.speakerInstanceId);
-      const speakerCard = speaker ? snapshot.cards.find((item) => item.id === speaker.cardId) : null;
+      const speaker = instances.find((item) => item.id === target.speakerInstanceId);
+      const speakerCard = speaker ? session.cards.find((item) => item.id === speaker.cardId) : null;
       if (!speaker || !speakerCard) {
         setError('找不到这条回复对应的角色');
         return;
@@ -422,7 +453,7 @@ export function App() {
         abortRef.current = null;
       }
     },
-    [busy, db, makeCharacterLine, messages, runGeneration, scene, session, snapshot],
+    [busy, db, instances, makeCharacterLine, messages, runGeneration, scene, session, world],
   );
 
   const handleDeleteMessage = useCallback(
@@ -439,112 +470,375 @@ export function App() {
     [db, messages, session],
   );
 
-  const handleStop = useCallback(() => abortRef.current?.abort(), []);
+  /** 切换场景：开一场新的，并留下一条旁白式动作（谁跟谁去了哪里）。 */
+  const handleStartNewScene = useCallback(
+    async (input: { title: string; location: string; worldTime: string }) => {
+      if (!world || !conversation) return;
+
+      const created = await session.startNewScene(input);
+      if (!created) return;
+
+      const members = selectSceneMembers(instances, created);
+      const content = buildSceneTransitionNarration({ next: created, members });
+
+      await session.appendMessages([
+        createNarrationMessage({
+          roomId: world.id,
+          conversationId: conversation.id,
+          sceneId: created.id,
+          turnId: createTurnId(),
+          content,
+        }),
+      ]);
+    },
+    [conversation, instances, session, world],
+  );
+
+  const handleNewConversation = useCallback(
+    async (input: {
+      title: string;
+      cardIds: string[];
+      worldBookIds: string[];
+      sceneTitle: string;
+      location: string;
+      worldTime: string;
+    }) => {
+      setNewConversationOpen(false);
+      const cards = session.library.cards.filter((card) => input.cardIds.includes(card.id));
+
+      // 还没有世界时，「新对话」顺带把世界建起来：否则用户会卡在「没有世界可开线」
+      if (session.world === null) {
+        await session.createWorld({
+          title: input.title,
+          persona: activePersona,
+          cards,
+          worldBookIds: input.worldBookIds as never,
+        });
+        return;
+      }
+
+      await session.startConversation({
+        title: input.title,
+        cards,
+        worldBookIds: input.worldBookIds as never,
+        sceneTitle: input.sceneTitle,
+        location: input.location,
+        worldTime: input.worldTime,
+      });
+    },
+    [activePersona, session],
+  );
+
+  /** 「创建」走副对话；还没有世界就先建一个空世界，否则管理员无处落脚。 */
+  const handleCreateWithAi = useCallback(async () => {
+    if (session.world === null) {
+      await session.createWorld({ title: '新世界', persona: activePersona, cards: [] });
+    }
+    await session.openSideConversation();
+    setPane('list');
+  }, [activePersona, session]);
+
+  const handleToggleKind = useCallback(async () => {
+    if (conversation?.kind === 'side') {
+      const main = session.conversations.find((item) => item.kind === 'main');
+      if (main) await session.openConversation(main.id);
+      return;
+    }
+    await session.openSideConversation();
+  }, [conversation, session]);
+
+  const handleArchive = useCallback(
+    async (targetConversationId: string) => {
+      const report = await session.archiveConversation(targetConversationId as never);
+      if (report === null) return;
+      setError(null);
+      setWarnings([
+        {
+          code: 'conversation.archived',
+          message: `已归档：回滚了 ${String(report.restoredInstances)} 名角色的状态，撤销了 ${String(
+            report.removedMemories,
+          )} 条记忆。对话本身保留在设置里。`,
+        },
+      ]);
+    },
+    [session],
+  );
+
+  const handleToggleMode = useCallback(
+    (key: keyof ConversationModes, value: boolean) => {
+      if (!conversation) return;
+      void session.updateConversation({ modes: { ...conversation.modes, [key]: value } });
+    },
+    [conversation, session],
+  );
+
   const disabled = busy || !session.ready;
+  const detail = detailId === null ? null : (instances.find((instance) => instance.id === detailId) ?? null);
+  const worldId = world?.id ?? null;
+
+  // 换世界时把选中态清掉，避免看到上一个世界的角色详情
+  useEffect(() => {
+    if (worldId === null) return;
+    setDetailId(null);
+  }, [worldId]);
 
   return (
     <div className="app">
       <TopBar
-        rooms={session.rooms}
-        activeRoomId={snapshot?.room.id ?? null}
-        personas={personas}
-        activePersonaId={activePersona?.id ?? null}
+        collapsed={collapsed}
+        onToggleCollapsed={() => setCollapsed((value) => !value)}
         backendKind={boot?.backendKind ?? ''}
         degraded={boot?.degraded ?? false}
-        canStartNewWorld={activeCard !== null}
-        disabled={disabled}
-        onOpenRoom={(id) => {
-          void session.openRoom(id);
-          setLastPrompt(null);
-        }}
-        onDeleteRoom={(id) => void session.deleteRoom(id)}
-        onNewWorld={() => {
-          if (activeCard) void startNewRoom(activeCard);
-        }}
-        onSelectPersona={(persona) => void session.setPersona(persona)}
-        onReset={() => {
-          if (activeCard) void startNewRoom(activeCard);
-        }}
+        backgroundPending={worker.pending}
       />
 
-      <div className="app-body">
-        <DesignSidebar
+      <div className={collapsed ? 'app-body collapsed' : 'app-body'}>
+        {collapsed ? null : (
+          <LeftRail
+            pane={pane}
+            onPaneChange={setPane}
+            onNewConversation={() => setNewConversationOpen(true)}
+            onCreateWithAi={() => void handleCreateWithAi()}
+            onImportFile={(file) => void handleImport(file)}
+            disabled={disabled}
+            list={
+              <>
+                {error !== null || dbError !== null || session.error !== null ? (
+                  <div className="notice error">
+                    <strong>出错了</strong>
+                    <p>{error ?? session.error ?? dbError}</p>
+                    <button
+                      type="button"
+                      className="ghost"
+                      onClick={() => {
+                        setError(null);
+                        session.clearError();
+                      }}
+                    >
+                      知道了
+                    </button>
+                  </div>
+                ) : null}
+
+                {warnings.length > 0 ? (
+                  <div className="notice warn">
+                    <strong>提示</strong>
+                    <ul>
+                      {warnings.map((item, index) => (
+                        <li key={`${String(index)}-${item.message.slice(0, 12)}`}>{item.message}</li>
+                      ))}
+                    </ul>
+                    <button type="button" className="ghost" onClick={() => setWarnings([])}>
+                      知道了
+                    </button>
+                  </div>
+                ) : null}
+
+                <WorldTree
+                  worlds={session.worlds}
+                  activeWorldId={world?.id ?? null}
+                  conversations={session.conversations}
+                  activeConversationId={conversation?.id ?? null}
+                  disabled={disabled}
+                  onOpenWorld={(id) => void session.openWorld(id)}
+                  onOpenConversation={(id) => void session.openConversation(id)}
+                  onArchiveConversation={(target) => {
+                    if (
+                      window.confirm(
+                        `归档「${target.title}」？情绪、关系与记忆会回滚到它开始之前，这条时间线相当于没有发生过；对话本身会保留在设置里。`,
+                      )
+                    ) {
+                      void handleArchive(target.id);
+                    }
+                  }}
+                  onDeleteConversation={(target) => void session.deleteConversation(target.id)}
+                  onDeleteWorld={(id) => void session.deleteWorld(id)}
+                />
+              </>
+            }
+            panel={
+              <>
+                {pane === 'cards' ? (
+                  <section className="panel">
+                    <CardDesigner
+                      cards={session.library.cards}
+                      disabled={disabled}
+                      onSave={(card) => void session.saveCard(card)}
+                      onDelete={(id) => void session.deleteCard(id)}
+                    />
+                  </section>
+                ) : null}
+
+                {pane === 'worldbooks' ? (
+                  <section className="panel">
+                    <WorldDesigner
+                      books={session.library.worldBooks}
+                      attachedIds={world?.worldBookIds ?? []}
+                      disabled={disabled}
+                      onSave={(book) => void session.saveWorldBook(book)}
+                      onDelete={(id) => void session.deleteWorldBook(id)}
+                      onAttach={(book) => void session.attachWorldBook(book)}
+                    />
+                  </section>
+                ) : null}
+
+                {pane === 'settings' ? (
+                  <SettingsPanel
+                    providers={providers}
+                    personas={personas}
+                    activePersonaId={activePersona?.id ?? null}
+                    archivedConversations={session.archivedConversations}
+                    activeConversationId={conversation?.id ?? null}
+                    disabled={disabled}
+                    onSelectPersona={(persona) => void session.setPersona(persona)}
+                    onSavePersona={(persona) => void session.savePersona(persona)}
+                    onDeletePersona={(id) => void session.deletePersona(id)}
+                    onOpenArchived={(id) => void session.openConversation(id)}
+                    onDeleteArchived={(target) => void session.deleteConversation(target.id)}
+                  />
+                ) : null}
+              </>
+            }
+          />
+        )}
+
+        <div className="workspace">
+          <MainHeader
+            world={world}
+            conversation={conversation}
+            cast={cast}
+            disabled={disabled}
+            panelOpen={panelOpen}
+            onToggleKind={() => void handleToggleKind()}
+            onTogglePanel={() => setPanelOpen((value) => !value)}
+            onRenameConversation={(title) => void session.updateConversation({ title })}
+          />
+
+          {world === null || conversation === null ? (
+            <section className="chat-surface empty">
+              <p className="hint">还没有打开的对话。</p>
+              <p className="hint">
+                导入一张角色卡，或者用左栏的「新对话」开一条线；也可以点「创建」让世界管理员陪你起草。
+              </p>
+            </section>
+          ) : (
+            <div className="workspace-body">
+              {isSide ? (
+                <SideChat
+                  conversation={conversation}
+                  messages={messages}
+                  streamText={admin.streamText}
+                  busy={admin.busy}
+                  ready={ready}
+                  archived={archived}
+                  onSend={(text) => void admin.send(text)}
+                  onStop={admin.stop}
+                  onAdopt={(messageId, artifact) => void session.adoptArtifact(messageId, artifact.id)}
+                  onDiscard={(messageId, artifact) => void session.discardArtifact(messageId, artifact.id)}
+                />
+              ) : (
+                <MainChat
+                  conversation={conversation}
+                  scene={scene}
+                  messages={messages}
+                  cast={cast}
+                  streamText={streamText}
+                  streamSpeaker={instances.find((item) => scene?.cast.includes(item.id))?.displayName ?? ''}
+                  reasoningText={reasoningText}
+                  busy={busy}
+                  ready={ready}
+                  archived={archived}
+                  onSend={(text) => void handleSend(text)}
+                  onStop={() => abortRef.current?.abort()}
+                  onRegenerate={(id) => void handleRegenerate(id)}
+                  onEdit={(id, content) => void session.updateMessage(id, { content })}
+                  onDelete={(id) => void handleDeleteMessage(id)}
+                  onToggleMode={handleToggleMode}
+                  onOpenScene={() => setSceneOpen(true)}
+                  onDropInstance={(id) => void session.setPresence(id, 'onstage')}
+                />
+              )}
+
+              <div className={panelOpen ? 'runtime-drawer open' : 'runtime-drawer'}>
+                {panelOpen ? (
+                  <RuntimePanel
+                    scene={scene}
+                    instances={instances}
+                    memories={session.memories}
+                    attachedWorldBooks={session.worldBooks}
+                    libraryCards={session.library.cards}
+                    prompt={lastPrompt}
+                    pending={worker.pending}
+                    completed={worker.completed}
+                    workerError={worker.lastError}
+                    disabled={disabled}
+                    onSceneChange={(patch) => void session.updateScene(patch)}
+                    onStartNewScene={(title) => void handleStartNewScene({ title, location: '', worldTime: '' })}
+                    onSetPresence={(id, presence) => void session.setPresence(id, presence)}
+                    onRenameInstance={(id, name) => void session.updateInstance(id, { displayName: name })}
+                    onRemoveInstance={(id) => void session.removeInstance(id)}
+                    onAddInstance={(card) => void session.addInstance(card)}
+                    onDetachWorldBook={(id) => void session.detachWorldBook(id)}
+                    onUpdateMemory={(id, patch) => void session.updateMemory(id, patch)}
+                    onDeleteMemory={(id) => void session.deleteMemory(id)}
+                  />
+                ) : null}
+              </div>
+            </div>
+          )}
+
+          {!isSide && world !== null && conversation !== null ? (
+            <CastRail
+              instances={instances}
+              scene={scene}
+              cards={session.cards}
+              disabled={disabled}
+              onOpenDetail={setDetailId}
+              availableCards={availableCards}
+              onAddInstance={(card) => void session.addInstance(card)}
+            />
+          ) : null}
+        </div>
+      </div>
+
+      {newConversationOpen ? (
+        <NewConversationDialog
           cards={session.library.cards}
           worldBooks={session.library.worldBooks}
-          attachedWorldBookIds={snapshot?.room.worldBookIds ?? []}
-          personas={personas}
-          activePersonaId={activePersona?.id ?? null}
-          providers={providers}
+          defaultCardIds={instances.map((instance) => instance.cardId)}
+          attachedBookIds={world?.worldBookIds ?? []}
           disabled={disabled}
-          onSaveCard={(card) => void session.saveCard(card)}
-          onDeleteCard={(id) => void session.deleteCard(id)}
-          onSaveWorldBook={(book) => void session.saveWorldBook(book)}
-          onDeleteWorldBook={(id) => void session.deleteWorldBook(id)}
-          onAttachWorldBook={(book) => void session.attachWorldBook(book)}
-          onSelectPersona={(persona) => void session.setPersona(persona)}
-          onSavePersona={(persona) => void session.savePersona(persona)}
-          onDeletePersona={(id) => void session.deletePersona(id)}
-          onImportFile={(file) => {
-            void handleImport(file);
-          }}
-          notice={{ warnings: warnings.map((item) => item.message), error: error ?? session.error ?? dbError }}
+          onClose={() => setNewConversationOpen(false)}
+          onSubmit={(input) => void handleNewConversation(input)}
         />
+      ) : null}
 
-        <main className="main">
-          <ChatPanel
-            messages={messages}
-            streamText={streamText}
-            reasoningText={reasoningText}
-            busy={busy}
-            ready={ready}
-            characterName={snapshot?.instances[0]?.displayName ?? ''}
-            onSend={(text) => {
-              void handleSend(text);
-            }}
-            onStop={handleStop}
-            onReset={() => {
-              if (activeCard) void startNewRoom(activeCard);
-            }}
-            onRegenerate={(id) => void handleRegenerate(id)}
-            onEdit={(id, content) => void session.updateMessage(id, { content })}
-            onDelete={(id) => void handleDeleteMessage(id)}
-          />
-        </main>
-
-        <RuntimePanel
+      {sceneOpen ? (
+        <SceneDialog
           scene={scene}
-          instances={snapshot?.instances ?? []}
-          memories={snapshot?.memories ?? []}
-          attachedWorldBooks={snapshot?.worldBooks ?? []}
-          libraryCards={session.library.cards}
-          prompt={lastPrompt}
-          pending={worker.pending}
-          completed={worker.completed}
-          workerError={worker.lastError}
+          instances={instances}
           disabled={disabled}
-          onSceneChange={(patch) => void session.updateScene(patch)}
-          onStartNewScene={(title) => void session.startNewScene(title)}
-          onSetPresence={(id, presence) => void session.setPresence(id, presence)}
-          onRenameInstance={(id, name) => void session.updateInstance(id, { displayName: name })}
-          onRemoveInstance={(id) => void session.removeInstance(id)}
-          onAddInstance={(card) => {
-            void session.addInstance(card).then(async (instance) => {
-              if (!instance || !snapshot || !scene) return;
-              const greeting = createGreetingMessage({
-                card,
-                instance,
-                room: snapshot.room,
-                scene,
-                audience: [...scene.cast, instance.id],
-              });
-              if (greeting) await session.appendMessages([greeting]);
-            });
-          }}
-          onDetachWorldBook={(id) => void session.detachWorldBook(id)}
-          onUpdateMemory={(id, patch) => void session.updateMemory(id, patch)}
-          onDeleteMemory={(id) => void session.deleteMemory(id)}
+          onClose={() => setSceneOpen(false)}
+          onSave={(patch) => void session.updateScene(patch)}
+          onStartNewScene={(input) => void handleStartNewScene(input)}
         />
-      </div>
+      ) : null}
+
+      {detail === null ? null : (
+        <CastDetail
+          instance={detail}
+          card={session.cards.find((card) => card.id === detail.cardId) ?? null}
+          memories={session.memories}
+          disabled={disabled}
+          onClose={() => setDetailId(null)}
+          onRename={(id, name) => void session.updateInstance(id, { displayName: name })}
+          onSetPresence={(id, presence) => void session.setPresence(id, presence)}
+          onRemove={(id) => {
+            setDetailId(null);
+            void session.removeInstance(id);
+          }}
+        />
+      )}
     </div>
   );
 }

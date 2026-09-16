@@ -25,6 +25,13 @@ export interface ProvidersApi {
   apiKey: string;
   keyMode: KeyStorageMode;
   keyKind: KeyStore['kind'];
+  /**
+   * 后台任务（记忆抽取等）使用的配置。
+   *
+   * 优先用标了 background 的配置，通常是更便宜的模型；没有单独配置时
+   * 退回当前配置，保证功能可用。
+   */
+  background: { baseUrl: string; apiKey: string; model: string; temperature: number } | null;
   selectProfile: (id: string) => Promise<void>;
   addProfile: (input: CreateProviderProfileInput) => Promise<void>;
   updateProfile: (id: string, patch: Partial<ProviderProfile>) => Promise<void>;
@@ -44,6 +51,7 @@ export function useProviders(db: DramatisDb | null): ProvidersApi {
   const [activeId, setActiveId] = useState<string | null>(null);
   const [keyMode, setKeyModeState] = useState<KeyStorageMode>('session');
   const [apiKey, setApiKeyState] = useState('');
+  const [backgroundKey, setBackgroundKey] = useState('');
   const [keyKind, setKeyKind] = useState<KeyStore['kind']>('memory');
 
   const keyStoreRef = useRef<KeyStore>(createBrowserKeyStore('session'));
@@ -96,6 +104,13 @@ export function useProviders(db: DramatisDb | null): ProvidersApi {
     }
 
     void store.get(profile.keyRef).then((secret) => setApiKeyState(secret ?? ''));
+
+    const backgroundProfile = profiles.find((item) => item.role === 'background');
+    if (!backgroundProfile) {
+      setBackgroundKey('');
+      return;
+    }
+    void store.get(backgroundProfile.keyRef).then((secret) => setBackgroundKey(secret ?? ''));
   }, [keyMode, activeId, profiles]);
 
   const selectProfile = useCallback(
@@ -173,6 +188,7 @@ export function useProviders(db: DramatisDb | null): ProvidersApi {
     apiKey,
     keyMode,
     keyKind,
+    background: buildBackground(),
     selectProfile,
     addProfile,
     updateProfile,
@@ -180,4 +196,15 @@ export function useProviders(db: DramatisDb | null): ProvidersApi {
     setApiKey,
     setKeyMode,
   };
+
+  function buildBackground(): ProvidersApi['background'] {
+    const dedicated = profiles.find((item) => item.role === 'background');
+    if (dedicated) {
+      return { baseUrl: dedicated.baseUrl, apiKey: backgroundKey, model: dedicated.model, temperature: 0.2 };
+    }
+
+    const fallback = profiles.find((item) => item.id === activeId);
+    if (!fallback) return null;
+    return { baseUrl: fallback.baseUrl, apiKey, model: fallback.model, temperature: 0.2 };
+  }
 }

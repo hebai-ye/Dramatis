@@ -38,7 +38,8 @@ export interface Message {
 export interface MemoryEvent {
   id: EventId;
   roomId: RoomId;
-  sceneId: SceneId;
+  /** 抽取时所在的场景；没有活跃场景时为空。 */
+  sceneId: SceneId | null;
   timeline: {
     worldTime: string;
     sequence: number;
@@ -53,6 +54,10 @@ export interface MemoryEvent {
   perception: string;
   /** 0 ~ 1，影响召回优先级与衰减速度。 */
   importance: number;
+  /** 用户手动置顶。置顶的记忆不参与衰减，召回时始终优先。 */
+  pinned: boolean;
+  /** 用户手动改过重要度，衰减与重锚都不覆盖它。 */
+  importanceLocked: boolean;
   affects: InstanceId[];
   /** 溯源，可展开回原文。 */
   sourceTurnIds: string[];

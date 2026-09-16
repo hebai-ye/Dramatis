@@ -1,8 +1,8 @@
 import type { Card, WorldBook } from '../model/card.js';
-import type { CardId, MessageId, RoomId, SceneId, WorldBookId } from '../model/ids.js';
+import type { CardId, EventId, MessageId, RoomId, SceneId, WorldBookId } from '../model/ids.js';
 import { nowIso } from '../model/ids.js';
 import type { CharacterInstance } from '../model/instance.js';
-import type { Message } from '../model/message.js';
+import type { MemoryEvent, Message } from '../model/message.js';
 import { createPersona, type Persona } from '../model/persona.js';
 import type { ProviderProfile } from '../model/provider.js';
 import type { Room, Scene } from '../model/room.js';
@@ -24,6 +24,7 @@ export const COLLECTIONS = {
   instances: 'instances',
   worldBooks: 'worldBooks',
   messages: 'messages',
+  memories: 'memories',
   personas: 'personas',
   providerProfiles: 'providerProfiles',
   backgroundTasks: 'backgroundTasks',
@@ -61,6 +62,8 @@ export interface RoomSnapshot {
   cards: Card[];
   worldBooks: WorldBook[];
   messages: Message[];
+  /** 房间内的记忆条目，含客观条目与各角色视角条目。 */
+  memories: MemoryEvent[];
   /** persona 是跨房间共用的身份表，一并返回方便 UI 直接切换。 */
   personas: Persona[];
 }
@@ -345,10 +348,67 @@ export class Repository {
     }
 
     const personas = await this.listPersonas();
-    return { room, scenes, instances, cards, worldBooks, messages, personas };
+    const memories = await this.listMemories(roomId);
+    return { room, scenes, instances, cards, worldBooks, messages, memories, personas };
   }
 
   // ---- 玩家身份（P0-3） ----
+
+  // ---- 记忆（P1） ----
+
+  async listMemories(roomId: RoomId): Promise<MemoryEvent[]> {
+    return this.store.list<MemoryEvent>(COLLECTIONS.memories, {
+      where: { roomId },
+      orderBy: 'createdAt',
+      direction: 'desc',
+    });
+  }
+
+  async saveMemories(events: readonly MemoryEvent[]): Promise<void> {
+    await this.store.bulkPut(COLLECTIONS.memories, events);
+  }
+
+  async updateMemory(id: EventId, patch: Partial<MemoryEvent>): Promise<MemoryEvent | null> {
+    const existing = await this.store.get<MemoryEvent>(COLLECTIONS.memories, id);
+    if (!existing) return null;
+
+    const updated: MemoryEvent = {
+      ...existing,
+      ...patch,
+      id: existing.id,
+      roomId: existing.roomId,
+      sourceTurnIds: existing.sourceTurnIds,
+    };
+    await this.store.put(COLLECTIONS.memories, updated);
+    return updated;
+  }
+
+  async deleteMemory(id: EventId): Promise<void> {
+    await this.store.remove(COLLECTIONS.memories, id);
+  }
+
+  /**
+   * 删除某个回合产生的全部记忆，用于重抽与消息删除（P0-7 的回滚）。
+   *
+   * 按 `sourceTurnIds` 判断而不是按时间——一条记忆可能由多轮对话共同产生，
+   * 只要它引用了被撤销的回合，就该跟着作废。
+   */
+  async deleteMemoriesByTurn(roomId: RoomId, turnId: string): Promise<number> {
+    const events = await this.store.list<MemoryEvent>(COLLECTIONS.memories, { where: { roomId } });
+    const affected = events.filter((event) => event.sourceTurnIds.includes(turnId));
+    for (const event of affected) {
+      await this.store.remove(COLLECTIONS.memories, event.id);
+    }
+    return affected.length;
+  }
+
+  /** 房间内单调递增的记忆序号，用于时间线排序。 */
+  async nextMemorySequence(roomId: RoomId): Promise<number> {
+    const key = `memorySeq:${roomId}`;
+    const next = ((await this.getMeta<number>(key)) ?? 0) + 1;
+    await this.setMeta(key, next);
+    return next;
+  }
 
   async listPersonas(): Promise<Persona[]> {
     return this.store.list<Persona>(COLLECTIONS.personas, { orderBy: 'createdAt' });

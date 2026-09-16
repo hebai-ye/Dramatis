@@ -13,19 +13,25 @@ import {
   importCardFromPng,
   type Message,
   type MessageId,
+  type PromptMemory,
+  type RecalledMemory,
+  recallMemories,
   runTurn,
   type Scene,
   scheduleSpeakers,
+  selectWithinBudget,
   turnsSinceLastSpoke,
 } from '@dramatis/core';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { CardPanel } from './components/CardPanel';
 import { CastPanel } from './components/CastPanel';
 import { ChatPanel } from './components/ChatPanel';
+import { MemoryPanel } from './components/MemoryPanel';
 import { PromptInspector } from './components/PromptInspector';
 import { ProviderPanel } from './components/ProviderPanel';
 import { RoomPanel } from './components/RoomPanel';
 import { ScenePanel } from './components/ScenePanel';
+import { MEMORY_BUDGET_TOKENS, MEMORY_TASK_KIND, useMemoryWorker } from './lib/memory';
 import { useProviders } from './lib/providers';
 import { useDatabase, useSession } from './lib/session';
 
@@ -35,10 +41,30 @@ function looksLikePng(bytes: Uint8Array): boolean {
   return PNG_SIGNATURE.every((byte, index) => bytes[index] === byte);
 }
 
+function toPromptMemory(recalled: RecalledMemory): PromptMemory {
+  const event = recalled.event;
+  return {
+    id: event.id,
+    summary: event.summary,
+    score: recalled.score,
+    ...(event.perception !== '' ? { perception: event.perception } : {}),
+    ...(event.timeline.worldTime !== '' ? { worldTime: event.timeline.worldTime } : {}),
+  };
+}
+
 export function App() {
   const { db, boot, error: dbError } = useDatabase();
   const session = useSession(db);
   const providers = useProviders(db);
+
+  // 记忆抽取跑在后台队列里，写完通知 session 重新载入房间
+  const worker = useMemoryWorker({
+    db,
+    provider: providers.background,
+    onIngested: () => {
+      void session.reloadRoom();
+    },
+  });
 
   const [importedCard, setImportedCard] = useState<Card | null>(null);
   const [warnings, setWarnings] = useState<ImportWarning[]>([]);
@@ -74,6 +100,7 @@ export function App() {
       card: Card;
       history: Message[];
       playerInput: string;
+      memories?: readonly PromptMemory[];
       showStream: boolean;
       signal: AbortSignal;
     }): Promise<string> => {
@@ -96,6 +123,7 @@ export function App() {
           cast: snapshot.instances,
           history: options.history,
           playerInput: options.playerInput,
+          memories: options.memories === undefined ? [] : [...options.memories],
           budget: { maxTokens: profile.maxTokens, reserveForReply: profile.reserveForReply },
         },
         provider,
@@ -197,7 +225,7 @@ export function App() {
 
   const handleSend = useCallback(
     async (text: string) => {
-      if (!snapshot || !scene || busy) return;
+      if (!db || !snapshot || !scene || busy) return;
 
       const profile = providers.active;
       if (!profile) {
@@ -253,15 +281,37 @@ export function App() {
           const speakerCard = snapshot.cards.find((item) => item.id === speaker.cardId) ?? activeCard;
           if (!speakerCard) continue;
 
+          // 只召回这个人自己的视角条目——这是「多角色」与「一个角色的多个分身」
+          // 之间的分界线，也是 P1-3 的接入点
+          const now = new Date().toISOString();
+          const recalled = selectWithinBudget(
+            recallMemories(snapshot.memories, {
+              observerId: speaker.id,
+              text: [text, ...history.slice(-6).map((message) => message.content)].join('\n'),
+              participantIds: scene.cast,
+              location: scene.location,
+              now,
+            }),
+            MEMORY_BUDGET_TOKENS,
+          );
+
           const reply = await runGeneration({
             speaker,
             card: speakerCard,
             history: first ? history : continuedHistory,
             playerInput: first ? text : '',
+            memories: recalled.map(toPromptMemory),
             showStream: true,
             signal: controller.signal,
           });
           first = false;
+
+          if (recalled.length > 0) {
+            void session.markRecalled(
+              recalled.map((item) => item.event),
+              now,
+            );
+          }
 
           if (reply.trim() !== '') {
             const line = makeCharacterLine(speaker, reply, turnId, scene);
@@ -269,6 +319,16 @@ export function App() {
             continuedHistory = [...continuedHistory, line];
           }
         }
+
+        // 抽成一块后台任务，不阻塞对话；负载只存 id，内容现取
+        await db.queue.enqueue({
+          kind: MEMORY_TASK_KIND,
+          idempotencyKey: `${MEMORY_TASK_KIND}:${turnId}`,
+          roomId: snapshot.room.id,
+          turnId,
+          payload: { roomId: snapshot.room.id, sceneId: scene.id, turnId },
+        });
+        worker.kick();
       } catch (sendError) {
         const message = sendError instanceof Error ? sendError.message : String(sendError);
         setError(controller.signal.aborted ? `已停止生成（${message}）` : message);
@@ -279,7 +339,7 @@ export function App() {
         abortRef.current = null;
       }
     },
-    [activeCard, busy, makeCharacterLine, messages, providers, runGeneration, scene, session, snapshot],
+    [activeCard, busy, db, makeCharacterLine, messages, providers, runGeneration, scene, session, snapshot, worker],
   );
 
   /**
@@ -316,6 +376,7 @@ export function App() {
       setReasoningText('');
 
       await db.queue.cancelByTurn(target.turnId);
+      await session.deleteMemoriesByTurn(target.turnId);
       for (const message of turnMessages) {
         if (message.role === 'character') await session.deleteMessage(message.id);
       }
@@ -358,6 +419,7 @@ export function App() {
       // 删掉角色的回复，就等于这一轮没有发生过，排队的记忆抽取也要一起撤销
       if (target.role === 'character' && db) {
         await db.queue.cancelByTurn(target.turnId);
+        await session.deleteMemoriesByTurn(target.turnId);
       }
       await session.deleteMessage(id);
     },
@@ -433,6 +495,18 @@ export function App() {
             disabled={busy}
             onChange={(patch) => void session.updateScene(patch)}
             onStartNewScene={(title) => void session.startNewScene(title)}
+          />
+        ) : null}
+
+        {snapshot ? (
+          <MemoryPanel
+            memories={snapshot.memories}
+            instances={snapshot.instances}
+            pending={worker.pending}
+            workerError={worker.lastError}
+            disabled={busy}
+            onUpdate={(id, patch) => void session.updateMemory(id, patch)}
+            onDelete={(id) => void session.deleteMemory(id)}
           />
         ) : null}
 

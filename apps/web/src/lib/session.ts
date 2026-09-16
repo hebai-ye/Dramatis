@@ -1,8 +1,10 @@
 import {
   type Card,
   type CharacterInstance,
+  type EventId,
   type InstanceId,
   META_KEYS,
+  type MemoryEvent,
   type Message,
   type MessageId,
   nowIso,
@@ -90,6 +92,13 @@ export interface SessionApi {
   startNewScene: (title: string) => Promise<void>;
   deleteMessage: (id: MessageId) => Promise<void>;
   updateMessage: (id: MessageId, patch: Partial<Message>) => Promise<void>;
+  /** 重新从存储载入当前房间；后台任务写入记忆后调用。 */
+  reloadRoom: () => Promise<void>;
+  updateMemory: (id: EventId, patch: Partial<MemoryEvent>) => Promise<void>;
+  deleteMemory: (id: EventId) => Promise<void>;
+  markRecalled: (events: readonly MemoryEvent[], now: string) => Promise<void>;
+  /** 撤销某个回合的记忆写入，重抽与删除消息时使用（P0-7 的回滚）。 */
+  deleteMemoriesByTurn: (turnId: string) => Promise<void>;
   /**
    * 切换这个房间使用的玩家身份（P0-3）。
    *
@@ -465,6 +474,69 @@ export function useSession(db: DramatisDb | null): SessionApi {
     return db ? db.repository.listPersonas() : [];
   }, [db]);
 
+  const deleteMemoriesByTurn = useCallback(
+    async (turnId: string) => {
+      const current = snapshotRef.current;
+      if (!db || !current) return;
+      await db.repository.deleteMemoriesByTurn(current.room.id, turnId);
+      setSnapshot({
+        ...current,
+        memories: current.memories.filter((memory) => !memory.sourceTurnIds.includes(turnId)),
+      });
+    },
+    [db, setSnapshot],
+  );
+
+  const reloadRoom = useCallback(async () => {
+    const current = snapshotRef.current;
+    if (!db || !current) return;
+    const loaded = await db.repository.loadRoom(current.room.id);
+    if (loaded) setSnapshot(loaded);
+  }, [db, setSnapshot]);
+
+  const updateMemory = useCallback(
+    async (id: EventId, patch: Partial<MemoryEvent>) => {
+      const current = snapshotRef.current;
+      if (!db || !current) return;
+      const updated = await db.repository.updateMemory(id, patch);
+      if (!updated) return;
+      setSnapshot({
+        ...current,
+        memories: current.memories.map((memory) => (memory.id === id ? updated : memory)),
+      });
+    },
+    [db, setSnapshot],
+  );
+
+  const deleteMemory = useCallback(
+    async (id: EventId) => {
+      const current = snapshotRef.current;
+      if (!db || !current) return;
+      await db.repository.deleteMemory(id);
+      setSnapshot({ ...current, memories: current.memories.filter((memory) => memory.id !== id) });
+    },
+    [db, setSnapshot],
+  );
+
+  const markRecalled = useCallback(
+    async (events: readonly MemoryEvent[], now: string) => {
+      const current = snapshotRef.current;
+      if (!db || !current || events.length === 0) return;
+
+      const touched = events.map((event) => ({
+        ...event,
+        lastRecalledAt: now,
+        recallCount: event.recallCount + 1,
+      }));
+      await db.repository.saveMemories(touched);
+      setSnapshot({
+        ...current,
+        memories: current.memories.map((memory) => touched.find((item) => item.id === memory.id) ?? memory),
+      });
+    },
+    [db, setSnapshot],
+  );
+
   const activeScene =
     snapshot === null ? null : (snapshot.scenes.find((scene) => scene.id === snapshot.room.activeSceneId) ?? null);
 
@@ -487,6 +559,11 @@ export function useSession(db: DramatisDb | null): SessionApi {
     startNewScene,
     deleteMessage,
     updateMessage,
+    reloadRoom,
+    updateMemory,
+    deleteMemory,
+    markRecalled,
+    deleteMemoriesByTurn,
     setPersona,
     savePersona,
     listPersonas,

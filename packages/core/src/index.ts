@@ -1,5 +1,9 @@
 export * from './compat/sillytavern/index.js';
 export * from './director/scheduler.js';
+export * from './memory/extract.js';
+export * from './memory/ingest.js';
+export * from './memory/recall.js';
+export * from './memory/types.js';
 export * from './model/index.js';
 export * from './platform/background-runner.js';
 export * from './platform/entity-store.js';
@@ -10,6 +14,7 @@ export * from './prompt/assemble.js';
 export * from './prompt/budget.js';
 export * from './prompt/history.js';
 export * from './prompt/types.js';
+export * from './provider/collect.js';
 export * from './provider/openai-compatible.js';
 export * from './session/turn.js';
 export * from './storage/repository.js';

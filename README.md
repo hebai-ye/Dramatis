@@ -149,6 +149,8 @@ Android 与 Windows 桌面都优先走 PWA：一套代码，不需要独立的�
 
 完整任务表、依赖关系与执行顺序见 [docs/ROADMAP.md](docs/ROADMAP.md)。
 
+评测与验证方式（含自动化基线结果与真实模型的验证步骤）见 [docs/EVAL.md](docs/EVAL.md)。
+
 | 级别 | 内容 | 状态 |
 | --- | --- | --- |
 | M0 | 兼容层、数据模型、Prompt 装配、单人对话 | ✅ 已完成 |

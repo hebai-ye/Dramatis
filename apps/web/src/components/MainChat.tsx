@@ -159,7 +159,7 @@ export function MainChat({
                   </div>
                 </>
               ) : (
-                <MessageBody message={message} showSpeaker={false}>
+                <MessageBody message={message} speakerName={nameOf(message)} showSpeaker={false}>
                   {message.id === lastCharacterId ? (
                     <button
                       type="button"
@@ -210,7 +210,7 @@ export function MainChat({
             <Avatar name={streamSpeaker} />
             <div className="message-column streaming">
               <span className="message-name">{streamSpeaker}</span>
-              {renderMessageContent(streamText).map((segment, index) =>
+              {renderMessageContent(streamText, { speakerName: streamSpeaker }).map((segment, index) =>
                 segment.kind === 'action' ? (
                   <p className="action-line" key={`stream-action-${String(index)}`}>
                     {segment.text}

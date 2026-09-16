@@ -24,6 +24,28 @@ export interface RenderOptions {
    * 超过就按句子边界切开——模型很爱一次说一大段，而真人聊天是一句一句发的。
    */
   maxBubbleLength?: number;
+  /**
+   * 说话者的名字。
+   *
+   * 真实模型经常在回复开头自报家门（`秦娘：# 她拎起酒壶……`）——它是在模仿
+   * 历史记录里「名字：台词」的格式。说话者自己的名字在界面上已经由头像与
+   * 名字行给出了，正文里再写一遍纯属噪声，而且会把紧随其后的 `#` 动作标记
+   * 顶掉。所以这里把它剥掉：只剥**与说话者同名**的前缀，写成别人的名字属于
+   * 冒充，要留在正文里让人看见。
+   */
+  speakerName?: string;
+}
+
+function stripLeadingSpeakerPrefix(content: string, speakerName: string | undefined): string {
+  // 转写标记 `【名字】` 是我们写进提示词的，角色自己不会这么说话：只要它出现在
+  // 开头就是模型照抄历史留下的噪声，**不论写的是谁的名字**都剥掉。
+  // （写成别人的名字属于冒充，那是另一个问题，正文内容仍然保留给用户看。）
+  const withoutMarker = content.replace(/^\s*【[^】\n]{1,16}】\s*/, '');
+  if (speakerName === undefined || speakerName.trim() === '') return withoutMarker;
+
+  const name = speakerName.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  // 「秦娘：」这种自报家门同样是格式噪声（说话人已经由头像与名字行给出）
+  return withoutMarker.replace(new RegExp(`^\\s*${name}\\s*[:：]\\s*`), '');
 }
 
 export const DEFAULT_MAX_BUBBLE_LENGTH = 110;
@@ -37,6 +59,23 @@ function isActionLine(line: string): boolean {
 
 function stripActionMarkers(line: string): string {
   return line.replace(/^\s*#+\s?/, '').trim();
+}
+
+/**
+ * `#` 不一定出现在行首。
+ *
+ * 真实模型（DeepSeek 网页版端到端测试）会写成
+ * `「上个月的事，六个人，车马一起没的。」# 她朝陈九那边抬了下下巴。`——
+ * 动作标记跟在句号后面，与对白挤在同一行。只认行首的话，这个 `#` 会原样
+ * 漏进气泡里，看起来像乱码。所以先在**句末标点之后的 `#`** 前面断行，
+ * 再走同一套逐行规则。
+ *
+ * 只在这个位置断：句中偶然出现的 `#`（比如话题标签）不该被动。
+ */
+const INLINE_ACTION_BREAK = /([。！？…；」』)】])\s*#/g;
+
+export function normalizeActionBreaks(content: string): string {
+  return content.replace(INLINE_ACTION_BREAK, '$1\n#');
 }
 
 /**
@@ -57,7 +96,7 @@ export function splitMessageContent(content: string): MessageSegment[] {
     current = null;
   };
 
-  for (const rawLine of content.split(/\r?\n/)) {
+  for (const rawLine of normalizeActionBreaks(content).split(/\r?\n/)) {
     if (rawLine.trim() === '') {
       flush();
       continue;
@@ -111,8 +150,9 @@ export function splitLongSpeech(text: string, maxLength = DEFAULT_MAX_BUBBLE_LEN
 export function renderMessageContent(content: string, options: RenderOptions = {}): MessageSegment[] {
   const maxLength = options.maxBubbleLength ?? DEFAULT_MAX_BUBBLE_LENGTH;
   const pieces: MessageSegment[] = [];
+  const cleaned = stripLeadingSpeakerPrefix(content, options.speakerName);
 
-  for (const segment of splitMessageContent(content)) {
+  for (const segment of splitMessageContent(cleaned)) {
     if (segment.kind === 'action') {
       pieces.push(segment);
       continue;
@@ -127,5 +167,6 @@ export function renderMessageContent(content: string, options: RenderOptions = {
 
 /** 写进 prompt 的动作约定。角色不照做时，气泡会变得又长又平。 */
 export const ACTION_FORMAT_RULE =
-  '动作与神态请用 `#` 另起一段描写（例如：`# 她把杯子往桌上一放`），动作不要写进对白的气泡里；' +
+  '动作与神态请用 `#` 另起一段描写（例如：`# 她把杯子往桌上一放`），' +
+  '`#` 必须写在**一行的开头**，动作与对白不要挤在同一行；' +
   '对白请分段，不要一口气写成一大段。';

@@ -78,6 +78,25 @@ describe('BackgroundRunner', () => {
     expect(await queue.pendingCount()).toBe(0);
   });
 
+  it('clearTurn 连已完成的记录一起清掉，重新入队才不会被幂等键挡住', async () => {
+    const queue = runner();
+    await queue.enqueue({ kind: 'memory.extract', payload: {}, idempotencyKey: 'k', turnId: 'turn-1' });
+    const [task] = await queue.take(1);
+    if (!task) throw new Error('未取到任务');
+    await queue.complete(task.id);
+
+    // 只撤销未完成的：已完成那条还在，重新入队会被幂等地挡住
+    expect(await queue.cancelByTurn('turn-1')).toBe(0);
+    const reused = await queue.enqueue({ kind: 'memory.extract', payload: {}, idempotencyKey: 'k', turnId: 'turn-1' });
+    expect(reused.id).toBe(task.id);
+
+    // 清掉整轮记录之后，同样的幂等键能起一条新任务
+    expect(await queue.clearTurn('turn-1')).toBe(1);
+    const fresh = await queue.enqueue({ kind: 'memory.extract', payload: {}, idempotencyKey: 'k', turnId: 'turn-1' });
+    expect(fresh.id).not.toBe(task.id);
+    expect(fresh.status).toBe('pending');
+  });
+
   it('启动时把被中断的任务捡回来', async () => {
     const queue = runner();
     await queue.enqueue({ kind: 'a', payload: {}, idempotencyKey: 'a' });

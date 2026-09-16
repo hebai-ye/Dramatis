@@ -47,6 +47,14 @@ export interface BackgroundRunner {
   fail(id: string, error: string): Promise<void>;
   /** 重抽时撤销同一回合尚未完成的任务（P0-7）。返回撤销数量。 */
   cancelByTurn(turnId: string): Promise<number>;
+  /**
+   * 把某一回合的任务记录整体清掉，**包括已经跑完的**。
+   *
+   * 重抽要用这个而不是 `cancelByTurn`：任务跑完之后那条「已完成」的记录仍然
+   * 占着幂等键，于是重新入队会被当成重复任务直接返回，这一轮的记忆就再也
+   * 抽不出来了（真实模型端到端测试里踩到的坑）。
+   */
+  clearTurn(turnId: string): Promise<number>;
   /** 启动时调用：把中断的 running 任务改回 pending。 */
   recoverInterrupted(): Promise<number>;
   pendingCount(): Promise<number>;
@@ -130,6 +138,14 @@ export function createBackgroundRunner(store: EntityStore): BackgroundRunner {
         await store.remove(COLLECTION, task.id);
       }
       return pending.length;
+    },
+
+    async clearTurn(turnId: string): Promise<number> {
+      const tasks = await store.list<BackgroundTask>(COLLECTION, { where: { turnId } });
+      for (const task of tasks) {
+        await store.remove(COLLECTION, task.id);
+      }
+      return tasks.length;
     },
 
     async recoverInterrupted(): Promise<number> {

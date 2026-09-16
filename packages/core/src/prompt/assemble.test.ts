@@ -278,7 +278,9 @@ describe('assemblePrompt / 多角色场景', () => {
     });
     // 历史是独立的对话消息，不在 system 里
     const groupText = group.messages.map((message) => message.content).join('\n');
-    expect(groupText).toContain('Bob：今晚的雨真大');
+    // 用【名字】而不是「名字：」标记说话人：后者会被模型当成范本照抄，
+    // 真实模型验证里它甚至抄成了别人的名字
+    expect(groupText).toContain('【Bob】今晚的雨真大');
 
     const solo = assemblePrompt({
       card,
@@ -292,7 +294,7 @@ describe('assemblePrompt / 多角色场景', () => {
     });
     const soloText = solo.messages.map((message) => message.content).join('\n');
     expect(soloText).toContain('今晚的雨真大');
-    expect(soloText).not.toContain('Bob：');
+    expect(soloText).not.toContain('【Bob】');
   });
 
   it('指令提醒不要替其他在场角色发言', () => {
@@ -339,7 +341,7 @@ describe('assemblePrompt / 多角色场景', () => {
     });
 
     const messages = prompt.messages;
-    expect(messages.at(-1)?.content).toBe('Alice：欢迎光临');
+    expect(messages.at(-1)?.content).toBe('【Alice】欢迎光临');
     expect(messages.filter((message) => message.content === '你们好')).toHaveLength(1);
   });
 
@@ -397,5 +399,27 @@ describe('assemblePrompt / 多角色场景', () => {
     expect(system).toContain('静默');
     // 静默模式下连动作的写法也要交代清楚，否则模型会干脆什么都不输出
     expect(system).toContain('`#`');
+  });
+
+  it('多人同场时交代清楚「名字前缀只是给你看的标记」', () => {
+    const { card, instance, room, scene } = fixtures();
+    const bob = makeInstance(room, card, 'Bob');
+
+    const prompt = assemblePrompt({
+      card,
+      instance,
+      room,
+      scene,
+      cast: [instance, bob],
+      history: [],
+      playerInput: '你们谁先说',
+      budget: baseBudget,
+    });
+    const system = prompt.messages[0]?.content ?? '';
+
+    // 历史里的 assistant 消息带「名字：」前缀；真实模型会照抄这个格式，
+    // 甚至写成别人的名字（DeepSeek 网页版端到端测试里就是这样），所以要明说
+    expect(system).toContain('不要在回复开头写任何角色名');
+    expect(system).toContain('那是他的回合');
   });
 });

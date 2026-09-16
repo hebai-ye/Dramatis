@@ -404,7 +404,7 @@ export function App() {
    */
   const handleRegenerate = useCallback(
     async (id: MessageId) => {
-      if (!db || !world || !scene || busy) return;
+      if (!db || !world || !scene || !conversation || busy) return;
 
       const target = messages.find((message) => message.id === id);
       if (!target) return;
@@ -428,7 +428,9 @@ export function App() {
       setStreamText('');
       setReasoningText('');
 
-      await db.queue.cancelByTurn(target.turnId);
+      // 用 clearTurn 而不是 cancelByTurn：已经跑完的任务记录会占着幂等键，
+      // 不清掉的话下面重新入队会被当成重复任务
+      await db.queue.clearTurn(target.turnId);
       for (const message of turnMessages) {
         if (message.role === 'character') await session.deleteMessage(message.id);
       }
@@ -451,6 +453,27 @@ export function App() {
         if (reply.trim() !== '') {
           await session.appendMessages([makeCharacterLine(speaker, reply, target.turnId, scene)]);
         }
+
+        // 重抽撤销了这一轮的后台任务，必须重新排一次队。
+        // 不补这一步的话，被重抽的那一轮会永远不再抽取记忆——角色的记忆里
+        // 就永久缺了一段（真实模型端到端测试里就是这样发现的：重抽两次之后
+        // 记忆条数少了一条，再也没有回来）。
+        const payload = {
+          roomId: world.id,
+          sceneId: scene.id,
+          turnId: target.turnId,
+          conversationId: conversation.id,
+        };
+        for (const kind of [MEMORY_TASK_KIND, AFFECT_TASK_KIND]) {
+          await db.queue.enqueue({
+            kind,
+            idempotencyKey: `${kind}:${target.turnId}`,
+            roomId: world.id,
+            turnId: target.turnId,
+            payload,
+          });
+        }
+        worker.kick();
       } catch (regenerateError) {
         const message = regenerateError instanceof Error ? regenerateError.message : String(regenerateError);
         setError(controller.signal.aborted ? `已停止生成（${message}）` : message);
@@ -461,7 +484,7 @@ export function App() {
         abortRef.current = null;
       }
     },
-    [busy, db, instances, makeCharacterLine, messages, runGeneration, scene, session, world],
+    [busy, conversation, db, instances, makeCharacterLine, messages, runGeneration, scene, session, worker, world],
   );
 
   const handleDeleteMessage = useCallback(

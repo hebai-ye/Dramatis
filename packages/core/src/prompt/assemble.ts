@@ -345,6 +345,11 @@ function buildMemoryBlocks(memories: PromptMemory[]): PromptBlock[] {
  *
  * `prefixSpeaker` 在多角色场景下必开：对话消息的 assistant 角色分不出是谁说的，
  * 不标名字模型就会把几个角色混成一个声音。
+ *
+ * 标记用 `【名字】` 而不是「名字：」。真实模型验证里的教训：写成「名字：」时，
+ * 模型会把历史当范本照抄，甚至用**别人的名字**开头（秦娘那条回复以「陈九：」开头），
+ * 于是同一句话同时属于两个人。方括号标记看起来就不像台词，被误抄的概率低得多；
+ * 万一还是被抄了，渲染层也认得它、能剥掉。
  */
 function buildHistoryBlocks(history: Message[], limit: number, prefixSpeaker: boolean): PromptBlock[] {
   const recent = history.slice(-limit);
@@ -353,7 +358,7 @@ function buildHistoryBlocks(history: Message[], limit: number, prefixSpeaker: bo
     kind: 'history',
     label: message.speakerName,
     content:
-      prefixSpeaker && message.role !== 'player' ? `${message.speakerName}：${message.content}` : message.content,
+      prefixSpeaker && message.role !== 'player' ? `【${message.speakerName}】${message.content}` : message.content,
     priority: PRIORITY.history,
     droppable: true,
     sequence: index,
@@ -468,9 +473,18 @@ export function assemblePrompt(input: AssembleInput): AssembledPrompt {
       `现在轮到你发言。请以「${input.instance.displayName}」的身份回应，保持角色不跳出。` +
       othersClause +
       '不要代替玩家行动，也不要描写玩家的内心想法。' +
+      // 历史记录里的 assistant 消息带着「名字：」前缀（多人同场时才加），
+      // 真实模型会照着这个格式往下写，甚至写成别人的名字——所以这里必须说清
+      // 前缀只是给它看的标记，它自己回复时不要带。
+      '直接写你的对白与动作，不要在回复开头写任何角色名（不要出现「某某：」这样的前缀）。' +
+      '即使你觉得场上别人更该接这句话，也不要替他写——那是他的回合。' +
+      '历史记录里的【名字】只是给你看的说话人标记，你的回复里不要出现这种标记。' +
       describeModes(input.modes)
         .map((line) => `\n${line}`)
-        .join(''),
+        .join('') +
+      // 放在最后：这一句是模型生成前读到的最后一段。写在前面的规则它经常漏——
+      // DeepSeek 网页版端到端测试里，动作 `#` 的遵守率只有约 2/9。
+      '\n格式（必须遵守）：动作与神态用 `#` 独占一行开头；对白不加任何名字前缀。',
     priority: PRIORITY.instruction,
     droppable: false,
   });

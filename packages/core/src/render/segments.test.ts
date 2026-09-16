@@ -47,6 +47,22 @@ describe('splitMessageContent', () => {
     const segments = splitMessageContent('话题 #1 是这么回事');
     expect(segments).toEqual([{ kind: 'speech', text: '话题 #1 是这么回事' }]);
   });
+
+  it('句末标点后面的 `#` 仍算动作分段（模型常把动作与对白挤在一行）', () => {
+    const segments = splitMessageContent(
+      '「上个月的事，六个人，车马一起没的。」# 她朝陈九那边抬了下下巴。「他跑船的。」',
+    );
+
+    expect(segments).toEqual([
+      { kind: 'speech', text: '「上个月的事，六个人，车马一起没的。」' },
+      { kind: 'action', text: '她朝陈九那边抬了下下巴。「他跑船的。」' },
+    ]);
+  });
+
+  it('中文引号收尾后接 `#` 也断行', () => {
+    const segments = splitMessageContent('「你问这个做什么。」# 她把杯子放下。');
+    expect(segments.map((segment) => segment.kind)).toEqual(['speech', 'action']);
+  });
 });
 
 describe('splitLongSpeech', () => {
@@ -80,5 +96,31 @@ describe('renderMessageContent', () => {
     expect(pieces[0]?.kind).toBe('action');
     expect(pieces[0]?.text).toContain('一个很长的动作描写');
     expect(pieces.filter((piece) => piece.kind === 'speech')).toHaveLength(1);
+  });
+
+  it('剥掉「自己名字：」前缀，让后面的 `#` 重新变成动作标记', () => {
+    // 真实模型端到端测试里的原样输出：自报家门 + 行内动作
+    const pieces = renderMessageContent('秦娘：# 她拎起酒壶，往你杯里斟满。\n「姓周的——收旧书那个？」', {
+      speakerName: '秦娘',
+    });
+
+    expect(pieces).toEqual([
+      { kind: 'action', text: '她拎起酒壶，往你杯里斟满。' },
+      { kind: 'speech', text: '「姓周的——收旧书那个？」' },
+    ]);
+  });
+
+  it('写成别人的名字时保留正文（冒充要看得见），但不保留「名字：」这种假前缀', () => {
+    const pieces = renderMessageContent('陈九：他抬眼看你。', { speakerName: '秦娘' });
+    expect(pieces[0]?.text).toBe('陈九：他抬眼看你。');
+
+    // 转写标记【…】不同：那是我们写进提示词的记号，角色不会这么说话，一律剥掉
+    const copied = renderMessageContent('【陈九】# 我把烟斗重新点上。', { speakerName: '秦娘' });
+    expect(copied).toEqual([{ kind: 'action', text: '我把烟斗重新点上。' }]);
+  });
+
+  it('照抄历史标记「【名字】」时也剥掉', () => {
+    const pieces = renderMessageContent('【秦娘】# 她把壶放下。', { speakerName: '秦娘' });
+    expect(pieces).toEqual([{ kind: 'action', text: '她把壶放下。' }]);
   });
 });

@@ -3,6 +3,8 @@ import type { ReactNode } from 'react';
 
 interface Props {
   message: Message;
+  /** 说话者的显示名，用于剥掉模型偶尔写在开头的人名前缀。 */
+  speakerName: string;
   /** 只有多角色同场时需要每段都标名字，单独说话时标一次就够。 */
   showSpeaker: boolean;
   /** 挂在最后一段上的操作按钮（重抽 / 编辑 / 删除）。 */
@@ -37,12 +39,12 @@ export function Avatar({ name, size = 34 }: { name: string; size?: number }) {
  *
  * 切分规则住在内核（`renderMessageContent`），这里只负责把它画出来。
  */
-export function MessageBody({ message, showSpeaker, children }: Props) {
+export function MessageBody({ message, speakerName, showSpeaker, children }: Props) {
   if (message.role === 'narration' || message.role === 'system') {
     return <p className="narration-line">{message.content}</p>;
   }
 
-  const segments = renderMessageContent(message.content);
+  const segments = renderMessageContent(message.content, { speakerName });
   const lastSpeechIndex = segments.reduce((last, segment, index) => (segment.kind === 'speech' ? index : last), -1);
 
   return (

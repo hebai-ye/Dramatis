@@ -142,7 +142,7 @@ describe('长跑基线（P1-10）', () => {
       cardIds: [aliceCard.id, bobCard.id, carolCard.id],
       instanceIds: [],
       worldBookIds: [],
-      activeSceneId: sceneIdValue,
+      activeConversationId: null,
       createdAt: now,
       updatedAt: now,
     };
@@ -156,6 +156,7 @@ describe('长跑基线（P1-10）', () => {
     const scene: Scene = {
       id: sceneIdValue,
       roomId: roomIdValue,
+      conversationId: null,
       title: '开场',
       location: '',
       worldTime: '第一日',
@@ -353,7 +354,7 @@ describe('长跑基线（P1-10）', () => {
       cardIds: [card.id],
       instanceIds: [],
       worldBookIds: [],
-      activeSceneId: sceneIdValue,
+      activeConversationId: null,
       createdAt: now,
       updatedAt: now,
     };
@@ -363,6 +364,7 @@ describe('长跑基线（P1-10）', () => {
     const scene: Scene = {
       id: sceneIdValue,
       roomId: roomIdValue,
+      conversationId: null,
       title: '开场',
       location: '',
       worldTime: '第一日',

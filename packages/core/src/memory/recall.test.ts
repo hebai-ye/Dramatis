@@ -10,6 +10,7 @@ function memory(overrides: Partial<MemoryEvent> = {}): MemoryEvent {
   return {
     id: eventId(newId()),
     roomId: roomId('room-1'),
+    conversationId: null,
     sceneId: null,
     timeline: { worldTime: '第三日', sequence: 1 },
     location: '',

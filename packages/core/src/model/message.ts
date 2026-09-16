@@ -1,10 +1,23 @@
-import type { EventId, InstanceId, MessageId, RoomId, SceneId } from './ids.js';
+import type { ConversationId, EventId, InstanceId, MessageId, RoomId, SceneId } from './ids.js';
 
-export type MessageRole = 'player' | 'character' | 'system' | 'narration';
+/**
+ * 消息的说话人类型。
+ *
+ * `admin` 是副对话里的「世界管理员」——它不扮演任何角色，产出的是
+ * 角色卡与世界书这类素材，所以既不是 character 也不是 narration。
+ */
+export type MessageRole = 'player' | 'character' | 'system' | 'narration' | 'admin';
 
 export interface Message {
   id: MessageId;
   roomId: RoomId;
+  /**
+   * 这条消息属于哪条对话。
+   *
+   * 主对话与副对话是两条独立记录，各有各的历史；界面只渲染当前对话的消息，
+   * 记忆抽取也只处理主对话（管理员的产出不是剧情，不该变成角色的记忆）。
+   */
+  conversationId: ConversationId | null;
   sceneId: SceneId | null;
   /** 一次玩家输入到角色回应视为同一回合。 */
   turnId: string;
@@ -38,6 +51,13 @@ export interface Message {
 export interface MemoryEvent {
   id: EventId;
   roomId: RoomId;
+  /**
+   * 这条记忆由哪条对话产生。
+   *
+   * 归档一条对话时按它整批删除——「把记忆回滚到该对话开始之前」，
+   * 靠时间戳判断既不可靠也不可逆。
+   */
+  conversationId: ConversationId | null;
   /** 抽取时所在的场景；没有活跃场景时为空。 */
   sceneId: SceneId | null;
   timeline: {

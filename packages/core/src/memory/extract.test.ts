@@ -26,6 +26,7 @@ function actor(name: string): CharacterInstance {
 const scene: Scene = {
   id: sceneId(newId()),
   roomId: roomId(newId()),
+  conversationId: null,
   title: '开场',
   location: '旧城酒馆',
   worldTime: '第三日 · 黄昏',

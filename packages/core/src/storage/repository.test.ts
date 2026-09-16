@@ -26,7 +26,7 @@ function fixtures() {
     cardIds: [cardIdValue],
     instanceIds: [instanceIdValue],
     worldBookIds: [bookIdValue],
-    activeSceneId: sceneIdValue,
+    activeConversationId: null,
     createdAt: now,
     updatedAt: now,
   };
@@ -34,6 +34,7 @@ function fixtures() {
   const scene: Scene = {
     id: sceneIdValue,
     roomId: roomIdValue,
+    conversationId: null,
     title: '开场',
     location: '旧城东侧',
     worldTime: '第三日 · 黄昏',
@@ -122,7 +123,7 @@ describe('Repository / schema', () => {
     const repo = new Repository(store);
     const report = await repo.migrate();
 
-    expect(report.applied.map((migration) => migration.version)).toEqual([2]);
+    expect(report.applied.map((migration) => migration.version)).toEqual([2, 3]);
 
     const personas = await repo.listPersonas();
     expect(personas).toHaveLength(1);
@@ -131,6 +132,11 @@ describe('Repository / schema', () => {
 
     const room = await repo.getRoom(roomId('room-legacy'));
     expect(room?.personaId).toBe(personas[0]?.id);
+    // v3 顺手把旧房间拆成「世界 + 一条主线对话」
+    expect(room?.activeConversationId).not.toBeNull();
+    const conversations = await repo.listConversations(roomId('room-legacy'));
+    expect(conversations).toHaveLength(1);
+    expect(conversations[0]?.id).toBe(room?.activeConversationId);
   });
 
   it('已是最新版本时重复迁移不做任何事', async () => {
@@ -251,6 +257,7 @@ describe('Repository / 房间', () => {
       {
         id: eventId(newId()),
         roomId: room.id,
+        conversationId: null,
         sceneId: scene.id,
         timeline: { worldTime: '第一日', sequence: 1 },
         location: '',

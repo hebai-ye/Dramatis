@@ -61,6 +61,7 @@ function fixtures(castPolicy: Scene['castPolicy'] = 'locked') {
   const scene: Scene = {
     id: sceneIdValue,
     roomId: roomIdValue,
+    conversationId: null,
     title: '开场',
     location: '旧城东侧的酒馆',
     worldTime: '第三日 · 黄昏',
@@ -80,7 +81,7 @@ function fixtures(castPolicy: Scene['castPolicy'] = 'locked') {
     cardIds: [card.id],
     instanceIds: [instanceIdValue],
     worldBookIds: [],
-    activeSceneId: sceneIdValue,
+    activeConversationId: null,
     createdAt: now,
     updatedAt: now,
   };

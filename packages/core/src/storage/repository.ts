@@ -1,6 +1,19 @@
 import type { Card, WorldBook } from '../model/card.js';
-import type { CardId, EventId, MessageId, RoomId, SceneId, WorldBookId } from '../model/ids.js';
-import { nowIso } from '../model/ids.js';
+import { type Conversation, defaultConversationModes, restoreInstancesFromSnapshot } from '../model/conversation.js';
+import {
+  conversationId as asConversationId,
+  roomId as asRoomId,
+  sceneId as asSceneId,
+  type CardId,
+  type ConversationId,
+  type EventId,
+  type MessageId,
+  newId,
+  nowIso,
+  type RoomId,
+  type SceneId,
+  type WorldBookId,
+} from '../model/ids.js';
 import type { CharacterInstance } from '../model/instance.js';
 import type { MemoryEvent, Message } from '../model/message.js';
 import { createPersona, type Persona } from '../model/persona.js';
@@ -14,11 +27,12 @@ import type { EntityStore } from '../platform/entity-store.js';
  * 任何会改变已落盘数据结构的改动都要 +1，并补一条 `Migration`。
  * 这是「从第一天就留好升级路径」的具体做法（ROADMAP P0-1）。
  */
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 3;
 
 export const COLLECTIONS = {
   meta: 'meta',
   rooms: 'rooms',
+  conversations: 'conversations',
   scenes: 'scenes',
   cards: 'cards',
   instances: 'instances',
@@ -53,10 +67,13 @@ export interface RoomSummary {
   updatedAt: string;
   messageCount: number;
   instanceCount: number;
+  conversationCount: number;
 }
 
 export interface RoomSnapshot {
   room: Room;
+  /** 世界下的所有对话，含已归档的（界面默认只显示未归档的）。 */
+  conversations: Conversation[];
   scenes: Scene[];
   instances: CharacterInstance[];
   cards: Card[];
@@ -66,6 +83,14 @@ export interface RoomSnapshot {
   memories: MemoryEvent[];
   /** persona 是跨房间共用的身份表，一并返回方便 UI 直接切换。 */
   personas: Persona[];
+}
+
+/** 归档一条对话的实际影响，供界面如实提示「回滚了什么」。 */
+export interface ArchiveReport {
+  conversationId: ConversationId;
+  restoredInstances: number;
+  removedMemories: number;
+  nextConversationId: ConversationId | null;
 }
 
 /**
@@ -94,6 +119,54 @@ export const MIGRATIONS: readonly Migration[] = [
         });
         await store.put(COLLECTIONS.personas, persona);
         await store.put(COLLECTIONS.rooms, { ...room, id: roomId, personaId: persona.id });
+      }
+    },
+  },
+  {
+    version: 3,
+    describe: '把房间拆成「世界 + 多条对话」：为每个世界补一条主线对话，并给场景、消息、记忆标明归属',
+    run: async (store) => {
+      const rooms = await store.list<Record<string, unknown>>(COLLECTIONS.rooms);
+
+      for (const room of rooms) {
+        const id = typeof room.id === 'string' ? room.id : '';
+        if (id === '') continue;
+
+        const now = typeof room.updatedAt === 'string' ? room.updatedAt : nowIso();
+        const activeScene = typeof room.activeSceneId === 'string' ? asSceneId(room.activeSceneId) : null;
+
+        const conversation: Conversation = {
+          id: asConversationId(newId()),
+          roomId: asRoomId(id),
+          kind: 'main',
+          title: '主线',
+          activeSceneId: activeScene,
+          modes: defaultConversationModes(),
+          archivedAt: null,
+          // 旧数据没有「对话开始之前」的概念：整条线就是这个世界本身，
+          // 所以快照留空，归档这样的对话不会回滚任何状态。
+          stateSnapshot: [],
+          createdAt: typeof room.createdAt === 'string' ? room.createdAt : now,
+          updatedAt: now,
+        };
+        await store.put(COLLECTIONS.conversations, conversation);
+
+        const assign = async (collection: string): Promise<void> => {
+          const records = await store.list<Record<string, unknown> & { id: string }>(collection, {
+            where: { roomId: id },
+          });
+          for (const record of records) {
+            if (typeof record.conversationId === 'string') continue;
+            await store.put(collection, { ...record, id: record.id, conversationId: conversation.id });
+          }
+        };
+
+        await assign(COLLECTIONS.scenes);
+        await assign(COLLECTIONS.messages);
+        await assign(COLLECTIONS.memories);
+
+        const { activeSceneId: _dropped, ...rest } = room;
+        await store.put(COLLECTIONS.rooms, { ...rest, id, activeConversationId: conversation.id });
       }
     },
   },
@@ -178,6 +251,7 @@ export class Repository {
         updatedAt: room.updatedAt,
         messageCount: await this.store.count(COLLECTIONS.messages, { roomId: room.id }),
         instanceCount: await this.store.count(COLLECTIONS.instances, { roomId: room.id }),
+        conversationCount: await this.store.count(COLLECTIONS.conversations, { roomId: room.id }),
       });
     }
     return summaries;
@@ -190,6 +264,7 @@ export class Repository {
    * 删掉一个房间不应该连带毁掉用户导入的素材。
    */
   async deleteRoom(id: RoomId): Promise<void> {
+    const conversations = await this.store.list<Conversation>(COLLECTIONS.conversations, { where: { roomId: id } });
     const scenes = await this.store.list<Scene>(COLLECTIONS.scenes, { where: { roomId: id } });
     const instances = await this.store.list<CharacterInstance>(COLLECTIONS.instances, { where: { roomId: id } });
     const messages = await this.store.list<Message>(COLLECTIONS.messages, { where: { roomId: id } });
@@ -197,12 +272,113 @@ export class Repository {
     // 后台任务也要清掉：留下指向已删除房间的任务，只会在下次启动时反复失败
     const tasks = await this.store.list<{ id: string }>(COLLECTIONS.backgroundTasks, { where: { roomId: id } });
 
+    for (const conversation of conversations) await this.store.remove(COLLECTIONS.conversations, conversation.id);
     for (const scene of scenes) await this.store.remove(COLLECTIONS.scenes, scene.id);
     for (const instance of instances) await this.store.remove(COLLECTIONS.instances, instance.id);
     for (const message of messages) await this.store.remove(COLLECTIONS.messages, message.id);
     for (const memory of memories) await this.store.remove(COLLECTIONS.memories, memory.id);
     for (const task of tasks) await this.store.remove(COLLECTIONS.backgroundTasks, task.id);
     await this.store.remove(COLLECTIONS.rooms, id);
+  }
+
+  // ---- 对话（LAYOUT：世界 = 项目，一个世界下可以开多个对话） ----
+
+  async saveConversation(conversation: Conversation): Promise<void> {
+    await this.store.put(COLLECTIONS.conversations, { ...conversation, updatedAt: nowIso() });
+  }
+
+  async getConversation(id: ConversationId): Promise<Conversation | null> {
+    return this.store.get<Conversation>(COLLECTIONS.conversations, id);
+  }
+
+  /**
+   * 世界下的对话，默认不含已归档的。
+   *
+   * 归档后的对话不在主列表里（LAYOUT），所以默认过滤掉；设置面板需要
+   * 列出它们时显式传 `includeArchived`。
+   */
+  async listConversations(roomIdValue: RoomId, options: { includeArchived?: boolean } = {}): Promise<Conversation[]> {
+    const all = await this.store.list<Conversation>(COLLECTIONS.conversations, {
+      where: { roomId: roomIdValue },
+      orderBy: 'createdAt',
+      direction: 'asc',
+    });
+    return options.includeArchived === true ? all : all.filter((conversation) => conversation.archivedAt === null);
+  }
+
+  /** 删掉一条对话：场景、消息、记忆一起走，角色与世界书保留。 */
+  async deleteConversation(id: ConversationId): Promise<void> {
+    const conversation = await this.getConversation(id);
+    if (!conversation) return;
+
+    const scenes = await this.store.list<Scene>(COLLECTIONS.scenes, { where: { conversationId: id } });
+    const messages = await this.store.list<Message>(COLLECTIONS.messages, { where: { conversationId: id } });
+    const memories = await this.store.list<MemoryEvent>(COLLECTIONS.memories, { where: { conversationId: id } });
+
+    for (const scene of scenes) await this.store.remove(COLLECTIONS.scenes, scene.id);
+    for (const message of messages) await this.store.remove(COLLECTIONS.messages, message.id);
+    for (const memory of memories) await this.store.remove(COLLECTIONS.memories, memory.id);
+    await this.store.remove(COLLECTIONS.conversations, id);
+
+    const room = await this.getRoom(conversation.roomId);
+    if (room?.activeConversationId === id) {
+      const remaining = await this.listConversations(conversation.roomId);
+      await this.saveRoom({ ...room, activeConversationId: remaining[0]?.id ?? null, updatedAt: nowIso() });
+    }
+  }
+
+  /**
+   * 归档一条对话（LAYOUT「归档对话」）。
+   *
+   * 语义是「这条时间线没有发生过」：情绪、关系与记忆**回滚到该对话开始之前**，
+   * 但对话本身被保留，改为从设置里打开回顾。所以这里不是删除，
+   * 而是「标记 + 还原 + 清掉这条线产生的记忆」。
+   *
+   * 幂等：重复归档不会再次回滚，也不会把已经改过的状态再擦一遍。
+   */
+  async archiveConversation(id: ConversationId, options: { at?: string } = {}): Promise<ArchiveReport | null> {
+    const conversation = await this.getConversation(id);
+    if (!conversation) return null;
+
+    const at = options.at ?? nowIso();
+    if (conversation.archivedAt !== null) {
+      const room = await this.getRoom(conversation.roomId);
+      return {
+        conversationId: conversation.id,
+        restoredInstances: 0,
+        removedMemories: 0,
+        nextConversationId: room?.activeConversationId ?? null,
+      };
+    }
+
+    const instances = await this.listInstances(conversation.roomId);
+    const restored = restoreInstancesFromSnapshot(instances, conversation.stateSnapshot, at);
+    let restoredInstances = 0;
+    for (let index = 0; index < restored.length; index += 1) {
+      const next = restored[index];
+      const before = instances[index];
+      if (!next || !before) continue;
+      // 状态没变就不写库：归档一条从头到尾没改过任何状态的空对话，
+      // 不该在实例上留下「刚刚更新过」的痕迹
+      if (JSON.stringify([next.affect, next.relationships]) === JSON.stringify([before.affect, before.relationships])) {
+        continue;
+      }
+      await this.saveInstance(next);
+      restoredInstances += 1;
+    }
+
+    const removedMemories = await this.deleteMemoriesByConversation(conversation.id);
+    await this.store.put(COLLECTIONS.conversations, { ...conversation, archivedAt: at, updatedAt: at });
+
+    const room = await this.getRoom(conversation.roomId);
+    let nextConversationId = room?.activeConversationId ?? null;
+    if (room && room.activeConversationId === conversation.id) {
+      const remaining = await this.listConversations(conversation.roomId);
+      nextConversationId = remaining[0]?.id ?? null;
+      await this.saveRoom({ ...room, activeConversationId: nextConversationId, updatedAt: at });
+    }
+
+    return { conversationId: conversation.id, restoredInstances, removedMemories, nextConversationId };
   }
 
   // ---- 场景 ----
@@ -295,18 +471,29 @@ export class Repository {
     return stamped;
   }
 
-  /** 返回最近 `limit` 条消息，按时间正序。 */
-  async listMessages(roomId: RoomId, options: { limit?: number } = {}): Promise<Message[]> {
+  /**
+   * 返回最近 `limit` 条消息，按时间正序。
+   *
+   * 传了 `conversationId` 就只取那条对话的消息——主对话与副对话是两条
+   * 独立记录，混在一起会让管理员的草稿出现在角色的剧情里。
+   */
+  async listMessages(
+    roomId: RoomId,
+    options: { limit?: number; conversationId?: ConversationId } = {},
+  ): Promise<Message[]> {
+    const where: Record<string, unknown> = { roomId };
+    if (options.conversationId !== undefined) where.conversationId = options.conversationId;
+
     if (options.limit === undefined) {
       return this.store.list<Message>(COLLECTIONS.messages, {
-        where: { roomId },
+        where,
         orderBy: 'seq',
         direction: 'asc',
       });
     }
 
     const recent = await this.store.list<Message>(COLLECTIONS.messages, {
-      where: { roomId },
+      where,
       orderBy: 'seq',
       direction: 'desc',
       limit: options.limit,
@@ -344,6 +531,7 @@ export class Repository {
     const room = await this.getRoom(roomId);
     if (!room) return null;
 
+    const conversations = await this.listConversations(roomId, { includeArchived: true });
     const scenes = await this.listScenes(roomId);
     const instances = await this.listInstances(roomId);
     const messages = await this.store.list<Message>(COLLECTIONS.messages, {
@@ -366,19 +554,36 @@ export class Repository {
 
     const personas = await this.listPersonas();
     const memories = await this.listMemories(roomId);
-    return { room, scenes, instances, cards, worldBooks, messages, memories, personas };
+    return { room, conversations, scenes, instances, cards, worldBooks, messages, memories, personas };
   }
 
   // ---- 玩家身份（P0-3） ----
 
   // ---- 记忆（P1） ----
 
-  async listMemories(roomId: RoomId): Promise<MemoryEvent[]> {
+  async listMemories(roomId: RoomId, options: { conversationId?: ConversationId } = {}): Promise<MemoryEvent[]> {
+    const where: Record<string, unknown> = { roomId };
+    if (options.conversationId !== undefined) where.conversationId = options.conversationId;
+
     return this.store.list<MemoryEvent>(COLLECTIONS.memories, {
-      where: { roomId },
+      where,
       orderBy: 'createdAt',
       direction: 'desc',
     });
+  }
+
+  /**
+   * 删除一条对话产生的全部记忆，用于归档。
+   *
+   * 「回滚到该对话开始之前」不能靠时间戳判断：同一次重抽、跨场景、自动
+   * 补做的后台任务都会让时间戳错位。归属字段是唯一可靠的依据。
+   */
+  async deleteMemoriesByConversation(id: ConversationId): Promise<number> {
+    const events = await this.store.list<MemoryEvent>(COLLECTIONS.memories, { where: { conversationId: id } });
+    for (const event of events) {
+      await this.store.remove(COLLECTIONS.memories, event.id);
+    }
+    return events.length;
   }
 
   async saveMemories(events: readonly MemoryEvent[]): Promise<void> {
@@ -456,12 +661,15 @@ export class Repository {
 
   async saveSnapshot(snapshot: {
     room?: Room;
+    conversations?: readonly Conversation[];
     scenes?: readonly Scene[];
     instances?: readonly CharacterInstance[];
     cards?: readonly Card[];
     worldBooks?: readonly WorldBook[];
   }): Promise<void> {
     if (snapshot.room) await this.saveRoom(snapshot.room);
+    if (snapshot.conversations)
+      for (const conversation of snapshot.conversations) await this.saveConversation(conversation);
     if (snapshot.scenes) for (const scene of snapshot.scenes) await this.saveScene(scene);
     if (snapshot.instances) for (const instance of snapshot.instances) await this.saveInstance(instance);
     if (snapshot.cards) for (const card of snapshot.cards) await this.saveCard(card);

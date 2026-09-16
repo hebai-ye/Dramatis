@@ -1,4 +1,5 @@
 export * from './card.js';
+export * from './conversation.js';
 export * from './ids.js';
 export * from './instance.js';
 export * from './message.js';

@@ -1,9 +1,11 @@
 import type { WorldBookMatch } from '../compat/sillytavern/worldbook.js';
 import type { Card } from '../model/card.js';
+import type { ConversationModes } from '../model/conversation.js';
 import { type InstanceId, PLAYER } from '../model/ids.js';
 import type { Affect, CharacterInstance, TraitAxis } from '../model/instance.js';
 import type { Message } from '../model/message.js';
 import type { Room, Scene } from '../model/room.js';
+import { ACTION_FORMAT_RULE } from '../render/segments.js';
 import { heuristicTokenCounter, type TokenCounter } from '../token/estimate.js';
 import { applyBudget } from './budget.js';
 import { selectHistoryFor } from './history.js';
@@ -36,6 +38,8 @@ export interface AssembleInput {
   memories?: PromptMemory[];
   /** 场景内的角色，用于让模型知道还有谁在场（P0-6）。 */
   cast?: readonly CharacterInstance[];
+  /** 会话级对话模式：静默、是否必须等主角先开口（LAYOUT「输入区 · 加号」）。 */
+  modes?: ConversationModes;
   budget: {
     /** 模型的上下文窗口。 */
     maxTokens: number;
@@ -144,7 +148,26 @@ function defaultSystemPrompt(card: Card, playerName: string): string {
     `你只扮演「${card.name}」这一个角色，始终以其身份说话与行动。`,
     '不要替玩家做决定，不要描写玩家的心理活动，不要以旁白解释角色动机。',
     '用第一人称和动作描写写作，像小说里的对话那样自然。',
+    ACTION_FORMAT_RULE,
   ].join('\n');
+}
+
+/**
+ * 会话级模式的指令（LAYOUT 的「对话模式」）。
+ *
+ * 模式只是开关，模型不知道就等于没开——所以它必须落到 prompt 里，
+ * 和入场策略一样，是「界面上的设置真的生效」的那一步。
+ */
+function describeModes(modes: ConversationModes | undefined): string[] {
+  if (!modes) return [];
+  const lines: string[] = [];
+  if (modes.playerFirst) {
+    lines.push('本轮模式：只有玩家先开口，你才可以接话。玩家没说话就保持沉默，用动作推进即可。');
+  }
+  if (modes.silent) {
+    lines.push('本轮模式（静默）：不要说话，只写动作与神态（每条用 `#` 起段），也不要替别人发言。');
+  }
+  return lines;
 }
 
 function buildPersonaBlock(card: Card, instance: CharacterInstance): PromptBlock {
@@ -444,7 +467,10 @@ export function assemblePrompt(input: AssembleInput): AssembledPrompt {
     content:
       `现在轮到你发言。请以「${input.instance.displayName}」的身份回应，保持角色不跳出。` +
       othersClause +
-      '不要代替玩家行动，也不要描写玩家的内心想法。',
+      '不要代替玩家行动，也不要描写玩家的内心想法。' +
+      describeModes(input.modes)
+        .map((line) => `\n${line}`)
+        .join(''),
     priority: PRIORITY.instruction,
     droppable: false,
   });

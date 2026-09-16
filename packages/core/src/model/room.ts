@@ -1,4 +1,4 @@
-import type { CardId, InstanceId, RoomId, SceneId, WorldBookId } from './ids.js';
+import type { CardId, ConversationId, InstanceId, RoomId, SceneId, WorldBookId } from './ids.js';
 
 /**
  * 场景的入场策略（设计文档 §2.3）。
@@ -10,6 +10,13 @@ export type CastPolicy = 'open' | 'locked' | 'invite_only' | 'triggered';
 export interface Scene {
   id: SceneId;
   roomId: RoomId;
+  /**
+   * 场景属于哪条对话。
+   *
+   * 一个世界可以开多条对话（LAYOUT「世界 → 多个对话」），每条对话有自己的
+   * 场景线：换了对话就该换场景，否则两条线的「此刻在哪里」会互相污染。
+   */
+  conversationId: ConversationId | null;
   title: string;
   location: string;
   /** 世界内时间，自由文本，例如「第三日 · 黄昏」。 */
@@ -23,7 +30,14 @@ export interface Scene {
   endedAt: string | null;
 }
 
-/** 世界 / 房间 —— 一条持续的世界线（设计文档 §2.2）。 */
+/**
+ * 世界（仓储层里仍叫 room）。
+ *
+ * LAYOUT 把层级定为「世界 = 项目，一个世界下可以开多个对话」，所以
+ * 世界本身不再直接挂着一条对话线，而是持有若干条 `Conversation`。
+ * 角色、角色卡、世界书、玩家身份是**世界级**的，跨对话共用；
+ * 场景、消息、对话模式是**对话级**的。
+ */
 export interface Room {
   id: RoomId;
   title: string;
@@ -40,7 +54,8 @@ export interface Room {
   cardIds: CardId[];
   instanceIds: InstanceId[];
   worldBookIds: WorldBookId[];
-  activeSceneId: SceneId | null;
+  /** 当前打开的对话；为空表示这个世界还没有任何对话。 */
+  activeConversationId: ConversationId | null;
   createdAt: string;
   updatedAt: string;
 }

@@ -1,5 +1,13 @@
 import type { Card } from '../model/card.js';
-import { type InstanceId, messageId, newId, nowIso, type RoomId, type SceneId } from '../model/ids.js';
+import {
+  type ConversationId,
+  type InstanceId,
+  messageId,
+  newId,
+  nowIso,
+  type RoomId,
+  type SceneId,
+} from '../model/ids.js';
 import type { CharacterInstance } from '../model/instance.js';
 import type { Message } from '../model/message.js';
 import type { Room, Scene } from '../model/room.js';
@@ -25,6 +33,8 @@ export function createTurnId(): string {
 
 export function createPlayerMessage(input: {
   roomId: RoomId;
+  /** 归属的对话；主对话与副对话各自记录，不能混。 */
+  conversationId?: ConversationId | null;
   sceneId: SceneId | null;
   turnId: string;
   speakerName: string;
@@ -37,6 +47,7 @@ export function createPlayerMessage(input: {
   return {
     id: messageId(newId()),
     roomId: input.roomId,
+    conversationId: input.conversationId ?? null,
     sceneId: input.sceneId,
     turnId: input.turnId,
     seq: input.seq ?? 0,
@@ -51,6 +62,7 @@ export function createPlayerMessage(input: {
 
 export function createCharacterMessage(input: {
   roomId: RoomId;
+  conversationId?: ConversationId | null;
   sceneId: SceneId | null;
   turnId: string;
   speakerInstanceId: InstanceId;
@@ -64,6 +76,7 @@ export function createCharacterMessage(input: {
   return {
     id: messageId(newId()),
     roomId: input.roomId,
+    conversationId: input.conversationId ?? null,
     sceneId: input.sceneId,
     turnId: input.turnId,
     seq: input.seq ?? 0,
@@ -93,6 +106,7 @@ export function createGreetingMessage(input: {
 
   return createCharacterMessage({
     roomId: input.room.id,
+    conversationId: input.scene?.conversationId ?? null,
     sceneId: input.scene?.id ?? null,
     turnId: createTurnId(),
     speakerInstanceId: input.instance.id,
@@ -100,6 +114,35 @@ export function createGreetingMessage(input: {
     content: greeting.trim(),
     audience: input.audience ?? [input.instance.id],
   });
+}
+
+/**
+ * 旁白式动作（LAYOUT「切换场景后产生一条旁白式动作」）。
+ *
+ * 它没有气泡、不属于任何角色，记录的是「谁跟谁去了哪里」。`audience` 留空
+ * 表示所有人都能看到——包括当时不在场的人：换场这件事本身是公开的。
+ */
+export function createNarrationMessage(input: {
+  roomId: RoomId;
+  conversationId: ConversationId | null;
+  sceneId: SceneId | null;
+  turnId: string;
+  content: string;
+}): Message {
+  return {
+    id: messageId(newId()),
+    roomId: input.roomId,
+    conversationId: input.conversationId,
+    sceneId: input.sceneId,
+    turnId: input.turnId,
+    seq: 0,
+    role: 'narration',
+    speakerInstanceId: null,
+    speakerName: '旁白',
+    audience: [],
+    content: input.content,
+    createdAt: nowIso(),
+  };
 }
 
 /**

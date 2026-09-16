@@ -1,4 +1,4 @@
-import { eventId, newId, nowIso, type RoomId, type SceneId } from '../model/ids.js';
+import { type ConversationId, eventId, newId, nowIso, type RoomId, type SceneId } from '../model/ids.js';
 import type { CharacterInstance } from '../model/instance.js';
 import type { MemoryEvent } from '../model/message.js';
 import type { ExtractedMemory } from './types.js';
@@ -6,6 +6,8 @@ import type { ExtractedMemory } from './types.js';
 export interface IngestInput {
   roomId: RoomId;
   sceneId: SceneId | null;
+  /** 这条记忆由哪条对话产生；归档时要按它整批撤销。 */
+  conversationId?: ConversationId | null;
   worldTime: string;
   /** 房间内单调递增的序号，用于排序与时效计算。 */
   sequence: number;
@@ -49,6 +51,7 @@ export function buildMemoryEvents(input: IngestInput): IngestResult {
   const base = {
     roomId: input.roomId,
     sceneId: input.sceneId,
+    conversationId: input.conversationId ?? null,
     timeline: { worldTime: input.worldTime, sequence: input.sequence },
     location: input.extraction.location,
     participants: participantIds,

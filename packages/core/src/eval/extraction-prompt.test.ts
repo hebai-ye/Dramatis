@@ -72,7 +72,7 @@ describe('抽取提示词参考', () => {
       cardIds: [aliceCard.id, bobCard.id],
       instanceIds: [],
       worldBookIds: [],
-      activeSceneId: sceneIdValue,
+      activeConversationId: null,
       createdAt: now,
       updatedAt: now,
     };
@@ -83,6 +83,7 @@ describe('抽取提示词参考', () => {
     const scene: Scene = {
       id: sceneIdValue,
       roomId: roomIdValue,
+      conversationId: null,
       title: '雨夜',
       location: '旧城东侧的酒馆',
       worldTime: '第三日 · 黄昏',

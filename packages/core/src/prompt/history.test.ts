@@ -11,6 +11,7 @@ function message(content: string, audience: InstanceId[], speaker: InstanceId | 
   return {
     id: content as never,
     roomId: 'room' as never,
+    conversationId: null,
     sceneId: null,
     turnId: 'turn',
     seq: 0,

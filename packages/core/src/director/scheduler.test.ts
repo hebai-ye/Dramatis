@@ -80,6 +80,55 @@ describe('scheduleSpeakers / 资格', () => {
     expect(result.speakers).toEqual([inCast.id]);
     expect(result.scores.find((score) => score.instanceId === onstage.id)?.excluded).toContain('不在当前场景名单');
   });
+
+  it('玩家接着说给他听时，上一位压过冷却继续接话', () => {
+    // 真实使用里踩到的：玩家用「你还记得吗」追问刚说过话的人，v1 因为冷却换了人
+    const alice = actor('Alice');
+    const bob = actor('Bob');
+
+    const result = scheduleSpeakers({
+      playerInput: '你还记得吗？',
+      candidates: [candidate(alice, 0), candidate(bob, 3)],
+      previousSpeakerId: alice.id,
+      random: noJitter,
+    });
+
+    expect(result.speakers).toEqual([alice.id]);
+    expect(
+      result.scores.find((score) => score.instanceId === alice.id)?.reasons.map((reason) => reason.code),
+    ).toContain('continuation');
+  });
+
+  it('问全场（你们）时按公平性轮换，不算延续', () => {
+    const alice = actor('Alice');
+    const bob = actor('Bob');
+
+    const result = scheduleSpeakers({
+      playerInput: '你们觉得这件事该怎么办？',
+      candidates: [candidate(alice, 0), candidate(bob, 3)],
+      previousSpeakerId: alice.id,
+      random: noJitter,
+    });
+
+    expect(result.speakers).toEqual([bob.id]);
+  });
+
+  it('玩家点了别人的名时，延续加成让位给点名', () => {
+    const alice = actor('Alice');
+    const bob = actor('Bob');
+
+    const result = scheduleSpeakers({
+      playerInput: 'Bob，你怎么看？',
+      candidates: [candidate(alice, 0), candidate(bob, 0)],
+      previousSpeakerId: alice.id,
+      random: noJitter,
+    });
+
+    expect(result.speakers).toEqual([bob.id]);
+    expect(
+      result.scores.find((score) => score.instanceId === alice.id)?.reasons.map((reason) => reason.code),
+    ).not.toContain('continuation');
+  });
 });
 
 describe('scheduleSpeakers / 打分', () => {

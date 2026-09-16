@@ -308,6 +308,8 @@ export function App() {
 
       try {
         const since = turnsSinceLastSpoke(history, turnId);
+        const previousSpeakerId =
+          [...history].reverse().find((message) => message.role === 'character')?.speakerInstanceId ?? null;
         const schedule = scheduleSpeakers({
           playerInput: text,
           candidates: instances.map((instance) => ({
@@ -317,6 +319,8 @@ export function App() {
           // 名单以当前场景为准：presence 是「他在这个世界的状态」，
           // 而多条对话并存时，onstage 的角色未必在这条线的这场戏里
           cast: scene.cast,
+          // 玩家接着往下说时，仍由上一位接话，不要因为冷却就换人
+          previousSpeakerId,
           maxSpeakers: 1,
         });
 

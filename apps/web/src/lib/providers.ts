@@ -38,6 +38,18 @@ export interface ProvidersApi {
   deleteProfile: (id: string) => Promise<void>;
   setApiKey: (value: string) => Promise<void>;
   setKeyMode: (mode: KeyStorageMode) => Promise<void>;
+  /**
+   * 一次性提交「模型接入」面板上的全部改动。
+   *
+   * 面板是草稿式的：改字段不再即时落库，而是等用户点保存。这样既给了「改完再确认」
+   * 的机会，也让「密钥保存方式」和密钥本身能一起生效——分成两步做的话，先切档位
+   * 再写密钥会写进旧的存储实例（KeyStore 的重建发生在下次渲染之后）。
+   */
+  commitConfig: (input: {
+    profile: Partial<ProviderProfile>;
+    apiKey: string;
+    keyMode: KeyStorageMode;
+  }) => Promise<void>;
 }
 
 /**
@@ -181,6 +193,34 @@ export function useProviders(db: DramatisDb | null): ProvidersApi {
     [db],
   );
 
+  const commitConfig = useCallback(
+    async (input: { profile: Partial<ProviderProfile>; apiKey: string; keyMode: KeyStorageMode }) => {
+      if (!db) return;
+      const profile = profiles.find((item) => item.id === activeId);
+      if (!profile) return;
+
+      // 先按目标档位把密钥写好，再切换档位：KeyStore 的重建发生在下次渲染之后，
+      // 直接调用 setApiKey 会写进旧的存储实例
+      const target = createBrowserKeyStore(input.keyMode);
+      if (input.apiKey.trim() === '') await target.remove(profile.keyRef);
+      else await target.set(profile.keyRef, input.apiKey);
+
+      if (input.keyMode !== keyMode) {
+        // 从「保存在本机浏览器」切回「仅本次会话」时，顺手清掉明文那份，
+        // 否则用户以为已经收回了，磁盘上其实还留着
+        if (keyMode === 'device') await createBrowserKeyStore('device').remove(profile.keyRef);
+        setKeyModeState(input.keyMode);
+        await db.repository.setMeta(META_KEY_MODE, input.keyMode);
+      }
+
+      keyStoreRef.current = target;
+      setKeyKind(target.kind);
+      setApiKeyState(input.apiKey);
+      await updateProfile(profile.id, input.profile);
+    },
+    [activeId, db, keyMode, profiles, updateProfile],
+  );
+
   return {
     profiles,
     activeId,
@@ -195,6 +235,7 @@ export function useProviders(db: DramatisDb | null): ProvidersApi {
     deleteProfile,
     setApiKey,
     setKeyMode,
+    commitConfig,
   };
 
   function buildBackground(): ProvidersApi['background'] {

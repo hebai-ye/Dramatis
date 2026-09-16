@@ -1104,6 +1104,20 @@ details summary {
   white-space: nowrap;
 }
 
+/* 草稿式表单的保存条：改完点保存才落库 */
+.save-bar {
+  align-items: center;
+  border-top: 1px dashed var(--line);
+  display: flex;
+  gap: 8px;
+  padding-top: 10px;
+}
+
+.save-bar .hint {
+  flex: 1;
+  text-align: right;
+}
+
 /* ---------- 输入区 ---------- */
 
 .composer-tools {

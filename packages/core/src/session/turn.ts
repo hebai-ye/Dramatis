@@ -13,6 +13,7 @@ import type { Message, MessageUsage } from '../model/message.js';
 import type { Room, Scene } from '../model/room.js';
 import { type AssembledPrompt, type AssembleInput, assemblePrompt } from '../prompt/assemble.js';
 import type { ModelParams, ModelProvider } from '../provider/openai-compatible.js';
+import { normalizeActionBreaks } from '../render/segments.js';
 
 export type TurnEvent =
   | { type: 'prompt'; prompt: AssembledPrompt }
@@ -115,7 +116,9 @@ export function createGreetingMessage(input: {
     turnId: createTurnId(),
     speakerInstanceId: input.instance.id,
     speakerName: input.instance.displayName,
-    content: greeting.trim(),
+    // 把开场白里的行内动作断到行首：它是对话记录的第一条，
+    // 也是模型随后模仿的样板，格式从一开始就该是对的
+    content: normalizeActionBreaks(greeting.trim()),
     audience: input.audience ?? [input.instance.id],
   });
 }

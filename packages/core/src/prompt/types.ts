@@ -39,6 +39,8 @@ export type PromptBlockKind =
   | 'scene'
   | 'history'
   | 'instruction'
+  /** 动作写法的现场示范。可选：预算紧张时最先被丢。 */
+  | 'format'
   | 'player';
 
 /** 历史消息块还原成对话消息所需的角色信息。 */

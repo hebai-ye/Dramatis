@@ -53,6 +53,75 @@ export const DEFAULT_MAX_BUBBLE_LENGTH = 110;
 /** 句末标点，切分时优先在这些位置断开。 */
 const SENTENCE_END = /[。！？!?…；;\n]/;
 
+/**
+ * 对白的引号。中英文都收：中文用「」『』与弯引号，英文用直引号。
+ */
+const QUOTE_PAIRS: Record<string, string> = {
+  '「': '」',
+  '『': '』',
+  '“': '”',
+  '"': '"',
+};
+
+/** 只有真的像一句话时才单独成段，免得把标点或空白切出来。 */
+function isMeaningful(text: string): boolean {
+  return /[\p{Script=Han}\p{L}\p{N}]/u.test(text);
+}
+
+interface QuotedSpan {
+  quoted: boolean;
+  text: string;
+}
+
+/**
+ * 按引号把一行切成「对白」与「非对白」的片段。
+ *
+ * 这是给**不写动作标记的模型**准备的兜底。它们不肯按约定加 `#`，但几乎总把对白
+ * 放进引号里——那我们就反过来用：引号内是对白，引号外是动作。
+ */
+export function splitByQuotes(line: string): QuotedSpan[] {
+  const spans: QuotedSpan[] = [];
+  let buffer = '';
+  let quoted = false;
+  let closer = '';
+
+  const flush = (): void => {
+    const text = buffer.trim();
+    if (text !== '' && (quoted || isMeaningful(text))) spans.push({ quoted, text });
+    buffer = '';
+  };
+
+  for (const char of line) {
+    if (!quoted) {
+      const expected = QUOTE_PAIRS[char];
+      if (expected !== undefined) {
+        flush();
+        quoted = true;
+        closer = expected;
+        buffer += char;
+        continue;
+      }
+      buffer += char;
+      continue;
+    }
+
+    buffer += char;
+    if (char === closer) {
+      flush();
+      quoted = false;
+      closer = '';
+    }
+  }
+
+  flush();
+  return spans;
+}
+
+/** 这一行里有没有成对的引号。 */
+function hasQuotedSpan(line: string): boolean {
+  return splitByQuotes(line).some((span) => span.quoted);
+}
+
 function isActionLine(line: string): boolean {
   return /^\s*#/.test(line);
 }
@@ -78,6 +147,39 @@ export function normalizeActionBreaks(content: string): string {
   return content.replace(INLINE_ACTION_BREAK, '$1\n#');
 }
 
+/** 说话人标签：`名字：` 或 `名字:`，出现在行首，最长 12 个字符。 */
+const SPEAKER_LABEL = /^\s*([^：:\n]{1,12})\s*[：:]\s*(.*)$/;
+
+/**
+ * 把角色卡自带的「对话风格示例」整理成我们自己的写法。
+ *
+ * 卡里的示例通常长这样（SillyTavern 的老习惯）：
+ *
+ *     玩家：听说北边的商队没了。
+ *     陈九：听说？# 他压低声音敲了两下桌子。「我的货找谁要去。」
+ *
+ * 它是**最强的一份示范**——模型模仿它，远胜于服从我们的规则。可它的写法与约定正好
+ * 相反：动作挤在对白后面、回复开头挂着「名字：」。所以注入之前先归一化：
+ * 行内动作断到行首，说话人标签换成 `【名字】`，与历史记录用同一套形状。
+ *
+ * 只改格式、不动内容——卡里每一句话都还在。
+ */
+export function normalizeCardExample(content: string, speakerNames: readonly string[] = []): string {
+  const names = new Set(speakerNames.map((name) => name.trim()).filter((name) => name !== ''));
+
+  return normalizeActionBreaks(content)
+    .split(/\r?\n/)
+    .map((line) => {
+      const match = SPEAKER_LABEL.exec(line);
+      if (!match) return line;
+      const label = (match[1] ?? '').trim();
+      const rest = match[2] ?? '';
+      const isSpeaker = names.has(label) || /^(玩家|用户|user|you)$/i.test(label);
+      return isSpeaker ? `【${label}】${rest}` : line;
+    })
+    .join('\n');
+}
+
 /**
  * 按 `#` 把一段正文切成「对白段」与「动作段」。
  *
@@ -96,20 +198,47 @@ export function splitMessageContent(content: string): MessageSegment[] {
     current = null;
   };
 
-  for (const rawLine of normalizeActionBreaks(content).split(/\r?\n/)) {
+  const lines = normalizeActionBreaks(content).split(/\r?\n/);
+
+  /**
+   * 这条消息有没有用引号写对白。
+   *
+   * 有的话就启用「引号内是对白、引号外是动作」的兜底规则——模型不肯写 `#` 时，
+   * 这是唯一可靠的分段依据。没有引号就不启用，免得把整段独白误判成动作。
+   */
+  const usesQuotes = lines.some((line) => hasQuotedSpan(line));
+
+  for (const rawLine of lines) {
     if (rawLine.trim() === '') {
       flush();
       continue;
     }
 
-    const kind: MessageSegmentKind = isActionLine(rawLine) ? 'action' : 'speech';
-    const line = kind === 'action' ? stripActionMarkers(rawLine) : rawLine.trim();
+    const push = (kind: MessageSegmentKind, text: string): void => {
+      if (text === '') return;
+      if (!current || current.kind !== kind) {
+        flush();
+        current = { kind, lines: [] };
+      }
+      current.lines.push(text);
+    };
 
-    if (!current || current.kind !== kind) {
-      flush();
-      current = { kind, lines: [] };
+    if (isActionLine(rawLine)) {
+      push('action', stripActionMarkers(rawLine));
+      continue;
     }
-    if (line !== '') current.lines.push(line);
+
+    const trimmed = rawLine.trim();
+    if (!usesQuotes) {
+      push('speech', trimmed);
+      continue;
+    }
+
+    // 引号外的部分当动作，引号内当对白。整行都是动作时（比如纯描写），
+    // 它会自然落进 action 段。
+    for (const span of splitByQuotes(trimmed)) {
+      push(span.quoted ? 'speech' : 'action', span.text);
+    }
   }
 
   flush();
@@ -165,8 +294,35 @@ export function renderMessageContent(content: string, options: RenderOptions = {
   return pieces;
 }
 
-/** 写进 prompt 的动作约定。角色不照做时，气泡会变得又长又平。 */
-export const ACTION_FORMAT_RULE =
-  '动作与神态请用 `#` 另起一段描写（例如：`# 她把杯子往桌上一放`），' +
-  '`#` 必须写在**一行的开头**，动作与对白不要挤在同一行；' +
-  '对白请分段，不要一口气写成一大段。';
+/**
+ * 写进 prompt 的动作约定。
+ *
+ * 这是踩了一整轮才定下来的写法。起初只要求「动作用 `#` 独占一行」：加规则、
+ * 加正反例、加现场示范、把角色卡自带的示例也归一化，DeepSeek 的默认模型**全都
+ * 不照做**（12 回合里只有约 2 条）。但它有一点很稳定：**对白永远带「」引号**。
+ *
+ * 于是约定反过来说明——引号内是对白，引号外是动作——用一个模型已经在遵守的写法
+ * 来推它该守的那部分。`#` 仍然支持（也仍然优先），只是不再指望它。
+ */
+export const ACTION_FORMAT_RULE = [
+  '写法：对白一定要用「」包起来；没被引号包住的句子会被当成动作，显示在气泡之外。',
+  '动作也可以显式写成 `# 动作`（独占一行开头）。',
+].join('\n');
+
+/**
+ * 规则的具体例子。
+ *
+ * 与规则分开：规则要短、要留在不可丢弃的系统块里，例子长得多，放进可丢弃的
+ * 格式块——预算紧张时先让位给记忆与关系，而不是把整条 prompt 顶出预算。
+ */
+export const ACTION_FORMAT_EXAMPLES = [
+  '正确：',
+  '# 她把杯子往桌上一放。',
+  '「你问这个做什么。」',
+  '# 她抬眼看了看门口。',
+  '也正确（动作不加 `#`，但也没有放进引号里）：',
+  '她把杯子往桌上一放。',
+  '「你问这个做什么。」',
+  '错误（把动作也写进引号，读起来像她在念旁白）：',
+  '「她把杯子往桌上一放。」',
+].join('\n');

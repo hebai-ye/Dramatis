@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { renderMessageContent, splitLongSpeech, splitMessageContent } from './segments.js';
+import {
+  normalizeCardExample,
+  renderMessageContent,
+  splitByQuotes,
+  splitLongSpeech,
+  splitMessageContent,
+} from './segments.js';
 
 describe('splitMessageContent', () => {
   it('把 `#` 开头的段落切成动作段', () => {
@@ -122,5 +128,67 @@ describe('renderMessageContent', () => {
   it('照抄历史标记「【名字】」时也剥掉', () => {
     const pieces = renderMessageContent('【秦娘】# 她把壶放下。', { speakerName: '秦娘' });
     expect(pieces).toEqual([{ kind: 'action', text: '她把壶放下。' }]);
+  });
+});
+
+describe('normalizeCardExample', () => {
+  it('把卡里的行内动作断到行首、把名字标签换成【】', () => {
+    const raw = [
+      '玩家：北边那支商队的事你听说了吗？',
+      '陈九：听说？# 他压低声音，指节敲了两下桌子。「我的货找谁要去。」',
+    ].join('\n');
+
+    const normalized = normalizeCardExample(raw, ['陈九', '老周']);
+
+    expect(normalized).toBe(
+      [
+        '【玩家】北边那支商队的事你听说了吗？',
+        '【陈九】听说？',
+        '# 他压低声音，指节敲了两下桌子。「我的货找谁要去。」',
+      ].join('\n'),
+    );
+  });
+
+  it('不认识的名字标签不动：那不是说话人标记', () => {
+    const raw = '备注：这段是给作者看的。';
+    expect(normalizeCardExample(raw, ['陈九'])).toBe('备注：这段是给作者看的。');
+  });
+});
+
+describe('引号兜底：模型不写 `#` 时按引号分段', () => {
+  it('引号内是对白，引号外是动作', () => {
+    const segments = splitMessageContent('她把酒壶提起来搁到炭盆上。\n「温着呢，别催。」');
+
+    expect(segments).toEqual([
+      { kind: 'action', text: '她把酒壶提起来搁到炭盆上。' },
+      { kind: 'speech', text: '「温着呢，别催。」' },
+    ]);
+  });
+
+  it('对白与动作挤在同一行时也能切开', () => {
+    const segments = splitMessageContent('她没回头。「胡掌柜？会做生意的。」');
+
+    expect(segments).toEqual([
+      { kind: 'action', text: '她没回头。' },
+      { kind: 'speech', text: '「胡掌柜？会做生意的。」' },
+    ]);
+  });
+
+  it('整条消息没有引号时保持原样（全是对白），不把独白误判成动作', () => {
+    const segments = splitMessageContent('我要是能管天，早把这铺子搬走了。');
+    expect(segments).toEqual([{ kind: 'speech', text: '我要是能管天，早把这铺子搬走了。' }]);
+  });
+
+  it('`#` 标记依然有效，且优先于引号规则', () => {
+    const segments = splitMessageContent('# 她把杯子放下。\n「你问这个做什么。」');
+    expect(segments.map((segment) => segment.kind)).toEqual(['action', 'speech']);
+  });
+
+  it('splitByQuotes 认得中英文引号', () => {
+    expect(splitByQuotes('She said "hello" and left.')).toEqual([
+      { quoted: false, text: 'She said' },
+      { quoted: true, text: '"hello"' },
+      { quoted: false, text: 'and left.' },
+    ]);
   });
 });

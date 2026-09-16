@@ -5,7 +5,7 @@ import { type InstanceId, PLAYER } from '../model/ids.js';
 import type { Affect, CharacterInstance, TraitAxis } from '../model/instance.js';
 import type { Message } from '../model/message.js';
 import type { Room, Scene } from '../model/room.js';
-import { ACTION_FORMAT_RULE } from '../render/segments.js';
+import { ACTION_FORMAT_EXAMPLES, ACTION_FORMAT_RULE, normalizeCardExample } from '../render/segments.js';
 import { heuristicTokenCounter, type TokenCounter } from '../token/estimate.js';
 import { applyBudget } from './budget.js';
 import { selectHistoryFor } from './history.js';
@@ -80,6 +80,22 @@ const PRIORITY = {
 
 /** 预算被榨干时仍要留下的最小空间，保证 prompt 不会退化成空。 */
 const MIN_PROMPT_TOKENS = 256;
+
+/**
+ * 动作写法的现场示范。
+ *
+ * 真实模型（DeepSeek）在 12 回合里只有约 2 条照 `#` 约定写；把规则写进系统提示、
+ * 在每轮指令里再提醒一次都不管用。原因是它**模仿对话记录**远胜于服从规则——
+ * 而记录里最近几条恰好都是「动作没带 `#`」的。所以这里直接给一段形状正确的短示范，
+ * 放在模型生成前读到的最后一段里，并注明「只是示范，不是本轮内容」。
+ */
+const FORMAT_DEMO = [
+  '格式示范（只是示范，不是本轮内容）：对白带「」，没带引号的一律当动作。',
+  '玩家：你们两个怎么看？',
+  '# 他把袖口的水拧了一把。',
+  '「先看看货再说。」',
+  '他抬眼看了看门口。',
+].join('\n');
 
 const TRAIT_LABELS: Record<TraitAxis, readonly [string, string]> = {
   extroversion: ['外向主动', '内向寡言'],
@@ -178,7 +194,12 @@ function buildPersonaBlock(card: Card, instance: CharacterInstance): PromptBlock
   const traits = describeTraits(instance.traits);
   if (traits !== '') parts.push(`性格倾向：${traits}`);
 
-  const examples = truncate(card.exampleMessages, 1200);
+  // 卡里的示例要先归一化成我们自己的写法：它是模型最愿意模仿的示范，
+  // 而老卡片的写法（动作挤在对白后、回复开头挂名字）正好与约定相反
+  const examples = truncate(
+    normalizeCardExample(card.exampleMessages, [card.name, card.nickname, instance.displayName]),
+    1200,
+  );
   if (examples !== '') parts.push(`对话风格示例：\n${examples}`);
 
   const compressed = [
@@ -487,6 +508,18 @@ export function assemblePrompt(input: AssembleInput): AssembledPrompt {
       '\n格式（必须遵守）：动作与神态用 `#` 独占一行开头；对白不加任何名字前缀。',
     priority: PRIORITY.instruction,
     droppable: false,
+  });
+
+  // 示范单独成块并且**可丢弃**：它是提升格式遵守率的优化项，不是必需品。
+  // 预算紧张时应当先让位给记忆与关系，而不是把整条 prompt 顶出预算。
+  blocks.push({
+    id: 'format',
+    kind: 'format',
+    label: '格式示范',
+    content: [ACTION_FORMAT_EXAMPLES, FORMAT_DEMO].join('\n\n'),
+    priority: PRIORITY.history + 50,
+    droppable: true,
+    compressed: '对白用「」包起来，没被引号包住的句子会被当成动作。',
   });
 
   // 同一回合里第二名角色发言时 playerInput 为空——玩家的话已经在历史里了，

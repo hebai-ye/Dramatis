@@ -1,5 +1,6 @@
 import type { ProviderRole } from '@dramatis/core';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import type { KeyStorageMode } from '../lib/keystore';
 import { describeKeyStore } from '../lib/keystore';
 import type { ProvidersApi } from '../lib/providers';
 
@@ -21,14 +22,102 @@ const ENDPOINT_PRESETS = [
 
 const NEW_PROFILE_LABEL = '＋ 新建配置';
 
-function toNumber(value: string, fallback: number): number {
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : fallback;
+/** 面板上的草稿。改字段只动草稿，点保存才落库。 */
+interface Draft {
+  name: string;
+  model: string;
+  baseUrl: string;
+  role: ProviderRole;
+  temperature: number;
+  maxTokens: number;
+  reserveForReply: number;
+  apiKey: string;
+  keyMode: KeyStorageMode;
 }
 
+function draftOf(api: ProvidersApi): Draft | null {
+  const active = api.active;
+  if (!active) return null;
+  return {
+    name: active.name,
+    model: active.model,
+    baseUrl: active.baseUrl,
+    role: active.role,
+    temperature: active.temperature,
+    maxTokens: active.maxTokens,
+    reserveForReply: active.reserveForReply,
+    apiKey: api.apiKey,
+    keyMode: api.keyMode,
+  };
+}
+
+function isSameDraft(left: Draft | null, right: Draft | null): boolean {
+  if (left === null || right === null) return left === right;
+  return (
+    left.name === right.name &&
+    left.model === right.model &&
+    left.baseUrl === right.baseUrl &&
+    left.role === right.role &&
+    left.temperature === right.temperature &&
+    left.maxTokens === right.maxTokens &&
+    left.reserveForReply === right.reserveForReply &&
+    left.apiKey === right.apiKey &&
+    left.keyMode === right.keyMode
+  );
+}
+
+/**
+ * 模型接入。
+ *
+ * 面板是**草稿式**的：字段改动只停留在本地，点「保存」才写进配置与密钥库。
+ * 这样用户能在确认之前来回改，也不至于每敲一个字符就落一次盘；「密钥保存方式」
+ * 与密钥本身也会一起生效。
+ */
 export function ProviderPanel({ api, disabled }: Props) {
   const [showKey, setShowKey] = useState(false);
+  const [draft, setDraft] = useState<Draft | null>(null);
+  const [savedAt, setSavedAt] = useState<string | null>(null);
   const active = api.active;
+  const { activeId, keyMode } = api;
+
+  /**
+   * 草稿的重置时机。
+   *
+   * 只在「换了一份配置」或「那份配置在库里变了」时重置——不能每渲染一次就重置，
+   * 否则用户正在输入的内容会被冲掉。所以依赖是一串具体的值，而不是整个 api 对象。
+   */
+  const signature = [activeId, keyMode, active?.name, active?.model, active?.baseUrl, active?.role].join('|');
+
+  // biome-ignore lint/correctness/useExhaustiveDependencies: 依赖就是上面那串值，重新取整个 api 会把草稿冲掉
+  useEffect(() => {
+    setDraft(draftOf(api));
+    setSavedAt(null);
+  }, [signature]);
+
+  const dirty = !isSameDraft(draft, draftOf(api));
+
+  const patch = (values: Partial<Draft>): void => {
+    setDraft((previous) => (previous === null ? previous : { ...previous, ...values }));
+    setSavedAt(null);
+  };
+
+  const save = async (): Promise<void> => {
+    if (draft === null || active === null) return;
+    await api.commitConfig({
+      profile: {
+        name: draft.name,
+        model: draft.model,
+        baseUrl: draft.baseUrl,
+        role: draft.role,
+        temperature: draft.temperature,
+        maxTokens: draft.maxTokens,
+        reserveForReply: draft.reserveForReply,
+      },
+      apiKey: draft.apiKey,
+      keyMode: draft.keyMode,
+    });
+    setSavedAt(new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }));
+  };
 
   return (
     <section className="panel">
@@ -56,25 +145,25 @@ export function ProviderPanel({ api, disabled }: Props) {
         </select>
       </label>
 
-      {active ? (
+      {active && draft ? (
         <>
           <div className="grid-2">
             <label>
               名称
               <input
                 type="text"
-                value={active.name}
+                value={draft.name}
                 disabled={disabled}
-                onChange={(event) => void api.updateProfile(active.id, { name: event.target.value })}
+                onChange={(event) => patch({ name: event.target.value })}
               />
             </label>
             <label>
               模型名
               <input
                 type="text"
-                value={active.model}
+                value={draft.model}
                 disabled={disabled}
-                onChange={(event) => void api.updateProfile(active.id, { model: event.target.value })}
+                onChange={(event) => patch({ model: event.target.value })}
               />
             </label>
           </div>
@@ -84,9 +173,9 @@ export function ProviderPanel({ api, disabled }: Props) {
             <input
               type="text"
               list="endpoint-presets"
-              value={active.baseUrl}
+              value={draft.baseUrl}
               disabled={disabled}
-              onChange={(event) => void api.updateProfile(active.id, { baseUrl: event.target.value })}
+              onChange={(event) => patch({ baseUrl: event.target.value })}
             />
           </label>
           <datalist id="endpoint-presets">
@@ -100,9 +189,9 @@ export function ProviderPanel({ api, disabled }: Props) {
           <label>
             用途
             <select
-              value={active.role}
+              value={draft.role}
               disabled={disabled}
-              onChange={(event) => void api.updateProfile(active.id, { role: event.target.value as ProviderRole })}
+              onChange={(event) => patch({ role: event.target.value as ProviderRole })}
             >
               <option value="both">对话与后台都用</option>
               <option value="main">只用于对话</option>
@@ -119,10 +208,10 @@ export function ProviderPanel({ api, disabled }: Props) {
             <span className="inline">
               <input
                 type={showKey ? 'text' : 'password'}
-                value={api.apiKey}
+                value={draft.apiKey}
                 disabled={disabled}
                 placeholder="sk-..."
-                onChange={(event) => void api.setApiKey(event.target.value)}
+                onChange={(event) => patch({ apiKey: event.target.value })}
               />
               <button type="button" className="ghost" onClick={() => setShowKey((value) => !value)}>
                 {showKey ? '隐藏' : '显示'}
@@ -133,15 +222,18 @@ export function ProviderPanel({ api, disabled }: Props) {
           <label>
             密钥保存方式
             <select
-              value={api.keyMode}
+              value={draft.keyMode}
               disabled={disabled}
-              onChange={(event) => void api.setKeyMode(event.target.value === 'device' ? 'device' : 'session')}
+              onChange={(event) => patch({ keyMode: event.target.value === 'device' ? 'device' : 'session' })}
             >
               <option value="session">仅本次会话（最安全）</option>
               <option value="device">保存在本机浏览器（最方便）</option>
             </select>
           </label>
-          <p className="hint warn">{describeKeyStore(api.keyKind)}</p>
+          <p className="hint warn">
+            {describeKeyStore(draft.keyMode === 'device' ? 'plain' : 'memory')}
+            {draft.keyMode === api.keyMode ? '' : '（保存后生效）'}
+          </p>
 
           <div className="grid-3">
             <label>
@@ -151,13 +243,9 @@ export function ProviderPanel({ api, disabled }: Props) {
                 step="0.05"
                 min="0"
                 max="2"
-                value={active.temperature}
+                value={draft.temperature}
                 disabled={disabled}
-                onChange={(event) =>
-                  void api.updateProfile(active.id, {
-                    temperature: toNumber(event.target.value, active.temperature),
-                  })
-                }
+                onChange={(event) => patch({ temperature: Number(event.target.value) || 0 })}
               />
             </label>
             <label>
@@ -166,11 +254,9 @@ export function ProviderPanel({ api, disabled }: Props) {
                 type="number"
                 step="1024"
                 min="1024"
-                value={active.maxTokens}
+                value={draft.maxTokens}
                 disabled={disabled}
-                onChange={(event) =>
-                  void api.updateProfile(active.id, { maxTokens: toNumber(event.target.value, active.maxTokens) })
-                }
+                onChange={(event) => patch({ maxTokens: Number(event.target.value) || 1024 })}
               />
             </label>
             <label>
@@ -179,15 +265,32 @@ export function ProviderPanel({ api, disabled }: Props) {
                 type="number"
                 step="256"
                 min="0"
-                value={active.reserveForReply}
+                value={draft.reserveForReply}
                 disabled={disabled}
-                onChange={(event) =>
-                  void api.updateProfile(active.id, {
-                    reserveForReply: toNumber(event.target.value, active.reserveForReply),
-                  })
-                }
+                onChange={(event) => patch({ reserveForReply: Number(event.target.value) || 0 })}
               />
             </label>
+          </div>
+
+          <div className="save-bar">
+            <button type="button" disabled={disabled || !dirty} onClick={() => void save()}>
+              保存
+            </button>
+            <button
+              type="button"
+              className="ghost"
+              disabled={disabled || !dirty}
+              title="放弃这次改动，恢复成已保存的值"
+              onClick={() => {
+                setDraft(draftOf(api));
+                setSavedAt(null);
+              }}
+            >
+              撤销
+            </button>
+            <span className="hint">
+              {dirty ? '有未保存的改动' : savedAt === null ? '改动只在点保存后生效' : `已保存（${savedAt}）`}
+            </span>
           </div>
 
           <button

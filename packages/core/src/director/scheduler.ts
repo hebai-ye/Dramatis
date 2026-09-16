@@ -40,12 +40,21 @@ export interface ScheduleInput {
    * 传了名单就以此为准，不在名单里的一律不接话。
    */
   cast?: readonly InstanceId[];
+  /**
+   * 上一条发言的角色。
+   *
+   * 玩家接着往下说时（「那你呢」「你还记得吗」这种，没点名），本该由同一个
+   * 人接话——真实使用里 v1 会因为冷却惩罚换人，读起来像答非所问。
+   * 只要玩家没有点名别人，就给他一个「延续」加成，压过冷却惩罚。
+   */
+  previousSpeakerId?: InstanceId | null;
   /** 注入随机源便于测试；默认 Math.random。 */
   random?: () => number;
 }
 
 export type ScoreReasonCode =
   | 'mentioned'
+  | 'continuation'
   | 'extroversion'
   | 'cooldown'
   | 'fairness'
@@ -87,6 +96,19 @@ const COOLDOWN_LAST_TURN = -45;
 const COOLDOWN_SECOND_TURN = -18;
 const EXTROVERSION_WEIGHT = 15;
 const QUESTION_BONUS = 6;
+const CONTINUATION_BONUS = 60;
+
+/**
+ * 这句话是不是「说给上一个人听」的。
+ *
+ * 判据故意做得窄：出现「你 / 您」且**没有**「你们 / 各位 / 大家」这类复数说法。
+ * 「你还记得吗」是追问，该由同一个人接；「你们觉得呢」是在问全场，该轮换。
+ * 这条判据替代不了 P1-6 的意图先行，但比「上一条是谁说的」这种瞎猜准得多。
+ */
+function looksAddressedToLast(text: string): boolean {
+  if (!/[你您]/.test(text)) return false;
+  return !/你们|各位|大家|诸位/.test(text);
+}
 const JITTER_RANGE = 6;
 const MIN_SCORE = 0;
 
@@ -120,6 +142,23 @@ export function scheduleSpeakers(input: ScheduleInput): ScheduleResult {
   const random = input.random ?? Math.random;
   const maxSpeakers = Math.max(1, input.maxSpeakers ?? 1);
   const question = isQuestion(input.playerInput);
+
+  /**
+   * 玩家有没有点名别人。
+   *
+   * 点了名就说明他在跟另一个人说话，「延续上一位」的加成必须让位给点名；
+   * 没点名时默认他还在跟上一位说。
+   */
+  const mentionsOther = input.candidates.some(
+    (candidate) =>
+      candidate.instance.id !== input.previousSpeakerId &&
+      mentions(input.playerInput, [candidate.instance.displayName, ...(candidate.aliases ?? [])]) !== null,
+  );
+  const continuing =
+    input.previousSpeakerId !== null &&
+    input.previousSpeakerId !== undefined &&
+    !mentionsOther &&
+    looksAddressedToLast(input.playerInput);
 
   const scores: SpeakerScore[] = input.candidates.map((candidate) => {
     const { instance } = candidate;
@@ -156,6 +195,15 @@ export function scheduleSpeakers(input: ScheduleInput): ScheduleResult {
       reasons.push({ code: 'mentioned', label: `被点名（${hit}）`, delta: MENTION_BONUS });
     }
 
+    const isPrevious = instance.id === input.previousSpeakerId;
+    if (isPrevious && continuing) {
+      reasons.push({
+        code: 'continuation',
+        label: '玩家在接着说给他听',
+        delta: CONTINUATION_BONUS,
+      });
+    }
+
     const extroversion = instance.traits.extroversion * EXTROVERSION_WEIGHT;
     if (Math.abs(extroversion) >= 1) {
       reasons.push({
@@ -167,7 +215,10 @@ export function scheduleSpeakers(input: ScheduleInput): ScheduleResult {
 
     const sinceSpoke = candidate.turnsSinceSpoke ?? null;
 
-    if (sinceSpoke === 0) {
+    // 玩家还在跟他说话时不算「抢话」：冷却惩罚在这里会让对话变成答非所问
+    if (isPrevious && continuing) {
+      // 不加冷却惩罚
+    } else if (sinceSpoke === 0) {
       reasons.push({ code: 'cooldown', label: '上一回合刚发过言', delta: COOLDOWN_LAST_TURN });
     } else if (sinceSpoke === 1) {
       reasons.push({ code: 'cooldown', label: '两回合内发过言', delta: COOLDOWN_SECOND_TURN });

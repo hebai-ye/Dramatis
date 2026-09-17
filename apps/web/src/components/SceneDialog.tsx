@@ -1,4 +1,10 @@
-import type { CastPolicy, CharacterInstance, Scene } from '@dramatis/core';
+import {
+  type CastPolicy,
+  type CharacterInstance,
+  defaultTravelCast,
+  type InstanceId,
+  type Scene,
+} from '@dramatis/core';
 import { useState } from 'react';
 
 interface Props {
@@ -8,7 +14,13 @@ interface Props {
   onClose: () => void;
   onSave: (patch: Partial<Scene>) => void;
   /** 结束本场、开新场；会写一条旁白式动作记录「谁跟谁去了哪里」。 */
-  onStartNewScene: (input: { title: string; location: string; worldTime: string }) => void;
+  onStartNewScene: (input: {
+    title: string;
+    location: string;
+    worldTime: string;
+    /** 这次带谁走（T17）：没勾的人留在原地，自动转「在幕后」。 */
+    cast: InstanceId[];
+  }) => void;
 }
 
 const CAST_POLICY_OPTIONS: Array<{ value: CastPolicy; label: string; note: string }> = [
@@ -30,6 +42,8 @@ export function SceneDialog({ scene, instances, disabled, onClose, onSave, onSta
   const [title, setTitle] = useState(scene?.title ?? '');
   const [location, setLocation] = useState(scene?.location ?? '');
   const [worldTime, setWorldTime] = useState(scene?.worldTime ?? '');
+  // 默认带走此刻在场上的人；换场前可以逐个取消（长跑里秦娘就是这样被误带走的）
+  const [travelCast, setTravelCast] = useState<InstanceId[]>(() => defaultTravelCast(scene, instances));
 
   const cast = scene === null ? [] : instances.filter((instance) => scene.cast.includes(instance.id));
 
@@ -109,6 +123,32 @@ export function SceneDialog({ scene, instances, disabled, onClose, onSave, onSta
           <p className="hint">
             此刻在场：{cast.length === 0 ? '没有人' : cast.map((instance) => instance.displayName).join('、')}
           </p>
+
+          <fieldset className="picker">
+            <legend>这次带谁走</legend>
+            <p className="hint">取消勾选的人留在原地，会自动转为「在幕后」；旁白只记跟着走的人。</p>
+            {cast.length === 0 ? (
+              <p className="hint">此刻场上没有人。</p>
+            ) : (
+              cast.map((instance) => (
+                <label key={instance.id} className="inline-check">
+                  <input
+                    type="checkbox"
+                    checked={travelCast.includes(instance.id)}
+                    disabled={disabled}
+                    onChange={() =>
+                      setTravelCast((previous) =>
+                        previous.includes(instance.id)
+                          ? previous.filter((id) => id !== instance.id)
+                          : [...previous, instance.id],
+                      )
+                    }
+                  />
+                  <span>{instance.displayName}</span>
+                </label>
+              ))
+            )}
+          </fieldset>
         </div>
 
         <footer className="modal-foot">
@@ -128,7 +168,12 @@ export function SceneDialog({ scene, instances, disabled, onClose, onSave, onSta
             disabled={disabled}
             title="结束本场、开一场新的，并留下一条「谁跟谁去了哪里」的旁白"
             onClick={() => {
-              onStartNewScene({ title: title.trim() === '' ? '新场景' : title.trim(), location, worldTime });
+              onStartNewScene({
+                title: title.trim() === '' ? '新场景' : title.trim(),
+                location,
+                worldTime,
+                cast: travelCast,
+              });
               onClose();
             }}
           >

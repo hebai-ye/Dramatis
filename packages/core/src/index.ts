@@ -23,6 +23,7 @@ export * from './provider/openai-compatible.js';
 export * from './render/attribution.js';
 export * from './render/narration.js';
 export * from './render/segments.js';
+export * from './session/presence.js';
 export * from './session/setup.js';
 export * from './session/turn.js';
 export * from './storage/repository.js';

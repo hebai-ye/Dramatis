@@ -573,7 +573,7 @@ export function App() {
 
   /** 切换场景：开一场新的，并留下一条旁白式动作（谁跟谁去了哪里）。 */
   const handleStartNewScene = useCallback(
-    async (input: { title: string; location: string; worldTime: string }) => {
+    async (input: { title: string; location: string; worldTime: string; cast?: readonly InstanceId[] }) => {
       if (!world || !conversation) return;
 
       const created = await session.startNewScene(input);

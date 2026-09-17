@@ -9,6 +9,7 @@ import {
   type ConversationId,
   createGreetingMessage,
   createPersona,
+  defaultTravelCast,
   type EventId,
   type InstanceId,
   META_KEYS,
@@ -26,6 +27,7 @@ import {
   type RoomSummary,
   revertAffectForTurn,
   type Scene,
+  syncPresenceForScene,
   type WorldBook,
   type WorldBookId,
 } from '@dramatis/core';
@@ -150,6 +152,11 @@ export interface SessionApi {
     location?: string;
     worldTime?: string;
     summary?: string;
+    /**
+     * 这次带谁走（T17）。
+     * 留空时按「此刻在场上的人」默认，界面上可以逐个取消勾选。
+     */
+    cast?: readonly InstanceId[];
   }) => Promise<Scene | null>;
   updateScene: (patch: Partial<Scene>) => Promise<void>;
   /**
@@ -409,7 +416,19 @@ export function useSession(db: DramatisDb | null): SessionApi {
 
       const room: Room = { ...current.room, activeConversationId: id, updatedAt: nowIso() };
       await db.repository.saveRoom(room);
-      setSnapshot({ ...current, room });
+
+      // 换了对话就换了一条场景线，存在状态要跟着对齐（T10）：
+      // 否则会出现「右栏说在场、这条线的名单里却没有他」的角色
+      const target = current.conversations.find((item) => item.id === id) ?? null;
+      const scene = current.scenes.find((item) => item.id === target?.activeSceneId) ?? null;
+      const synced = scene === null ? [] : syncPresenceForScene(current.instances, scene);
+      for (const instance of synced) await db.repository.saveInstance(instance);
+
+      setSnapshot({
+        ...current,
+        room,
+        instances: current.instances.map((item) => synced.find((next) => next.id === item.id) ?? item),
+      });
     },
     [db, setSnapshot],
   );
@@ -442,6 +461,12 @@ export function useSession(db: DramatisDb | null): SessionApi {
         cards,
       });
       await db.repository.setMeta(META_KEYS.lastRoomId, room.id);
+
+      // 新对话只带一部分人上台，其余人应当转为「在幕后」：
+      // 名单是权威，presence 跟着名单走（T10）
+      for (const instance of syncPresenceForScene([...current.instances, ...plan.createdInstances], plan.scene)) {
+        await db.repository.saveInstance(instance);
+      }
 
       // 开幕由场上的角色开场：新对话是一片空白的白纸，什么都不摆会更让人无措
       const openingCast = [...current.instances, ...plan.createdInstances].filter((instance) =>
@@ -649,6 +674,7 @@ export function useSession(db: DramatisDb | null): SessionApi {
       location?: string;
       worldTime?: string;
       summary?: string;
+      cast?: readonly InstanceId[];
     }): Promise<Scene | null> => {
       const current = snapshotRef.current;
       if (!db || !current) return null;
@@ -657,11 +683,8 @@ export function useSession(db: DramatisDb | null): SessionApi {
       if (!active) return null;
 
       const previous = current.scenes.find((item) => item.id === active.activeSceneId) ?? null;
-      const cast = (previous?.cast ?? current.room.instanceIds).filter((id) =>
-        current.instances.some(
-          (instance) => instance.id === id && (instance.presence === 'onstage' || instance.presence === 'muted'),
-        ),
-      );
+      // 默认带走此刻在场上的人；调用方（换场对话框）可以逐个取消
+      const cast = [...(input.cast ?? defaultTravelCast(previous, current.instances))];
 
       const now = nowIso();
       const nextScene = createSceneFor(current.room.id, active.id, cast, {
@@ -678,6 +701,10 @@ export function useSession(db: DramatisDb | null): SessionApi {
       await db.repository.saveScene(nextScene);
       await db.repository.saveConversation(conversation);
 
+      // 留下的人转「在幕后」：名单是权威，presence 跟着名单走（T10）
+      const synced = syncPresenceForScene(current.instances, nextScene, now);
+      for (const instance of synced) await db.repository.saveInstance(instance);
+
       setSnapshot({
         ...current,
         scenes: [
@@ -685,6 +712,7 @@ export function useSession(db: DramatisDb | null): SessionApi {
           nextScene,
         ],
         conversations: current.conversations.map((item) => (item.id === conversation.id ? conversation : item)),
+        instances: current.instances.map((item) => synced.find((next) => next.id === item.id) ?? item),
       });
       return nextScene;
     },

@@ -13,6 +13,7 @@ import type { Message, MessageUsage } from '../model/message.js';
 import type { Room, Scene } from '../model/room.js';
 import { type AssembledPrompt, type AssembleInput, assemblePrompt } from '../prompt/assemble.js';
 import type { ModelParams, ModelProvider } from '../provider/openai-compatible.js';
+import { splitIntent } from '../render/intent.js';
 import { normalizeActionBreaks, stripLeadingMarkers } from '../render/segments.js';
 
 /**
@@ -22,12 +23,14 @@ import { normalizeActionBreaks, stripLeadingMarkers } from '../render/segments.j
  * 更多（真实长跑里从 1 个长到 5 个）。只在显示层剥掉只能解决观感，**历史里仍然留着**，
  * 于是下一轮继续学。真正该在这一步清掉：存储里没有标记，提示词里自然也没有。
  */
-function sanitizeCharacterContent(content: string, speakerName: string): string {
+function sanitizeCharacterContent(content: string, speakerName: string): { content: string; intent: string | null } {
   const withoutMarkers = stripLeadingMarkers(content);
   const name = speakerName.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const withoutSelfPrefix =
     name === '' ? withoutMarkers : withoutMarkers.replace(new RegExp(`^\\s*${name}\\s*[:：]\\s*`), '');
-  return normalizeActionBreaks(withoutSelfPrefix);
+  // 意图单独收走：留在正文里会进历史，被后续回合学成正文的一部分
+  const { intent, body } = splitIntent(withoutSelfPrefix);
+  return { content: normalizeActionBreaks(body), intent };
 }
 
 export type TurnEvent =
@@ -93,6 +96,8 @@ export function createCharacterMessage(input: {
   /** 未落盘时留空，由仓储层的 appendMessages 分配。 */
   seq?: number;
 }): Message {
+  const sanitized = sanitizeCharacterContent(input.content, input.speakerName);
+
   return {
     id: messageId(newId()),
     roomId: input.roomId,
@@ -104,7 +109,8 @@ export function createCharacterMessage(input: {
     speakerInstanceId: input.speakerInstanceId,
     speakerName: input.speakerName,
     audience: input.audience ?? [input.speakerInstanceId],
-    content: sanitizeCharacterContent(input.content, input.speakerName),
+    content: sanitized.content,
+    ...(sanitized.intent === null ? {} : { intent: sanitized.intent, intentSource: 'declared' as const }),
     createdAt: nowIso(),
   };
 }

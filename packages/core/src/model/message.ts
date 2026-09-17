@@ -70,6 +70,21 @@ export interface Message {
    */
   audience: InstanceId[];
   content: string;
+  /**
+   * 这一轮角色声明的意图（P1-6 的零额外调用版）。
+   *
+   * 模型在回复开头写一行「意图：…」，解析后单独存这里、正文里不留——
+   * 留在正文里就会进历史，被下一轮学成正文的一部分。
+   */
+  intent?: string;
+  /**
+   * 意图是从哪来的。
+   *
+   * `declared`：模型照格式写了「意图：…」那一行（取决于它是否听话）。
+   * `reasoning`：它没有声明，但有推理流，取第一句当盘算——这是模型真实在想的事，
+   * 只是不是我们要求的格式。两者在界面上用不同的措辞区分，不混为一谈。
+   */
+  intentSource?: 'declared' | 'reasoning';
   /** 副对话里管理员这次产出的草稿；主对话的消息不带这个字段。 */
   artifacts?: AdminArtifact[];
   /**

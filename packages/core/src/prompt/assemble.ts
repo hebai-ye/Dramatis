@@ -5,6 +5,7 @@ import { type InstanceId, PLAYER } from '../model/ids.js';
 import type { Affect, CharacterInstance, TraitAxis } from '../model/instance.js';
 import type { Message } from '../model/message.js';
 import type { Room, Scene } from '../model/room.js';
+import { INTENT_FORMAT_RULE } from '../render/intent.js';
 import { ACTION_FORMAT_EXAMPLES, ACTION_FORMAT_RULE, normalizeCardExample } from '../render/segments.js';
 import { heuristicTokenCounter, type TokenCounter } from '../token/estimate.js';
 import { applyBudget } from './budget.js';
@@ -505,7 +506,9 @@ export function assemblePrompt(input: AssembleInput): AssembledPrompt {
         .join('') +
       // 放在最后：这一句是模型生成前读到的最后一段。写在前面的规则它经常漏——
       // DeepSeek 网页版端到端测试里，动作 `#` 的遵守率只有约 2/9。
-      '\n格式（必须遵守）：动作与神态用 `#` 独占一行开头；对白不加任何名字前缀。',
+      '\n格式（必须遵守）：动作与神态用 `#` 独占一行开头；对白不加任何名字前缀。' +
+      // 意图先行（P1-6 的零额外调用版）：先声明这一轮想做什么，再落笔
+      `\n${INTENT_FORMAT_RULE}`,
     priority: PRIORITY.instruction,
     droppable: false,
   });

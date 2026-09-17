@@ -1,5 +1,6 @@
 import type { InstanceId } from '../model/ids.js';
 import type { CharacterInstance } from '../model/instance.js';
+import { intentKind } from '../render/intent.js';
 
 /**
  * 发言调度 v1（ROADMAP P0-4，设计文档 §3.1）。
@@ -24,6 +25,13 @@ export interface ScheduleCandidate {
   turnsSinceSpoke: number | null | undefined;
   /** 用于名字识别的别名，通常是角色卡的原始名字与昵称。 */
   aliases?: readonly string[];
+  /**
+   * 这个角色上一轮声明的意图（P1-6）。
+   *
+   * 只用一个信号：他上轮说自己「只是在看 / 在等」时，这一轮稍微让一让。
+   * 判据来自意图那一行，是角色自己说的，所以可解释。
+   */
+  lastIntent?: string | null;
 }
 
 export interface ScheduleInput {
@@ -56,6 +64,7 @@ export type ScoreReasonCode =
   | 'mentioned'
   | 'addressed'
   | 'continuation'
+  | 'intent-wait'
   | 'extroversion'
   | 'cooldown'
   | 'fairness'
@@ -99,6 +108,8 @@ const COOLDOWN_SECOND_TURN = -18;
 const EXTROVERSION_WEIGHT = 15;
 const QUESTION_BONUS = 6;
 const CONTINUATION_BONUS = 60;
+/** 上轮声明「按兵不动」的人，这一轮让一让。 */
+const WAIT_PENALTY = -12;
 
 /**
  * 这句话是不是「说给上一个人听」的。
@@ -266,6 +277,11 @@ export function scheduleSpeakers(input: ScheduleInput): ScheduleResult {
 
     const jitter = random() * JITTER_RANGE;
     reasons.push({ code: 'jitter', label: '随机扰动（避免每次都是同一人）', delta: jitter });
+
+    // 角色自己说过「这一轮我只看着」——那就别让他下一轮抢着开口
+    if (intentKind(candidate.lastIntent) === 'wait') {
+      reasons.push({ code: 'intent-wait', label: '他上一轮说自己在旁观', delta: WAIT_PENALTY });
+    }
 
     const score = reasons.reduce((total, reason) => total + reason.delta, 0);
 

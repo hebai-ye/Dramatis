@@ -1105,6 +1105,13 @@ details summary {
 }
 
 /* 归属可疑提示（T18）：只在真的可疑时出现，点按钮才改数据 */
+.intent-line {
+  color: var(--muted-text);
+  font-size: 10px;
+  margin: 0 0 2px;
+  opacity: 0.85;
+}
+
 .attr-warn {
   align-items: center;
   background: rgba(217, 164, 65, 0.1);

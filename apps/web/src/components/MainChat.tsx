@@ -173,6 +173,18 @@ export function MainChat({
               {message.role === 'character' ? <span className="message-name">{nameOf(message)}</span> : null}
 
               {/*
+                他自己声明的意图（P1-6）。放在气泡上方而不是塞进正文：
+                它是「为什么这么回」的注解，不是他说出口的话。
+              */}
+              {message.intent === undefined ? null : (
+                <p className="intent-line">
+                  {/* 两种来源用不同措辞：他照格式写的，与他实际在想的是两回事 */}
+                  {message.intentSource === 'reasoning' ? '盘算：' : '想做：'}
+                  {message.intent}
+                </p>
+              )}
+
+              {/*
                 归属可疑提示（T18）。只提示、不自动改：硬改归属比错位更糟，
                 所以把「更像是谁说的」摆出来，用户点一下才动数据。
               */}

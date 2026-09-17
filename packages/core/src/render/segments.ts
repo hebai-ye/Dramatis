@@ -308,6 +308,20 @@ export function renderMessageContent(content: string, options: RenderOptions = {
 }
 
 /**
+ * 这条消息里有没有「说话」。
+ *
+ * 用途只有一个但很重要：**只做动作、一个字没说的那一轮不该算发言**。
+ * 否则一个全程沉默、只是摇头的角色会被冷却惩罚压住，而公平性又把他往前推，
+ * 调度结果会变得没有道理。旁白与系统消息不算发言。
+ */
+export function hasSpeech(content: string): boolean {
+  // 判据是**有没有引号**，而不是「按渲染规则算不算对白」：渲染规则为了兼容
+  // 把没有引号的行也当对白显示，那样任何纯动作的一轮都会被误判成「说了话」。
+  // 这里的用途是调度（沉默的一轮不该吃冷却），宁可只认最可靠的信号。
+  return content.split(/\r?\n/).some((line) => splitByQuotes(line).some((span) => span.quoted));
+}
+
+/**
  * 写进 prompt 的动作约定。
  *
  * 这是踩了一整轮才定下来的写法。起初只要求「动作用 `#` 独占一行」：加规则、

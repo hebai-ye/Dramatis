@@ -21,6 +21,7 @@ export * from './prompt/types.js';
 export * from './provider/collect.js';
 export * from './provider/openai-compatible.js';
 export * from './render/attribution.js';
+export * from './render/intent.js';
 export * from './render/narration.js';
 export * from './render/segments.js';
 export * from './session/presence.js';

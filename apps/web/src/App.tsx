@@ -9,6 +9,7 @@ import {
   createOpenAICompatibleProvider,
   createPlayerMessage,
   createTurnId,
+  hasSpeech,
   type InstanceId,
   importCardFromJson,
   importCardFromPng,
@@ -73,6 +74,14 @@ function toPromptMemory(recalled: RecalledMemory): PromptMemory {
     ...(event.perception !== '' ? { perception: event.perception } : {}),
     ...(event.timeline.worldTime !== '' ? { worldTime: event.timeline.worldTime } : {}),
   };
+}
+
+/** 取第一句当「盘算」，太长就截断——它是给用户的提示，不是存档。 */
+function firstSentence(text: string): string {
+  const flat = text.trim().replace(/\s*\n\s*/g, ' ');
+  const match = /^[^。！？.!?\n]{4,80}/.exec(flat);
+  const sentence = (match?.[0] ?? flat.slice(0, 60)).trim();
+  return sentence.length <= 60 ? sentence : `${sentence.slice(0, 60)}…`;
 }
 
 /**
@@ -153,9 +162,9 @@ export function App() {
       memories?: readonly PromptMemory[];
       showStream: boolean;
       signal: AbortSignal;
-    }): Promise<{ text: string; usage: MessageUsage | null }> => {
+    }): Promise<{ text: string; usage: MessageUsage | null; reasoning: string }> => {
       const profile = providers.active;
-      if (!profile || !world || !scene) return { text: '', usage: null };
+      if (!profile || !world || !scene) return { text: '', usage: null, reasoning: '' };
 
       const provider = createOpenAICompatibleProvider({
         baseUrl: profile.baseUrl,
@@ -171,6 +180,8 @@ export function App() {
 
       let accumulated = '';
       let usage: MessageUsage | null = null;
+      // 推理流也算「模型自己的盘算」：它不肯按格式写意图时，这是唯一真实的计划来源
+      let reasoning = '';
       for await (const event of runTurn(
         {
           card: options.card,
@@ -193,7 +204,8 @@ export function App() {
             setLastPrompt(event.prompt);
             break;
           case 'reasoning':
-            setReasoningText((previous) => previous + event.text);
+            reasoning += event.text;
+            setReasoningText(reasoning);
             break;
           case 'text':
             accumulated += event.text;
@@ -205,7 +217,7 @@ export function App() {
             break;
         }
       }
-      return { text: accumulated, usage };
+      return { text: accumulated, usage, reasoning };
     },
     [conversation, instances, providers, scene, session.worldBooks, world],
   );
@@ -307,14 +319,26 @@ export function App() {
       let continuedHistory: Message[] = [...history, playerMessage];
 
       try {
-        const since = turnsSinceLastSpoke(history, turnId);
+        // 只有真的说了话的那一轮才算「发言」：全程只做动作的角色不该被冷却压住
+        const spokeHistory = history.filter((message) => message.role !== 'character' || hasSpeech(message.content));
+        const since = turnsSinceLastSpoke(spokeHistory, turnId);
         const previousSpeakerId =
           [...history].reverse().find((message) => message.role === 'character')?.speakerInstanceId ?? null;
+
+        // 每个角色上一轮自己声明的意图（P1-6）：说自己「只是在看」的人，这一轮让一让
+        const lastIntentByInstance = new Map<InstanceId, string>();
+        for (const message of history) {
+          if (message.role !== 'character' || message.speakerInstanceId === null) continue;
+          if (message.intent === undefined) continue;
+          lastIntentByInstance.set(message.speakerInstanceId, message.intent);
+        }
+
         const schedule = scheduleSpeakers({
           playerInput: text,
           candidates: instances.map((instance) => ({
             instance,
             turnsSinceSpoke: since.get(instance.id) ?? null,
+            lastIntent: lastIntentByInstance.get(instance.id) ?? null,
           })),
           // 名单以当前场景为准：presence 是「他在这个世界的状态」，
           // 而多条对话并存时，onstage 的角色未必在这条线的这场戏里
@@ -365,10 +389,15 @@ export function App() {
           }
 
           if (reply.trim() !== '') {
+            const created = makeCharacterLine(speaker, reply, turnId, scene);
             const line: Message = {
-              ...makeCharacterLine(speaker, reply, turnId, scene),
+              ...created,
               // 用量挂在消息上：刷新之后仍然能看见这一轮花了多少
               ...(generation.usage === null ? {} : { usage: generation.usage }),
+              // 没按格式声明意图时，用它自己的推理首句当盘算（有推理流的模型才有）
+              ...(created.intent === undefined && generation.reasoning.trim() !== ''
+                ? { intent: firstSentence(generation.reasoning), intentSource: 'reasoning' as const }
+                : {}),
             };
             await session.appendMessages([line]);
             continuedHistory = [...continuedHistory, line];

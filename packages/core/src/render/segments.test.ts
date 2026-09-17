@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  hasSpeech,
   normalizeCardExample,
   renderMessageContent,
   splitByQuotes,
@@ -161,6 +162,14 @@ describe('normalizeCardExample', () => {
 });
 
 describe('引号兜底：模型不写 `#` 时按引号分段', () => {
+  it('hasSpeech 只认真的说了话的那一轮', () => {
+    expect(hasSpeech('「你问这个做什么。」')).toBe(true);
+    expect(hasSpeech('# 她把杯子放下，没抬头。')).toBe(false);
+    // 没有引号 = 这一轮只做了动作。判据是引号，不是渲染规则（渲染为了兼容会把
+    // 无引号的行也当对白显示）
+    expect(hasSpeech('她把杯子放下。')).toBe(false);
+    expect(hasSpeech('# 她把杯子放下。\n「……」')).toBe(true);
+  });
   it('引号内是对白，引号外是动作', () => {
     const segments = splitMessageContent('她把酒壶提起来搁到炭盆上。\n「温着呢，别催。」');
 

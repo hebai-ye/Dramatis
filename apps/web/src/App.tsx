@@ -51,6 +51,7 @@ import { TopBar } from './components/TopBar';
 import { WorldDesigner } from './components/WorldDesigner';
 import { WorldTree } from './components/WorldTree';
 import { useAdminChat } from './lib/admin';
+import { useArchive } from './lib/archive';
 import { useProviders } from './lib/providers';
 import { useDatabase, useSession } from './lib/session';
 import { extraCalls, useUsage } from './lib/usage';
@@ -145,6 +146,14 @@ export function App() {
     onChanged: () => {
       void session.reloadWorld();
     },
+  });
+
+  /**
+   * 封存导出 / 导入（P2-4）。导入之后立刻打开新世界——否则用户会以为没导进来。
+   */
+  const archive = useArchive({
+    db,
+    onImported: (id) => session.openWorld(id),
   });
 
   const [collapsed, setCollapsed] = useState(false);
@@ -1036,6 +1045,8 @@ export function App() {
                     onDeletePersona={(id) => void session.deletePersona(id)}
                     onOpenArchived={(id) => void session.openConversation(id)}
                     onDeleteArchived={(target) => void session.deleteConversation(target.id)}
+                    onExportArchive={() => (world === null ? Promise.resolve(null) : archive.exportWorld(world.id))}
+                    onImportArchive={archive.importArchive}
                   />
                 ) : null}
               </>

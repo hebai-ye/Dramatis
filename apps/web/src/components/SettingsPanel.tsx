@@ -1,4 +1,5 @@
 import type { Conversation, ConversationId, Persona } from '@dramatis/core';
+import { useState } from 'react';
 import type { ProvidersApi } from '../lib/providers';
 import { PersonaLibrary } from './PersonaLibrary';
 import { ProviderPanel } from './ProviderPanel';
@@ -15,6 +16,10 @@ interface Props {
   onDeletePersona: (id: string) => void;
   onOpenArchived: (id: ConversationId) => void;
   onDeleteArchived: (conversation: Conversation) => void;
+  /** 导出当前世界；返回给用户看的一句话（取消时是 null）。 */
+  onExportArchive: () => Promise<{ ok: boolean; message: string } | null>;
+  /** 选一个封存文件导进来。 */
+  onImportArchive: () => Promise<{ ok: boolean; message: string } | null>;
 }
 
 function formatTime(iso: string): string {
@@ -41,7 +46,25 @@ export function SettingsPanel({
   onDeletePersona,
   onOpenArchived,
   onDeleteArchived,
+  onExportArchive,
+  onImportArchive,
 }: Props) {
+  const [archiveNotice, setArchiveNotice] = useState<{ ok: boolean; message: string } | null>(null);
+  const [archiveBusy, setArchiveBusy] = useState(false);
+
+  const runArchive = async (action: () => Promise<{ ok: boolean; message: string } | null>): Promise<void> => {
+    setArchiveBusy(true);
+    setArchiveNotice(null);
+    try {
+      const result = await action();
+      if (result !== null) setArchiveNotice(result);
+    } catch (error) {
+      setArchiveNotice({ ok: false, message: error instanceof Error ? error.message : String(error) });
+    } finally {
+      setArchiveBusy(false);
+    }
+  };
+
   return (
     <div className="stack">
       <section className="panel">
@@ -59,6 +82,42 @@ export function SettingsPanel({
           onSave={onSavePersona}
           onDelete={onDeletePersona}
         />
+      </section>
+
+      {/*
+        封存（P2-4）：把一整个世界存成一个文件带走。
+        它同时是云同步之前的过渡方案、也是移动端的数据安全网——手机浏览器
+        随时可能把本地数据清掉。
+      */}
+      <section className="panel">
+        <h2>封存（导出 / 导入）</h2>
+        <p className="hint">
+          导出的是一整个世界：对话、场景、角色与角色卡、消息、记忆、情绪关系、前情章节、世界书、账单——一个文件，
+          换台设备导进来就能接着用。导入永远是<strong>新建一条世界线</strong>，不会覆盖或改动本机已有的数据。
+        </p>
+        <div className="save-bar">
+          <button
+            type="button"
+            disabled={disabled || archiveBusy || activeConversationId === null}
+            onClick={() => void runArchive(onExportArchive)}
+          >
+            {archiveBusy ? '处理中…' : '导出这个世界'}
+          </button>
+          <button
+            type="button"
+            className="ghost"
+            disabled={disabled || archiveBusy}
+            onClick={() => void runArchive(onImportArchive)}
+          >
+            导入封存
+          </button>
+        </div>
+        {activeConversationId === null ? <p className="hint">先打开一个世界，才能导出。</p> : null}
+        {archiveNotice === null ? null : (
+          <div className={archiveNotice.ok ? 'notice' : 'notice error'}>
+            <p>{archiveNotice.message.replace(/\*\*/g, '')}</p>
+          </div>
+        )}
       </section>
 
       <section className="panel">

@@ -1,4 +1,12 @@
-import { heuristicTokenCounter, type MemoryEvent, recallMemories, selectWithinBudget } from '@dramatis/core';
+import {
+  heuristicTokenCounter,
+  limitFallbackItems,
+  type MemoryEvent,
+  type RecalledMemory,
+  recallMemories,
+  selectWithinBudget,
+  textSimilarity,
+} from '@dramatis/core';
 
 /**
  * 召回探针（ROADMAP P1-11 的决策工具，开发用页面，不进应用构建）。
@@ -53,6 +61,21 @@ interface EntityRecord {
   value: unknown;
 }
 
+/** 一轮评测的汇总数字。 */
+interface Metrics {
+  hits: number;
+  top1: number;
+  inBudget: number;
+  leaks: number;
+  noise: number;
+  tokens: number;
+  positives: number;
+  /** 进预算的条目里，有多少条是「命中关键词」进来的（其余靠重要度/时效兜底）。 */
+  keywordItems: number;
+  /** 同一题里两条选中条目之间的最高相似度（判断噪音是不是近重复）。 */
+  maxPairSimilarity: number;
+}
+
 async function readCollection<T>(name: string): Promise<T[]> {
   const db = await new Promise<IDBDatabase>((resolve, reject) => {
     const request = indexedDB.open('dramatis', 1);
@@ -86,86 +109,152 @@ async function main(): Promise<void> {
 
   const now = new Date().toISOString();
   const counter = heuristicTokenCounter;
-  const lines: string[] = [
-    `# 召回探针·真实数据`,
-    `库里有 ${String(memories.length)} 条记忆、${String(instances.length)} 个角色`,
-    '',
-    '| 探针 | 该答的人 | 视角内候选 | 命题排名 | 首条命中 | 进预算 | 噪音 | token |',
-    '| --- | --- | --- | --- | --- | --- | --- | --- |',
-  ];
 
-  let hits = 0;
-  let top1Hits = 0;
-  let inBudget = 0;
-  let leaks = 0;
-  let noiseTotal = 0;
-  let positives = 0;
+  /**
+   * 跑一遍全部探针。`limit` 为 null 表示不限制兜底条目。
+   *
+   * 这一步放在**预算裁剪之前**：省下来的额度才能让给别的东西——若放在之后，
+   * 预算早就被占满，限制只是让最终条数变少。
+   */
+  const run = (limit: number | null): { metrics: Metrics; rows: string[] } => {
+    const metrics: Metrics = {
+      hits: 0,
+      top1: 0,
+      inBudget: 0,
+      leaks: 0,
+      noise: 0,
+      tokens: 0,
+      positives: 0,
+      keywordItems: 0,
+      maxPairSimilarity: 0,
+    };
+    const rows: string[] = [];
 
-  for (const probe of PROBES) {
-    const instance = byName.get(probe.observer);
-    if (!instance) {
-      lines.push(`| ${probe.text} | ${probe.observer} | （找不到这个角色） | - | - | - | - |`);
-      continue;
+    for (const probe of PROBES) {
+      const instance = byName.get(probe.observer);
+      if (!instance) {
+        rows.push(`| ${probe.text} | ${probe.observer} | （找不到这个角色） | - | - | - | - |`);
+        continue;
+      }
+
+      const mine = memories.filter((memory) => memory.observerId === instance.id);
+      const expected = mine
+        .filter((memory) => probe.expectAll.every((word) => searchable(memory).includes(word)))
+        .map((memory) => memory.id);
+      // 注意：禁用词表为空时不能当成「匹配所有」——那会把每一题都误报成串味
+      const forbidWords = probe.forbidAll ?? [];
+      const forbidden = new Set(
+        forbidWords.length === 0
+          ? []
+          : mine
+              .filter((memory) => forbidWords.every((word) => searchable(memory).includes(word)))
+              .map((memory) => memory.id),
+      );
+
+      const ranked = recallMemories(memories, {
+        observerId: instance.id,
+        text: probe.text,
+        participantIds: onstage,
+        location: '',
+        now,
+      });
+      const candidates: RecalledMemory[] = limit === null ? ranked : limitFallbackItems(ranked, limit);
+      const selected = selectWithinBudget(candidates, 800, counter);
+      const selectedIds = selected.map((item) => item.event.id);
+
+      const firstHit = candidates.findIndex((item) => expected.includes(item.event.id));
+      // 排在第一的是不是期望条目：重复提过的线索会命中多条，所以「首条命中」比
+      // 「命题里有没有」更接近「模型第一眼看到什么」
+      const top1 = candidates[0] === undefined ? false : expected.includes(candidates[0].event.id);
+      const inBudgetHit = expected.some((id) => selectedIds.includes(id));
+      const leaked = selectedIds.filter((id) => forbidden.has(id));
+      const noise = selectedIds.filter((id) => !expected.includes(id) && !forbidden.has(id));
+      const tokens = selected.reduce(
+        (total, item) => total + counter.count(item.event.summary) + counter.count(item.event.perception),
+        0,
+      );
+
+      if (probe.expectAll.length > 0) metrics.positives += 1;
+      if (firstHit >= 0) metrics.hits += 1;
+      if (top1) metrics.top1 += 1;
+      if (inBudgetHit) metrics.inBudget += 1;
+      if (leaked.length > 0) metrics.leaks += 1;
+      metrics.noise += noise.length;
+      metrics.tokens += tokens;
+      metrics.keywordItems += selected.filter((item) =>
+        item.reasons.some((reason) => reason.code === 'keyword'),
+      ).length;
+
+      // 同一题里选中条目之间的最高相似度：如果噪音是「同一件事换个说法」，
+      // 这个数会很高，去重才有意义；不高就说明噪音是别的东西。
+      for (let left = 0; left < selected.length; left += 1) {
+        for (let right = left + 1; right < selected.length; right += 1) {
+          const a = selected[left];
+          const b = selected[right];
+          if (!a || !b) continue;
+          const similarity = textSimilarity(
+            `${a.event.summary} ${a.event.perception}`,
+            `${b.event.summary} ${b.event.perception}`,
+          );
+          if (similarity > metrics.maxPairSimilarity) metrics.maxPairSimilarity = similarity;
+        }
+      }
+
+      rows.push(
+        `| ${probe.text.slice(0, 16)}… | ${probe.observer} | ${String(mine.length)} | ${
+          firstHit < 0 ? '未命中' : `#${String(firstHit + 1)}`
+        } | ${top1 ? '✅' : '—'} | ${inBudgetHit ? '✅' : '❌'} | ${String(noise.length)} | ${String(tokens)} |`,
+      );
     }
 
-    const mine = memories.filter((memory) => memory.observerId === instance.id);
-    const expected = mine
-      .filter((memory) => probe.expectAll.every((word) => `${memory.summary}${memory.perception}`.includes(word)))
-      .map((memory) => memory.id);
-    // 注意：禁用词表为空时不能当成「匹配所有」——那会把每一题都误报成串味
-    const forbidWords = probe.forbidAll ?? [];
-    const forbidden = new Set(
-      forbidWords.length === 0
-        ? []
-        : mine
-            .filter((memory) => forbidWords.every((word) => `${memory.summary}${memory.perception}`.includes(word)))
-            .map((memory) => memory.id),
-    );
+    return { metrics, rows };
+  };
 
-    const ranked = recallMemories(memories, {
-      observerId: instance.id,
-      text: probe.text,
-      participantIds: onstage,
-      location: '',
-      now,
-    });
-    const selected = selectWithinBudget(ranked, 800, counter);
-    const selectedIds = selected.map((item) => item.event.id);
+  const percent = (value: number, total: number): string =>
+    `${String(Math.round((value / (total === 0 ? 1 : total)) * 100))}%`;
 
-    const firstHit = ranked.findIndex((item) => expected.includes(item.event.id));
-    // 排在第一的是不是期望条目：重复提过的线索会命中多条，所以「首条命中」比
-    // 「命题里有没有」更接近「模型第一眼看到什么」
-    const top1 = ranked[0] === undefined ? false : expected.includes(ranked[0].event.id);
-    const inBudgetHit = expected.some((id) => selectedIds.includes(id));
-    const leaked = selectedIds.filter((id) => forbidden.has(id));
-    const noise = selectedIds.filter((id) => !expected.includes(id) && !forbidden.has(id));
-    const tokens = selected.reduce(
-      (total, item) => total + counter.count(item.event.summary) + counter.count(item.event.perception),
-      0,
-    );
+  const lines: string[] = [
+    '# 召回探针·真实数据',
+    `库里有 ${String(memories.length)} 条记忆、${String(instances.length)} 个角色（${[...nameOf.values()].join('、')}）`,
+    '',
+    '## 策略扫描（T22 兜底条目上限）',
+    '',
+    '| 兜底上限 | 命题命中 | 首条命中 | 进预算 | 串味 | 平均噪音 | 关键词条目 | 选中项最高相似度 | 平均 token |',
+    '| --- | --- | --- | --- | --- | --- | --- | --- | --- |',
+  ];
 
-    if (probe.expectAll.length > 0) positives += 1;
-    if (firstHit >= 0) hits += 1;
-    if (top1) top1Hits += 1;
-    if (inBudgetHit) inBudget += 1;
-    if (leaked.length > 0) leaks += 1;
-    noiseTotal += noise.length;
-
+  for (const limit of [null, 6, 4, 3, 2, 1, 0]) {
+    const { metrics } = run(limit);
     lines.push(
-      `| ${probe.text.slice(0, 16)}… | ${probe.observer} | ${String(mine.length)} | ${
-        firstHit < 0 ? '未命中' : `#${String(firstHit + 1)}`
-      } | ${top1 ? '✅' : '—'} | ${inBudgetHit ? '✅' : '❌'} | ${String(noise.length)} | ${String(tokens)} |`,
+      `| ${limit === null ? '不限' : `≤${String(limit)}`} | ${percent(metrics.hits, metrics.positives)} | ${percent(
+        metrics.top1,
+        metrics.positives,
+      )} | ${percent(metrics.inBudget, metrics.positives)} | ${String(metrics.leaks)} | ${(
+        metrics.noise / PROBES.length
+      ).toFixed(1)} | ${(metrics.keywordItems / PROBES.length).toFixed(1)} | ${(
+        metrics.maxPairSimilarity / PROBES.length
+      ).toFixed(2)} | ${String(Math.round(metrics.tokens / PROBES.length))} |`,
     );
   }
 
-  const denom = positives === 0 ? 1 : positives;
+  const chosen = new URLSearchParams(location.search).get('fallback');
+  const chosenLimit = chosen === null ? null : Number(chosen);
+  const detail = run(chosenLimit);
   lines.push(
     '',
-    `命题命中 ${String(Math.round((hits / denom) * 100))}% · 首条命中 ${String(Math.round((top1Hits / denom) * 100))}% · 进预算 ${String(Math.round((inBudget / denom) * 100))}% · 串味 ${String(leaks)} 题 · 平均噪音 ${(noiseTotal / PROBES.length).toFixed(1)} 条`,
+    `## 逐题（兜底上限 ${chosenLimit === null ? '不限' : `≤${String(chosenLimit)}`}）`,
+    '',
+    '| 探针 | 该答的人 | 视角内候选 | 命题排名 | 首条命中 | 进预算 | 噪音 | token |',
+    '| --- | --- | --- | --- | --- | --- | --- | --- |',
+    ...detail.rows,
   );
-  lines.push('', `（角色名解析：${[...nameOf.values()].join('、')}）`);
 
   write(lines.join('\n'));
+}
+
+/** 探针关键字在这条记忆里找：摘要 + 观感。 */
+function searchable(memory: MemoryEvent): string {
+  return `${memory.summary}${memory.perception}`;
 }
 
 void main();

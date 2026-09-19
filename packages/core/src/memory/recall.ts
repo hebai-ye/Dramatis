@@ -196,3 +196,96 @@ export function selectWithinBudget(
 
   return selected;
 }
+
+/**
+ * 近似去重（ROADMAP T22）。
+ *
+ * 长跑里同一件事会被反复提起——「夹层」「半堵新墙」「那壶酒」各聊过好几轮，
+ * 每一轮都落一条记忆。它们用词接近、说的却是同一件事，于是**同一线索把预算
+ * 占掉一大半**：真实数据实测 800 token 里约一半是这种重复条目（EVAL 第五节）。
+ *
+ * 解决办法不需要嵌入模型：中文没有空格，二元组（bigram）已经能说明两句话像不像——
+ * 与关键词召回用的是同一套词元，零依赖、零调用、完全可预测。
+ *
+ * 保留规则：**留下分数最高的那条**（输入本来就按分数从高到低排好），
+ * 后面的近重复直接丢。丢掉的原文一个字都没删，只是这一轮不带进 prompt。
+ */
+export const DEFAULT_DEDUPE_THRESHOLD = 0.6;
+
+/** 用汇总 + 观感做相似度判断：同一件事在不同回合的两种写法，词元重合度很高。 */
+function defaultTextOf(event: MemoryEvent): string {
+  return `${event.summary} ${event.perception}`;
+}
+
+/** 二元组集合的 Jaccard 相似度（0~1）。两边都没有词元时算 0：无话可说谈不上重复。 */
+export function textSimilarity(left: string, right: string): number {
+  const a = new Set(tokenizeQuery(left));
+  const b = new Set(tokenizeQuery(right));
+  if (a.size === 0 || b.size === 0) return 0;
+
+  let shared = 0;
+  for (const term of a) {
+    if (b.has(term)) shared += 1;
+  }
+  return shared / (a.size + b.size - shared);
+}
+
+export interface DedupeOptions {
+  /** 相似度阈值：达到就算重复。默认 0.6——实测值见 EVAL 第五节。 */
+  threshold?: number;
+  /** 自定义比较用的文字；缺省是 summary + perception。 */
+  textOf?: (event: MemoryEvent) => string;
+}
+
+export function dedupeRecalled(items: readonly RecalledMemory[], options: DedupeOptions = {}): RecalledMemory[] {
+  const threshold = options.threshold ?? DEFAULT_DEDUPE_THRESHOLD;
+  const textOf = options.textOf ?? defaultTextOf;
+
+  const kept: RecalledMemory[] = [];
+  const keptTexts: string[] = [];
+
+  for (const item of items) {
+    const text = textOf(item.event);
+    const duplicate = keptTexts.some((other) => textSimilarity(text, other) >= threshold);
+    if (duplicate) continue;
+    kept.push(item);
+    keptTexts.push(text);
+  }
+
+  return kept;
+}
+
+/**
+ * 兜底条目的上限（T22 的实测结论）。
+ *
+ * 召回分数里有一半是「重要度 + 时效」——它们让玩家说「你好」时角色也能想起几件事，
+ * 这是 P1-3 有意留的兜底。但真实数据实测发现：**800 token 预算里平均有 5 条是这样
+ * 进来的**，同一角色的其它不相干记忆占掉一半额度；而选中条目之间的相似度只有 0.03
+ * ——它不是「重复」，就是「无关」（EVAL 第五节）。
+ *
+ * 所以这里给兜底设个上限：**有命中时最多再带几条无关的**。一句泛泛的话（一条命中
+ * 都没有）仍然照旧兜底，否则角色会什么都想不起来。
+ *
+ * 置顶条目不算兜底：那是用户明确要求「这条一定要在」。
+ */
+export const DEFAULT_FALLBACK_LIMIT = 2;
+
+/** 这条记忆是「被问到的东西」，还是「顺带想起来的」。 */
+function isOnTopic(item: RecalledMemory): boolean {
+  return item.reasons.some((reason) => reason.code === 'keyword' || reason.code === 'pinned');
+}
+
+export function limitFallbackItems(
+  items: readonly RecalledMemory[],
+  maxFallback: number = DEFAULT_FALLBACK_LIMIT,
+): RecalledMemory[] {
+  // 一条命中的都没有（闲聊、开场白）：保持原来的兜底行为
+  if (!items.some(isOnTopic)) return [...items];
+
+  let used = 0;
+  return items.filter((item) => {
+    if (isOnTopic(item)) return true;
+    used += 1;
+    return used <= maxFallback;
+  });
+}

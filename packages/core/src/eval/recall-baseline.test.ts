@@ -30,6 +30,15 @@ describe('混合召回评测（P1-11 的决策依据）', () => {
     expect(report.noisePerProbe).toBeLessThanOrEqual(6);
   });
 
+  it('兜底上限确实把预算让给了命中的条目（T22）', () => {
+    const unlimited = evaluateRecall(RECALL_SCENARIO, { fallbackLimit: null });
+    // 默认（与线上一致）不该带来回归：命中率与进预算都不掉
+    expect(report.hitRate).toBeGreaterThanOrEqual(unlimited.hitRate);
+    expect(report.inBudgetRate).toBeGreaterThanOrEqual(unlimited.inBudgetRate);
+    // 而无关条目变少（省下来的额度给了命中的那些）
+    expect(report.noisePerProbe).toBeLessThan(unlimited.noisePerProbe);
+  });
+
   it('报告能被打印出来（CLI 与文档共用同一份数字）', () => {
     const text = formatRecallReport(report);
     // 与 prompt-samples 一样，这个测试的用途之一就是把表打出来给人看

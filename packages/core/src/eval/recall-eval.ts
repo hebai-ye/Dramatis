@@ -1,4 +1,4 @@
-import { recallMemories, selectWithinBudget } from '../memory/recall.js';
+import { limitFallbackItems, recallMemories, selectWithinBudget } from '../memory/recall.js';
 import type { RecallReason } from '../memory/types.js';
 import type { MemoryEvent } from '../model/message.js';
 import { heuristicTokenCounter, type TokenCounter } from '../token/estimate.js';
@@ -75,6 +75,13 @@ export interface EvaluateRecallOptions {
   counter?: TokenCounter;
   /** 收集理由时是否只算期望命中的那条。 */
   weights?: Parameters<typeof recallMemories>[2];
+  /**
+   * 兜底条目的上限：null 表示不限。
+   *
+   * 缺省与线上一致（有命中时最多两条无关条目），这样评测数字就是用户实际看到的东西。
+   * 想对比「不限」时的表现，传 `null`。
+   */
+  fallbackLimit?: number | null;
 }
 
 export function evaluateRecall(dataset: RecallDataset, options: EvaluateRecallOptions = {}): RecallReport {
@@ -95,7 +102,9 @@ export function evaluateRecall(dataset: RecallDataset, options: EvaluateRecallOp
       options.weights ?? {},
     );
 
-    const selected = selectWithinBudget(ranked, budgetTokens, counter);
+    const candidates =
+      options.fallbackLimit === null ? ranked : limitFallbackItems(ranked, options.fallbackLimit ?? undefined);
+    const selected = selectWithinBudget(candidates, budgetTokens, counter);
     const expected = new Set(probe.expectIds);
     const forbidden = new Set(probe.forbidIds ?? []);
 

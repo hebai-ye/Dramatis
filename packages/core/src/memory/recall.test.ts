@@ -1,7 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import { eventId, instanceId, newId, roomId } from '../model/ids.js';
 import type { MemoryEvent } from '../model/message.js';
-import { recallMemories, scoreMemory, selectWithinBudget, tokenizeQuery } from './recall.js';
+import {
+  dedupeRecalled,
+  limitFallbackItems,
+  recallMemories,
+  scoreMemory,
+  selectWithinBudget,
+  textSimilarity,
+  tokenizeQuery,
+} from './recall.js';
 import type { RecallQuery } from './types.js';
 
 const OBSERVER = instanceId('observer-1');
@@ -167,5 +175,146 @@ describe('selectWithinBudget', () => {
   it('预算为 0 时返回空', () => {
     const recalled = recallMemories([memory()], query());
     expect(selectWithinBudget(recalled, 0)).toEqual([]);
+  });
+});
+
+describe('近似去重（T22）', () => {
+  it('相似度有区分度：几乎一样 > 换了说法 > 完全不同', () => {
+    const base = '玩家问起船上的夹层，陈九说后艄舱板底下能塞两个麻包。';
+    const nearlySame = '玩家问起船上的夹层，陈九说后艄舱板底下能塞两个麻包。';
+    const paraphrase = '陈九说后艄舱板底下有夹层，能塞两个麻包，外头看不出来。';
+    const different = '小满说先生烧过一批盖着断角鹿印的货单。';
+
+    const same = textSimilarity(base, nearlySame);
+    const reworded = textSimilarity(base, paraphrase);
+    const other = textSimilarity(base, different);
+
+    expect(same).toBe(1);
+    expect(reworded).toBeGreaterThan(other);
+    expect(reworded).toBeGreaterThan(0.4);
+    expect(other).toBeLessThan(0.2);
+  });
+
+  it('留下分数最高的那条，别的近重复丢掉', () => {
+    const ranked = [
+      {
+        event: memory({ id: eventId('high'), summary: '玩家问起船上的夹层，陈九说后艄舱板底下能塞两个麻包。' }),
+        score: 90,
+        reasons: [],
+      },
+      {
+        event: memory({
+          id: eventId('dup'),
+          summary: '玩家问起船上的夹层，陈九说后艄舱板底下能塞两个麻包，外头看不出来。',
+        }),
+        score: 80,
+        reasons: [],
+      },
+      {
+        event: memory({ id: eventId('other'), summary: '小满说先生烧过一批盖着断角鹿印的货单。' }),
+        score: 70,
+        reasons: [],
+      },
+    ];
+
+    const kept = dedupeRecalled(ranked);
+    expect(kept.map((item) => item.event.id)).toEqual(['high', 'other']);
+  });
+
+  it('阈值可调：调高之后「换了说法」的那条会被留下', () => {
+    const ranked = [
+      {
+        event: memory({ id: eventId('a'), summary: '玩家问起船上的夹层，陈九说后艄舱板底下能塞两个麻包。' }),
+        score: 90,
+        reasons: [],
+      },
+      {
+        event: memory({ id: eventId('b'), summary: '陈九说后艄舱板底下有夹层，能塞两个麻包，外头看不出来。' }),
+        score: 80,
+        reasons: [],
+      },
+    ];
+
+    // 实测这种换说法约 0.48：阈值 0.4 判为重复，0.9 则不判
+    expect(dedupeRecalled(ranked, { threshold: 0.4 })).toHaveLength(1);
+    expect(dedupeRecalled(ranked, { threshold: 0.9 })).toHaveLength(2);
+  });
+
+  it('没有词元的条目不会被误判成重复', () => {
+    expect(textSimilarity('。。。', '！？')).toBe(0);
+    expect(textSimilarity('', '任何东西')).toBe(0);
+  });
+
+  it('去重之后预算能装下更多不同的线索', () => {
+    // 三条近重复 + 一条别的事：不去重时预算只够两条近重复，去重后另一条线索进得来
+    const events = [
+      memory({ summary: `玩家问船上夹层，陈九说后艄舱板底下能塞两个麻包${'。'}` }),
+      memory({ summary: '陈九说后艄舱板底下有夹层，能塞两个麻包，外头看不出来。' }),
+      memory({ summary: '陈九提到后艄舱板底下的夹层，说能塞两个麻包。' }),
+      memory({ summary: '小满说先生收过一批盖着断角鹿印的货单，第二天叫她全烧了。' }),
+    ];
+    const recalled = recallMemories(events, query({ text: '夹层 鹿印' }));
+
+    const withoutDedupe = selectWithinBudget(recalled, 60);
+    const withDedupe = selectWithinBudget(dedupeRecalled(recalled, { threshold: 0.4 }), 60);
+
+    expect(withoutDedupe.length).toBeGreaterThan(0);
+    expect(withDedupe.some((item) => item.event.summary.includes('鹿印'))).toBe(true);
+  });
+});
+
+describe('兜底条目上限（T22 实测结论）', () => {
+  /** 造一条「被问到的东西」：有关键词命中。 */
+  function onTopic(summary: string) {
+    const recalled = recallMemories([memory({ summary })], query({ text: '夹层' }));
+    const item = recalled[0];
+    if (!item) throw new Error('没造出命中条目');
+    return item;
+  }
+
+  /** 造一条「顺带想起来的」：没有关键词命中，只靠重要度与时效。 */
+  function offTopic(summary: string) {
+    const recalled = recallMemories([memory({ summary, importance: 0.6 })], query({ text: '夹层' }));
+    const item = recalled[0];
+    if (!item) throw new Error('没造出兜底条目');
+    return item;
+  }
+
+  it('有命中时，兜底条目最多留 N 条', () => {
+    const items = [
+      onTopic('玩家问起后艄舱板底下的夹层。'),
+      offTopic('秦娘说店里还剩三间空房。'),
+      offTopic('小满提醒前头滩口子底下有淤泥。'),
+      offTopic('陈九说渡口还有夜船。'),
+      offTopic('玩家问起巷口那半堵新墙。'),
+    ];
+
+    const limited = limitFallbackItems(items, 2);
+    expect(limited).toHaveLength(3); // 1 条命中 + 2 条兜底
+    expect(limited[0]?.event.summary).toContain('夹层');
+  });
+
+  it('一条命中都没有时保持原来的兜底（不能什么都不给）', () => {
+    const items = [
+      offTopic('秦娘说店里还剩三间空房。'),
+      offTopic('小满提醒前头滩口子底下有淤泥。'),
+      offTopic('陈九说渡口还有夜船。'),
+    ];
+
+    expect(limitFallbackItems(items, 2)).toHaveLength(3);
+  });
+
+  it('置顶的条目不算兜底：用户要求它一定要在', () => {
+    const pinned = recallMemories(
+      [memory({ summary: '一件很久以前的事。', pinned: true, importance: 0.2 })],
+      query({ text: '夹层' }),
+    )[0];
+    if (!pinned) throw new Error('没造出置顶条目');
+
+    const items = [onTopic('玩家问起后艄舱板底下的夹层。'), offTopic('秦娘说店里还剩三间空房。'), pinned];
+    expect(limitFallbackItems(items, 0).map((item) => item.event.summary)).toEqual([
+      '玩家问起后艄舱板底下的夹层。',
+      '一件很久以前的事。',
+    ]);
   });
 });

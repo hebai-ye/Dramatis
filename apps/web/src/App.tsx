@@ -17,6 +17,7 @@ import {
   importCardFromJson,
   importCardFromPng,
   isIntentFirst,
+  limitFallbackItems,
   type Message,
   type MessageId,
   type MessageUsage,
@@ -507,13 +508,18 @@ export function App() {
           // 只召回这个人自己的视角条目
           const now = new Date().toISOString();
           const recalled = selectWithinBudget(
-            recallMemories(session.memories, {
-              observerId: speaker.id,
-              text: [text, ...history.slice(-6).map((message) => message.content)].join('\n'),
-              participantIds: scene.cast,
-              location: scene.location,
-              now,
-            }),
+            // 兜底上限（T22）：有命中的那一轮最多再带两条「顺带想起」的记忆。
+            // 实测 800 token 里原本平均有 5 条是这类无关条目，把预算让出去之后，
+            // 命中条目从 4.0 涨到 5.1 条（EVAL 第五节）。
+            limitFallbackItems(
+              recallMemories(session.memories, {
+                observerId: speaker.id,
+                text: [text, ...history.slice(-6).map((message) => message.content)].join('\n'),
+                participantIds: scene.cast,
+                location: scene.location,
+                now,
+              }),
+            ),
             MEMORY_BUDGET_TOKENS,
           );
 

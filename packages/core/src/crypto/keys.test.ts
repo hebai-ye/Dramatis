@@ -20,7 +20,12 @@ import { decryptRecord, encryptRecord } from './records.js';
 /** 测试里把迭代数调小：这些用例验的是「关系」，不是 KDF 的强度。 */
 const FAST = { handleIterations: 100, keyIterations: 200 };
 
-const COORDINATES = { spaceHandle: 'handle-abc', collection: 'messages', id: 'msg-1', rev: 1 };
+const COORDINATES = {
+  spaceHandle: 'handle-abc',
+  collection: 'messages',
+  id: 'msg-1',
+  updatedAt: '2026-09-19T10:00:00.000Z',
+};
 
 describe('normalizeUserId', () => {
   it('去首尾空白、大小写折叠、内部空白压成一个空格', () => {

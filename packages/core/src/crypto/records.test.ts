@@ -24,7 +24,7 @@ const coordinates: RecordCoordinates = {
   spaceHandle: 'handle-abc',
   collection: 'messages',
   id: 'msg-1',
-  rev: 7,
+  updatedAt: '2026-09-19T10:00:00.000Z',
 };
 
 describe('encryptRecord / decryptRecord', () => {
@@ -79,7 +79,7 @@ describe('AAD 把密文钉在坐标上', () => {
   const cases: Array<[string, RecordCoordinates]> = [
     ['换集合', { ...coordinates, collection: 'memories' }],
     ['换 id', { ...coordinates, id: 'msg-2' }],
-    ['换 rev', { ...coordinates, rev: 8 }],
+    ['换时间戳（同一 id 的旧版本顶新版本）', { ...coordinates, updatedAt: '2026-09-19T10:00:00.001Z' }],
     ['换空间', { ...coordinates, spaceHandle: 'handle-other' }],
   ];
 
@@ -96,7 +96,7 @@ describe('AAD 把密文钉在坐标上', () => {
 
   it('AAD 就是「空间|集合|id|rev」，四条换一条就换一个串', () => {
     const aad = new TextDecoder().decode(recordAad(coordinates));
-    expect(aad).toBe('handle-abc|messages|msg-1|7');
+    expect(aad).toBe('handle-abc|messages|msg-1|2026-09-19T10:00:00.000Z');
   });
 });
 

@@ -82,7 +82,13 @@ async function main(): Promise<void> {
     verifyCredential(created.recoveryCredential, created.recoveryCredentialHash),
   );
 
-  const coordinates = { spaceHandle: created.spaceHandle, collection: 'messages', id: 'probe-msg-1', rev: 3 };
+  const updatedAt = new Date().toISOString();
+  const coordinates = {
+    spaceHandle: created.spaceHandle,
+    collection: 'messages',
+    id: 'probe-msg-1',
+    updatedAt,
+  };
   const payload = { id: 'probe-msg-1', content: '「三十箱货是谁的？」', audience: ['inst-1'] };
   const sealed = await timeIt('encryptRecord（加密一条记录）', () =>
     encryptRecord(created.encKey, coordinates, payload),
@@ -101,17 +107,21 @@ async function main(): Promise<void> {
       return error instanceof CryptoError;
     }
   });
-  await check('rev 被改（旧密文顶新版本）→ 解不开', async () => {
+  await check('时间戳对不上（旧密文顶新版本）→ 解不开', async () => {
     try {
-      await decryptRecord(created.encKey, { ...coordinates, rev: 4 }, sealed);
+      await decryptRecord(
+        created.encKey,
+        { ...coordinates, updatedAt: new Date(Date.now() + 1).toISOString() },
+        sealed,
+      );
       return false;
     } catch (error) {
       return error instanceof CryptoError;
     }
   });
-  await check('AAD 形状就是「空间|集合|id|rev」', () => {
+  await check('AAD 形状就是「空间|集合|id|updatedAt」', () => {
     const aad = new TextDecoder().decode(recordAad(coordinates));
-    return aad === `${created.spaceHandle}|messages|probe-msg-1|3`;
+    return aad === `${created.spaceHandle}|messages|probe-msg-1|${updatedAt}`;
   });
 
   say('');

@@ -374,7 +374,28 @@ export class Repository {
   private async softDelete(collection: string, id: string, at: string = nowIso()): Promise<void> {
     const record = await this.store.get<{ id: string; deletedAt?: string | null }>(collection, id);
     if (record === null || !isAlive(record)) return;
-    await this.store.put(collection, { ...record, id, deletedAt: at, updatedAt: at });
+    const updatedAt = await this.stampUpdatedAt(collection, id, at);
+    await this.store.put(collection, { ...record, id, deletedAt: updatedAt, updatedAt });
+  }
+
+  /**
+   * 给这条记录盖一个**严格递增**的 `updatedAt`（P2-6 第三步的协议要求）。
+   *
+   * 为什么不能只用 `nowIso()`：同一个毫秒里改两次是常事（后台任务与界面同帧写入），
+   * 而 `updatedAt` 有两个身份——LWW 的比较依据，以及记录密文 AAD 的一部分
+   * （见 SYNC §4.4）。要是两次写入撞上同一个时间戳，两件事都会退化：
+   * 「谁最后改的」分不出来，密文也不再能区分版本。
+   *
+   * 做法：新时间若不比这条记录的旧时间晚，就取「旧时间 + 1 ms」。代价是时间戳
+   * 可能略超前于墙钟——这是逻辑时钟的常规代价，换来的是每条记录的写入顺序可判定。
+   */
+  private async stampUpdatedAt(collection: string, id: string, at: string = nowIso()): Promise<string> {
+    const existing = await this.store.get<{ updatedAt?: string }>(collection, id);
+    const previous = typeof existing?.updatedAt === 'string' ? existing.updatedAt : '';
+    if (previous === '' || previous < at) return at;
+
+    const parsed = Date.parse(previous);
+    return Number.isNaN(parsed) ? at : new Date(parsed + 1).toISOString();
   }
 
   /** 查询默认口径：软删除的记录不返回。`includeDeleted` 是给同步与诊断用的后门。 */
@@ -431,7 +452,8 @@ export class Repository {
   // ---- 房间 ----
 
   async saveRoom(room: Room): Promise<void> {
-    await this.store.put(COLLECTIONS.rooms, { ...room, updatedAt: nowIso(), deletedAt: null });
+    const updatedAt = await this.stampUpdatedAt(COLLECTIONS.rooms, room.id);
+    await this.store.put(COLLECTIONS.rooms, { ...room, updatedAt, deletedAt: null });
   }
 
   async getRoom(id: RoomId): Promise<Room | null> {
@@ -499,7 +521,8 @@ export class Repository {
   // ---- 对话（LAYOUT：世界 = 项目，一个世界下可以开多个对话） ----
 
   async saveConversation(conversation: Conversation): Promise<void> {
-    await this.store.put(COLLECTIONS.conversations, { ...conversation, updatedAt: nowIso(), deletedAt: null });
+    const updatedAt = await this.stampUpdatedAt(COLLECTIONS.conversations, conversation.id);
+    await this.store.put(COLLECTIONS.conversations, { ...conversation, updatedAt, deletedAt: null });
   }
 
   async getConversation(id: ConversationId): Promise<Conversation | null> {
@@ -614,7 +637,8 @@ export class Repository {
   // ---- 场景 ----
 
   async saveScene(scene: Scene): Promise<void> {
-    await this.store.put(COLLECTIONS.scenes, { ...scene, updatedAt: nowIso(), deletedAt: null });
+    const updatedAt = await this.stampUpdatedAt(COLLECTIONS.scenes, scene.id);
+    await this.store.put(COLLECTIONS.scenes, { ...scene, updatedAt, deletedAt: null });
   }
 
   async getScene(id: SceneId): Promise<Scene | null> {
@@ -632,7 +656,8 @@ export class Repository {
   // ---- 角色实例 ----
 
   async saveInstance(instance: CharacterInstance): Promise<void> {
-    await this.store.put(COLLECTIONS.instances, { ...instance, updatedAt: nowIso(), deletedAt: null });
+    const updatedAt = await this.stampUpdatedAt(COLLECTIONS.instances, instance.id);
+    await this.store.put(COLLECTIONS.instances, { ...instance, updatedAt, deletedAt: null });
   }
 
   async listInstances(roomId: RoomId): Promise<CharacterInstance[]> {
@@ -647,7 +672,8 @@ export class Repository {
   // ---- 角色卡与世界书（跨房间共用） ----
 
   async saveCard(card: Card): Promise<void> {
-    await this.store.put(COLLECTIONS.cards, { ...card, updatedAt: nowIso(), deletedAt: null });
+    const updatedAt = await this.stampUpdatedAt(COLLECTIONS.cards, card.id);
+    await this.store.put(COLLECTIONS.cards, { ...card, updatedAt, deletedAt: null });
   }
 
   async getCard(id: CardId): Promise<Card | null> {
@@ -663,7 +689,8 @@ export class Repository {
   }
 
   async saveWorldBook(book: WorldBook): Promise<void> {
-    await this.store.put(COLLECTIONS.worldBooks, { ...book, updatedAt: nowIso(), deletedAt: null });
+    const updatedAt = await this.stampUpdatedAt(COLLECTIONS.worldBooks, book.id);
+    await this.store.put(COLLECTIONS.worldBooks, { ...book, updatedAt, deletedAt: null });
   }
 
   async getWorldBook(id: WorldBookId): Promise<WorldBook | null> {
@@ -700,13 +727,13 @@ export class Repository {
       next = existing.reduce((max, item) => Math.max(max, localSeqOf(item)), 0);
     }
 
-    const now = nowIso();
     const stamped: Message[] = [];
     for (const message of messages) {
       next += 1;
       // 老封存文件里可能还带着 `seq`：丢掉它，库里只留 `localSeq` 一个名字
       const { seq: _legacySeq, ...rest } = message as StoredMessage;
-      stamped.push({ ...rest, roomId, localSeq: next, deviceId, updatedAt: now, deletedAt: null });
+      const updatedAt = await this.stampUpdatedAt(COLLECTIONS.messages, message.id);
+      stamped.push({ ...rest, roomId, localSeq: next, deviceId, updatedAt, deletedAt: null });
     }
 
     await this.store.bulkPut(COLLECTIONS.messages, stamped);
@@ -761,7 +788,7 @@ export class Repository {
       roomId: existing.roomId,
       localSeq: existing.localSeq,
       deviceId: existing.deviceId,
-      updatedAt: nowIso(),
+      updatedAt: await this.stampUpdatedAt(COLLECTIONS.messages, id),
       deletedAt: null,
     };
     await this.store.put(COLLECTIONS.messages, updated);
@@ -807,7 +834,7 @@ export class Repository {
     const updated: Message = {
       ...message,
       artifacts: message.artifacts.map((item) => (item.id === artifactId ? adopted : item)),
-      updatedAt: nowIso(),
+      updatedAt: await this.stampUpdatedAt(COLLECTIONS.messages, messageId),
       deletedAt: null,
     };
     await this.store.put(COLLECTIONS.messages, updated);
@@ -824,7 +851,7 @@ export class Repository {
       artifacts: message.artifacts.map((item) =>
         item.id === artifactId && item.status === 'pending' ? { ...item, status: 'discarded' } : item,
       ),
-      updatedAt: nowIso(),
+      updatedAt: await this.stampUpdatedAt(COLLECTIONS.messages, messageId),
       deletedAt: null,
     };
     await this.store.put(COLLECTIONS.messages, updated);
@@ -901,11 +928,12 @@ export class Repository {
   }
 
   async saveMemories(events: readonly MemoryEvent[]): Promise<void> {
-    const now = nowIso();
-    await this.store.bulkPut(
-      COLLECTIONS.memories,
-      events.map((event) => ({ ...event, updatedAt: now, deletedAt: null })),
-    );
+    const stamped: MemoryEvent[] = [];
+    for (const event of events) {
+      const updatedAt = await this.stampUpdatedAt(COLLECTIONS.memories, event.id);
+      stamped.push({ ...event, updatedAt, deletedAt: null });
+    }
+    await this.store.bulkPut(COLLECTIONS.memories, stamped);
   }
 
   // ---- 分层摘要（P1-5） ----
@@ -931,7 +959,8 @@ export class Repository {
   }
 
   async saveChapterSummary(chapter: ChapterSummary): Promise<void> {
-    await this.store.put(COLLECTIONS.chapterSummaries, { ...chapter, updatedAt: nowIso(), deletedAt: null });
+    const updatedAt = await this.stampUpdatedAt(COLLECTIONS.chapterSummaries, chapter.id);
+    await this.store.put(COLLECTIONS.chapterSummaries, { ...chapter, updatedAt, deletedAt: null });
   }
 
   /** 删除一条对话产生的章节摘要，用于归档与彻底删除。 */
@@ -955,7 +984,7 @@ export class Repository {
       id: existing.id,
       roomId: existing.roomId,
       sourceTurnIds: existing.sourceTurnIds,
-      updatedAt: nowIso(),
+      updatedAt: await this.stampUpdatedAt(COLLECTIONS.memories, id),
       deletedAt: null,
     };
     await this.store.put(COLLECTIONS.memories, updated);
@@ -998,7 +1027,8 @@ export class Repository {
   }
 
   async savePersona(persona: Persona): Promise<void> {
-    await this.store.put(COLLECTIONS.personas, { ...persona, updatedAt: nowIso(), deletedAt: null });
+    const updatedAt = await this.stampUpdatedAt(COLLECTIONS.personas, persona.id);
+    await this.store.put(COLLECTIONS.personas, { ...persona, updatedAt, deletedAt: null });
   }
 
   /**

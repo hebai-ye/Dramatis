@@ -4,15 +4,16 @@
  * 同步的单位是**一条实体一条记录**（SYNC §4.1），所以加密也按条来：
  *
  * ```ts
- * const sealed = await encryptRecord(keys.encKey, { spaceHandle, collection, id, rev }, message);
- * // 服务端存 { spaceHandle, collection, id, rev, ciphertext, iv, updatedAt, size }
- * const back = await decryptRecord<Message>(keys.encKey, { spaceHandle, collection, id, rev }, sealed);
+ * const sealed = await encryptRecord(keys.encKey, { spaceHandle, collection, id, updatedAt }, message);
+ * // 服务端存 { spaceHandle, collection, id, serverRev, ciphertext, iv, updatedAt, size }
+ * const back = await decryptRecord<Message>(keys.encKey, { spaceHandle, collection, id, updatedAt }, sealed);
  * ```
  *
- * **AAD 绑定坐标**：`spaceId|collection|id|rev` 既是加密时的附加数据，也是
+ * **AAD 绑定坐标**：`spaceHandle|collection|id|updatedAt` 既是加密时的附加数据，也是
  * 解密时的附加数据。服务端如果把 A 的记录挪到 B 的位置（改 collection、改 id、
  * 甚至换一个空间），解密会直接失败——密文被钉死在它自己的坐标上，而不是
- * 靠服务端自觉。rev 也进 AAD，所以「拿旧密文顶替新版本」同样解不开。
+ * 靠服务端自觉。`updatedAt` 也在里面，而且仓储层保证它**每条记录严格递增**，
+ * 所以「拿同一 id 的旧密文顶替新版本」同样解不开。
  */
 
 import { fromBase64Url, fromUtf8, randomBytes, subtle, toBase64Url, utf8 } from './encoding.js';
@@ -31,8 +32,14 @@ export interface RecordCoordinates {
   collection: string;
   /** 实体 id（uuid）。 */
   id: string;
-  /** 服务端分配的单调递增版本号。本地记录没有它时用 0。 */
-  rev: number;
+  /**
+   * 这条记录的写入时间（实体的 `updatedAt`）。
+   *
+   * 为什么是它、不是服务端的版本号：客户端加密时还不知道服务端会分配哪个号
+   * （SYNC §4.4 记了这个空隙）。`updatedAt` 是客户端自己盖的章、又随记录明文
+   * 存在服务端，两边都拿得到，而且严格递增——既能防挪位置，也能防旧版本顶新版本。
+   */
+  updatedAt: string;
 }
 
 /**
@@ -43,7 +50,7 @@ export interface RecordCoordinates {
  * 分隔符一致就够——AAD 不要求能反解析，只要求**不同的坐标拼出不同的串**。
  */
 export function recordAad(coordinates: RecordCoordinates): Uint8Array<ArrayBuffer> {
-  return utf8([coordinates.spaceHandle, coordinates.collection, coordinates.id, String(coordinates.rev)].join('|'));
+  return utf8([coordinates.spaceHandle, coordinates.collection, coordinates.id, coordinates.updatedAt].join('|'));
 }
 
 /** 服务端落库的那条记录（它看到的全部内容）。 */

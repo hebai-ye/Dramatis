@@ -454,6 +454,24 @@ describe('Repository / updatedAt（P2-6 数据层前置）', () => {
     expect(isFresh((await repo.getScene(scene.id))?.updatedAt)).toBe(true);
   });
 
+  it('同一毫秒里写两次，updatedAt 仍然严格递增（LWW 与记录密文的 AAD 都靠它）', async () => {
+    const repo = new Repository(createMemoryEntityStore());
+    const { scene } = fixtures();
+
+    await repo.saveScene(scene);
+    const first = (await repo.getScene(scene.id))?.updatedAt ?? '';
+    await repo.saveScene(scene);
+    const second = (await repo.getScene(scene.id))?.updatedAt ?? '';
+
+    expect(Date.parse(second)).toBeGreaterThan(Date.parse(first));
+
+    // 时间被外部调慢（或库里存着一个未来时间）时也不许倒退：倒退会让 LWW 判错，
+    // 也会让同一 id 的两版密文撞上同一个 AAD
+    await repo.saveScene({ ...scene, updatedAt: '1999-01-01T00:00:00.000Z' });
+    const third = (await repo.getScene(scene.id))?.updatedAt ?? '';
+    expect(Date.parse(third)).toBeGreaterThan(Date.parse(second));
+  });
+
   it('saveMemories / updateMemory 也会更新 updatedAt', async () => {
     const repo = new Repository(createMemoryEntityStore());
     const { room, scene, instance } = fixtures();

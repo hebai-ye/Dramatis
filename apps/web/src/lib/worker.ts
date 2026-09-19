@@ -10,6 +10,7 @@ import {
   chapterCandidates,
   collectCompletionWithTools,
   createOpenAICompatibleProvider,
+  evaluateBudget,
   type ModelProvider,
   newId,
   nowIso,
@@ -476,7 +477,24 @@ export function useBackgroundWorker(options: {
             throw new Error('后台任务缺少可用的模型配置或 API Key');
           }
 
+          /**
+           * 熔断检查（P1-9）：每次都拿**最新**的账单与这个世界的上限重算一遍，
+           * 而不是用界面渲染时算出来的状态——队列可能积压，界面也可能还没刷新。
+           */
           const payload = task.payload as TurnTaskPayload;
+          const roomIdForBudget = payload.roomId;
+          const room = await db.repository.getRoom(roomIdForBudget);
+          const limits = room?.budget ?? null;
+          if (limits !== null) {
+            const state = evaluateBudget(await db.ledger.summary({ roomId: roomIdForBudget }), limits);
+            if (state.burned) {
+              // 直接收掉这一条：留着会让它每次启动都重跑一遍
+              await db.queue.complete(task.id);
+              setLastError(`${state.reason ?? '已达本局上限'}，后台任务已暂停（角色回复不受影响）`);
+              continue;
+            }
+          }
+
           let outcome: TaskOutcome = { called: false, usage: null };
           if (task.kind === TURN_ANALYSIS_TASK_KIND) {
             outcome = await runTurnAnalysis(payload, config);

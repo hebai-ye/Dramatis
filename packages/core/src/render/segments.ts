@@ -34,6 +34,16 @@ export interface RenderOptions {
    * 冒充，要留在正文里让人看见。
    */
   speakerName?: string;
+  /**
+   * 把**动作段**里的第一人称换成说话人的名字。
+   *
+   * 模型很爱用「我」写自己的动作（五十回合长跑里几乎每段都是「我把斗笠往上一抬」），
+   * 读起来像角色在自己念旁白。界面上的动作是给玩家看的第三方叙述，主语该是名字。
+   * 对白里的「我」一个字都不动——那是他在说话。
+   *
+   * 只改**显示**，不改存储：记忆抽取与语音归属检测读的仍然是模型原本写的东西。
+   */
+  thirdPersonActions?: boolean;
 }
 
 function stripLeadingSpeakerPrefix(content: string, speakerName: string | undefined): string {
@@ -133,6 +143,94 @@ export function splitByQuotes(line: string): QuotedSpan[] {
 /** 这一行里有没有成对的引号。 */
 function hasQuotedSpan(line: string): boolean {
   return splitByQuotes(line).some((span) => span.quoted);
+}
+
+/**
+ * 只在引号**之外**做替换，引号里的原样保留。
+ *
+ * 动作段里也可能夹着引号（`# 她朝门口抬了下下巴。「你问这个做什么。」`），
+ * 那里的「我」是角色说的话，不能动。
+ */
+function mapOutsideQuotes(text: string, transform: (chunk: string) => string): string {
+  let out = '';
+  let buffer = '';
+  let quoted = false;
+  let closer = '';
+
+  for (const char of text) {
+    if (!quoted) {
+      const expected = QUOTE_PAIRS[char];
+      if (expected !== undefined) {
+        out += transform(buffer);
+        buffer = '';
+        quoted = true;
+        closer = expected;
+        out += char;
+        continue;
+      }
+      buffer += char;
+      continue;
+    }
+
+    out += char;
+    if (char === closer) {
+      quoted = false;
+      closer = '';
+    }
+  }
+
+  return out + transform(buffer);
+}
+
+/**
+ * 动作段的第一人称 → 说话人的名字。
+ *
+ * 三种「我」不动：
+ * - **我们**：「陈九们」不是人话，复数留给以后专门处理
+ * - **自我**：构词的一部分（自我怀疑），不是代词
+ * - **你我**：对举（你我之间），换成名字反而别扭
+ */
+export function thirdPersonAction(text: string, speakerName: string): string {
+  const name = speakerName.trim();
+  if (name === '') return text;
+  return mapOutsideQuotes(text, (chunk) => rewriteFirstPerson(chunk, name));
+}
+
+/** 句末：到这里就是新的一句话，主语该重新给出名字。 */
+const SENTENCE_BREAK = /[。！？…\n\s]/;
+/** 句内停顿：第二次以主语出现时，中文习惯是省略而不是重念名字。 */
+const CLAUSE_BREAK = /[，、；：]/;
+
+function rewriteFirstPerson(chunk: string, name: string): string {
+  let out = '';
+  let named = false;
+
+  for (let index = 0; index < chunk.length; index += 1) {
+    const char = chunk[index];
+    if (char !== '我') {
+      out += char;
+      continue;
+    }
+
+    const previous = index === 0 ? '' : (chunk[index - 1] ?? '');
+    const next = chunk[index + 1] ?? '';
+    // 我们（复数）、自我（构词）、你我（对举）都不动
+    if (next === '们' || previous === '自' || previous === '你') {
+      out += char;
+      continue;
+    }
+
+    const atSentenceStart = index === 0 || SENTENCE_BREAK.test(previous);
+    const atClauseStart = atSentenceStart || CLAUSE_BREAK.test(previous);
+    // 同一句里第二次以主语出现：名字已经给过了，中文习惯是省略。
+    // 换了句子就重新给名字——「他比陈九还高。陈九记下了。」比省略清楚。
+    if (named && atClauseStart && !atSentenceStart) continue;
+
+    out += name;
+    named = true;
+  }
+
+  return out;
 }
 
 function isActionLine(line: string): boolean {
@@ -296,7 +394,11 @@ export function renderMessageContent(content: string, options: RenderOptions = {
 
   for (const segment of splitMessageContent(cleaned)) {
     if (segment.kind === 'action') {
-      pieces.push(segment);
+      pieces.push(
+        options.thirdPersonActions === true && options.speakerName !== undefined
+          ? { kind: 'action', text: thirdPersonAction(segment.text, options.speakerName) }
+          : segment,
+      );
       continue;
     }
     for (const part of splitLongSpeech(segment.text, maxLength)) {

@@ -306,7 +306,11 @@ export function MainChat({
             <Avatar name={streamSpeaker} />
             <div className="message-column streaming">
               <span className="message-name">{streamSpeaker}</span>
-              {renderMessageContent(streamText, { speakerName: streamSpeaker }).map((segment, index) =>
+              {/* 流式气泡与落盘后的渲染用同一套规则，否则「我」会在生成完的一瞬间跳成名字 */}
+              {renderMessageContent(streamText, {
+                speakerName: streamSpeaker,
+                thirdPersonActions: true,
+              }).map((segment, index) =>
                 segment.kind === 'action' ? (
                   <p className="action-line" key={`stream-action-${String(index)}`}>
                     {segment.text}

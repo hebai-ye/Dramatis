@@ -1,5 +1,7 @@
 import type {
   AssembledPrompt,
+  BudgetLimits,
+  BudgetState,
   Card,
   ChapterSummary,
   CharacterInstance,
@@ -35,6 +37,11 @@ interface Props {
   extraCalls: number;
   /** 账单：整个世界与当前对话各一份。 */
   usage: { world: UsageSummary | null; conversation: UsageSummary | null };
+  /** 本局的调用预算与熔断状态（P1-9）。 */
+  budget: BudgetState;
+  /** 已经保存的上限（草稿初值）。 */
+  budgetLimits: BudgetLimits | null;
+  onSaveBudget: (limits: BudgetLimits | null) => void;
   /** 当前对话名，给用量面板做标题。 */
   conversationTitle: string;
   workerError: string | null;
@@ -176,6 +183,9 @@ export function RuntimePanel(props: Props) {
           world={props.usage.world}
           conversation={props.usage.conversation}
           conversationTitle={props.conversationTitle}
+          budget={props.budget}
+          limits={props.budgetLimits}
+          onSaveBudget={props.onSaveBudget}
         />
       ) : null}
 

@@ -44,7 +44,12 @@ export function MessageBody({ message, speakerName, showSpeaker, children }: Pro
     return <p className="narration-line">{message.content}</p>;
   }
 
-  const segments = renderMessageContent(message.content, { speakerName });
+  // 角色的动作用名字做主语（「我把手收了回来」→「陈九把手收了回来」）：
+  // 界面上的动作是给玩家看的第三方叙述，不是角色在念旁白。玩家的动作保持第一人称
+  const segments = renderMessageContent(message.content, {
+    speakerName,
+    thirdPersonActions: message.role === 'character',
+  });
   const lastSpeechIndex = segments.reduce((last, segment, index) => (segment.kind === 'speech' ? index : last), -1);
 
   return (

@@ -6,6 +6,7 @@ import {
   splitByQuotes,
   splitLongSpeech,
   splitMessageContent,
+  thirdPersonAction,
 } from './segments.js';
 
 describe('splitMessageContent', () => {
@@ -204,5 +205,49 @@ describe('引号兜底：模型不写 `#` 时按引号分段', () => {
       { quoted: true, text: '"hello"' },
       { quoted: false, text: 'and left.' },
     ]);
+  });
+});
+
+describe('动作主语用名字（thirdPersonAction）', () => {
+  it('把动作里的「我」换成说话人的名字', () => {
+    expect(thirdPersonAction('我把斗笠檐往上一抬，正眼看你。', '陈九')).toBe('陈九把斗笠檐往上一抬，正眼看你。');
+    expect(thirdPersonAction('我把手从钩子上收回来。', '陈九')).toBe('陈九把手从钩子上收回来。');
+  });
+
+  it('「我的」一起换：名字 + 的', () => {
+    expect(thirdPersonAction('我把我的碗推过去。', '秦娘')).toBe('秦娘把秦娘的碗推过去。');
+  });
+
+  it('引号里的「我」一个字都不动——那是他在说话', () => {
+    expect(thirdPersonAction('我抬眼看他。「我什么也没看见。」', '小满')).toBe('小满抬眼看他。「我什么也没看见。」');
+  });
+
+  it('三种不该动的「我」：我们、自我、你我', () => {
+    expect(thirdPersonAction('我们得走了。', '陈九')).toBe('我们得走了。');
+    expect(thirdPersonAction('他有点自我怀疑。', '陈九')).toBe('他有点自我怀疑。');
+    expect(thirdPersonAction('你我之间不必多说。', '陈九')).toBe('你我之间不必多说。');
+  });
+
+  it('名字为空时原样返回（比如流式气泡还不知道是谁）', () => {
+    expect(thirdPersonAction('我把碗放下。', '  ')).toBe('我把碗放下。');
+  });
+
+  it('同一段里第二次当主语时省略，而不是把名字念两遍', () => {
+    expect(thirdPersonAction('我看了看她，我又低下头。', '陈九')).toBe('陈九看了看她，又低下头。');
+    // 不是主语位置（比如「比我高」）就照常换成名字，不能删
+    expect(thirdPersonAction('他比我还高。我记下了。', '陈九')).toBe('他比陈九还高。陈九记下了。');
+  });
+
+  it('渲染时按选项生效：角色开、玩家不开', () => {
+    const content = '我把杯子放下。\n「你问这个做什么。」';
+
+    const asCharacter = renderMessageContent(content, { speakerName: '秦娘', thirdPersonActions: true });
+    expect(asCharacter).toEqual([
+      { kind: 'action', text: '秦娘把杯子放下。' },
+      { kind: 'speech', text: '「你问这个做什么。」' },
+    ]);
+
+    const asPlayer = renderMessageContent(content, { speakerName: '旅人' });
+    expect(asPlayer[0]).toEqual({ kind: 'action', text: '我把杯子放下。' });
   });
 });

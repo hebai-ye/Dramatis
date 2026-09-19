@@ -1,3 +1,4 @@
+import type { BudgetLimits } from '../storage/budget.js';
 import type { CardId, ConversationId, InstanceId, RoomId, SceneId, WorldBookId } from './ids.js';
 
 /**
@@ -78,6 +79,13 @@ export interface Room {
   worldBookIds: WorldBookId[];
   /** 当前打开的对话；为空表示这个世界还没有任何对话。 */
   activeConversationId: ConversationId | null;
+  /**
+   * 本局的调用预算（ROADMAP P1-9）。
+   *
+   * 挂在世界（房间）上而不是全局设置：花销是按世界算的，一条线跑疯了不该
+   * 牵连同一个人另一个世界。留空表示不限。
+   */
+  budget?: BudgetLimits | null;
   createdAt: string;
   updatedAt: string;
 }

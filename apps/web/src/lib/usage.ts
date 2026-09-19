@@ -66,11 +66,16 @@ export function formatTokens(value: number): string {
  */
 export function formatCost(totals: UsageTotals): string | null {
   if (totals.cost === null) return null;
-  const currency = totals.currency ?? '';
-  const amount = totals.cost < 0.01 ? totals.cost.toFixed(4) : totals.cost.toFixed(2);
   const partial =
     totals.pricedCalls < totals.calls ? `（${String(totals.pricedCalls)}/${String(totals.calls)} 次有单价）` : '';
-  return `${currency}${amount}${partial}`;
+  return `${formatMoney(totals.cost, totals.currency)}${partial}`;
+}
+
+/** 单独一个金额的写法（账单合计、预算里的「已用多少」）。 */
+export function formatMoney(amount: number, currency: string | null): string {
+  const symbol = currency ?? '';
+  const value = amount < 0.01 ? amount.toFixed(4) : amount.toFixed(2);
+  return `${symbol}${value}`;
 }
 
 export const CATEGORY_LABELS: Record<string, string> = {

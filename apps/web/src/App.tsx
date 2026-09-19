@@ -11,6 +11,7 @@ import {
   createOpenAICompatibleProvider,
   createPlayerMessage,
   createTurnId,
+  evaluateBudget,
   hasSpeech,
   type InstanceId,
   importCardFromJson,
@@ -116,6 +117,15 @@ export function App() {
     roomId: world?.id ?? null,
     conversationId: conversation?.id ?? null,
   });
+
+  /**
+   * 调用预算（P1-9 熔断）。
+   *
+   * 到上限时只停**生成之外**的调用：意图判断、一轮分析、分层摘要。
+   * 角色回复永远照常——聊到一半突然说不出话，比多花几分钱糟糕得多。
+   */
+  const budget = evaluateBudget(usage.world, world?.budget ?? null);
+  const burned = budget.burned;
 
   const worker = useBackgroundWorker({
     db,
@@ -279,6 +289,8 @@ export function App() {
       turnId: string;
     }) => {
       if (!isIntentFirst(conversation?.modes)) return null;
+      // 熔断：已达本局上限就不再问「谁开口、想做什么」，退回纯规则调度
+      if (burned) return null;
       const config =
         providers.background ??
         (providers.active === null
@@ -330,7 +342,7 @@ export function App() {
         return null;
       }
     },
-    [conversation, db, providers, usage, world],
+    [burned, conversation, db, providers, usage, world],
   );
 
   /**
@@ -343,6 +355,7 @@ export function App() {
   const enqueueSceneSummary = useCallback(
     async (target: Scene, key: string) => {
       if (!db || !world || !conversation) return;
+      if (burned) return;
 
       await db.queue.enqueue({
         kind: SCENE_SUMMARY_TASK_KIND,
@@ -353,7 +366,7 @@ export function App() {
       });
       worker.kick();
     },
-    [conversation, db, worker, world],
+    [burned, conversation, db, worker, world],
   );
 
   const handleImport = useCallback(
@@ -564,6 +577,16 @@ export function App() {
         await usage.reload();
         // 让后台看一眼这一场要不要压场记（够不够由后台判断，不够不会发调用）
         await enqueueSceneSummary(scene, turnId);
+        // 熔断时不再排后台任务：这一轮照常生成，但不写记忆、不推演状态
+        if (burned) {
+          setWarnings([
+            {
+              code: 'budget',
+              message: `${budget.reason ?? '已达本局上限'}——这一轮只生成回复，不做意图判断与后台记录。可在运行时的「用量」页调整上限。`,
+            },
+          ]);
+          return;
+        }
         await db.queue.enqueue({
           kind: TURN_ANALYSIS_TASK_KIND,
           idempotencyKey: `${TURN_ANALYSIS_TASK_KIND}:${turnId}`,
@@ -583,6 +606,8 @@ export function App() {
       }
     },
     [
+      budget.reason,
+      burned,
       busy,
       conversation,
       db,
@@ -1083,6 +1108,9 @@ export function App() {
                     pending={worker.pending}
                     extraCalls={extraCalls(usage.world)}
                     usage={{ world: usage.world, conversation: usage.conversation }}
+                    budget={budget}
+                    budgetLimits={world?.budget ?? null}
+                    onSaveBudget={(limits) => void session.setBudget(limits)}
                     conversationTitle={conversation?.title ?? ''}
                     workerError={worker.lastError}
                     disabled={disabled}

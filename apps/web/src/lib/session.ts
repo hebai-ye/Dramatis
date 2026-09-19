@@ -2,6 +2,7 @@ import {
   type ArchiveReport,
   conversationId as asConversationId,
   roomId as asRoomId,
+  type BudgetLimits,
   type Card,
   type CardId,
   type ChapterSummary,
@@ -135,6 +136,12 @@ export interface SessionApi {
   }) => Promise<RoomId | null>;
   deleteWorld: (id: RoomId) => Promise<void>;
   renameWorld: (title: string) => Promise<void>;
+  /**
+   * 设置本局的调用预算（P1-9 熔断）。
+   *
+   * 存在世界（房间）上：花销是按世界算的，一条线跑疯了不该牵连另一个世界。
+   */
+  setBudget: (limits: BudgetLimits | null) => Promise<void>;
 
   openConversation: (id: ConversationId) => Promise<void>;
   startConversation: (input: StartConversationInput) => Promise<Conversation | null>;
@@ -409,6 +416,18 @@ export function useSession(db: DramatisDb | null): SessionApi {
       await refreshWorlds();
     },
     [db, refreshWorlds, setSnapshot],
+  );
+
+  const setBudget = useCallback(
+    async (limits: BudgetLimits | null) => {
+      const current = snapshotRef.current;
+      if (!db || !current) return;
+
+      const room = { ...current.room, budget: limits };
+      await db.repository.saveRoom(room);
+      setSnapshot({ ...current, room });
+    },
+    [db, setSnapshot],
   );
 
   const openConversation = useCallback(
@@ -1167,6 +1186,7 @@ export function useSession(db: DramatisDb | null): SessionApi {
     createWorld,
     deleteWorld,
     renameWorld,
+    setBudget,
     openConversation,
     startConversation,
     openSideConversation,

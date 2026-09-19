@@ -30,6 +30,7 @@ export * from './render/segments.js';
 export * from './session/presence.js';
 export * from './session/setup.js';
 export * from './session/turn.js';
+export * from './storage/budget.js';
 export * from './storage/repository.js';
 export * from './storage/usage.js';
 export * from './token/estimate.js';

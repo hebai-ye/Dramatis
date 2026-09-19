@@ -37,6 +37,7 @@ async function adminMessage(artifacts: AdminArtifact[]): Promise<{ repository: R
     ...(artifacts.length > 0 ? { artifacts } : {}),
     createdAt: nowIso(),
     updatedAt: nowIso(),
+    deletedAt: null,
   };
   await repository.appendMessages(message.roomId, [message]);
   return { repository, message };

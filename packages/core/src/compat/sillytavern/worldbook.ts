@@ -5,7 +5,7 @@ import {
   type WorldBookEntry,
   type WorldBookPosition,
 } from '../../model/card.js';
-import { type WorldBookId, worldBookId } from '../../model/ids.js';
+import { nowIso, type WorldBookId, worldBookId } from '../../model/ids.js';
 import type { ImportWarning } from './card.js';
 
 export interface WorldBookImportResult {
@@ -176,8 +176,9 @@ export function parseWorldBook(
     extensions[key] = value;
   }
 
+  const at = nowIso();
   return {
-    book: { id, name, entries, extensions },
+    book: { id, name, entries, extensions, createdAt: at, updatedAt: at, deletedAt: null },
     warnings,
   };
 }

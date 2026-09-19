@@ -24,6 +24,7 @@ function fixtures() {
     traitsLocked: false,
     createdAt: now,
     updatedAt: now,
+    deletedAt: null,
   };
   const room: Room = {
     id: roomIdValue,
@@ -37,6 +38,7 @@ function fixtures() {
     activeConversationId: null,
     createdAt: now,
     updatedAt: now,
+    deletedAt: null,
   };
   const scene: Scene = {
     id: sceneId(newId()),
@@ -51,6 +53,7 @@ function fixtures() {
     createdAt: now,
     updatedAt: now,
     endedAt: null,
+    deletedAt: null,
   };
 
   return { card, instance, room, scene };

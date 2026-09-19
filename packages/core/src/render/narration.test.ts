@@ -20,6 +20,7 @@ function actor(name: string): CharacterInstance {
     traitsLocked: false,
     createdAt: now,
     updatedAt: now,
+    deletedAt: null,
   };
 }
 
@@ -38,6 +39,7 @@ function scene(overrides: Partial<Scene> = {}): Scene {
     endedAt: null,
     ...overrides,
     updatedAt: overrides.updatedAt ?? nowIso(),
+    deletedAt: null,
   };
 }
 

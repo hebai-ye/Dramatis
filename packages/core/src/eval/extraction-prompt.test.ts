@@ -34,6 +34,9 @@ function card(name: string): Card {
     embeddedWorldBook: null,
     extensions: {},
     source: { kind: 'manual', spec: 'dramatis', specVersion: '1', importedAt: nowIso() },
+    createdAt: nowIso(),
+    updatedAt: nowIso(),
+    deletedAt: null,
   };
 }
 
@@ -51,6 +54,7 @@ function instance(source: Card, room: Room, name: string): CharacterInstance {
     traitsLocked: false,
     createdAt: now,
     updatedAt: now,
+    deletedAt: null,
   };
 }
 
@@ -75,6 +79,7 @@ describe('抽取提示词参考', () => {
       activeConversationId: null,
       createdAt: now,
       updatedAt: now,
+      deletedAt: null,
     };
 
     const alice = instance(aliceCard, room, 'Alice');
@@ -93,6 +98,7 @@ describe('抽取提示词参考', () => {
       createdAt: now,
       updatedAt: now,
       endedAt: null,
+      deletedAt: null,
     };
 
     const turnId = newId();

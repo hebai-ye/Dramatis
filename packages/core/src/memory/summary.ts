@@ -286,4 +286,6 @@ export interface ChapterSummary {
   createdAt: string;
   /** 最后一次写入的时间（P2-6）。章节是只增不改的，所以它通常等于 createdAt。 */
   updatedAt: string;
+  /** 软删除墓碑（P2-6）：归档一条对话时章节被收走，也是盖章。 */
+  deletedAt: string | null;
 }

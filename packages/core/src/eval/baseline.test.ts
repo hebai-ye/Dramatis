@@ -92,6 +92,9 @@ function makeCard(name: string): Card {
     embeddedWorldBook: null,
     extensions: {},
     source: { kind: 'manual', spec: 'dramatis', specVersion: '1', importedAt: nowIso() },
+    createdAt: nowIso(),
+    updatedAt: nowIso(),
+    deletedAt: null,
   };
 }
 
@@ -111,6 +114,7 @@ function makeInstance(card: Card, room: Room, name: string, presence: Presence):
     traitsLocked: false,
     createdAt: now,
     updatedAt: now,
+    deletedAt: null,
   };
 }
 
@@ -145,6 +149,7 @@ describe('长跑基线（P1-10）', () => {
       activeConversationId: null,
       createdAt: now,
       updatedAt: now,
+      deletedAt: null,
     };
 
     const alice = makeInstance(aliceCard, room, 'Alice', 'onstage');
@@ -166,6 +171,7 @@ describe('长跑基线（P1-10）', () => {
       createdAt: now,
       updatedAt: now,
       endedAt: null,
+      deletedAt: null,
     };
 
     await repository.saveSnapshot({
@@ -358,6 +364,7 @@ describe('长跑基线（P1-10）', () => {
       activeConversationId: null,
       createdAt: now,
       updatedAt: now,
+      deletedAt: null,
     };
     const alice = makeInstance(card, room, 'Alice', 'onstage');
     room.instanceIds = [alice.id];
@@ -375,6 +382,7 @@ describe('长跑基线（P1-10）', () => {
       createdAt: now,
       updatedAt: now,
       endedAt: null,
+      deletedAt: null,
     };
 
     // 造 60 条超长历史，任何窗口都装不下

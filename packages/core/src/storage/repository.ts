@@ -16,11 +16,12 @@ import {
   type WorldBookId,
 } from '../model/ids.js';
 import type { CharacterInstance } from '../model/instance.js';
+import { aliveOnly, isAlive } from '../model/lifecycle.js';
 import type { AdminArtifact, MemoryEvent, Message } from '../model/message.js';
 import { createPersona, type Persona } from '../model/persona.js';
 import type { ProviderProfile } from '../model/provider.js';
 import type { Room, Scene } from '../model/room.js';
-import type { EntityStore } from '../platform/entity-store.js';
+import type { EntityQuery, EntityStore } from '../platform/entity-store.js';
 import { USAGE_COLLECTION } from './usage.js';
 
 /**
@@ -29,7 +30,7 @@ import { USAGE_COLLECTION } from './usage.js';
  * 任何会改变已落盘数据结构的改动都要 +1，并补一条 `Migration`。
  * 这是「从第一天就留好升级路径」的具体做法（ROADMAP P0-1）。
  */
-export const SCHEMA_VERSION = 4;
+export const SCHEMA_VERSION = 5;
 
 export const COLLECTIONS = {
   meta: 'meta',
@@ -156,6 +157,7 @@ export const MIGRATIONS: readonly Migration[] = [
           stateSnapshot: [],
           createdAt: typeof room.createdAt === 'string' ? room.createdAt : now,
           updatedAt: now,
+          deletedAt: null,
         };
         await store.put(COLLECTIONS.conversations, conversation);
 
@@ -200,6 +202,33 @@ export const MIGRATIONS: readonly Migration[] = [
       }
     },
   },
+  {
+    version: 5,
+    describe: '给参与同步的实体补 deletedAt = null（P2-6 软删除）：老记录一律视为「还在」',
+    run: async (store) => {
+      // 只补字段、不改语义：老库里所有记录都是硬删的，没有墓碑可言，
+      // 所以它们全都应该是「活着」。字段补上之后 isAlive 的判据才一致。
+      const collections = [
+        COLLECTIONS.rooms,
+        COLLECTIONS.conversations,
+        COLLECTIONS.scenes,
+        COLLECTIONS.instances,
+        COLLECTIONS.cards,
+        COLLECTIONS.worldBooks,
+        COLLECTIONS.messages,
+        COLLECTIONS.memories,
+        COLLECTIONS.chapterSummaries,
+        COLLECTIONS.personas,
+      ];
+      for (const collection of collections) {
+        const records = await store.list<Record<string, unknown> & { id: string }>(collection);
+        for (const record of records) {
+          if (record.deletedAt !== undefined) continue;
+          await store.put(collection, { ...record, id: record.id, deletedAt: null });
+        }
+      }
+    },
+  },
 ];
 
 interface MetaRecord {
@@ -222,6 +251,41 @@ export class Repository {
 
   get backendKind(): string {
     return this.store.kind;
+  }
+
+  // ---- 软删除与默认过滤（P2-6） ----
+
+  /**
+   * 软删除：把 `deletedAt` 与 `updatedAt` 一起盖章，记录本身留着。
+   *
+   * 为什么要留：同步的另一台设备手里还有这条记录，硬删之后它会当成
+   * 「本地新数据」再推回来——用户会看到删掉的东西自己复活。墓碑还必须
+   * 带上 `updatedAt`，否则冲突判定（LWW）分不出「删除」和「没改过」。
+   *
+   * 幂等：已经删过的记录不再重复盖章，免得把一个旧墓碑的时间推到当下。
+   */
+  private async softDelete(collection: string, id: string, at: string = nowIso()): Promise<void> {
+    const record = await this.store.get<{ id: string; deletedAt?: string | null }>(collection, id);
+    if (record === null || !isAlive(record)) return;
+    await this.store.put(collection, { ...record, id, deletedAt: at, updatedAt: at });
+  }
+
+  /** 查询默认口径：软删除的记录不返回。`includeDeleted` 是给同步与诊断用的后门。 */
+  private async listAlive<T extends { id: string; deletedAt?: string | null }>(
+    collection: string,
+    query?: EntityQuery,
+  ): Promise<T[]> {
+    return aliveOnly(await this.store.list<T>(collection, query));
+  }
+
+  private async getAlive<T extends { deletedAt?: string | null }>(collection: string, id: string): Promise<T | null> {
+    const record = await this.store.get<T>(collection, id);
+    return record !== null && isAlive(record) ? record : null;
+  }
+
+  private async countAlive(collection: string, where?: Record<string, unknown>): Promise<number> {
+    const records = await this.store.list<{ id: string; deletedAt?: string | null }>(collection, { where });
+    return aliveOnly(records).length;
   }
 
   // ---- meta ----
@@ -260,15 +324,15 @@ export class Repository {
   // ---- 房间 ----
 
   async saveRoom(room: Room): Promise<void> {
-    await this.store.put(COLLECTIONS.rooms, { ...room, updatedAt: nowIso() });
+    await this.store.put(COLLECTIONS.rooms, { ...room, updatedAt: nowIso(), deletedAt: null });
   }
 
   async getRoom(id: RoomId): Promise<Room | null> {
-    return this.store.get<Room>(COLLECTIONS.rooms, id);
+    return this.getAlive<Room>(COLLECTIONS.rooms, id);
   }
 
   async listRooms(): Promise<RoomSummary[]> {
-    const rooms = await this.store.list<Room>(COLLECTIONS.rooms, {
+    const rooms = await this.listAlive<Room>(COLLECTIONS.rooms, {
       orderBy: 'updatedAt',
       direction: 'desc',
     });
@@ -279,9 +343,9 @@ export class Repository {
         id: room.id,
         title: room.title,
         updatedAt: room.updatedAt,
-        messageCount: await this.store.count(COLLECTIONS.messages, { roomId: room.id }),
-        instanceCount: await this.store.count(COLLECTIONS.instances, { roomId: room.id }),
-        conversationCount: await this.store.count(COLLECTIONS.conversations, { roomId: room.id }),
+        messageCount: await this.countAlive(COLLECTIONS.messages, { roomId: room.id }),
+        instanceCount: await this.countAlive(COLLECTIONS.instances, { roomId: room.id }),
+        conversationCount: await this.countAlive(COLLECTIONS.conversations, { roomId: room.id }),
       });
     }
     return summaries;
@@ -292,14 +356,20 @@ export class Repository {
    *
    * 角色卡与世界书**不删**——它们是可被多个房间共用的资产，
    * 删掉一个房间不应该连带毁掉用户导入的素材。
+   *
+   * 级联出去的都是**软删除**（P2-6）：世界、对话、场景、角色、消息、记忆、
+   * 章节全部留墓碑，这样另一台设备同步时才知道这些东西是被删了，而不是
+   * 自己这边缺了几条。例外是队列与账单——它们不参与同步，而且是本机事实，
+   * 硬删掉即可。
    */
   async deleteRoom(id: RoomId): Promise<void> {
-    const conversations = await this.store.list<Conversation>(COLLECTIONS.conversations, { where: { roomId: id } });
-    const scenes = await this.store.list<Scene>(COLLECTIONS.scenes, { where: { roomId: id } });
-    const instances = await this.store.list<CharacterInstance>(COLLECTIONS.instances, { where: { roomId: id } });
-    const messages = await this.store.list<Message>(COLLECTIONS.messages, { where: { roomId: id } });
-    const memories = await this.store.list<MemoryEvent>(COLLECTIONS.memories, { where: { roomId: id } });
-    const chapters = await this.store.list<ChapterSummary>(COLLECTIONS.chapterSummaries, {
+    const at = nowIso();
+    const conversations = await this.listAlive<Conversation>(COLLECTIONS.conversations, { where: { roomId: id } });
+    const scenes = await this.listAlive<Scene>(COLLECTIONS.scenes, { where: { roomId: id } });
+    const instances = await this.listAlive<CharacterInstance>(COLLECTIONS.instances, { where: { roomId: id } });
+    const messages = await this.listAlive<Message>(COLLECTIONS.messages, { where: { roomId: id } });
+    const memories = await this.listAlive<MemoryEvent>(COLLECTIONS.memories, { where: { roomId: id } });
+    const chapters = await this.listAlive<ChapterSummary>(COLLECTIONS.chapterSummaries, {
       where: { roomId: id },
     });
     // 后台任务也要清掉：留下指向已删除房间的任务，只会在下次启动时反复失败
@@ -308,25 +378,25 @@ export class Repository {
     // 时间线可以当作没发生过，钱不行
     const usage = await this.store.list<{ id: string }>(COLLECTIONS.usageRecords, { where: { roomId: id } });
 
-    for (const conversation of conversations) await this.store.remove(COLLECTIONS.conversations, conversation.id);
-    for (const scene of scenes) await this.store.remove(COLLECTIONS.scenes, scene.id);
-    for (const instance of instances) await this.store.remove(COLLECTIONS.instances, instance.id);
-    for (const message of messages) await this.store.remove(COLLECTIONS.messages, message.id);
-    for (const memory of memories) await this.store.remove(COLLECTIONS.memories, memory.id);
-    for (const chapter of chapters) await this.store.remove(COLLECTIONS.chapterSummaries, chapter.id);
+    for (const conversation of conversations) await this.softDelete(COLLECTIONS.conversations, conversation.id, at);
+    for (const scene of scenes) await this.softDelete(COLLECTIONS.scenes, scene.id, at);
+    for (const instance of instances) await this.softDelete(COLLECTIONS.instances, instance.id, at);
+    for (const message of messages) await this.softDelete(COLLECTIONS.messages, message.id, at);
+    for (const memory of memories) await this.softDelete(COLLECTIONS.memories, memory.id, at);
+    for (const chapter of chapters) await this.softDelete(COLLECTIONS.chapterSummaries, chapter.id, at);
     for (const task of tasks) await this.store.remove(COLLECTIONS.backgroundTasks, task.id);
     for (const record of usage) await this.store.remove(COLLECTIONS.usageRecords, record.id);
-    await this.store.remove(COLLECTIONS.rooms, id);
+    await this.softDelete(COLLECTIONS.rooms, id, at);
   }
 
   // ---- 对话（LAYOUT：世界 = 项目，一个世界下可以开多个对话） ----
 
   async saveConversation(conversation: Conversation): Promise<void> {
-    await this.store.put(COLLECTIONS.conversations, { ...conversation, updatedAt: nowIso() });
+    await this.store.put(COLLECTIONS.conversations, { ...conversation, updatedAt: nowIso(), deletedAt: null });
   }
 
   async getConversation(id: ConversationId): Promise<Conversation | null> {
-    return this.store.get<Conversation>(COLLECTIONS.conversations, id);
+    return this.getAlive<Conversation>(COLLECTIONS.conversations, id);
   }
 
   /**
@@ -341,26 +411,28 @@ export class Repository {
       orderBy: 'createdAt',
       direction: 'asc',
     });
-    return options.includeArchived === true ? all : all.filter((conversation) => conversation.archivedAt === null);
+    const alive = aliveOnly(all);
+    return options.includeArchived === true ? alive : alive.filter((conversation) => conversation.archivedAt === null);
   }
 
-  /** 删掉一条对话：场景、消息、记忆一起走，角色与世界书保留。 */
+  /** 删掉一条对话：场景、消息、记忆一起走（都是软删除），角色与世界书保留。 */
   async deleteConversation(id: ConversationId): Promise<void> {
     const conversation = await this.getConversation(id);
     if (!conversation) return;
 
-    const scenes = await this.store.list<Scene>(COLLECTIONS.scenes, { where: { conversationId: id } });
-    const messages = await this.store.list<Message>(COLLECTIONS.messages, { where: { conversationId: id } });
-    const memories = await this.store.list<MemoryEvent>(COLLECTIONS.memories, { where: { conversationId: id } });
-    const chapters = await this.store.list<ChapterSummary>(COLLECTIONS.chapterSummaries, {
+    const at = nowIso();
+    const scenes = await this.listAlive<Scene>(COLLECTIONS.scenes, { where: { conversationId: id } });
+    const messages = await this.listAlive<Message>(COLLECTIONS.messages, { where: { conversationId: id } });
+    const memories = await this.listAlive<MemoryEvent>(COLLECTIONS.memories, { where: { conversationId: id } });
+    const chapters = await this.listAlive<ChapterSummary>(COLLECTIONS.chapterSummaries, {
       where: { conversationId: id },
     });
 
-    for (const scene of scenes) await this.store.remove(COLLECTIONS.scenes, scene.id);
-    for (const message of messages) await this.store.remove(COLLECTIONS.messages, message.id);
-    for (const memory of memories) await this.store.remove(COLLECTIONS.memories, memory.id);
-    for (const chapter of chapters) await this.store.remove(COLLECTIONS.chapterSummaries, chapter.id);
-    await this.store.remove(COLLECTIONS.conversations, id);
+    for (const scene of scenes) await this.softDelete(COLLECTIONS.scenes, scene.id, at);
+    for (const message of messages) await this.softDelete(COLLECTIONS.messages, message.id, at);
+    for (const memory of memories) await this.softDelete(COLLECTIONS.memories, memory.id, at);
+    for (const chapter of chapters) await this.softDelete(COLLECTIONS.chapterSummaries, chapter.id, at);
+    await this.softDelete(COLLECTIONS.conversations, id, at);
 
     const room = await this.getRoom(conversation.roomId);
     if (room?.activeConversationId === id) {
@@ -435,15 +507,15 @@ export class Repository {
   // ---- 场景 ----
 
   async saveScene(scene: Scene): Promise<void> {
-    await this.store.put(COLLECTIONS.scenes, { ...scene, updatedAt: nowIso() });
+    await this.store.put(COLLECTIONS.scenes, { ...scene, updatedAt: nowIso(), deletedAt: null });
   }
 
   async getScene(id: SceneId): Promise<Scene | null> {
-    return this.store.get<Scene>(COLLECTIONS.scenes, id);
+    return this.getAlive<Scene>(COLLECTIONS.scenes, id);
   }
 
   async listScenes(roomId: RoomId): Promise<Scene[]> {
-    return this.store.list<Scene>(COLLECTIONS.scenes, {
+    return this.listAlive<Scene>(COLLECTIONS.scenes, {
       where: { roomId },
       orderBy: 'createdAt',
       direction: 'asc',
@@ -453,50 +525,50 @@ export class Repository {
   // ---- 角色实例 ----
 
   async saveInstance(instance: CharacterInstance): Promise<void> {
-    await this.store.put(COLLECTIONS.instances, { ...instance, updatedAt: nowIso() });
+    await this.store.put(COLLECTIONS.instances, { ...instance, updatedAt: nowIso(), deletedAt: null });
   }
 
   async listInstances(roomId: RoomId): Promise<CharacterInstance[]> {
-    return this.store.list<CharacterInstance>(COLLECTIONS.instances, { where: { roomId } });
+    return this.listAlive<CharacterInstance>(COLLECTIONS.instances, { where: { roomId } });
   }
 
   /** 删除角色实例。角色卡是共用资产，不跟着删。 */
   async deleteInstance(id: string): Promise<void> {
-    await this.store.remove(COLLECTIONS.instances, id);
+    await this.softDelete(COLLECTIONS.instances, id);
   }
 
   // ---- 角色卡与世界书（跨房间共用） ----
 
   async saveCard(card: Card): Promise<void> {
-    await this.store.put(COLLECTIONS.cards, card);
+    await this.store.put(COLLECTIONS.cards, { ...card, updatedAt: nowIso(), deletedAt: null });
   }
 
   async getCard(id: CardId): Promise<Card | null> {
-    return this.store.get<Card>(COLLECTIONS.cards, id);
+    return this.getAlive<Card>(COLLECTIONS.cards, id);
   }
 
   async listCards(): Promise<Card[]> {
-    return this.store.list<Card>(COLLECTIONS.cards, { orderBy: 'name' });
+    return this.listAlive<Card>(COLLECTIONS.cards, { orderBy: 'name' });
   }
 
   async deleteCard(id: CardId): Promise<void> {
-    await this.store.remove(COLLECTIONS.cards, id);
+    await this.softDelete(COLLECTIONS.cards, id);
   }
 
   async saveWorldBook(book: WorldBook): Promise<void> {
-    await this.store.put(COLLECTIONS.worldBooks, book);
+    await this.store.put(COLLECTIONS.worldBooks, { ...book, updatedAt: nowIso(), deletedAt: null });
   }
 
   async getWorldBook(id: WorldBookId): Promise<WorldBook | null> {
-    return this.store.get<WorldBook>(COLLECTIONS.worldBooks, id);
+    return this.getAlive<WorldBook>(COLLECTIONS.worldBooks, id);
   }
 
   async listWorldBooks(): Promise<WorldBook[]> {
-    return this.store.list<WorldBook>(COLLECTIONS.worldBooks, { orderBy: 'name' });
+    return this.listAlive<WorldBook>(COLLECTIONS.worldBooks, { orderBy: 'name' });
   }
 
   async deleteWorldBook(id: WorldBookId): Promise<void> {
-    await this.store.remove(COLLECTIONS.worldBooks, id);
+    await this.softDelete(COLLECTIONS.worldBooks, id);
   }
 
   // ---- 消息 ----
@@ -515,7 +587,7 @@ export class Repository {
     const stamped: Message[] = [];
     for (const message of messages) {
       next += 1;
-      stamped.push({ ...message, roomId, seq: next, updatedAt: now });
+      stamped.push({ ...message, roomId, seq: next, updatedAt: now, deletedAt: null });
     }
 
     await this.store.bulkPut(COLLECTIONS.messages, stamped);
@@ -531,26 +603,21 @@ export class Repository {
    */
   async listMessages(
     roomId: RoomId,
-    options: { limit?: number; conversationId?: ConversationId } = {},
+    options: { limit?: number; conversationId?: ConversationId; includeDeleted?: boolean } = {},
   ): Promise<Message[]> {
     const where: Record<string, unknown> = { roomId };
     if (options.conversationId !== undefined) where.conversationId = options.conversationId;
 
-    if (options.limit === undefined) {
-      return this.store.list<Message>(COLLECTIONS.messages, {
-        where,
-        orderBy: 'seq',
-        direction: 'asc',
-      });
-    }
-
-    const recent = await this.store.list<Message>(COLLECTIONS.messages, {
+    const all = await this.store.list<Message>(COLLECTIONS.messages, {
       where,
       orderBy: 'seq',
-      direction: 'desc',
-      limit: options.limit,
+      direction: 'asc',
     });
-    return recent.reverse();
+    // 软删除必须在**分页之前**过滤：先取 limit 条再过滤的话，被删掉的那条
+    // 会白占一个名额，用户会看到历史凭空少一截
+    const alive = options.includeDeleted === true ? all : aliveOnly(all);
+    const limit = options.limit;
+    return limit === undefined ? alive : alive.slice(Math.max(0, alive.length - limit));
   }
 
   async updateMessage(id: MessageId, patch: Partial<Message>): Promise<Message | null> {
@@ -563,6 +630,7 @@ export class Repository {
       roomId: existing.roomId,
       seq: existing.seq,
       updatedAt: nowIso(),
+      deletedAt: null,
     };
     await this.store.put(COLLECTIONS.messages, updated);
     return updated;
@@ -570,7 +638,7 @@ export class Repository {
 
   /** 删除单条消息，用于消息编辑与重抽（P0-7）。 */
   async deleteMessage(id: MessageId): Promise<void> {
-    await this.store.remove(COLLECTIONS.messages, id);
+    await this.softDelete(COLLECTIONS.messages, id);
   }
 
   /**
@@ -584,7 +652,7 @@ export class Repository {
     messageId: MessageId,
     artifactId: string,
   ): Promise<{ message: Message; artifact: AdminArtifact | null } | null> {
-    const message = await this.store.get<Message>(COLLECTIONS.messages, messageId);
+    const message = await this.getAlive<Message>(COLLECTIONS.messages, messageId);
     if (!message || message.artifacts === undefined) return null;
 
     const target = message.artifacts.find((item) => item.id === artifactId);
@@ -608,6 +676,7 @@ export class Repository {
       ...message,
       artifacts: message.artifacts.map((item) => (item.id === artifactId ? adopted : item)),
       updatedAt: nowIso(),
+      deletedAt: null,
     };
     await this.store.put(COLLECTIONS.messages, updated);
     return { message: updated, artifact: adopted };
@@ -615,7 +684,7 @@ export class Repository {
 
   /** 丢弃一条草稿：只改状态，不删记录——用户可能过一会儿又想要它。 */
   async discardAdminArtifact(messageId: MessageId, artifactId: string): Promise<Message | null> {
-    const message = await this.store.get<Message>(COLLECTIONS.messages, messageId);
+    const message = await this.getAlive<Message>(COLLECTIONS.messages, messageId);
     if (!message || message.artifacts === undefined) return null;
 
     const updated: Message = {
@@ -624,6 +693,7 @@ export class Repository {
         item.id === artifactId && item.status === 'pending' ? { ...item, status: 'discarded' } : item,
       ),
       updatedAt: nowIso(),
+      deletedAt: null,
     };
     await this.store.put(COLLECTIONS.messages, updated);
     return updated;
@@ -631,11 +701,11 @@ export class Repository {
 
   /** 删除某个回合产生的全部消息，用于重抽（P0-7）。返回删除数量。 */
   async removeMessagesByTurn(roomId: RoomId, turnId: string): Promise<number> {
-    const messages = await this.store.list<Message>(COLLECTIONS.messages, {
+    const messages = await this.listAlive<Message>(COLLECTIONS.messages, {
       where: { roomId, turnId },
     });
     for (const message of messages) {
-      await this.store.remove(COLLECTIONS.messages, message.id);
+      await this.softDelete(COLLECTIONS.messages, message.id);
     }
     return messages.length;
   }
@@ -649,11 +719,7 @@ export class Repository {
     const conversations = await this.listConversations(roomId, { includeArchived: true });
     const scenes = await this.listScenes(roomId);
     const instances = await this.listInstances(roomId);
-    const messages = await this.store.list<Message>(COLLECTIONS.messages, {
-      where: { roomId },
-      orderBy: 'seq',
-      direction: 'asc',
-    });
+    const messages = await this.listMessages(roomId);
 
     const cards: Card[] = [];
     for (const cardIdValue of room.cardIds) {
@@ -681,7 +747,7 @@ export class Repository {
     const where: Record<string, unknown> = { roomId };
     if (options.conversationId !== undefined) where.conversationId = options.conversationId;
 
-    return this.store.list<MemoryEvent>(COLLECTIONS.memories, {
+    return this.listAlive<MemoryEvent>(COLLECTIONS.memories, {
       where,
       orderBy: 'createdAt',
       direction: 'desc',
@@ -695,9 +761,9 @@ export class Repository {
    * 补做的后台任务都会让时间戳错位。归属字段是唯一可靠的依据。
    */
   async deleteMemoriesByConversation(id: ConversationId): Promise<number> {
-    const events = await this.store.list<MemoryEvent>(COLLECTIONS.memories, { where: { conversationId: id } });
+    const events = await this.listAlive<MemoryEvent>(COLLECTIONS.memories, { where: { conversationId: id } });
     for (const event of events) {
-      await this.store.remove(COLLECTIONS.memories, event.id);
+      await this.softDelete(COLLECTIONS.memories, event.id);
     }
     return events.length;
   }
@@ -706,7 +772,7 @@ export class Repository {
     const now = nowIso();
     await this.store.bulkPut(
       COLLECTIONS.memories,
-      events.map((event) => ({ ...event, updatedAt: now })),
+      events.map((event) => ({ ...event, updatedAt: now, deletedAt: null })),
     );
   }
 
@@ -725,7 +791,7 @@ export class Repository {
     const where: Record<string, unknown> = { roomId };
     if (options.conversationId !== undefined) where.conversationId = options.conversationId;
 
-    return this.store.list<ChapterSummary>(COLLECTIONS.chapterSummaries, {
+    return this.listAlive<ChapterSummary>(COLLECTIONS.chapterSummaries, {
       where,
       orderBy: 'createdAt',
       direction: 'asc',
@@ -733,22 +799,22 @@ export class Repository {
   }
 
   async saveChapterSummary(chapter: ChapterSummary): Promise<void> {
-    await this.store.put(COLLECTIONS.chapterSummaries, { ...chapter, updatedAt: nowIso() });
+    await this.store.put(COLLECTIONS.chapterSummaries, { ...chapter, updatedAt: nowIso(), deletedAt: null });
   }
 
   /** 删除一条对话产生的章节摘要，用于归档与彻底删除。 */
   async deleteChapterSummariesByConversation(id: ConversationId): Promise<number> {
-    const chapters = await this.store.list<ChapterSummary>(COLLECTIONS.chapterSummaries, {
+    const chapters = await this.listAlive<ChapterSummary>(COLLECTIONS.chapterSummaries, {
       where: { conversationId: id },
     });
     for (const chapter of chapters) {
-      await this.store.remove(COLLECTIONS.chapterSummaries, chapter.id);
+      await this.softDelete(COLLECTIONS.chapterSummaries, chapter.id);
     }
     return chapters.length;
   }
 
   async updateMemory(id: EventId, patch: Partial<MemoryEvent>): Promise<MemoryEvent | null> {
-    const existing = await this.store.get<MemoryEvent>(COLLECTIONS.memories, id);
+    const existing = await this.getAlive<MemoryEvent>(COLLECTIONS.memories, id);
     if (!existing) return null;
 
     const updated: MemoryEvent = {
@@ -758,13 +824,14 @@ export class Repository {
       roomId: existing.roomId,
       sourceTurnIds: existing.sourceTurnIds,
       updatedAt: nowIso(),
+      deletedAt: null,
     };
     await this.store.put(COLLECTIONS.memories, updated);
     return updated;
   }
 
   async deleteMemory(id: EventId): Promise<void> {
-    await this.store.remove(COLLECTIONS.memories, id);
+    await this.softDelete(COLLECTIONS.memories, id);
   }
 
   /**
@@ -774,10 +841,10 @@ export class Repository {
    * 只要它引用了被撤销的回合，就该跟着作废。
    */
   async deleteMemoriesByTurn(roomId: RoomId, turnId: string): Promise<number> {
-    const events = await this.store.list<MemoryEvent>(COLLECTIONS.memories, { where: { roomId } });
+    const events = await this.listAlive<MemoryEvent>(COLLECTIONS.memories, { where: { roomId } });
     const affected = events.filter((event) => event.sourceTurnIds.includes(turnId));
     for (const event of affected) {
-      await this.store.remove(COLLECTIONS.memories, event.id);
+      await this.softDelete(COLLECTIONS.memories, event.id);
     }
     return affected.length;
   }
@@ -791,15 +858,15 @@ export class Repository {
   }
 
   async listPersonas(): Promise<Persona[]> {
-    return this.store.list<Persona>(COLLECTIONS.personas, { orderBy: 'createdAt' });
+    return this.listAlive<Persona>(COLLECTIONS.personas, { orderBy: 'createdAt' });
   }
 
   async getPersona(id: string): Promise<Persona | null> {
-    return this.store.get<Persona>(COLLECTIONS.personas, id);
+    return this.getAlive<Persona>(COLLECTIONS.personas, id);
   }
 
   async savePersona(persona: Persona): Promise<void> {
-    await this.store.put(COLLECTIONS.personas, { ...persona, updatedAt: nowIso() });
+    await this.store.put(COLLECTIONS.personas, { ...persona, updatedAt: nowIso(), deletedAt: null });
   }
 
   /**
@@ -809,8 +876,8 @@ export class Repository {
    * 返回受影响的房间数，便于 UI 提示。
    */
   async deletePersona(id: string): Promise<number> {
-    await this.store.remove(COLLECTIONS.personas, id);
-    const rooms = await this.store.list<Room>(COLLECTIONS.rooms, { where: { personaId: id } });
+    await this.softDelete(COLLECTIONS.personas, id);
+    const rooms = await this.listAlive<Room>(COLLECTIONS.rooms, { where: { personaId: id } });
     for (const room of rooms) {
       await this.store.put(COLLECTIONS.rooms, { ...room, personaId: null });
     }

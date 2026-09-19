@@ -98,6 +98,8 @@ export interface Message {
   createdAt: string;
   /** 最后一次写入的时间（P2-6）：编辑、改归属、采纳草稿都会把它推到当下。 */
   updatedAt: string;
+  /** 软删除墓碑（P2-6）：重抽、删除单条消息都是盖章，原文还在库里。 */
+  deletedAt: string | null;
 }
 
 /**
@@ -143,4 +145,6 @@ export interface MemoryEvent {
   updatedAt: string;
   lastRecalledAt: string | null;
   recallCount: number;
+  /** 软删除墓碑（P2-6）：撤销与删除都是盖章，同步时要把它推给别的设备。 */
+  deletedAt: string | null;
 }

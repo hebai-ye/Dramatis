@@ -18,6 +18,7 @@ function actor(name: string, presence: Presence): CharacterInstance {
     traitsLocked: false,
     createdAt: now,
     updatedAt: now,
+    deletedAt: null,
   };
 }
 
@@ -35,6 +36,7 @@ function sceneWith(cast: readonly CharacterInstance[]): Scene {
     createdAt: nowIso(),
     updatedAt: nowIso(),
     endedAt: null,
+    deletedAt: null,
   };
 }
 

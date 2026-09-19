@@ -12,6 +12,8 @@ export interface Persona {
   description: string;
   createdAt: string;
   updatedAt: string;
+  /** 软删除墓碑（P2-6）。 */
+  deletedAt: string | null;
 }
 
 export function createPersona(input: { name: string; description?: string }): Persona {
@@ -22,5 +24,6 @@ export function createPersona(input: { name: string; description?: string }): Pe
     description: input.description ?? '',
     createdAt: now,
     updatedAt: now,
+    deletedAt: null,
   };
 }

@@ -79,4 +79,6 @@ export interface CharacterInstance {
   traitsLocked: boolean;
   createdAt: string;
   updatedAt: string;
+  /** 软删除墓碑（P2-6）：把角色移出世界是盖章，历史消息里的引用仍然指得到。 */
+  deletedAt: string | null;
 }

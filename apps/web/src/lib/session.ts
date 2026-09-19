@@ -356,6 +356,7 @@ export function useSession(db: DramatisDb | null): SessionApi {
         activeConversationId: null,
         createdAt: now,
         updatedAt: now,
+        deletedAt: null,
       };
 
       // 空白世界也要有一条对话线，否则用户进来看到的是一个无处落脚的壳
@@ -530,6 +531,7 @@ export function useSession(db: DramatisDb | null): SessionApi {
       stateSnapshot: [],
       createdAt: now,
       updatedAt: now,
+      deletedAt: null,
     };
     const room: Room = { ...current.room, activeConversationId: conversation.id, updatedAt: now };
 

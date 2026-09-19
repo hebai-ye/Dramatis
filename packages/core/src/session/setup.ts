@@ -42,6 +42,7 @@ export function createInstanceFor(card: Card, roomIdValue: Room['id'], displayNa
     traitsLocked: false,
     createdAt: now,
     updatedAt: now,
+    deletedAt: null,
   };
 }
 
@@ -67,6 +68,7 @@ export function createSceneFor(
     createdAt: now,
     updatedAt: now,
     endedAt: null,
+    deletedAt: null,
   };
 }
 
@@ -108,6 +110,7 @@ export function createWorldFromCard(card: Card, persona: Persona): World {
     activeConversationId: conversation.id,
     createdAt: now,
     updatedAt: now,
+    deletedAt: null,
   };
 
   return { room, conversation: { ...conversation, activeSceneId: scene.id }, scene, instance };
@@ -195,6 +198,7 @@ export function planNewConversation(input: {
     instanceIds: [...input.room.instanceIds, ...createdInstances.map((instance) => instance.id)],
     activeConversationId: conversation.id,
     updatedAt: now,
+    deletedAt: null,
   };
 
   return {

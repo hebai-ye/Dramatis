@@ -420,6 +420,7 @@ export function useBackgroundWorker(options: {
           keyFacts: parsed.keyFacts,
           createdAt: at,
           updatedAt: at,
+          deletedAt: null,
         });
       }
       return { called: true, usage: completion.usage };

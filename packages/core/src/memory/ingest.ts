@@ -63,6 +63,7 @@ export function buildMemoryEvents(input: IngestInput): IngestResult {
     updatedAt: createdAt,
     lastRecalledAt: null,
     recallCount: 0,
+    deletedAt: null,
     pinned: false,
     importanceLocked: false,
   };

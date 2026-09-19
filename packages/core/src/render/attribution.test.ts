@@ -17,6 +17,7 @@ function actor(name: string): CharacterInstance {
     traitsLocked: false,
     createdAt: now,
     updatedAt: now,
+    deletedAt: null,
   };
 }
 

@@ -81,6 +81,8 @@ export interface Conversation {
   stateSnapshot: ConversationStateSnapshot[];
   createdAt: string;
   updatedAt: string;
+  /** 软删除墓碑（P2-6）。归档是 `archivedAt`，删除是这里，两者不是一回事。 */
+  deletedAt: string | null;
 }
 
 export function createConversation(input: {
@@ -105,6 +107,7 @@ export function createConversation(input: {
     stateSnapshot: captureConversationState(input.instances ?? []),
     createdAt: now,
     updatedAt: now,
+    deletedAt: null,
   };
 }
 

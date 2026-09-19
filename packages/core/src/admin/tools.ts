@@ -10,6 +10,7 @@ import {
   worldBookId as asWorldBookId,
   type CardId,
   newId,
+  nowIso,
   type WorldBookId,
 } from '../model/ids.js';
 import type { CastPolicy, Scene } from '../model/room.js';
@@ -269,6 +270,9 @@ function parseWorldBookDraft(args: Record<string, unknown>, context: AdminToolCo
     name,
     entries,
     extensions: {},
+    createdAt: nowIso(),
+    updatedAt: nowIso(),
+    deletedAt: null,
   };
 
   return {

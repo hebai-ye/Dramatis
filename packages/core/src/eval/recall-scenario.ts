@@ -52,6 +52,7 @@ function memory(input: {
     updatedAt: input.createdAt ?? OBSERVED,
     lastRecalledAt: null,
     recallCount: input.recallCount ?? 0,
+    deletedAt: null,
   };
 }
 

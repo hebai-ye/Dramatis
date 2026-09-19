@@ -206,6 +206,7 @@ describe('用量账单', () => {
       activeConversationId: null,
       createdAt: '2026-09-19T00:00:00.000Z',
       updatedAt: '2026-09-19T00:00:00.000Z',
+      deletedAt: null,
     });
     await usage.record({ roomId: room, category: 'generation', model: 'm', promptTokens: 100 });
     await usage.record({ roomId: roomId('room-2'), category: 'generation', model: 'm', promptTokens: 200 });

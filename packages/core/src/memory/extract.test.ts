@@ -20,6 +20,7 @@ function actor(name: string): CharacterInstance {
     traitsLocked: false,
     createdAt: now,
     updatedAt: now,
+    deletedAt: null,
   };
 }
 
@@ -36,6 +37,7 @@ const scene: Scene = {
   createdAt: nowIso(),
   updatedAt: nowIso(),
   endedAt: null,
+  deletedAt: null,
 };
 
 describe('extractJsonObject', () => {

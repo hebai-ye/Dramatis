@@ -59,6 +59,8 @@ export interface Scene {
    */
   updatedAt: string;
   endedAt: string | null;
+  /** 软删除墓碑（P2-6）。非 null 表示这一场戏被删了，查询默认不再返回它。 */
+  deletedAt: string | null;
 }
 
 /**
@@ -96,4 +98,6 @@ export interface Room {
   budget?: BudgetLimits | null;
   createdAt: string;
   updatedAt: string;
+  /** 软删除墓碑（P2-6）：删世界是盖章，不是把记录抹掉。 */
+  deletedAt: string | null;
 }

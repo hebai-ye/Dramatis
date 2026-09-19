@@ -44,6 +44,9 @@ function card(name: string, overrides: Partial<Card> = {}): Card {
     extensions: {},
     source: { kind: 'manual', spec: 'dramatis', specVersion: '1', importedAt: nowIso() },
     ...overrides,
+    createdAt: overrides.createdAt ?? nowIso(),
+    updatedAt: overrides.updatedAt ?? nowIso(),
+    deletedAt: overrides.deletedAt ?? null,
   };
 }
 
@@ -74,6 +77,7 @@ function fixture() {
     activeConversationId: null,
     createdAt: now,
     updatedAt: now,
+    deletedAt: null,
   };
 
   const makeInstance = (source: Card, displayName: string): CharacterInstance => ({
@@ -99,6 +103,7 @@ function fixture() {
     traitsLocked: false,
     createdAt: now,
     updatedAt: now,
+    deletedAt: null,
   });
 
   const alice = makeInstance(aliceCard, 'Alice');
@@ -118,6 +123,7 @@ function fixture() {
     createdAt: now,
     updatedAt: now,
     endedAt: null,
+    deletedAt: null,
   };
 
   const turnId = newId();
@@ -253,6 +259,9 @@ describe('真实模型验证取样器', () => {
             },
           ],
           extensions: {},
+          createdAt: nowIso(),
+          updatedAt: nowIso(),
+          deletedAt: null,
         },
       ],
       history: [
@@ -270,6 +279,7 @@ describe('真实模型验证取样器', () => {
           content: '帮我给这个旧城补一点设定，再起草一个能在酒馆里遇到的角色。',
           createdAt: nowIso(),
           updatedAt: nowIso(),
+          deletedAt: null,
         },
       ],
       userInput: '顺便把当前场景的地点改成「旧城东侧的夜间酒馆」，时间是第三日 · 黄昏。',

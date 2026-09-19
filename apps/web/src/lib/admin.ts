@@ -206,6 +206,7 @@ export function useAdminChat(options: {
           ...(artifacts.length > 0 ? { artifacts } : {}),
           createdAt: nowIso(),
           updatedAt: nowIso(),
+          deletedAt: null,
         };
         await session.appendMessages([message]);
 

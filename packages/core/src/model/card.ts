@@ -28,6 +28,16 @@ export interface Card {
   /** 未识别的扩展字段原样保留，避免导入时静默丢数据（设计文档 §9.2）。 */
   extensions: Record<string, unknown>;
   source: CardSource;
+  /**
+   * 时间戳与软删除（P2-6）。
+   *
+   * 卡原本一个时间字段都没有（只有 `source.importedAt`）。同步按实体比对
+   * `updatedAt`、按墓碑传播删除，所以卡与世界书也得有——这是原计划里
+   * 以为「其余实体已经有了」、实际上漏掉的一处。
+   */
+  createdAt: string;
+  updatedAt: string;
+  deletedAt: string | null;
 }
 
 export interface CardSource {
@@ -46,6 +56,9 @@ export interface WorldBook {
   entries: WorldBookEntry[];
   /** 未识别字段原样保留。 */
   extensions: Record<string, unknown>;
+  createdAt: string;
+  updatedAt: string;
+  deletedAt: string | null;
 }
 
 /** 选择逻辑，数值对齐 SillyTavern 的 selectiveLogic。 */
@@ -121,6 +134,9 @@ export function createBlankCard(overrides: Partial<Card> = {}): Card {
     extensions: {},
     source: { kind: 'manual', spec: 'dramatis', specVersion: '1', importedAt: now },
     ...overrides,
+    createdAt: overrides.createdAt ?? now,
+    updatedAt: overrides.updatedAt ?? now,
+    deletedAt: overrides.deletedAt ?? null,
   };
 }
 
@@ -161,5 +177,14 @@ export function createWorldBookEntry(draft: WorldBookEntryDraft = {}): WorldBook
 }
 
 export function createBlankWorldBook(name = '未命名世界书'): WorldBook {
-  return { id: newId() as WorldBookId, name, entries: [], extensions: {} };
+  const now = nowIso();
+  return {
+    id: newId() as WorldBookId,
+    name,
+    entries: [],
+    extensions: {},
+    createdAt: now,
+    updatedAt: now,
+    deletedAt: null,
+  };
 }

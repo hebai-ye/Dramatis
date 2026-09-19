@@ -39,6 +39,7 @@ async function seed(): Promise<{ repository: Repository; roomId: Room['id'] }> {
     extensions: {},
     createdAt: now,
     updatedAt: now,
+    deletedAt: null,
   };
   await repository.saveWorldBook(book);
 
@@ -57,6 +58,7 @@ async function seed(): Promise<{ repository: Repository; roomId: Room['id'] }> {
     activeConversationId: null,
     createdAt: now,
     updatedAt: now,
+    deletedAt: null,
   };
   await repository.saveRoom(room);
 
@@ -106,6 +108,7 @@ async function seed(): Promise<{ repository: Repository; roomId: Room['id'] }> {
       content: '三十箱货是谁的？',
       createdAt: now,
       updatedAt: now,
+      deletedAt: null,
     },
     {
       id: messageId(newId()),
@@ -122,6 +125,7 @@ async function seed(): Promise<{ repository: Repository; roomId: Room['id'] }> {
       usage: { promptTokens: 100, completionTokens: 20 },
       createdAt: now,
       updatedAt: now,
+      deletedAt: null,
     },
   ];
   await repository.appendMessages(room.id, messages);
@@ -147,6 +151,7 @@ async function seed(): Promise<{ repository: Repository; roomId: Room['id'] }> {
       updatedAt: now,
       lastRecalledAt: null,
       recallCount: 0,
+      deletedAt: null,
     },
   ]);
 
@@ -160,6 +165,7 @@ async function seed(): Promise<{ repository: Repository; roomId: Room['id'] }> {
     keyFacts: ['三十箱货在胡记'],
     createdAt: now,
     updatedAt: now,
+    deletedAt: null,
   });
 
   await repository.saveRoom({ ...room, activeConversationId: main.id });
@@ -364,6 +370,7 @@ describe('封存导出 / 导入（P2-4）', () => {
       activeConversationId: null,
       createdAt: nowIso(),
       updatedAt: nowIso(),
+      deletedAt: null,
     };
     await repository.saveRoom(room);
 

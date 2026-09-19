@@ -19,6 +19,7 @@ function actor(name: string, presence: Presence = 'onstage'): CharacterInstance 
     traitsLocked: false,
     createdAt: now,
     updatedAt: now,
+    deletedAt: null,
   };
 }
 
@@ -35,6 +36,7 @@ const scene: Scene = {
   createdAt: nowIso(),
   updatedAt: nowIso(),
   endedAt: null,
+  deletedAt: null,
 };
 
 describe('buildIntentPlanMessages', () => {

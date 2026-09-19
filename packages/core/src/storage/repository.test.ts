@@ -29,6 +29,7 @@ function fixtures() {
     activeConversationId: null,
     createdAt: now,
     updatedAt: now,
+    deletedAt: null,
   };
 
   const scene: Scene = {
@@ -44,6 +45,7 @@ function fixtures() {
     createdAt: now,
     updatedAt: now,
     endedAt: null,
+    deletedAt: null,
   };
 
   const instance: CharacterInstance = {
@@ -58,6 +60,7 @@ function fixtures() {
     traitsLocked: false,
     createdAt: now,
     updatedAt: now,
+    deletedAt: null,
   };
 
   const card: Card = {
@@ -79,6 +82,9 @@ function fixtures() {
     embeddedWorldBook: null,
     extensions: {},
     source: { kind: 'json', spec: 'chara_card_v2', specVersion: '2.0', importedAt: now },
+    createdAt: now,
+    updatedAt: now,
+    deletedAt: null,
   };
 
   return {
@@ -87,7 +93,15 @@ function fixtures() {
     instance,
     card,
     bookId: bookIdValue,
-    book: { id: bookIdValue, name: '测试世界书', entries: [], extensions: {} },
+    book: {
+      id: bookIdValue,
+      name: '测试世界书',
+      entries: [],
+      extensions: {},
+      createdAt: now,
+      updatedAt: now,
+      deletedAt: null,
+    },
   };
 }
 
@@ -124,7 +138,7 @@ describe('Repository / schema', () => {
     const repo = new Repository(store);
     const report = await repo.migrate();
 
-    expect(report.applied.map((migration) => migration.version)).toEqual([2, 3, 4]);
+    expect(report.applied.map((migration) => migration.version)).toEqual([2, 3, 4, 5]);
 
     const personas = await repo.listPersonas();
     expect(personas).toHaveLength(1);
@@ -275,6 +289,7 @@ describe('Repository / 房间', () => {
         updatedAt: nowIso(),
         lastRecalledAt: null,
         recallCount: 0,
+        deletedAt: null,
       },
     ]);
     await queue.enqueue({ kind: 'memory.extract', payload: {}, idempotencyKey: 'k', roomId: room.id });
@@ -461,6 +476,7 @@ describe('Repository / updatedAt（P2-6 数据层前置）', () => {
       updatedAt: OLD,
       lastRecalledAt: null,
       recallCount: 0,
+      deletedAt: null,
     };
 
     await repo.saveMemories([event]);
@@ -486,6 +502,7 @@ describe('Repository / updatedAt（P2-6 数据层前置）', () => {
       keyFacts: [],
       createdAt: OLD,
       updatedAt: OLD,
+      deletedAt: null,
     });
 
     const [chapter] = await repo.listChapterSummaries(room.id);
@@ -507,6 +524,7 @@ describe('Repository / updatedAt（P2-6 数据层前置）', () => {
       summary: '',
       createdAt,
       endedAt: null,
+      deletedAt: null,
     });
 
     const repo = new Repository(store);
@@ -514,6 +532,163 @@ describe('Repository / updatedAt（P2-6 数据层前置）', () => {
 
     const migrated = await store.get<Record<string, unknown>>(COLLECTIONS.scenes, 'scene-legacy');
     expect(migrated?.updatedAt).toBe(createdAt);
+  });
+});
+
+describe('Repository / 软删除（P2-6）', () => {
+  it('删消息是盖章：查询看不到，记录还在（同步要拿它当墓碑推出去）', async () => {
+    const store = createMemoryEntityStore();
+    const repo = new Repository(store);
+    const { room, scene } = fixtures();
+    const [saved] = await repo.appendMessages(room.id, [message(room, scene, '要删掉的')]);
+    if (!saved) throw new Error('未写入');
+
+    await repo.deleteMessage(saved.id);
+
+    expect(await repo.listMessages(room.id)).toHaveLength(0);
+    const raw = await store.get<{ content: string; deletedAt: string | null; updatedAt: string }>(
+      COLLECTIONS.messages,
+      saved.id,
+    );
+    // 原文还在：这就是「用户删了，但同步还得告诉另一台设备这条被删了」的前提
+    expect(raw?.content).toBe('要删掉的');
+    expect(raw?.deletedAt).not.toBeNull();
+    // 墓碑的时间不能倒退，否则 LWW 会判成「没改过」
+    expect(Date.parse(raw?.updatedAt ?? '')).toBeGreaterThanOrEqual(Date.parse(saved.updatedAt));
+
+    const withDeleted = await repo.listMessages(room.id, { includeDeleted: true });
+    expect(withDeleted.map((item) => item.id)).toEqual([saved.id]);
+  });
+
+  it('过滤发生在分页之前：删掉最近一条，历史不该凭空少一截', async () => {
+    const repo = new Repository(createMemoryEntityStore());
+    const { room, scene } = fixtures();
+    const saved = await repo.appendMessages(
+      room.id,
+      ['一', '二', '三', '四'].map((content) => message(room, scene, content)),
+    );
+    const last = saved[3];
+    if (!last) throw new Error('未写入');
+
+    await repo.deleteMessage(last.id);
+
+    expect((await repo.listMessages(room.id, { limit: 3 })).map((item) => item.content)).toEqual(['一', '二', '三']);
+  });
+
+  it('删角色卡与世界书同样留墓碑，只是不再出现在列表里', async () => {
+    const store = createMemoryEntityStore();
+    const repo = new Repository(store);
+    const { card, book } = fixtures();
+
+    await repo.saveCard(card);
+    await repo.saveWorldBook(book);
+    await repo.deleteCard(card.id);
+    await repo.deleteWorldBook(book.id);
+
+    expect(await repo.listCards()).toHaveLength(0);
+    expect(await repo.listWorldBooks()).toHaveLength(0);
+    expect(await repo.getCard(card.id)).toBeNull();
+    // 素材是跨世界共用的：删掉一张卡不能把引用它的世界也带走
+    expect((await store.get<{ deletedAt: string | null }>(COLLECTIONS.cards, card.id))?.deletedAt).not.toBeNull();
+    expect((await store.get<{ deletedAt: string | null }>(COLLECTIONS.worldBooks, book.id))?.deletedAt).not.toBeNull();
+  });
+
+  it('删世界：子记录一起盖章，队列与账单硬删（它们不参与同步）', async () => {
+    const store = createMemoryEntityStore();
+    const repo = new Repository(store);
+    const queue = createBackgroundRunner(store);
+    const { room, scene, instance, card, book } = fixtures();
+
+    await repo.saveSnapshot({ room, scenes: [scene], instances: [instance], cards: [card], worldBooks: [book] });
+    await repo.appendMessages(room.id, [message(room, scene, '一个回合')]);
+    await queue.enqueue({ kind: 'memory.extract', payload: {}, idempotencyKey: 'k', roomId: room.id });
+
+    await repo.deleteRoom(room.id);
+
+    expect(await repo.getRoom(room.id)).toBeNull();
+    expect(await repo.listScenes(room.id)).toHaveLength(0);
+    expect(await repo.listInstances(room.id)).toHaveLength(0);
+    expect(await repo.listMessages(room.id)).toHaveLength(0);
+    expect(await queue.list()).toHaveLength(0);
+    // 墓碑仍然在库里——世界没了，但它「没了」这件事要能被同步解释
+    expect((await store.get<{ deletedAt: string | null }>(COLLECTIONS.rooms, room.id))?.deletedAt).not.toBeNull();
+    expect(
+      (await store.get<{ deletedAt: string | null }>(COLLECTIONS.scenes, scene.id))?.deletedAt,
+    ).not.toBeNull();
+  });
+
+  it('删除是幂等的：重复删除不会把墓碑时间一路推到当下', async () => {
+    const store = createMemoryEntityStore();
+    const repo = new Repository(store);
+    const { room, scene } = fixtures();
+    const [saved] = await repo.appendMessages(room.id, [message(room, scene, '删两次')]);
+    if (!saved) throw new Error('未写入');
+
+    await repo.deleteMessage(saved.id);
+    const first = await store.get<{ deletedAt: string | null }>(COLLECTIONS.messages, saved.id);
+    await repo.deleteMessage(saved.id);
+    const second = await store.get<{ deletedAt: string | null }>(COLLECTIONS.messages, saved.id);
+
+    expect(second?.deletedAt).toBe(first?.deletedAt);
+  });
+
+  it('给同一条对话滚回来的记忆也走软删除', async () => {
+    const repo = new Repository(createMemoryEntityStore());
+    const { room, scene, instance } = fixtures();
+    const turnId = newId();
+    await repo.saveMemories([
+      {
+        id: eventId(newId()),
+        roomId: room.id,
+        conversationId: null,
+        sceneId: scene.id,
+        timeline: { worldTime: '第一日', sequence: 1 },
+        location: '',
+        participants: [instance.id],
+        summary: '会被重抽撤销的事',
+        observerId: null,
+        perception: '',
+        importance: 0.5,
+        pinned: false,
+        importanceLocked: false,
+        affects: [],
+        sourceTurnIds: [turnId],
+        createdAt: nowIso(),
+        updatedAt: nowIso(),
+        deletedAt: null,
+        lastRecalledAt: null,
+        recallCount: 0,
+      },
+    ]);
+
+    expect(await repo.deleteMemoriesByTurn(room.id, turnId)).toBe(1);
+    // 第二次调用没有可撤的了：墓碑不该被反复计数
+    expect(await repo.deleteMemoriesByTurn(room.id, turnId)).toBe(0);
+    expect(await repo.listMemories(room.id)).toHaveLength(0);
+  });
+
+  it('迁移 v5 给老记录补 deletedAt = null', async () => {
+    const store = createMemoryEntityStore();
+    await store.put(COLLECTIONS.rooms, {
+      id: 'room-legacy',
+      title: '旧世界',
+      personaId: null,
+      playerName: '玩家',
+      playerPersona: '',
+      cardIds: [],
+      instanceIds: [],
+      worldBookIds: [],
+      activeConversationId: null,
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    });
+
+    const repo = new Repository(store);
+    await repo.migrate();
+
+    const migrated = await store.get<{ deletedAt: string | null }>(COLLECTIONS.rooms, 'room-legacy');
+    expect(migrated?.deletedAt).toBeNull();
+    expect(await repo.getRoom(roomId('room-legacy'))).not.toBeNull();
   });
 });
 

@@ -31,6 +31,9 @@ function fixtures(castPolicy: Scene['castPolicy'] = 'locked') {
     embeddedWorldBook: null,
     extensions: {},
     source: { kind: 'json', spec: 'chara_card_v2', specVersion: '2.0', importedAt: now },
+    createdAt: now,
+    updatedAt: now,
+    deletedAt: null,
   };
 
   const instance: CharacterInstance = {
@@ -56,6 +59,7 @@ function fixtures(castPolicy: Scene['castPolicy'] = 'locked') {
     traitsLocked: false,
     createdAt: now,
     updatedAt: now,
+    deletedAt: null,
   };
 
   const scene: Scene = {
@@ -71,6 +75,7 @@ function fixtures(castPolicy: Scene['castPolicy'] = 'locked') {
     createdAt: now,
     updatedAt: now,
     endedAt: null,
+    deletedAt: null,
   };
 
   const room: Room = {
@@ -85,6 +90,7 @@ function fixtures(castPolicy: Scene['castPolicy'] = 'locked') {
     activeConversationId: null,
     createdAt: now,
     updatedAt: now,
+    deletedAt: null,
   };
 
   return { card, instance, room, scene };
@@ -122,6 +128,7 @@ function makeInstance(
     traitsLocked: false,
     createdAt: now,
     updatedAt: now,
+    deletedAt: null,
   };
 }
 
@@ -279,6 +286,7 @@ describe('assemblePrompt / 多角色场景', () => {
       keyFacts: [`第 ${String(index)} 章的要点`],
       createdAt: nowIso(),
       updatedAt: nowIso(),
+      deletedAt: null,
     });
 
     const prompt = assemblePrompt({

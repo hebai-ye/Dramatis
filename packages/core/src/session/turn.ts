@@ -82,6 +82,7 @@ export function createPlayerMessage(input: {
     content: input.content,
     createdAt: now,
     updatedAt: now,
+    deletedAt: null,
   };
 }
 
@@ -116,6 +117,7 @@ export function createCharacterMessage(input: {
     ...(sanitized.intent === null ? {} : { intent: sanitized.intent, intentSource: 'declared' as const }),
     createdAt: now,
     updatedAt: now,
+    deletedAt: null,
   };
 }
 
@@ -176,6 +178,7 @@ export function createNarrationMessage(input: {
     content: input.content,
     createdAt: now,
     updatedAt: now,
+    deletedAt: null,
   };
 }
 

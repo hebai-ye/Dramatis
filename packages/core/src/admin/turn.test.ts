@@ -30,6 +30,9 @@ function makeCard(name: string): Card {
     embeddedWorldBook: null,
     extensions: {},
     source: { kind: 'manual', spec: 'dramatis', specVersion: '1', importedAt: nowIso() },
+    createdAt: nowIso(),
+    updatedAt: nowIso(),
+    deletedAt: null,
   };
 }
 
@@ -47,6 +50,7 @@ function makeInstance(card: Card, roomIdValue: Room['id']): CharacterInstance {
     traitsLocked: false,
     createdAt: now,
     updatedAt: now,
+    deletedAt: null,
   };
 }
 
@@ -114,6 +118,7 @@ function fixture() {
     activeConversationId: null,
     createdAt: nowIso(),
     updatedAt: nowIso(),
+    deletedAt: null,
   };
   const conversation = createConversation({ roomId: roomIdValue, title: '世界管理' });
 

@@ -201,6 +201,9 @@ export function parseCharacterCard(raw: unknown, source: Partial<CardSource> = {
       specVersion: str(record.spec_version),
       importedAt: nowIso(),
     },
+    createdAt: nowIso(),
+    updatedAt: nowIso(),
+    deletedAt: null,
   };
 
   return { card, warnings };

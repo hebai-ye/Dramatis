@@ -17,6 +17,7 @@ function actor(name: string, presence: Presence = 'onstage', extroversion = 0): 
     traitsLocked: false,
     createdAt: now,
     updatedAt: now,
+    deletedAt: null,
   };
 }
 

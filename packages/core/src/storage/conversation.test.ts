@@ -30,6 +30,9 @@ function makeCard(name: string): Card {
     embeddedWorldBook: null,
     extensions: {},
     source: { kind: 'manual', spec: 'dramatis', specVersion: '1', importedAt: nowIso() },
+    createdAt: nowIso(),
+    updatedAt: nowIso(),
+    deletedAt: null,
   };
 }
 
@@ -53,6 +56,7 @@ async function worldFixture() {
     activeConversationId: null,
     createdAt: now,
     updatedAt: now,
+    deletedAt: null,
   };
 
   const conversation = createConversation({
@@ -307,6 +311,7 @@ describe('归档对话', () => {
       activeSceneId: sceneIdValue,
       createdAt: now,
       updatedAt: now,
+      deletedAt: null,
     });
     await store.put(COLLECTIONS.scenes, {
       id: sceneIdValue,

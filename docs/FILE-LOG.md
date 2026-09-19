@@ -293,6 +293,7 @@ git ls-files | ForEach-Object {
 | 09-19 23:03 | `f43d5cd` | **P2-6 第一步（3/3）**：本机 `deviceId` + 消息 `localSeq`（`seq` 改名，迁移 v6） |
 | 09-19 23:30 | `ae8cbb6` | **P2-6 第二步**：`core/crypto` 加密工具（折 id / PBKDF2 / AES-GCM + AAD / 两种凭证 / 恢复码 / 主密钥封装）+ 真浏览器探针页 |
 | 09-19 23:37 | `f9c55b8` | **P2-6 第二步补**：AAD 改用 `updatedAt`，并让每条记录的 `updatedAt` 严格递增（定 SYNC §4.4 的空隙） |
+| 09-19 23:54 | `c485c44` | **P2-6 第三步**：`core/sync` 同步循环（传输层契约 / 合并规则 / 内存服务端 / 本地游标）+ 真机探针页 |
 
 ---
 
@@ -345,6 +346,12 @@ git ls-files | ForEach-Object {
 | `packages/core/src/crypto/keys.test.ts` | 2026-09-19 23:17 | 2026-09-19 23:29 | 2026-09-19 23:30（`ae8cbb6`） | 25 条：句柄/凭证/用途隔离/封装错误路径/恢复码（含「密码与恢复码解出同一把主密钥」） |
 | `packages/core/src/crypto/records.test.ts` | 2026-09-19 23:17 | 2026-09-19 23:20 | 2026-09-19 23:30（`ae8cbb6`） | 14 条：往返、密文不含明文、IV 随机、篡改与四种坐标错位都解不开 |
 | `apps/web/tools/crypto-probe.html` `crypto-probe.ts` | 2026-09-19 23:22 | 2026-09-19 23:29 | 2026-09-19 23:30（`ae8cbb6`） | 开发用探针页：真浏览器跑 19 项检查并打出 PBKDF2 的真实耗时（EVAL 第八节） |
+| `packages/core/src/sync/types.ts` | 2026-09-19 23:41 | 2026-09-19 23:41 | 2026-09-19 23:54（`c485c44`） | **P2-6 第三步**：三层协议类型（本地记录 / 线上记录 / `SyncTransport`）、十类集合白名单、本地同步状态 |
+| `packages/core/src/sync/merge.ts` | 2026-09-19 23:42 | 2026-09-19 23:42 | 2026-09-19 23:54（`c485c44`） | 合并规则：先比 `updatedAt`、平局墓碑赢、其余保留本地（纯函数，好测好解释） |
+| `packages/core/src/sync/loop.ts` | 2026-09-19 23:43 | 2026-09-19 23:53 | 2026-09-19 23:54（`c485c44`） | 推 → 拉 → 合并 → 推进游标；失败不推进游标；回声不再推回去 |
+| `packages/core/src/sync/memory-transport.ts` | 2026-09-19 23:42 | 2026-09-19 23:52 | 2026-09-19 23:54（`c485c44`） | 内存服务端：校验凭证哈希、分配 `serverRev`、按游标发记录、只存密文（也是 Worker 的对照物） |
+| `packages/core/src/sync/sync.test.ts` | 2026-09-19 23:45 | 2026-09-19 23:53 | 2026-09-19 23:54（`c485c44`） | 13 条：合并岔路、两台设备全流程、删除传墓碑、LWW、幂等、换空间、凭证错、服务端改密文 |
+| `apps/web/tools/sync-probe.html` `sync-probe.ts` | 2026-09-19 23:51 | 2026-09-19 23:53 | 2026-09-19 23:54（`c485c44`） | 开发用探针页：真浏览器跑两台设备完整链路（13 项检查、1.1 秒） |
 
 ### 改动文件（最近一次提交时间）
 
@@ -396,6 +403,9 @@ git ls-files | ForEach-Object {
 | `packages/core/src/storage/archive.ts` | 2026-09-19 23:03 | 导出按 `localSeqOf` 排序（老封存文件也能读），导入时序号与设备号由仓储层重发 |
 | `apps/web/src/lib/worker.ts` `admin.ts` | 2026-09-19 23:03 | 新建实体补新字段；场记游标改用 `message.localSeq` |
 | `packages/core/src/index.ts` | 2026-09-19 23:30 | 导出 `crypto/*`（折 id、派生、加解密、凭证） |
+| `packages/core/src/index.ts` | 2026-09-19 23:54 | 再导出 `sync/*`（传输层契约、合并规则、内存服务端、同步循环） |
+| `packages/core/src/model/room.ts` | 2026-09-19 23:52 | `Scene` 新增 `recapUpToMessageId`（合并后 `localSeq` 会撞号，场记游标改按消息 id） |
+| `packages/core/src/memory/summary.ts` | 2026-09-19 23:52 | `pendingSummary` 优先用消息 id 游标，老数据退回序号 |
 
 ---
 

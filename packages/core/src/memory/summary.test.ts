@@ -58,6 +58,40 @@ function line(input: {
   };
 }
 
+describe('场记游标：优先按消息 id，序号只给老数据兜底（P2-6 第三步）', () => {
+  it('合并之后序号会撞号：id 游标才算得对', () => {
+    const messages = [
+      line({ localSeq: 5, turnId: 't1', content: 'A 设备说的一句' }),
+      line({ localSeq: 2, turnId: 't2', content: 'B 设备说的一句' }),
+      line({ localSeq: 6, turnId: 't3', content: '最近的一句' }),
+    ];
+
+    // 老口径（只比序号）：B 那句话序号小，会被当成「早就摘过了」——漏摘
+    const bySeq = pendingSummary(scene({ recapUpToSeq: 5 }), messages);
+    expect(bySeq.messages.map((message) => message.content)).toEqual(['最近的一句']);
+
+    // 新口径：游标是第一条的 id，它后面两条都算没摘过
+    const cursorId = messages[0]?.id ?? null;
+    const byId = pendingSummary(scene({ recapUpToSeq: 5, recapUpToMessageId: cursorId }), messages);
+    expect(byId.messages.map((message) => message.content)).toEqual(['B 设备说的一句', '最近的一句']);
+  });
+
+  it('游标那条消息不见了（被删了）→ 退回序号口径，宁可多摘一轮', () => {
+    const messages = [
+      line({ localSeq: 1, turnId: 't1', content: '第一句' }),
+      line({ localSeq: 2, turnId: 't2', content: '第二句' }),
+      line({ localSeq: 3, turnId: 't3', content: '第三句' }),
+    ];
+
+    const pending = pendingSummary(
+      scene({ recapUpToSeq: 2, recapUpToMessageId: messageId('这条早就不在了') }),
+      messages,
+    );
+
+    expect(pending.messages.map((message) => message.localSeq)).toEqual([3]);
+  });
+});
+
 describe('场景摘要提示词', () => {
   it('带上地点、时间、在场的人与新增的部分', () => {
     const messages = buildSceneSummaryMessages({

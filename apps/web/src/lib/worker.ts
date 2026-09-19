@@ -353,10 +353,13 @@ export function useBackgroundWorker(options: {
           (max, message) => Math.max(max, message.localSeq),
           scene.recapUpToSeq ?? 0,
         );
+        // 游标记消息 id（合并之后 localSeq 会撞号），序号只作为老数据的兜底
+        const lastMessage = pending.messages.at(-1);
         await db.repository.saveScene({
           ...scene,
           recap,
           recapUpToSeq: lastSeq,
+          ...(lastMessage === undefined ? {} : { recapUpToMessageId: lastMessage.id }),
           recapUpdatedAt: nowIso(),
         });
       }

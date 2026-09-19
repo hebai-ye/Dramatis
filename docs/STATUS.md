@@ -18,16 +18,17 @@
 
 ## 一句话
 
-Dramatis 是一个多角色扮演酒馆，兼容 SillyTavern 资产格式。**P0（9 项）全部完成，P1 全部收口（11/11，P1-11 以评测结论收口：证据不支持上向量）；P2 已完成响应式 / PWA / 存储持久化 / 封存导出；界面改版三批（A/B/C）全部完成；P1-10 七轮真模型验证 + 六次评测回归跑完**，403 个测试通过；**P2-6 前两步（数据层前置 + 加密工具）已交付**。
+Dramatis 是一个多角色扮演酒馆，兼容 SillyTavern 资产格式。**P0（9 项）全部完成，P1 全部收口（11/11，P1-11 以评测结论收口：证据不支持上向量）；P2 已完成响应式 / PWA / 存储持久化 / 封存导出；界面改版三批（A/B/C）全部完成；P1-10 七轮真模型验证 + 六次评测回归跑完**，419 个测试通过；**P2-6 前三步（数据层前置 + 加密工具 + 同步循环）已交付**。
 
 **下一批做什么看 [TASKS.md](./TASKS.md)**：账号与同步**选型已定**（[SYNC.md](./SYNC.md)：
 同步空间 + 同步密码、AES-GCM 端到端加密、协议先行 + 可替换后端；用户 id 改成「用户自己填」，
-见该文档 §3.1 修订），**P2-6 前两步已完成**——
+见该文档 §3.1 修订），**P2-6 前三步已完成**——
 `Scene`/`Message`/`MemoryEvent`/`ChapterSummary` 补齐 `updatedAt`、全套 `deletedAt` 软删除、
 本机 `deviceId` 与消息 `localSeq`（三个提交 + 三条迁移，真机验证过老库升级与导出导入）。
 加密工具（`core/crypto`：折 id、PBKDF2 派生、AES-GCM 记录加解密、两种凭证与恢复码、
-主密钥封装）也已完成并在真浏览器里自测过。
-下一步是同步循环（push / pull / head + 合并规则）与 Cloudflare Worker 参考实现。
+主密钥封装）与**同步循环**（`core/sync`：可注入的 `SyncTransport`、内存服务端、
+推 → 拉 → 合并 → 推进游标）也已完成，两者都在真浏览器里自测过。
+下一步是 Cloudflare Worker 参考实现 + 把同步接进界面（设置里填 id 与密码）。
 另有 T3 剩下的一半（记忆合并成粗粒度印象）可以随时插进来。
 
 ## 已完成
@@ -61,6 +62,7 @@ Dramatis 是一个多角色扮演酒馆，兼容 SillyTavern 资产格式。**P0
 | — | T6 选型（P2-5）：账号＝同步空间 + 同步密码、后端可替换、AES-GCM 端到端；数据层要补什么也盘清了 |
 | — | P2-6 第一步（数据层前置）：四类实体补 `updatedAt`、全套 `deletedAt` 软删除、本机 `deviceId` + 消息 `localSeq`；三条迁移 + 真机验证（老库 v2→v6、导出导入、离线、手机视口） |
 | — | P2-6 第二步（加密工具）：`core/crypto`——折 id、PBKDF2、AES-GCM + AAD 绑坐标、两种凭证、恢复码、主密钥封装；真浏览器 19 项自测（含「恢复码解出同一把主密钥」） |
+| — | P2-6 第三步（同步循环）：`core/sync`——`SyncTransport`（head / push / pull）+ 内存服务端 + 合并规则（LWW、墓碑、记忆全留、消息按时间交错）+ 本地游标；真浏览器两台设备全链路 13 项自测 |
 
 ## 仓库结构速查
 
@@ -135,17 +137,18 @@ P1-7/P1-8 情绪与抗漂移、P1-9 调用预算与熔断（T19）、P1-10 七�
 运行时面板默认折叠，由主区标题栏的「面板」按钮开关），三批全部完成，
 差异表与实现取舍见 [LAYOUT.md](./LAYOUT.md)。
 
-**下一批建议**：按 [SYNC.md](./SYNC.md) 的顺序做 P2-6 的**第三步——同步循环**
-（本地游标、push / pull / head 三个请求的形状、合并规则：角色状态 LWW、记忆全留、
-消息按 `(deviceId, localSeq)` 排）。同步层需要一个可注入的 `SyncTransport`，
-这样单测可以在内存里跑完整合并，不必先有后端；Cloudflare Worker 的参考实现排在它后面。
+**下一批建议**：按 [SYNC.md](./SYNC.md) 的顺序做 P2-6 的**第四步——后端与界面**：
+① 照着 `SyncTransport` 写 Cloudflare Worker 参考实现（`deploy/cloudflare/`，
+一条命令部署）；② 把同步接进界面：设置里填「用户 id + 同步密码（或恢复码）」、
+显示上次同步时间与结果、有冲突时给一句人话摘要；③ 记录分块与坏记录隔离。
+内核与加密都已就绪，这一步主要是接线与部署。
 
 ## 怎么继续
 
 ```bash
 pnpm install
 pnpm desktop        # 起本地服务并用应用窗口打开
-pnpm test           # 403 个测试
+pnpm test           # 419 个测试
 pnpm typecheck
 pnpm lint
 pnpm build          # 生产构建（PWA 的 Service Worker 只在这个产物里注册）
@@ -172,14 +175,14 @@ pnpm --filter @dramatis/core test prompt-samples --silent=false --disableConsole
 下一步与「下一轮怎么开」），再读 docs/SYNC.md（账号与同步的选型，P2-5 已定稿）与
 docs/TASKS.md（工作清单）。
 
-这次要做：P2-6 的第三步「同步循环」——数据层（updatedAt / deletedAt / deviceId / localSeq）
-与加密工具（core/crypto）都已交付，照 docs/SYNC.md 第四节写：
+这次要做：P2-6 的第四步「后端与界面」——数据层、加密工具（core/crypto）
+与同步循环（core/sync）都已交付，照 docs/SYNC.md 第四节与 core/sync/types.ts 的契约写：
 
-1) 定义可注入的 SyncTransport（push / pull / head 三个请求）；
-2) 本地游标与推送点落进 meta（不进实体），拉回来的记录按 SYNC 4.2 的规则合并：
-   角色状态等 LWW、记忆全留、消息按 (deviceId, localSeq) 排、删除按墓碑传播；
-3) 先只做内核 + 内存 transport 的单测（离线聊十轮、两端合并、幂等重放），
-   接 Worker 参考实现放到后面一步。
+1) Cloudflare Worker 参考实现（deploy/cloudflare/）：head / push / pull 三个接口、
+   只存密文与坐标、校验凭证哈希、分配 serverRev，一条命令部署；
+2) 把同步接进界面：设置里填「用户 id + 同步密码（或恢复码）」，
+   显示上次同步时间与结果，冲突给一句人话摘要；
+3) 记录分块（超过行大小上限按 id + part 切）与坏记录隔离。
 
 要求：每一小步都能构建/测试/提交；提交信息带任务编号；实现与计划有偏差写进文档；
 做完在浏览器里真机验一遍（导出/导入、离线、手机视口都别回归）。
@@ -195,4 +198,5 @@ docs/TASKS.md（工作清单）。
 | PWA / Service Worker | 只在生产构建里注册：`pnpm build` 然后 `vite preview --port 4174`，用无头 Chrome 验。**别只清缓存不重装 SW**——脚本没变浏览器不会重新 install，缓存就一直是空的（我在这里绕过远路） |
 | 召回探针 | `http://127.0.0.1:5273/tools/recall-probe.html`（读本机真实记忆、用同一套内核跑探针） |
 | 加密探针 | `http://127.0.0.1:5273/tools/crypto-probe.html`（真浏览器跑一遍 PBKDF2 / AES-GCM / 恢复码，并打出耗时） |
+| 同步探针 | `http://127.0.0.1:5273/tools/sync-probe.html`（两台设备 + 内存服务端跑完整链路：加入 / 离线各聊两轮 / 合并 / 删一条 / 幂等） |
 | 真模型验证 | 两条路：应用里直接聊（Key 在浏览器配置里），或 `pnpm --filter @dramatis/core test prompt-samples --silent=false --disableConsoleIntercept` 生成提示词、贴进 DeepSeek 网页版 |

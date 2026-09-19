@@ -1,5 +1,5 @@
 import type { BudgetLimits } from '../storage/budget.js';
-import type { CardId, ConversationId, InstanceId, RoomId, SceneId, WorldBookId } from './ids.js';
+import type { CardId, ConversationId, InstanceId, MessageId, RoomId, SceneId, WorldBookId } from './ids.js';
 
 /**
  * 场景的入场策略（设计文档 §2.3）。
@@ -50,6 +50,16 @@ export interface Scene {
    * 在文档里写清楚就够了（P2-6 只改了消息上的 `seq`）。
    */
   recapUpToSeq?: number;
+  /**
+   * 场记覆盖到哪一条消息（消息 id，P2-6 第三步补）。
+   *
+   * 为什么除了 `recapUpToSeq` 还要这个：合并之后一个场景里的消息来自多台设备，
+   * 各自的 `localSeq` 会撞号（都从 1 开始），光靠序号分不出「这条摘过没有」。
+   * 消息 id 是全局唯一的，所以新写入一律记 id，序号留着给老数据兜底。
+   *
+   * 没设置时（老数据）退回按 `recapUpToSeq` 判断——两套游标并存，读的时候优先 id。
+   */
+  recapUpToMessageId?: MessageId | null;
   /** 上次生成摘要的时间；界面据此显示「什么时候整理的」。 */
   recapUpdatedAt?: string;
   createdAt: string;

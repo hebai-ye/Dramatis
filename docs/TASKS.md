@@ -187,7 +187,13 @@
       两种凭证与恢复码、主密钥封装（`packages/core/src/crypto/`）
       · **偏差**：主密钥改成随机的、用密码与恢复码各包一份——原方案「密码派生出的第二半
       直接当 `encKey`」和「恢复码等价于凭证」互相矛盾，修正写进 [SYNC.md](./SYNC.md) §3.3
-- [ ] 之后才是同步循环与 Worker 参考实现
+- [x] 同步循环（`packages/core/src/sync/`）：`SyncTransport`（head / push / pull）、
+      内存服务端、推拉循环与合并规则（LWW + 墓碑 + 记忆全留 + 消息按时间交错）、
+      本地游标与推送点存 meta
+      · 两步落地修正写进 [SYNC.md](./SYNC.md) §4.5：消息排序改成
+      `createdAt → deviceId → localSeq`；场记游标新增 `recapUpToMessageId`
+- [ ] Cloudflare Worker 参考实现（`deploy/cloudflare/`）+ 把同步接进界面
+      （设置里填 id + 密码、显示进度），以及记录分块、坏记录隔离
 
 - **来源**：ROADMAP P2，是「手机和电脑同一条世界线」的前提
 - **验证**：EVAL 第七节——真机（无头 Chrome）跑 v2→v6 迁移、导出/导入往返、

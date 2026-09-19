@@ -211,21 +211,40 @@ export interface PendingSummary {
 /**
  * 算出「从上次摘要到现在」攒了哪些内容。
  *
- * 游标是 `scene.recapUpToSeq`（消息在房间内单调递增的序号）。缺失或为 0 表示
- * 这一场还没有摘要——从头开始算。
+ * 游标优先用 `scene.recapUpToMessageId`（消息 id），老数据没有它时退回
+ * `scene.recapUpToSeq`（房间内递增的序号）。两者都缺表示这一场还没摘过——从头算。
  */
 export function pendingSummary(
   scene: Scene,
   messages: readonly Message[],
   counter: TokenCounter = heuristicTokenCounter,
 ): PendingSummary {
-  const cursor = scene.recapUpToSeq ?? 0;
-  const scoped = messages.filter((message) => message.sceneId === scene.id && localSeqOf(message) > cursor);
+  const inScene = messages.filter((message) => message.sceneId === scene.id);
+  const scoped = uncoveredBySummary(scene, inScene);
 
   const turns = new Set(scoped.map((message) => message.turnId)).size;
   const tokens = scoped.reduce((total, message) => total + counter.count(message.content), 0);
 
   return { messages: [...scoped], turns, tokens };
+}
+
+/**
+ * 这一场里还没被场记覆盖的消息。
+ *
+ * 两套游标并存是刻意的：合并之后同一个场景的消息可能来自两台设备，`localSeq`
+ * 会撞号，所以新写入一律记消息 id；而老数据（同步之前摘过的）只有序号，
+ * 找不到 id 时退回它。
+ */
+function uncoveredBySummary(scene: Scene, inScene: readonly Message[]): Message[] {
+  const cursorId = scene.recapUpToMessageId;
+  if (cursorId !== undefined && cursorId !== null) {
+    const index = inScene.findIndex((message) => message.id === cursorId);
+    // 找不到那条消息（比如它被删了）时不猜：退回序号口径，宁可多摘一轮
+    if (index >= 0) return inScene.slice(index + 1);
+  }
+
+  const cursor = scene.recapUpToSeq ?? 0;
+  return inScene.filter((message) => localSeqOf(message) > cursor);
 }
 
 /** 轮数或 token 谁先到阈值就压一次。没有新内容当然不压。 */

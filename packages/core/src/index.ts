@@ -35,4 +35,5 @@ export * from './storage/archive.js';
 export * from './storage/budget.js';
 export * from './storage/repository.js';
 export * from './storage/usage.js';
+export * from './sync/index.js';
 export * from './token/estimate.js';

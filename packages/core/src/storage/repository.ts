@@ -22,6 +22,13 @@ import { createPersona, type Persona } from '../model/persona.js';
 import type { ProviderProfile } from '../model/provider.js';
 import type { Room, Scene } from '../model/room.js';
 import type { EntityQuery, EntityStore } from '../platform/entity-store.js';
+import {
+  EMPTY_SYNC_STATE,
+  type LocalSyncRecord,
+  SYNC_COLLECTIONS,
+  type SyncCollection,
+  type SyncState,
+} from '../sync/types.js';
 import { USAGE_COLLECTION } from './usage.js';
 
 /**
@@ -60,6 +67,13 @@ export const META_KEYS = {
    * 也不需要看见它，换台设备就是新的设备号。
    */
   deviceId: 'device.id',
+  /**
+   * 同步状态（P2-6 第三步）：拉取游标与推送点。
+   *
+   * 存 meta 而不是实体：它是**这台设备**和服务端之间的账，不该被同步出去
+   * （同步它只会让两台设备抢同一个游标）。
+   */
+  syncState: 'sync.state',
 } as const;
 
 export interface Migration {
@@ -358,6 +372,93 @@ export class Repository {
     await this.setMeta(META_KEYS.deviceId, created);
     this.deviceIdCache = created;
     return created;
+  }
+
+  // ---- 同步的读口与写口（P2-6 第三步） ----
+
+  /**
+   * 同步状态：拉取游标 + 推送点。
+   *
+   * 换了一个空间就作废重来（`spaceHandle` 对不上时返回空状态）——否则上一个空间的
+   * 游标会把这个空间的记录当成「已经拉过了」，用户会看到一片空白。
+   */
+  async readSyncState(): Promise<SyncState> {
+    const stored = await this.getMeta<SyncState>(META_KEYS.syncState);
+    return stored ?? EMPTY_SYNC_STATE;
+  }
+
+  async writeSyncState(state: SyncState): Promise<void> {
+    await this.setMeta(META_KEYS.syncState, state);
+  }
+
+  /**
+   * 同步读口：白名单里所有集合的记录，**含墓碑**。
+   *
+   * 与 UI 用的那些 `listX` 不同：这里不过滤删除（墓碑要推给别的设备，
+   * 否则对方会把删掉的东西推回来）、不排序（排序是合并之后的事）、
+   * 不做业务判断。`since` 是增量：只要 `updatedAt > since` 的。
+   */
+  async listSyncRecords(options: { since?: string | null } = {}): Promise<LocalSyncRecord[]> {
+    const deviceId = await this.deviceId();
+    const since = options.since ?? null;
+    const out: LocalSyncRecord[] = [];
+
+    for (const collection of SYNC_COLLECTIONS) {
+      const rows = await this.store.list<Record<string, unknown> & { id: string }>(COLLECTIONS[collection]);
+      for (const row of rows) {
+        const value = collection === 'messages' ? reviveMessage(row as unknown as StoredMessage, deviceId) : row;
+        const updatedAt = typeof value.updatedAt === 'string' ? value.updatedAt : '';
+        // 没有时间戳的记录先不参与同步：迁移会补上，硬推出去反而会让对面写进坏数据
+        if (updatedAt === '') continue;
+        if (since !== null && updatedAt <= since) continue;
+        out.push({
+          collection,
+          id: row.id,
+          updatedAt,
+          deletedAt: typeof value.deletedAt === 'string' ? value.deletedAt : null,
+          value,
+        });
+      }
+    }
+
+    return out.sort((left, right) =>
+      left.updatedAt < right.updatedAt ? -1 : left.updatedAt > right.updatedAt ? 1 : 0,
+    );
+  }
+
+  /** 同步读口：单条（含墓碑）。合并时拿它比 `updatedAt`。 */
+  async getSyncRecord(collection: SyncCollection, id: string): Promise<LocalSyncRecord | null> {
+    const row = await this.store.get<Record<string, unknown> & { id: string }>(COLLECTIONS[collection], id);
+    if (row === null) return null;
+    const value =
+      collection === 'messages' ? reviveMessage(row as unknown as StoredMessage, await this.deviceId()) : row;
+    return {
+      collection,
+      id,
+      updatedAt: typeof value.updatedAt === 'string' ? value.updatedAt : '',
+      deletedAt: typeof value.deletedAt === 'string' ? value.deletedAt : null,
+      value,
+    };
+  }
+
+  /**
+   * 同步写口：把远端那条**原样**落库。
+   *
+   * 刻意不走 `saveX`：那些方法会重新盖 `updatedAt`（本机时间）并清空 `deletedAt`，
+   * 于是「远端删掉的东西」会被我们复活、`updatedAt` 也失去可比性。同步写进来的
+   * 记录必须保留原来的坐标——它表达的是**那台设备**的事实。
+   */
+  async putSyncRecord(record: LocalSyncRecord): Promise<void> {
+    const value = record.value;
+    if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+      throw new Error(`同步记录 ${record.collection}/${record.id} 的内容不是一个对象，拒绝落库。`);
+    }
+    await this.store.put(COLLECTIONS[record.collection], {
+      ...(value as Record<string, unknown>),
+      id: record.id,
+      updatedAt: record.updatedAt,
+      deletedAt: record.deletedAt,
+    });
   }
 
   // ---- 软删除与默认过滤（P2-6） ----
@@ -749,6 +850,11 @@ export class Repository {
    *
    * 排序用 `localSeq`（P2-6 之前的记录只有 `seq`，读的时候现归一），
    * 所以这里不把排序交给存储层：老字段排不出正确的顺序。
+   *
+   * 合并之后一个房间里的消息来自多台设备，各自的 `localSeq` 会撞号（都从 1 开始），
+   * 所以总序是 **`createdAt` → `deviceId` → `localSeq`**：时间给出人看着自然的
+   * 先后，后两级保证同毫秒也有确定顺序。设备时钟不准时顺序会歪——这是 SYNC §4.2
+   * 记下的已知代价（换向量时钟不值）。
    */
   async listMessages(
     roomId: RoomId,
@@ -763,7 +869,11 @@ export class Repository {
     const stored = await this.store.list<StoredMessage>(COLLECTIONS.messages, { where });
     const ordered = stored
       .map((item) => reviveMessage(item, deviceId))
-      .sort((left, right) => left.localSeq - right.localSeq);
+      .sort((left, right) => {
+        if (left.createdAt !== right.createdAt) return left.createdAt < right.createdAt ? -1 : 1;
+        if (left.deviceId !== right.deviceId) return left.deviceId < right.deviceId ? -1 : 1;
+        return left.localSeq - right.localSeq;
+      });
     // 软删除必须在**分页之前**过滤：先取 limit 条再过滤的话，被删掉的那条
     // 会白占一个名额，用户会看到历史凭空少一截
     const alive = options.includeDeleted === true ? ordered : aliveOnly(ordered);

@@ -25,8 +25,8 @@ const CACHE = 'dramatis-shell-v1';
  * 改成自己发现之后，构建产物叫什么名字都不用管：装的时候抓一次首页，把里面的
  * `<script src>` 与 `<link href>` 全收进来。同源 GET 才收，模型接口一个都不碰。
  */
-function discoverShell(html) {
-  const urls = new Set(['/', '/index.html', '/manifest.webmanifest', '/icon.svg']);
+async function discoverShell(html) {
+  const urls = new Set(['/', '/index.html', '/manifest.webmanifest']);
   const patterns = [/<script[^>]+src="([^"]+)"/g, /<link[^>]+href="([^"]+)"/g];
 
   for (const pattern of patterns) {
@@ -35,6 +35,17 @@ function discoverShell(html) {
       if (url.startsWith('/')) urls.add(url);
     }
   }
+
+  // manifest 里声明的图标也一起收：装到桌面之后断网打开，图标不该是破图
+  try {
+    const manifest = await (await fetch('/manifest.webmanifest', { cache: 'no-store' })).json();
+    for (const icon of manifest.icons ?? []) {
+      if (typeof icon.src === 'string' && icon.src.startsWith('/')) urls.add(icon.src);
+    }
+  } catch {
+    // manifest 读不到不影响外壳：图标顶多离线时退化
+  }
+
   return [...urls];
 }
 
@@ -46,7 +57,7 @@ function discoverShell(html) {
  */
 async function refreshShell() {
   const response = await fetch('/index.html', { cache: 'no-store' });
-  const urls = discoverShell(await response.text());
+  const urls = await discoverShell(await response.text());
   const cache = await caches.open(CACHE);
 
   await cache.addAll(urls);

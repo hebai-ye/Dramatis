@@ -120,19 +120,17 @@ P1-7/P1-8 情绪与抗漂移、P1-9 调用预算与熔断（T19）、P1-10 七�
   生成前用便宜模型问「这一轮谁开口、他想做什么」，**角色真的照着自己的打算落笔**
   （三轮证据见 EVAL）。每回合额外调用仍是 2 次，意图调用也被计入「额外调用」。
 
-**仍然缺的**：全程 token 账单（用量计数是会话级的，中途重载会清零，属于 P3-7/T7），
-以及语音归属错位（T18）。50 回合长跑已跑完，结论见 EVAL.md 第四轮。
+**那之后补上的**：全程 token 账单（T7：账单落盘的流水，跨重载不丢）、
+分层摘要（T3）、调用熔断（T19）、召回评测（T21/T22）、封存导出（T9）、
+响应式与 PWA（T8）。**仍然缺的**只有语音归属错位（T18 只能事后检测与一键改归属，
+模型侧没根治）与「记忆合并成粗粒度印象」（T3 的一半）。
 
 **界面改版已收尾**：草图里那两个待确认的问题都已定稿（右缘那条竖线是真实的角色栏；
 运行时面板默认折叠，由主区标题栏的「面板」按钮开关），三批全部完成，
 差异表与实现取舍见 [LAYOUT.md](./LAYOUT.md)。
 
-**下一批建议**：做 T7（把用量写进任务与消息，长跑中途重载不再清零），
-再做 P1-5 分层摘要（T3，50 回合长跑的上下文曲线已经给出阈值依据）。
-界面已经能承载完整的创作流程
-（导入卡 → 开对话 → 主/副对话分工 → 归档回滚），现在挡在「好用」前面的是
-输出质量与成本，而不是还缺哪个按钮。之后按 ROADMAP 的批次 4 继续
-（P1-5 分层摘要 / P1-6 意图先行调度）。
+**下一批建议**：按 [SYNC.md](./SYNC.md) 的顺序做 P2-6 的第一步——数据层前置
+（补 `updatedAt`、加 `deletedAt`、加 `deviceId`），纯本地、可测、不碰网络。
 
 ## 怎么继续
 
@@ -142,16 +140,46 @@ pnpm desktop        # 起本地服务并用应用窗口打开
 pnpm test           # 351 个测试
 pnpm typecheck
 pnpm lint
+pnpm build          # 生产构建（PWA 的 Service Worker 只在这个产物里注册）
 ```
 
-真实模型验证的取样器：
+真机验证的三条路径：
 
 ```bash
+# 1) 应用里直接聊（Key 存在浏览器配置里；模型调用会真的花钱，别乱跑）
+# 2) 取样提示词，贴进 DeepSeek 网页版，再把回答贴回来
 pnpm --filter @dramatis/core test prompt-samples --silent=false --disableConsoleIntercept
+# 3) 召回探针（读本机真实记忆，用同一套内核跑评测）
+#    http://127.0.0.1:5273/tools/recall-probe.html
 ```
 
 工作约定：每个批次结束时都必须能构建、能测试、能提交；提交信息带任务编号；实现与计划有偏差时写进 ROADMAP 而不是悄悄改掉。
 
-界面部分已在浏览器里手动跑过一遍完整流程（导入卡 → 新对话 → 动作分段渲染 →
-切换场景旁白 → 归档并在设置里回顾 → 面板抽屉与模式菜单），无控制台报错；
-但**尚未用真实模型验证生成质量与工具调用的实际表现**。
+## 下一轮怎么开（给新会话的提示词）
+
+> 直接复制下面这段作为新会话的第一条消息：
+
+```text
+接着做 Dramatis（多角色扮演酒馆）。先读 docs/STATUS.md（接续点，里面有当前进度、
+下一步与「下一轮怎么开」），再读 docs/SYNC.md（账号与同步的选型，P2-5 已定稿）与
+docs/TASKS.md（工作清单）。
+
+这次要做：P2-6 的第一步「数据层前置」——
+1) 给 Scene / Message / MemoryEvent / ChapterSummary 补 updatedAt，并在所有写入路径更新；
+2) 加 deletedAt 软删除（改写 repository.delete*，查询默认过滤）；
+3) 本机 deviceId（存 meta）+ 消息带 deviceId，房间级 seq 改名 localSeq 并兼容老数据。
+
+要求：每一小步都能构建/测试/提交；提交信息带任务编号；实现与计划有偏差写进文档；
+做完在浏览器里真机验一遍（导出/导入、离线、手机视口都别回归）。
+```
+
+**环境与工具（这一轮踩过的，省得再摸一遍）**：
+
+| 事项 | 怎么弄 |
+| --- | --- |
+| 起本地服务 | 在 `apps/web` 下 `node node_modules/vite/bin/vite.js --host 127.0.0.1 --port 5273 --strictPort`。**必须沙箱外启动**，否则应用窗口连不上（沙箱内的服务自身能 200，浏览器却拒绝连接） |
+| 真机验证（浏览器） | 用 `cua_repl` 驱动应用窗口；标签页卡在错误页就新开一个（旧的关掉）。通道偶尔整体不可用（报 auth 错），那就退到下面的无头方案 |
+| 无头验证 | Playwright 用**系统 Chrome**：`chromium.launch({ executablePath: 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe' })`（Playwright 自带的 headless shell 没装）。模块路径 `C:\Users\35350\.cache\codex-runtimes\codex-primary-runtime\dependencies\node\node_modules`，用 `createRequire` 加载 |
+| PWA / Service Worker | 只在生产构建里注册：`pnpm build` 然后 `vite preview --port 4174`，用无头 Chrome 验。**别只清缓存不重装 SW**——脚本没变浏览器不会重新 install，缓存就一直是空的（我在这里绕过远路） |
+| 召回探针 | `http://127.0.0.1:5273/tools/recall-probe.html`（读本机真实记忆、用同一套内核跑探针） |
+| 真模型验证 | 两条路：应用里直接聊（Key 在浏览器配置里），或 `pnpm --filter @dramatis/core test prompt-samples --silent=false --disableConsoleIntercept` 生成提示词、贴进 DeepSeek 网页版 |

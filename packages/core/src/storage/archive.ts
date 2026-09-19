@@ -19,7 +19,7 @@ import {
   type SceneId,
 } from '../model/ids.js';
 import type { CharacterInstance } from '../model/instance.js';
-import type { MemoryEvent, Message } from '../model/message.js';
+import { localSeqOf, type MemoryEvent, type Message } from '../model/message.js';
 import type { Persona } from '../model/persona.js';
 import type { Room, Scene } from '../model/room.js';
 import type { Repository } from './repository.js';
@@ -117,8 +117,8 @@ export function buildWorldArchive(input: BuildArchiveInput): WorldArchive {
     conversations: [...input.conversations],
     scenes: [...input.scenes],
     instances: [...input.instances],
-    // 按原有 seq 排好：导入时仓储层会重新分配，但顺序必须原样保留
-    messages: [...input.messages].sort((left, right) => left.seq - right.seq),
+    // 按原有的房间内序号排好：导入时仓储层会重新分配，但顺序必须原样保留
+    messages: [...input.messages].sort((left, right) => localSeqOf(left) - localSeqOf(right)),
     memories: [...input.memories],
     chapters: [...input.chapters],
     cards: [...input.cards],
@@ -325,7 +325,7 @@ export async function importWorldArchive(
   };
   await repository.saveRoom(room);
 
-  // 7) 消息：按原顺序交给 appendMessages，seq 由仓储层重排
+  // 7) 消息：按原顺序交给 appendMessages，localSeq 与 deviceId 由仓储层重发
   await repository.appendMessages(
     roomId,
     archive.messages.map((message) => ({

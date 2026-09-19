@@ -64,8 +64,10 @@ export function createPlayerMessage(input: {
   content: string;
   /** 在场角色实例；留空表示所有人可见。 */
   audience?: InstanceId[];
-  /** 未落盘时留空，由仓储层的 appendMessages 分配。 */
-  seq?: number;
+  /** 未落盘时留空，由仓储层的 appendMessages 分配（P2-6：本机序号）。 */
+  localSeq?: number;
+  /** 未落盘时留空，由仓储层的 appendMessages 填上本机设备号。 */
+  deviceId?: string;
 }): Message {
   const now = nowIso();
   return {
@@ -74,7 +76,8 @@ export function createPlayerMessage(input: {
     conversationId: input.conversationId ?? null,
     sceneId: input.sceneId,
     turnId: input.turnId,
-    seq: input.seq ?? 0,
+    localSeq: input.localSeq ?? 0,
+    deviceId: input.deviceId ?? '',
     role: 'player',
     speakerInstanceId: null,
     speakerName: input.speakerName,
@@ -96,8 +99,10 @@ export function createCharacterMessage(input: {
   content: string;
   /** 在场角色实例；留空表示只有说话者可见。 */
   audience?: InstanceId[];
-  /** 未落盘时留空，由仓储层的 appendMessages 分配。 */
-  seq?: number;
+  /** 未落盘时留空，由仓储层的 appendMessages 分配（P2-6：本机序号）。 */
+  localSeq?: number;
+  /** 未落盘时留空，由仓储层的 appendMessages 填上本机设备号。 */
+  deviceId?: string;
 }): Message {
   const sanitized = sanitizeCharacterContent(input.content, input.speakerName);
   const now = nowIso();
@@ -108,7 +113,8 @@ export function createCharacterMessage(input: {
     conversationId: input.conversationId ?? null,
     sceneId: input.sceneId,
     turnId: input.turnId,
-    seq: input.seq ?? 0,
+    localSeq: input.localSeq ?? 0,
+    deviceId: input.deviceId ?? '',
     role: 'character',
     speakerInstanceId: input.speakerInstanceId,
     speakerName: input.speakerName,
@@ -170,7 +176,8 @@ export function createNarrationMessage(input: {
     conversationId: input.conversationId,
     sceneId: input.sceneId,
     turnId: input.turnId,
-    seq: 0,
+    localSeq: 0,
+    deviceId: '',
     role: 'narration',
     speakerInstanceId: null,
     speakerName: '旁白',

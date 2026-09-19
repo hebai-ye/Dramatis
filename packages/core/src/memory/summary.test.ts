@@ -33,7 +33,7 @@ function scene(overrides: Partial<Scene> = {}): Scene {
 }
 
 function line(input: {
-  seq: number;
+  localSeq: number;
   turnId: string;
   content: string;
   sceneIdValue?: string;
@@ -45,7 +45,8 @@ function line(input: {
     conversationId: conversationId('conv-1'),
     sceneId: sceneId(input.sceneIdValue ?? 'scene-1'),
     turnId: input.turnId,
-    seq: input.seq,
+    localSeq: input.localSeq,
+    deviceId: '',
     role: 'character',
     speakerInstanceId: null,
     speakerName: input.speaker ?? '秦娘',
@@ -63,7 +64,7 @@ describe('场景摘要提示词', () => {
       scene: scene(),
       cast: [{ id: 'inst-1', displayName: '秦娘' }],
       playerName: '旅人',
-      messages: [line({ seq: 1, turnId: 't1', content: '「三十箱货是谁的？」' })],
+      messages: [line({ localSeq: 1, turnId: 't1', content: '「三十箱货是谁的？」' })],
       previousSummary: '',
     });
 
@@ -83,7 +84,7 @@ describe('场景摘要提示词', () => {
       scene: scene(),
       cast: [],
       playerName: '旅人',
-      messages: [line({ seq: 9, turnId: 't9', content: '「船明早开。」' })],
+      messages: [line({ localSeq: 9, turnId: 't9', content: '「船明早开。」' })],
       previousSummary: '玩家问起三十箱货，秦娘没有正面回答。',
     });
 
@@ -94,7 +95,7 @@ describe('场景摘要提示词', () => {
 
   it('玩家的话标出「玩家」，免得摘要把他写成角色', () => {
     const playerLine: Message = {
-      ...line({ seq: 1, turnId: 't1', content: '「船明早开？」' }),
+      ...line({ localSeq: 1, turnId: 't1', content: '「船明早开？」' }),
       role: 'player',
       speakerName: '旅人',
     };
@@ -136,20 +137,20 @@ describe('摘要解析', () => {
 describe('触发条件', () => {
   it('只算这一场里、游标之后的消息', () => {
     const pending = pendingSummary(scene({ recapUpToSeq: 2 }), [
-      line({ seq: 1, turnId: 't1', content: '旧的一轮' }),
-      line({ seq: 2, turnId: 't1', content: '旧的一轮' }),
-      line({ seq: 3, turnId: 't2', content: '新的一轮' }),
-      line({ seq: 4, turnId: 't2', content: '新的一轮' }),
-      line({ seq: 5, turnId: 't3', content: '别的场景', sceneIdValue: 'scene-2' }),
+      line({ localSeq: 1, turnId: 't1', content: '旧的一轮' }),
+      line({ localSeq: 2, turnId: 't1', content: '旧的一轮' }),
+      line({ localSeq: 3, turnId: 't2', content: '新的一轮' }),
+      line({ localSeq: 4, turnId: 't2', content: '新的一轮' }),
+      line({ localSeq: 5, turnId: 't3', content: '别的场景', sceneIdValue: 'scene-2' }),
     ]);
 
-    expect(pending.messages.map((message) => message.seq)).toEqual([3, 4]);
+    expect(pending.messages.map((message) => message.localSeq)).toEqual([3, 4]);
     expect(pending.turns).toBe(1);
   });
 
   it('攒够轮数就压一次', () => {
     const messages = Array.from({ length: SUMMARY_TURN_THRESHOLD }, (_value, index) =>
-      line({ seq: index + 1, turnId: `t${String(index + 1)}`, content: '一句话。' }),
+      line({ localSeq: index + 1, turnId: `t${String(index + 1)}`, content: '一句话。' }),
     );
 
     expect(shouldSummarizeScene(scene(), messages)).toBe(true);
@@ -159,13 +160,13 @@ describe('触发条件', () => {
   it('轮数不够但 token 超了也压一次（长回合不能等）', () => {
     // 全角字符按 1 字符 ≈ 1 token 估，下面这条约 3200 token，超过默认阈值
     const chunk = '很长的一段叙述。'.repeat(400);
-    const messages = [line({ seq: 1, turnId: 't1', content: chunk })];
+    const messages = [line({ localSeq: 1, turnId: 't1', content: chunk })];
     expect(shouldSummarizeScene(scene(), messages)).toBe(true);
     expect(shouldSummarizeScene(scene(), messages, { tokenThreshold: 100_000 })).toBe(false);
   });
 
   it('没有新内容就不压（幂等：重跑不会把同一段压两遍）', () => {
-    const messages = [line({ seq: 1, turnId: 't1', content: '一句话。' })];
+    const messages = [line({ localSeq: 1, turnId: 't1', content: '一句话。' })];
     expect(shouldSummarizeScene(scene({ recapUpToSeq: 1 }), messages)).toBe(false);
     expect(shouldSummarizeScene(scene(), [])).toBe(false);
   });

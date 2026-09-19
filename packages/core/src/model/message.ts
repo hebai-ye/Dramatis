@@ -52,12 +52,21 @@ export interface Message {
   /** 一次玩家输入到角色回应视为同一回合。 */
   turnId: string;
   /**
-   * 房间内单调递增的序号，由仓储层在落盘时分配。
+   * 本机分配的房间内序号（P2-6，原字段名 `seq`）。
    *
    * 不依赖 createdAt 排序：同一毫秒内落盘的多条消息必须仍有稳定顺序，
-   * 这也是 P2-6 跨设备合并的基础。未落盘的消息此值为 0。
+   * 这也是跨设备合并的基础。**两台设备各排各的号**，所以排序要看
+   * `(deviceId, localSeq)`：单看号码，两台设备的第一条消息都是 1。
+   * 未落盘的消息此值为 0。
    */
-  seq: number;
+  localSeq: number;
+  /**
+   * 这条消息是在哪台设备上产生的（P2-6）。
+   *
+   * 未落盘时是空串，由仓储层的 `appendMessages` 填上本机设备号——
+   * 与 `localSeq` 一样，只有写库的人才知道该填什么。
+   */
+  deviceId: string;
   role: MessageRole;
   speakerInstanceId: InstanceId | null;
   speakerName: string;
@@ -100,6 +109,16 @@ export interface Message {
   updatedAt: string;
   /** 软删除墓碑（P2-6）：重抽、删除单条消息都是盖章，原文还在库里。 */
   deletedAt: string | null;
+}
+
+/**
+ * 取消息的房间内序号，兼容 P2-6 之前只有 `seq` 的老数据。
+ *
+ * 老库里的记录要等迁移 v6 改名，但读路径（摘要游标、封存排序）不能
+ * 因此拿到 undefined ——统一走这里，比到处写 `?? 0` 安全。
+ */
+export function localSeqOf(message: { localSeq?: number; seq?: number }): number {
+  return message.localSeq ?? message.seq ?? 0;
 }
 
 /**

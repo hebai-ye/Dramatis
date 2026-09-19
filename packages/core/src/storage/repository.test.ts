@@ -138,7 +138,7 @@ describe('Repository / schema', () => {
     const repo = new Repository(store);
     const report = await repo.migrate();
 
-    expect(report.applied.map((migration) => migration.version)).toEqual([2, 3, 4, 5]);
+    expect(report.applied.map((migration) => migration.version)).toEqual([2, 3, 4, 5, 6]);
 
     const personas = await repo.listPersonas();
     expect(personas).toHaveLength(1);
@@ -312,8 +312,8 @@ describe('Repository / 消息', () => {
     ]);
     const second = await repo.appendMessages(room.id, [message(room, scene, 'B')]);
 
-    expect(first[0]?.seq).toBe(1);
-    expect(second[0]?.seq).toBe(2);
+    expect(first[0]?.localSeq).toBe(1);
+    expect(second[0]?.localSeq).toBe(2);
     expect(Date.parse(first[0]?.updatedAt ?? '')).toBeGreaterThan(Date.parse('2020-01-01T00:00:00.000Z'));
     expect(Date.parse(second[0]?.updatedAt ?? '')).toBeGreaterThan(Date.parse('2020-01-01T00:00:00.000Z'));
   });
@@ -327,14 +327,15 @@ describe('Repository / 消息', () => {
       ...message(room, scene, content),
       id: messageId(newId()),
       createdAt: sameInstant,
-      seq: 0,
+      localSeq: 0,
+      deviceId: '',
     }));
 
     await repo.appendMessages(room.id, batch);
     const listed = await repo.listMessages(room.id);
 
     expect(listed.map((item) => item.content)).toEqual(['一', '二', '三']);
-    expect(listed.map((item) => item.seq)).toEqual([1, 2, 3]);
+    expect(listed.map((item) => item.localSeq)).toEqual([1, 2, 3]);
   });
 
   it('limit 返回最近的 N 条且保持正序', async () => {
@@ -361,7 +362,7 @@ describe('Repository / 消息', () => {
     expect(updated?.content).toBe('改过的');
     expect(updated?.id).toBe(saved.id);
     expect(updated?.roomId).toBe(saved.roomId);
-    expect(updated?.seq).toBe(saved.seq);
+    expect(updated?.localSeq).toBe(saved.localSeq);
     expect(Date.parse(updated?.updatedAt ?? '')).toBeGreaterThanOrEqual(Date.parse(saved.updatedAt));
   });
 
@@ -612,9 +613,7 @@ describe('Repository / 软删除（P2-6）', () => {
     expect(await queue.list()).toHaveLength(0);
     // 墓碑仍然在库里——世界没了，但它「没了」这件事要能被同步解释
     expect((await store.get<{ deletedAt: string | null }>(COLLECTIONS.rooms, room.id))?.deletedAt).not.toBeNull();
-    expect(
-      (await store.get<{ deletedAt: string | null }>(COLLECTIONS.scenes, scene.id))?.deletedAt,
-    ).not.toBeNull();
+    expect((await store.get<{ deletedAt: string | null }>(COLLECTIONS.scenes, scene.id))?.deletedAt).not.toBeNull();
   });
 
   it('删除是幂等的：重复删除不会把墓碑时间一路推到当下', async () => {
@@ -689,6 +688,144 @@ describe('Repository / 软删除（P2-6）', () => {
     const migrated = await store.get<{ deletedAt: string | null }>(COLLECTIONS.rooms, 'room-legacy');
     expect(migrated?.deletedAt).toBeNull();
     expect(await repo.getRoom(roomId('room-legacy'))).not.toBeNull();
+  });
+});
+
+describe('Repository / 本机设备与 localSeq（P2-6）', () => {
+  it('deviceId 存在 meta 里，同一个库怎么读都是同一个', async () => {
+    const store = createMemoryEntityStore();
+    const first = new Repository(store);
+    const created = await first.deviceId();
+
+    expect(created).not.toBe('');
+    expect(await first.deviceId()).toBe(created);
+    // 换一个 Repository 实例读同一个库：设备号必须一样，否则同一条消息
+    // 会被算成两台设备的（同步时排序会散架）
+    const second = new Repository(store);
+    expect(await second.deviceId()).toBe(created);
+    expect(await second.getMeta<string>(META_KEYS.deviceId)).toBe(created);
+  });
+
+  it('追加消息时盖上设备号与 localSeq', async () => {
+    const repo = new Repository(createMemoryEntityStore());
+    const { room, scene } = fixtures();
+    const deviceId = await repo.deviceId();
+
+    const [saved] = await repo.appendMessages(room.id, [message(room, scene, '一')]);
+
+    expect(saved?.deviceId).toBe(deviceId);
+    expect(saved?.localSeq).toBe(1);
+    // 改消息不该把设备号与号段改掉
+    const updated = await repo.updateMessage(saved?.id ?? messageId('missing'), { content: '改过' });
+    expect(updated?.deviceId).toBe(deviceId);
+    expect(updated?.localSeq).toBe(1);
+  });
+
+  it('库里只有老计数器键时，新号接着它排（不会从 1 重来）', async () => {
+    const repo = new Repository(createMemoryEntityStore());
+    const { room, scene } = fixtures();
+    await repo.setMeta(`seq:${room.id}`, 7);
+
+    const [saved] = await repo.appendMessages(room.id, [message(room, scene, '接着排')]);
+
+    expect(saved?.localSeq).toBe(8);
+  });
+
+  it('老消息只有 seq：读出来归一成 localSeq，排序不变', async () => {
+    const store = createMemoryEntityStore();
+    const repo = new Repository(store);
+    const { room, scene } = fixtures();
+    const at = '2026-01-01T00:00:00.000Z';
+    for (const [content, seq] of [
+      ['一', 1],
+      ['二', 2],
+      ['三', 3],
+    ] as const) {
+      await store.put(COLLECTIONS.messages, {
+        id: newId(),
+        roomId: room.id,
+        conversationId: null,
+        sceneId: scene.id,
+        turnId: 'turn-legacy',
+        seq,
+        role: 'player',
+        speakerInstanceId: null,
+        speakerName: '旅人',
+        audience: [],
+        content,
+        createdAt: at,
+        updatedAt: at,
+        deletedAt: null,
+      });
+    }
+
+    const listed = await repo.listMessages(room.id);
+
+    expect(listed.map((item) => item.content)).toEqual(['一', '二', '三']);
+    expect(listed.map((item) => item.localSeq)).toEqual([1, 2, 3]);
+    // 老记录没有设备号：读的时候按本机补上，不让调用方拿到 undefined
+    expect(listed[0]?.deviceId).toBe(await repo.deviceId());
+  });
+
+  it('迁移 v6：seq 改名 localSeq、补设备号、搬计数器', async () => {
+    const store = createMemoryEntityStore();
+    const roomIdValue = roomId(newId());
+    const at = '2026-01-02T00:00:00.000Z';
+    await store.put(COLLECTIONS.rooms, {
+      id: roomIdValue,
+      title: '旧世界',
+      personaId: null,
+      playerName: '旅人',
+      playerPersona: '',
+      cardIds: [],
+      instanceIds: [],
+      worldBookIds: [],
+      activeConversationId: null,
+      createdAt: at,
+      updatedAt: at,
+    });
+    await store.put(COLLECTIONS.messages, {
+      id: 'message-legacy',
+      roomId: roomIdValue,
+      conversationId: null,
+      sceneId: null,
+      turnId: 'turn-legacy',
+      seq: 3,
+      role: 'player',
+      speakerInstanceId: null,
+      speakerName: '旅人',
+      audience: [],
+      content: '旧消息',
+      createdAt: at,
+      updatedAt: at,
+      deletedAt: null,
+    });
+    await store.put(COLLECTIONS.meta, { id: `seq:${roomIdValue}`, value: 3, updatedAt: at });
+
+    const repo = new Repository(store);
+    const report = await repo.migrate();
+    expect(report.to).toBe(SCHEMA_VERSION);
+
+    const raw = await store.get<Record<string, unknown>>(COLLECTIONS.messages, 'message-legacy');
+    expect(raw?.localSeq).toBe(3);
+    expect(raw?.seq).toBeUndefined();
+    expect(typeof raw?.deviceId === 'string' && raw.deviceId !== '').toBe(true);
+
+    expect(await repo.getMeta(`seq:${roomIdValue}`)).toBeNull();
+    expect(await repo.getMeta(`localSeq:${roomIdValue}`)).toBe(3);
+
+    // 迁移之后接着写：拿到 4，而不是从 1 重来（重来就会和老消息撞号）
+    const [next] = await repo.appendMessages(roomIdValue, [
+      createPlayerMessage({
+        roomId: roomIdValue,
+        sceneId: null,
+        turnId: 'turn-new',
+        speakerName: '旅人',
+        content: '新消息',
+      }),
+    ]);
+    expect(next?.localSeq).toBe(4);
+    expect(next?.deviceId).toBe((raw?.deviceId as string) ?? '');
   });
 });
 

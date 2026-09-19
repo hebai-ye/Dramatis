@@ -17,7 +17,7 @@ import {
 } from '../model/ids.js';
 import type { CharacterInstance } from '../model/instance.js';
 import { aliveOnly, isAlive } from '../model/lifecycle.js';
-import type { AdminArtifact, MemoryEvent, Message } from '../model/message.js';
+import { type AdminArtifact, localSeqOf, type MemoryEvent, type Message } from '../model/message.js';
 import { createPersona, type Persona } from '../model/persona.js';
 import type { ProviderProfile } from '../model/provider.js';
 import type { Room, Scene } from '../model/room.js';
@@ -30,7 +30,7 @@ import { USAGE_COLLECTION } from './usage.js';
  * 任何会改变已落盘数据结构的改动都要 +1，并补一条 `Migration`。
  * 这是「从第一天就留好升级路径」的具体做法（ROADMAP P0-1）。
  */
-export const SCHEMA_VERSION = 5;
+export const SCHEMA_VERSION = 6;
 
 export const COLLECTIONS = {
   meta: 'meta',
@@ -52,6 +52,14 @@ export const COLLECTIONS = {
 export const META_KEYS = {
   schemaVersion: 'schema.version',
   lastRoomId: 'session.lastRoomId',
+  /**
+   * 本机设备号（P2-6）。
+   *
+   * 消息顺序是 `(deviceId, localSeq)`：两台设备各排各的号，没有设备号
+   * 就分不清「这条 1 号」是谁的。它存在 meta 里而不是设置里——用户不该
+   * 也不需要看见它，换台设备就是新的设备号。
+   */
+  deviceId: 'device.id',
 } as const;
 
 export interface Migration {
@@ -229,6 +237,51 @@ export const MIGRATIONS: readonly Migration[] = [
       }
     },
   },
+  {
+    version: 6,
+    describe: '本机 deviceId 落进 meta，消息的 seq 改名 localSeq 并补 deviceId（P2-6）',
+    run: async (store) => {
+      // 1) 本机设备号。迁移跑在任何写入之前，所以这里就得把它造出来——
+      //    否则应用启动后第一批消息会没有设备号。
+      const metaKey = META_KEYS.deviceId;
+      const existing = await store.get<{ id: string; value: unknown }>(COLLECTIONS.meta, metaKey);
+      let deviceId = typeof existing?.value === 'string' && existing.value !== '' ? existing.value : '';
+      if (deviceId === '') {
+        deviceId = newId();
+        await store.put(COLLECTIONS.meta, { id: metaKey, value: deviceId, updatedAt: nowIso() });
+      }
+
+      // 2) 消息：`seq` → `localSeq`。老消息都是**这台设备**写下的（本地库是唯一
+      //    真相源，别处不会凭空出现记录），所以设备号直接补本机的。
+      const messages = await store.list<Record<string, unknown> & { id: string }>(COLLECTIONS.messages);
+      for (const message of messages) {
+        const { seq: legacySeq, ...rest } = message;
+        const localSeq =
+          typeof rest.localSeq === 'number' ? rest.localSeq : typeof legacySeq === 'number' ? legacySeq : 0;
+        const messageDevice = typeof rest.deviceId === 'string' && rest.deviceId !== '' ? rest.deviceId : deviceId;
+        await store.put(COLLECTIONS.messages, { ...rest, id: message.id, localSeq, deviceId: messageDevice });
+      }
+
+      // 3) 房间级计数器一起改名，否则老库会从 1 重新发号（号码会撞）
+      const rooms = await store.list<{ id: string }>(COLLECTIONS.rooms);
+      for (const room of rooms) {
+        const legacyKey = `seq:${room.id}`;
+        const legacy = await store.get<{ id: string; value: unknown }>(COLLECTIONS.meta, legacyKey);
+        if (legacy === null) continue;
+
+        const nextKey = `localSeq:${room.id}`;
+        const current = await store.get<{ id: string; value: unknown }>(COLLECTIONS.meta, nextKey);
+        const legacyValue = typeof legacy.value === 'number' ? legacy.value : 0;
+        const currentValue = typeof current?.value === 'number' ? current.value : 0;
+        await store.put(COLLECTIONS.meta, {
+          id: nextKey,
+          value: Math.max(legacyValue, currentValue),
+          updatedAt: nowIso(),
+        });
+        await store.remove(COLLECTIONS.meta, legacyKey);
+      }
+    },
+  },
 ];
 
 interface MetaRecord {
@@ -238,12 +291,40 @@ interface MetaRecord {
 }
 
 /**
+ * 落盘的消息记录。
+ *
+ * 比 `Message` 多一个可选的 `seq`：P2-6 之前写下的老消息只有那个字段，
+ * 读到内存里之后一律走 `reviveMessage` 归一，别处不该再看见它。
+ */
+type StoredMessage = Message & { seq?: number; localSeq?: number; deviceId?: string };
+
+/** 老消息补上新字段：`seq` → `localSeq`，缺设备号时按本机算。 */
+function reviveMessage(raw: StoredMessage, fallbackDeviceId: string): Message {
+  const { seq: _legacySeq, ...rest } = raw;
+  return {
+    ...rest,
+    localSeq: raw.localSeq ?? raw.seq ?? 0,
+    deviceId: raw.deviceId ?? fallbackDeviceId,
+    updatedAt: raw.updatedAt ?? raw.createdAt,
+    deletedAt: raw.deletedAt ?? null,
+  };
+}
+
+/**
  * 仓储层（ROADMAP P0-1）。
  *
  * 所有落盘都经过这里，UI 不直接接触 `EntityStore`。这样换存储后端
  * （IndexedDB → SQLite）时，只有适配层需要改动。
  */
 export class Repository {
+  /**
+   * 本机设备号的内存缓存。
+   *
+   * 消息落盘时每条都要填它，而它只在 meta 里存一份——不缓存的话每次
+   * 追加消息都要多读一次库。
+   */
+  private deviceIdCache: string | null = null;
+
   constructor(
     private readonly store: EntityStore,
     private readonly migrations: readonly Migration[] = MIGRATIONS,
@@ -251,6 +332,32 @@ export class Repository {
 
   get backendKind(): string {
     return this.store.kind;
+  }
+
+  // ---- 本机设备（P2-6） ----
+
+  /**
+   * 本机设备号，第一次访问时生成并落进 meta。
+   *
+   * 为什么要有它：两台设备离线各聊一段，合并后消息的顺序靠
+   * `(deviceId, localSeq)` 才稳定——时间戳会被设备时钟搞乱，而房间内
+   * 序号两边会各自从 1 开始。
+   *
+   * 不放进设置面板：用户不需要看见它，也不该被允许改（改了等于换设备）。
+   */
+  async deviceId(): Promise<string> {
+    if (this.deviceIdCache !== null) return this.deviceIdCache;
+
+    const existing = await this.getMeta<string>(META_KEYS.deviceId);
+    if (typeof existing === 'string' && existing !== '') {
+      this.deviceIdCache = existing;
+      return existing;
+    }
+
+    const created = newId();
+    await this.setMeta(META_KEYS.deviceId, created);
+    this.deviceIdCache = created;
+    return created;
   }
 
   // ---- 软删除与默认过滤（P2-6） ----
@@ -574,20 +681,32 @@ export class Repository {
   // ---- 消息 ----
 
   /**
-   * 追加消息并分配房间内单调递增的 `seq`。
+   * 追加消息并分配房间内单调递增的 `localSeq`，同时盖上本机 `deviceId`。
    *
    * 不依赖时间戳排序：同一毫秒内落盘的多条消息必须仍有稳定顺序，
-   * 这是 P2-6 跨设备合并的前提。
+   * 这是跨设备合并的前提。
+   *
+   * 计数器键从 `seq:<room>` 改名成 `localSeq:<room>`；老键仍然认（迁移 v6
+   * 会搬过去），另外计数器万一丢了就按库里已有的最大号续上——宁可跳号，
+   * 也不能把号码发重（发重了排序就不稳定了）。
    */
   async appendMessages(roomId: RoomId, messages: readonly Message[]): Promise<Message[]> {
-    const counterKey = `seq:${roomId}`;
-    let next = (await this.getMeta<number>(counterKey)) ?? 0;
+    const deviceId = await this.deviceId();
+    const counterKey = `localSeq:${roomId}`;
+    let next = await this.getMeta<number>(counterKey);
+    if (next === null) next = await this.getMeta<number>(`seq:${roomId}`);
+    if (next === null) {
+      const existing = await this.store.list<StoredMessage>(COLLECTIONS.messages, { where: { roomId } });
+      next = existing.reduce((max, item) => Math.max(max, localSeqOf(item)), 0);
+    }
 
     const now = nowIso();
     const stamped: Message[] = [];
     for (const message of messages) {
       next += 1;
-      stamped.push({ ...message, roomId, seq: next, updatedAt: now, deletedAt: null });
+      // 老封存文件里可能还带着 `seq`：丢掉它，库里只留 `localSeq` 一个名字
+      const { seq: _legacySeq, ...rest } = message as StoredMessage;
+      stamped.push({ ...rest, roomId, localSeq: next, deviceId, updatedAt: now, deletedAt: null });
     }
 
     await this.store.bulkPut(COLLECTIONS.messages, stamped);
@@ -600,6 +719,9 @@ export class Repository {
    *
    * 传了 `conversationId` 就只取那条对话的消息——主对话与副对话是两条
    * 独立记录，混在一起会让管理员的草稿出现在角色的剧情里。
+   *
+   * 排序用 `localSeq`（P2-6 之前的记录只有 `seq`，读的时候现归一），
+   * 所以这里不把排序交给存储层：老字段排不出正确的顺序。
    */
   async listMessages(
     roomId: RoomId,
@@ -608,27 +730,37 @@ export class Repository {
     const where: Record<string, unknown> = { roomId };
     if (options.conversationId !== undefined) where.conversationId = options.conversationId;
 
-    const all = await this.store.list<Message>(COLLECTIONS.messages, {
-      where,
-      orderBy: 'seq',
-      direction: 'asc',
-    });
+    // 老记录没有设备号：按本机补，而不是漏成空串——「这条消息是谁写的」
+    // 在跨设备排序里是必需信息。第一次读会顺手把本机设备号建出来。
+    const deviceId = await this.deviceId();
+    const stored = await this.store.list<StoredMessage>(COLLECTIONS.messages, { where });
+    const ordered = stored
+      .map((item) => reviveMessage(item, deviceId))
+      .sort((left, right) => left.localSeq - right.localSeq);
     // 软删除必须在**分页之前**过滤：先取 limit 条再过滤的话，被删掉的那条
     // 会白占一个名额，用户会看到历史凭空少一截
-    const alive = options.includeDeleted === true ? all : aliveOnly(all);
+    const alive = options.includeDeleted === true ? ordered : aliveOnly(ordered);
     const limit = options.limit;
     return limit === undefined ? alive : alive.slice(Math.max(0, alive.length - limit));
   }
 
+  /** 读一条消息（软删除的不返回），老记录在这里归一。 */
+  private async getMessage(id: MessageId): Promise<Message | null> {
+    const raw = await this.store.get<StoredMessage>(COLLECTIONS.messages, id);
+    if (raw === null || !isAlive(raw)) return null;
+    return reviveMessage(raw, this.deviceIdCache ?? '');
+  }
+
   async updateMessage(id: MessageId, patch: Partial<Message>): Promise<Message | null> {
-    const existing = await this.store.get<Message>(COLLECTIONS.messages, id);
+    const existing = await this.getMessage(id);
     if (!existing) return null;
     const updated = {
       ...existing,
       ...patch,
       id: existing.id,
       roomId: existing.roomId,
-      seq: existing.seq,
+      localSeq: existing.localSeq,
+      deviceId: existing.deviceId,
       updatedAt: nowIso(),
       deletedAt: null,
     };
@@ -652,7 +784,7 @@ export class Repository {
     messageId: MessageId,
     artifactId: string,
   ): Promise<{ message: Message; artifact: AdminArtifact | null } | null> {
-    const message = await this.getAlive<Message>(COLLECTIONS.messages, messageId);
+    const message = await this.getMessage(messageId);
     if (!message || message.artifacts === undefined) return null;
 
     const target = message.artifacts.find((item) => item.id === artifactId);
@@ -684,7 +816,7 @@ export class Repository {
 
   /** 丢弃一条草稿：只改状态，不删记录——用户可能过一会儿又想要它。 */
   async discardAdminArtifact(messageId: MessageId, artifactId: string): Promise<Message | null> {
-    const message = await this.getAlive<Message>(COLLECTIONS.messages, messageId);
+    const message = await this.getMessage(messageId);
     if (!message || message.artifacts === undefined) return null;
 
     const updated: Message = {

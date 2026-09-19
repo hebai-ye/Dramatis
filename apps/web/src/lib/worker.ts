@@ -349,7 +349,10 @@ export function useBackgroundWorker(options: {
       if (parsed.summary !== '') {
         const recap =
           parsed.keyFacts.length === 0 ? parsed.summary : `${parsed.summary}\n要点：${parsed.keyFacts.join('；')}`;
-        const lastSeq = pending.messages.reduce((max, message) => Math.max(max, message.seq), scene.recapUpToSeq ?? 0);
+        const lastSeq = pending.messages.reduce(
+          (max, message) => Math.max(max, message.localSeq),
+          scene.recapUpToSeq ?? 0,
+        );
         await db.repository.saveScene({
           ...scene,
           recap,

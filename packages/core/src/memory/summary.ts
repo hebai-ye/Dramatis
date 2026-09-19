@@ -1,5 +1,6 @@
 import type { ConversationId, RoomId, SceneId } from '../model/ids.js';
 import type { Message } from '../model/message.js';
+import { localSeqOf } from '../model/message.js';
 import type { Scene } from '../model/room.js';
 import type { ChatMessage } from '../prompt/types.js';
 import { heuristicTokenCounter, type TokenCounter } from '../token/estimate.js';
@@ -219,7 +220,7 @@ export function pendingSummary(
   counter: TokenCounter = heuristicTokenCounter,
 ): PendingSummary {
   const cursor = scene.recapUpToSeq ?? 0;
-  const scoped = messages.filter((message) => message.sceneId === scene.id && message.seq > cursor);
+  const scoped = messages.filter((message) => message.sceneId === scene.id && localSeqOf(message) > cursor);
 
   const turns = new Set(scoped.map((message) => message.turnId)).size;
   const tokens = scoped.reduce((total, message) => total + counter.count(message.content), 0);

@@ -292,6 +292,7 @@ git ls-files | ForEach-Object {
 | 09-19 22:57 | `ac70781` | **P2-6 第一步（2/3）**：`deletedAt` 软删除——`delete*` 改墓碑、查询默认过滤（迁移 v5） |
 | 09-19 23:03 | `f43d5cd` | **P2-6 第一步（3/3）**：本机 `deviceId` + 消息 `localSeq`（`seq` 改名，迁移 v6） |
 | 09-19 23:30 | `ae8cbb6` | **P2-6 第二步**：`core/crypto` 加密工具（折 id / PBKDF2 / AES-GCM + AAD / 两种凭证 / 恢复码 / 主密钥封装）+ 真浏览器探针页 |
+| 09-19 23:37 | `f9c55b8` | **P2-6 第二步补**：AAD 改用 `updatedAt`，并让每条记录的 `updatedAt` 严格递增（定 SYNC §4.4 的空隙） |
 
 ---
 
@@ -340,6 +341,7 @@ git ls-files | ForEach-Object {
 | `packages/core/src/crypto/encoding.ts` | 2026-09-19 23:14 | 2026-09-19 23:20 | 2026-09-19 23:30（`ae8cbb6`） | base64url、随机字节、定长比较、WebCrypto 句柄（零依赖） |
 | `packages/core/src/crypto/keys.ts` | 2026-09-19 23:15 | 2026-09-19 23:29 | 2026-09-19 23:30（`ae8cbb6`） | 折 id 成空间句柄、PBKDF2 派生、凭证与哈希、**主密钥封装**、恢复码生成与归一 |
 | `packages/core/src/crypto/records.ts` | 2026-09-19 23:16 | 2026-09-19 23:20 | 2026-09-19 23:30（`ae8cbb6`） | 记录级 AES-256-GCM 加解密 + AAD 绑坐标 + 密文大小口径 |
+| 同上（`records.ts`） | 2026-09-19 23:36 | 2026-09-19 23:36 | 2026-09-19 23:37（`f9c55b8`） | AAD 的第四段从 `rev` 改成 `updatedAt`（SYNC §4.4 方案 A） |
 | `packages/core/src/crypto/keys.test.ts` | 2026-09-19 23:17 | 2026-09-19 23:29 | 2026-09-19 23:30（`ae8cbb6`） | 25 条：句柄/凭证/用途隔离/封装错误路径/恢复码（含「密码与恢复码解出同一把主密钥」） |
 | `packages/core/src/crypto/records.test.ts` | 2026-09-19 23:17 | 2026-09-19 23:20 | 2026-09-19 23:30（`ae8cbb6`） | 14 条：往返、密文不含明文、IV 随机、篡改与四种坐标错位都解不开 |
 | `apps/web/tools/crypto-probe.html` `crypto-probe.ts` | 2026-09-19 23:22 | 2026-09-19 23:29 | 2026-09-19 23:30（`ae8cbb6`） | 开发用探针页：真浏览器跑 19 项检查并打出 PBKDF2 的真实耗时（EVAL 第八节） |
@@ -386,7 +388,7 @@ git ls-files | ForEach-Object {
 | `packages/core/src/render/segments.ts` | 2026-09-19 20:45 | **T20**：动作段的第一人称 → 说话人的名字（引号内不动、第二次主语省略） |
 | `apps/web/src/components/MessageBody.tsx` | 2026-09-19 20:45 | 角色的动作按新规则渲染，玩家的保持第一人称 |
 | `apps/web/src/components/UsagePanel.tsx` | 2026-09-19 20:45 | 本局上限的草稿式编辑 + 已用/还能再调 + 已熔断提示 |
-| `packages/core/src/storage/repository.ts` | 2026-09-19 23:03 | **P2-6**：写入路径统一盖章（`updatedAt` / `deletedAt`）、软删除与默认过滤、`deviceId()`、`appendMessages` 发 `localSeq`、迁移 v4/v5/v6 |
+| `packages/core/src/storage/repository.ts` | 2026-09-19 23:37 | **P2-6**：写入路径统一盖章（`updatedAt` / `deletedAt`，且 `updatedAt` 严格递增）、软删除与默认过滤、`deviceId()`、`appendMessages` 发 `localSeq`、迁移 v4/v5/v6 |
 | `packages/core/src/model/message.ts` | 2026-09-19 23:03 | `Message` 增 `localSeq` / `deviceId` / `updatedAt` / `deletedAt`；`localSeqOf()` 兼容老 `seq` |
 | `packages/core/src/model/room.ts` | 2026-09-19 22:57 | `Scene` 增 `updatedAt` / `deletedAt`；`Room` 增 `deletedAt` |
 | `packages/core/src/model/card.ts` | 2026-09-19 22:57 | **偏差**：`Card` 与 `WorldBook` 原本连 `createdAt` 都没有，补 `createdAt` / `updatedAt` / `deletedAt` |

@@ -288,6 +288,9 @@ git ls-files | ForEach-Object {
 | 09-19 22:07 | `e0fdc1e` | T8b PWA：可安装、离线外壳（含两个实测坑）、存储持久化面板 |
 | 09-19 22:31 | `2742a30` | 换成用户给的应用图标（圣杯 + 彩虹火焰），去掉 AI 水印 |
 | 09-19 22:23 | `d755677` | T6/P2-5 账号与同步的方案选型（新增 SYNC.md） |
+| 09-19 22:47 | `1eed734` | **P2-6 第一步（1/3）**：四类实体补 `updatedAt`，写入路径统一盖章（迁移 v4） |
+| 09-19 22:57 | `ac70781` | **P2-6 第一步（2/3）**：`deletedAt` 软删除——`delete*` 改墓碑、查询默认过滤（迁移 v5） |
+| 09-19 23:03 | `f43d5cd` | **P2-6 第一步（3/3）**：本机 `deviceId` + 消息 `localSeq`（`seq` 改名，迁移 v6） |
 
 ---
 
@@ -331,6 +334,7 @@ git ls-files | ForEach-Object {
 | `packages/core/src/eval/recall-baseline.test.ts` | 2026-09-19 20:50 | 2026-09-19 20:50 | 2026-09-19 20:58（`ddf4ab0`） | 5 条回归红线 + 把评测表打出来 |
 | `apps/web/tools/recall-probe.html` | 2026-09-19 20:51 | 2026-09-19 20:51 | 2026-09-19 20:58（`ddf4ab0`） | 开发用探针页（不进应用构建） |
 | `apps/web/tools/recall-probe.ts` | 2026-09-19 20:51 | 2026-09-19 20:54 | 2026-09-19 20:58（`ddf4ab0`） | 读本机库里的真实记忆、用同一套内核实现跑探针 |
+| `packages/core/src/model/lifecycle.ts` | 2026-09-19 22:52 | 2026-09-19 22:52 | 2026-09-19 22:57（`ac70781`） | **P2-6 软删除**：`isAlive` / `aliveOnly`——「字段不存在」与 null 一视同仁，老数据不用先迁移也能读 |
 
 ### 改动文件（最近一次提交时间）
 
@@ -374,6 +378,13 @@ git ls-files | ForEach-Object {
 | `packages/core/src/render/segments.ts` | 2026-09-19 20:45 | **T20**：动作段的第一人称 → 说话人的名字（引号内不动、第二次主语省略） |
 | `apps/web/src/components/MessageBody.tsx` | 2026-09-19 20:45 | 角色的动作按新规则渲染，玩家的保持第一人称 |
 | `apps/web/src/components/UsagePanel.tsx` | 2026-09-19 20:45 | 本局上限的草稿式编辑 + 已用/还能再调 + 已熔断提示 |
+| `packages/core/src/storage/repository.ts` | 2026-09-19 23:03 | **P2-6**：写入路径统一盖章（`updatedAt` / `deletedAt`）、软删除与默认过滤、`deviceId()`、`appendMessages` 发 `localSeq`、迁移 v4/v5/v6 |
+| `packages/core/src/model/message.ts` | 2026-09-19 23:03 | `Message` 增 `localSeq` / `deviceId` / `updatedAt` / `deletedAt`；`localSeqOf()` 兼容老 `seq` |
+| `packages/core/src/model/room.ts` | 2026-09-19 22:57 | `Scene` 增 `updatedAt` / `deletedAt`；`Room` 增 `deletedAt` |
+| `packages/core/src/model/card.ts` | 2026-09-19 22:57 | **偏差**：`Card` 与 `WorldBook` 原本连 `createdAt` 都没有，补 `createdAt` / `updatedAt` / `deletedAt` |
+| `packages/core/src/model/conversation.ts` `instance.ts` `persona.ts` | 2026-09-19 22:57 | 三类实体补 `deletedAt`，构造器默认 null |
+| `packages/core/src/storage/archive.ts` | 2026-09-19 23:03 | 导出按 `localSeqOf` 排序（老封存文件也能读），导入时序号与设备号由仓储层重发 |
+| `apps/web/src/lib/worker.ts` `admin.ts` | 2026-09-19 23:03 | 新建实体补新字段；场记游标改用 `message.localSeq` |
 
 ---
 

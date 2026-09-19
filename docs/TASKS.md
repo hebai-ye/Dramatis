@@ -172,18 +172,25 @@
       `backgroundTasks`（设备本地的执行状态）、API Key 都**不同步**
 - [x] 盘点清楚数据层要补什么，并排出顺序（见下）
 
-**🔜 P2-6 第一步：数据层前置（纯本地改动，可测，不碰网络）**
+**🔜 P2-6 第一步：数据层前置（✅ 2026-09-19 交付，三个提交）**
 
-- [ ] 给 `Scene` / `Message` / `MemoryEvent` / `ChapterSummary` 补 `updatedAt`
-      （其余实体已经有了），并在所有写入路径更新
-- [ ] 加 `deletedAt` 软删除：改写 `repository.delete*`，查询默认过滤，
-      同步时作为墓碑推出去（否则另一台设备下次同步会把删掉的东西推回来）
-- [ ] 本机 `deviceId`（存 meta）+ 消息带 `deviceId`，现有房间级 `seq` 改名 `localSeq`
-      （保持向后兼容，老数据补一个默认设备）
+- [x] 给 `Scene` / `Message` / `MemoryEvent` / `ChapterSummary` 补 `updatedAt`，
+      并在所有写入路径更新（`1eed734`，迁移 v4）
+      · 偏差：`Card` 与 `WorldBook` 连 `createdAt` 都没有（原以为「其余实体已经有了」），
+      一并补上 `createdAt` / `updatedAt` / `deletedAt`
+- [x] 加 `deletedAt` 软删除：改写 `repository.delete*`，查询默认过滤
+      （`ac70781`，迁移 v5）——同步时作为墓碑推出去，
+      否则另一台设备下次同步会把删掉的东西推回来
+- [x] 本机 `deviceId`（存 meta）+ 消息带 `deviceId`，房间级 `seq` 改名 `localSeq`
+      （`f43d5cd`，迁移 v6；老数据补本机设备号、计数器键一起改名）
 - [ ] 加密工具（`core/crypto`）：派生、加解密、两种凭证
 - [ ] 之后才是同步循环与 Worker 参考实现
 
 - **来源**：ROADMAP P2，是「手机和电脑同一条世界线」的前提
+- **验证**：EVAL 第七节——真机（无头 Chrome）跑 v2→v6 迁移、导出/导入往返、
+  删除留墓碑、离线外壳、390×780 手机视口，0 控制台错误
+- **另有一条选型修订**：用户 id 改成**用户自己填**（可填手机号、不要验证码、
+  密码自己设），见 [SYNC.md](./SYNC.md) §3.1 修订
 
 ### ✅ T7 用量与成本统计完整化（P3-7 续）
 

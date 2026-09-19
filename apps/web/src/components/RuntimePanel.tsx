@@ -1,6 +1,7 @@
 import type {
   AssembledPrompt,
   Card,
+  ChapterSummary,
   CharacterInstance,
   EventId,
   InstanceId,
@@ -24,6 +25,8 @@ interface Props {
   scene: Scene | null;
   instances: CharacterInstance[];
   memories: MemoryEvent[];
+  /** 已滚成章节的前情（P1-5）。 */
+  chapters: ChapterSummary[];
   attachedWorldBooks: WorldBook[];
   libraryCards: Card[];
   prompt: AssembledPrompt | null;
@@ -157,6 +160,7 @@ export function RuntimePanel(props: Props) {
       {tab === 'memory' ? (
         <MemoryPanel
           memories={props.memories}
+          chapters={props.chapters}
           instances={props.instances}
           pending={props.pending}
           extraCalls={props.extraCalls}

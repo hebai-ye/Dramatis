@@ -240,6 +240,65 @@ describe('assemblePrompt', () => {
 });
 
 describe('assemblePrompt / 多角色场景', () => {
+  it('场景块带上自动整理的本场场记（P1-5 的场景层）', () => {
+    const { card, instance, room, scene } = fixtures();
+    const withRecap: Scene = {
+      ...scene,
+      summary: '雨夜的酒馆',
+      recap: '玩家问起三十箱货，Alice 没有正面回答。\n要点：三十箱货在船舱夹层',
+      recapUpToSeq: 12,
+    };
+
+    const prompt = assemblePrompt({
+      card,
+      instance,
+      room,
+      scene: withRecap,
+      history: [],
+      playerInput: '继续',
+      budget: baseBudget,
+    });
+
+    const system = prompt.messages[0]?.content ?? '';
+    // 人写的简介与自动场记是两件事，各占一行
+    expect(system).toContain('场景摘要：雨夜的酒馆');
+    expect(system).toContain('本场已经发生：玩家问起三十箱货，Alice 没有正面回答。');
+    expect(system).toContain('要点：三十箱货在船舱夹层');
+  });
+
+  it('章节摘要进「前情提要」块，更早的只报条数', () => {
+    const { card, instance, room, scene } = fixtures();
+    const chapter = (index: number) => ({
+      id: `chapter-${String(index)}`,
+      roomId: room.id,
+      conversationId: null,
+      title: `第 ${String(index)} 章 · 旧城`,
+      sceneIds: [],
+      summary: `第 ${String(index)} 章的经过。`,
+      keyFacts: [`第 ${String(index)} 章的要点`],
+      createdAt: nowIso(),
+    });
+
+    const prompt = assemblePrompt({
+      card,
+      instance,
+      room,
+      scene,
+      history: [],
+      playerInput: '继续',
+      chapters: [chapter(1), chapter(2), chapter(3), chapter(4), chapter(5)],
+      budget: baseBudget,
+    });
+
+    const system = prompt.messages[0]?.content ?? '';
+    expect(system).toContain('前情提要');
+    // 只带最近三章：太久的只报个数，不占预算
+    expect(system).toContain('更早还有 2 章（略）');
+    expect(system).toContain('第 5 章的经过。');
+    expect(system).not.toContain('第 1 章的经过。');
+    expect(prompt.blocks.some((block) => block.id === 'chapter')).toBe(true);
+  });
+
   it('场景块列出在场角色与各自的状态', () => {
     const { card, instance, room, scene } = fixtures();
     const bob = makeInstance(room, card, 'Bob', 'muted');

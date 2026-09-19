@@ -1,4 +1,5 @@
 import type { WorldBookMatch } from '../compat/sillytavern/worldbook.js';
+import type { ChapterSummary } from '../memory/summary.js';
 import type { Card } from '../model/card.js';
 import type { ConversationModes } from '../model/conversation.js';
 import { type InstanceId, PLAYER } from '../model/ids.js';
@@ -37,6 +38,13 @@ export interface AssembleInput {
   playerInput: string;
   worldBookMatches?: WorldBookMatch[];
   memories?: PromptMemory[];
+  /**
+   * 已经滚成章节的前情（P1-5），按时间正序。
+   *
+   * 只带最近几章：更早的压成一句「还有 N 章」。原文没有被删除，
+   * 需要细节时靠记忆召回与「展开回想」去找，而不是把整段历史塞回 prompt。
+   */
+  chapters?: readonly ChapterSummary[];
   /** 场景内的角色，用于让模型知道还有谁在场（P0-6）。 */
   cast?: readonly CharacterInstance[];
   /** 会话级对话模式：静默、是否必须等主角先开口（LAYOUT「输入区 · 加号」）。 */
@@ -303,6 +311,10 @@ function buildSceneBlock(
   }
 
   if (scene.summary.trim() !== '') lines.push(`场景摘要：${scene.summary.trim()}`);
+  // 滚动场记（P1-5 的场景层）：已经过去的部分不再占原文的位置
+  if (scene.recap !== undefined && scene.recap.trim() !== '') {
+    lines.push(`本场已经发生：${scene.recap.trim()}`);
+  }
 
   if (cast.length > 0) {
     const roster = cast
@@ -369,6 +381,40 @@ function buildMemoryBlocks(memories: PromptMemory[]): PromptBlock[] {
       score: memory.score,
     };
   });
+}
+
+/** 一次最多带几章；更早的只报条数，不占预算。 */
+const CHAPTER_BLOCK_LIMIT = 3;
+
+/**
+ * 章节块（P1-5 的第三层）。
+ *
+ * 前面的戏早就不在窗口里了，靠零散的记忆条目召回是**抽查**；这一块给的是
+ * 「前面发生过什么」的连续线索。只带最近三章：更早的压成一句「还有 N 章」，
+ * 因为越久远的越可能只是氛围，而不是当下要用的线索。
+ */
+function buildChapterBlock(chapters: readonly ChapterSummary[]): PromptBlock | null {
+  if (chapters.length === 0) return null;
+
+  const recent = chapters.slice(-CHAPTER_BLOCK_LIMIT);
+  const body = recent
+    .map((chapter) => {
+      const facts = chapter.keyFacts.length === 0 ? '' : `（要点：${chapter.keyFacts.join('；')}）`;
+      return `${chapter.title}：${chapter.summary.trim()}${facts}`;
+    })
+    .join('\n');
+
+  const older = chapters.length - recent.length;
+  const prefix = older <= 0 ? '' : `更早还有 ${String(older)} 章（略）。\n`;
+
+  return {
+    id: 'chapter',
+    kind: 'chapter',
+    label: '前情提要',
+    content: prefix + body,
+    priority: PRIORITY.history + 10,
+    droppable: true,
+  };
 }
 
 /**
@@ -477,6 +523,9 @@ export function assemblePrompt(input: AssembleInput): AssembledPrompt {
   if (relationshipBlock) blocks.push(relationshipBlock);
 
   blocks.push(...buildMemoryBlocks(input.memories ?? []));
+
+  const chapterBlock = buildChapterBlock(input.chapters ?? []);
+  if (chapterBlock) blocks.push(chapterBlock);
 
   const cast = input.cast ?? [];
   const sceneBlock = buildSceneBlock(input.scene, cast, input.instance.id);

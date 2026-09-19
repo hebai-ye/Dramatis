@@ -36,6 +36,8 @@ export type PromptBlockKind =
   | 'persona'
   | 'relationship'
   | 'memory'
+  /** 分层摘要滚出来的前情（P1-5）：自成一节，不与召回记忆合并。 */
+  | 'chapter'
   | 'scene'
   | 'history'
   | 'instruction'

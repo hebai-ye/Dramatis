@@ -1,4 +1,4 @@
-import type { CharacterInstance, EventId, MemoryEvent } from '@dramatis/core';
+import type { ChapterSummary, CharacterInstance, EventId, MemoryEvent } from '@dramatis/core';
 import { useMemo, useState } from 'react';
 
 interface Props {
@@ -12,6 +12,10 @@ interface Props {
    * 账单冲没了（T7）。现在读的是流水，跨刷新、跨重启都对得上。
    */
   extraCalls: number;
+  /**
+   * 已经滚成章节的前情（P1-5）。
+   */
+  chapters: ChapterSummary[];
   workerError: string | null;
   disabled: boolean;
   onUpdate: (id: EventId, patch: Partial<MemoryEvent>) => void;
@@ -37,6 +41,7 @@ export function MemoryPanel({
   instances,
   pending,
   extraCalls,
+  chapters,
   workerError,
   disabled,
   onUpdate,
@@ -87,6 +92,27 @@ export function MemoryPanel({
           ))}
         </select>
       </label>
+
+      {chapters.length === 0 ? null : (
+        <section className="chapter-block">
+          <h3>前情提要</h3>
+          <p className="hint">几场戏滚成的一章。原文一条都没删，只是不再占着 prompt 的位置。</p>
+          <ul className="chapter-list">
+            {chapters.map((chapter) => (
+              <li key={chapter.id}>
+                <div className="memory-head">
+                  <span className="tag accent">{chapter.title}</span>
+                  <span className="hint">{formatTime(chapter.createdAt)}</span>
+                </div>
+                <p className="memory-summary">{chapter.summary}</p>
+                {chapter.keyFacts.length === 0 ? null : (
+                  <p className="memory-perception">要点：{chapter.keyFacts.join('；')}</p>
+                )}
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
 
       {filtered.length === 0 ? (
         <p className="hint">

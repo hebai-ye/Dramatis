@@ -77,6 +77,7 @@ export const CATEGORY_LABELS: Record<string, string> = {
   generation: '角色生成',
   intent: '意图判断',
   analysis: '一轮分析（记忆 + 状态）',
+  summary: '前情摘要',
   admin: '世界管理员',
   memory: '记忆抽取（旧版）',
   affect: '状态推演（旧版）',

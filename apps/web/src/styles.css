@@ -369,6 +369,55 @@ button.ghost {
 
 /* ---------- 用量与花费（T7） ---------- */
 
+/* ---------- 分层摘要（P1-5） ---------- */
+
+.recap {
+  border-top: 1px dashed var(--line);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-top: 10px;
+}
+
+.recap h3,
+.chapter-block h3 {
+  font-size: 12px;
+  margin: 0;
+}
+
+.recap-text {
+  background: var(--surface-2, transparent);
+  line-height: 1.6;
+  margin: 0;
+  white-space: pre-wrap;
+}
+
+.chapter-block {
+  border-top: 1px dashed var(--line);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-top: 10px;
+}
+
+.chapter-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.chapter-list li {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px;
+}
+
 .usage-list {
   display: flex;
   flex-direction: column;

@@ -4,6 +4,7 @@ import {
   roomId as asRoomId,
   type Card,
   type CardId,
+  type ChapterSummary,
   type CharacterInstance,
   type Conversation,
   type ConversationId,
@@ -120,6 +121,8 @@ export interface SessionApi {
   cards: Card[];
   worldBooks: WorldBook[];
   memories: MemoryEvent[];
+  /** 已滚成章节的前情（P1-5），按时间正序。 */
+  chapters: ChapterSummary[];
   personas: Persona[];
   library: { cards: Card[]; worldBooks: WorldBook[] };
 
@@ -1153,6 +1156,11 @@ export function useSession(db: DramatisDb | null): SessionApi {
     cards: snapshot?.cards ?? [],
     worldBooks: snapshot?.worldBooks ?? [],
     memories: snapshot?.memories ?? [],
+    // 只带当前对话的章节：跨对话的前情不该串味（副对话本来也没有章节）
+    chapters:
+      snapshot === null || conversation === null
+        ? []
+        : snapshot.chapters.filter((chapter) => chapter.conversationId === conversation.id),
     personas: snapshot?.personas ?? [],
     library,
     openWorld,

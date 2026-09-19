@@ -52,7 +52,12 @@ import { useAdminChat } from './lib/admin';
 import { useProviders } from './lib/providers';
 import { useDatabase, useSession } from './lib/session';
 import { extraCalls, useUsage } from './lib/usage';
-import { MEMORY_BUDGET_TOKENS, TURN_ANALYSIS_TASK_KIND, useBackgroundWorker } from './lib/worker';
+import {
+  MEMORY_BUDGET_TOKENS,
+  SCENE_SUMMARY_TASK_KIND,
+  TURN_ANALYSIS_TASK_KIND,
+  useBackgroundWorker,
+} from './lib/worker';
 
 const PNG_SIGNATURE = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
 
@@ -211,6 +216,8 @@ export function App() {
           playerInput: options.playerInput,
           worldBookMatches,
           memories: options.memories === undefined ? [] : [...options.memories],
+          // 前情提要（P1-5）：早就不在窗口里的那几场戏，压成几行带过来
+          chapters: session.chapters,
           modes: conversation?.modes,
           ...(options.intent === undefined || options.intent === null
             ? {}
@@ -240,7 +247,7 @@ export function App() {
       }
       return { text: accumulated, usage, reasoning };
     },
-    [conversation, instances, providers, scene, session.worldBooks, world],
+    [conversation, instances, providers, scene, session.chapters, session.worldBooks, world],
   );
 
   const makeCharacterLine = useCallback(
@@ -324,6 +331,29 @@ export function App() {
       }
     },
     [conversation, db, providers, usage, world],
+  );
+
+  /**
+   * 每回合结算之后，让后台看一眼这一场要不要压场记（P1-5 的场景层）。
+   *
+   * 这里**不做阈值判断**：攒够没攒够由后台拿着最新数据决定（同一个纯函数），
+   * 界面侧的判断会拿着过期的场景对象重复触发——真机第一轮就出现过两次摘要调用。
+   * 幂等键按回合给：一轮只排一次队，攒不够时那一趟是空跑，不发调用、不记账。
+   */
+  const enqueueSceneSummary = useCallback(
+    async (target: Scene, key: string) => {
+      if (!db || !world || !conversation) return;
+
+      await db.queue.enqueue({
+        kind: SCENE_SUMMARY_TASK_KIND,
+        idempotencyKey: `${SCENE_SUMMARY_TASK_KIND}:${target.id}:${key}`,
+        roomId: world.id,
+        turnId: null,
+        payload: { roomId: world.id, sceneId: target.id, conversationId: conversation.id },
+      });
+      worker.kick();
+    },
+    [conversation, db, worker, world],
   );
 
   const handleImport = useCallback(
@@ -532,6 +562,8 @@ export function App() {
 
         // 一轮分析（记忆 + 状态变化）合成一次调用，不阻塞对话；负载只存 id，内容现取
         await usage.reload();
+        // 让后台看一眼这一场要不要压场记（够不够由后台判断，不够不会发调用）
+        await enqueueSceneSummary(scene, turnId);
         await db.queue.enqueue({
           kind: TURN_ANALYSIS_TASK_KIND,
           idempotencyKey: `${TURN_ANALYSIS_TASK_KIND}:${turnId}`,
@@ -554,6 +586,7 @@ export function App() {
       busy,
       conversation,
       db,
+      enqueueSceneSummary,
       instances,
       makeCharacterLine,
       messages,
@@ -761,8 +794,14 @@ export function App() {
           content,
         }),
       ]);
+
+      // 上一场戏在换场那一刻就该收尾：把它剩下的几轮压成场记，够多就接着滚一章
+      if (scene !== null && scene.id !== created.id) {
+        // 换场时也看一眼上一场：结尾那几轮不该丢在场记之外
+        await enqueueSceneSummary(scene, 'close');
+      }
     },
-    [conversation, instances, session, world],
+    [conversation, enqueueSceneSummary, instances, scene, session, world],
   );
 
   const handleNewConversation = useCallback(
@@ -1037,6 +1076,7 @@ export function App() {
                     scene={scene}
                     instances={instances}
                     memories={session.memories}
+                    chapters={session.chapters}
                     attachedWorldBooks={session.worldBooks}
                     libraryCards={session.library.cards}
                     prompt={lastPrompt}

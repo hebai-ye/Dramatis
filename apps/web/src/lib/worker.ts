@@ -1,19 +1,27 @@
 import {
   applyAffectUpdates,
   buildAffectMessages,
+  buildChapterSummaryMessages,
   buildExtractionMessages,
   buildMemoryEvents,
+  buildSceneSummaryMessages,
   buildTurnAnalysisMessages,
   type ConversationId,
+  chapterCandidates,
   collectCompletionWithTools,
   createOpenAICompatibleProvider,
   type ModelProvider,
+  newId,
+  nowIso,
   type ProviderPrice,
   parseAffectUpdates,
   parseExtraction,
+  parseSummary,
   parseTurnAnalysis,
+  pendingSummary,
   type RoomId,
   type SceneId,
+  shouldSummarizeScene,
   type TokenUsage,
   type UsageCategory,
 } from '@dramatis/core';
@@ -27,6 +35,10 @@ import type { DramatisDb } from './db';
  * 总额仍是「每回合额外调用 ≤ 2」。
  */
 export const TURN_ANALYSIS_TASK_KIND = 'turn.analyze';
+/** 场景场记（P1-5 的场景层）：把攒够的几轮压成一段。 */
+export const SCENE_SUMMARY_TASK_KIND = 'scene.summarize';
+/** 章节回顾（P1-5 的章节层）：几场戏滚成一条线索。 */
+export const CHAPTER_SUMMARY_TASK_KIND = 'chapter.summarize';
 /** 旧任务类型：老库的队列里可能还排着它们，worker 仍然认得。 */
 export const MEMORY_TASK_KIND = 'memory.extract';
 export const AFFECT_TASK_KIND = 'affect.update';
@@ -40,6 +52,25 @@ export interface TurnTaskPayload {
   /** 归属的对话；归档一条对话时要按它整批撤销记忆。 */
   conversationId: ConversationId | null;
   turnId: string;
+}
+
+/** 摘要任务的负载：只存 id，内容现取（与其它后台任务同一条规矩）。 */
+export interface SummaryTaskPayload {
+  roomId: RoomId;
+  conversationId: ConversationId | null;
+  /** 场景层任务才有。 */
+  sceneId?: SceneId;
+}
+
+/**
+ * 一次后台任务的结果。
+ *
+ * `called` 与 `usage` 必须分开：**没调用**（这一轮没攒够内容）不该记进账单，
+ * 而**调用了但服务商没返回用量**要记一笔 0 token 的账——账单记的是「发生过什么」。
+ */
+interface TaskOutcome {
+  called: boolean;
+  usage: TokenUsage | null;
 }
 
 export interface BackgroundProviderConfig {
@@ -58,6 +89,8 @@ export interface BackgroundProviderConfig {
 /** 任务类型 → 账单分类。老库里的 `memory.extract` / `affect.update` 也各有归属。 */
 const CATEGORY_BY_TASK: Record<string, UsageCategory> = {
   [TURN_ANALYSIS_TASK_KIND]: 'analysis',
+  [SCENE_SUMMARY_TASK_KIND]: 'summary',
+  [CHAPTER_SUMMARY_TASK_KIND]: 'summary',
   [MEMORY_TASK_KIND]: 'memory',
   [AFFECT_TASK_KIND]: 'affect',
 };
@@ -146,10 +179,10 @@ export function useBackgroundWorker(options: {
    * 省下来的调用额度给 P1-6 的意图调用。解析层宽容，模型偶尔只写一半也不会整轮作废。
    */
   const runTurnAnalysis = useCallback(
-    async (payload: TurnTaskPayload, config: BackgroundProviderConfig): Promise<TokenUsage | null> => {
-      if (!db) return null;
+    async (payload: TurnTaskPayload, config: BackgroundProviderConfig): Promise<TaskOutcome> => {
+      if (!db) return { called: false, usage: null };
       const context = await loadTurn(payload);
-      if (!context) return null;
+      if (!context) return { called: false, usage: null };
 
       const completion = await collectCompletionWithTools(
         makeProvider(config),
@@ -194,17 +227,17 @@ export function useBackgroundWorker(options: {
         }
       }
 
-      return completion.usage;
+      return { called: true, usage: completion.usage };
     },
     [db, loadTurn],
   );
 
   /** 旧任务类型：老库队列里可能还排着（抽取、推演各一次）。 */
   const runMemoryExtraction = useCallback(
-    async (payload: TurnTaskPayload, config: BackgroundProviderConfig): Promise<TokenUsage | null> => {
-      if (!db) return null;
+    async (payload: TurnTaskPayload, config: BackgroundProviderConfig): Promise<TaskOutcome> => {
+      if (!db) return { called: false, usage: null };
       const context = await loadTurn(payload);
-      if (!context) return null;
+      if (!context) return { called: false, usage: null };
 
       const completion = await collectCompletionWithTools(
         makeProvider(config),
@@ -234,22 +267,22 @@ export function useBackgroundWorker(options: {
       // 先清掉这一轮可能残留的旧记忆，让重试天然幂等
       await db.repository.deleteMemoriesByTurn(payload.roomId, payload.turnId);
       await db.repository.saveMemories(events);
-      return completion.usage;
+      return { called: true, usage: completion.usage };
     },
     [db, loadTurn],
   );
 
   const runAffectUpdate = useCallback(
-    async (payload: TurnTaskPayload, config: BackgroundProviderConfig): Promise<TokenUsage | null> => {
-      if (!db) return null;
+    async (payload: TurnTaskPayload, config: BackgroundProviderConfig): Promise<TaskOutcome> => {
+      if (!db) return { called: false, usage: null };
       const context = await loadTurn(payload);
-      if (!context) return null;
+      if (!context) return { called: false, usage: null };
 
       // 幂等：同一个回合已经推演过就不再叠加，否则重试会让关系翻倍
       const already = context.participants.some((instance) =>
         instance.affect.history.some((change) => change.turnId === payload.turnId),
       );
-      if (already) return null;
+      if (already) return { called: false, usage: null };
 
       const completion = await collectCompletionWithTools(
         makeProvider(config),
@@ -268,9 +301,163 @@ export function useBackgroundWorker(options: {
       for (const item of applied) {
         await db.repository.saveInstance(item.next);
       }
-      return completion.usage;
+      return { called: true, usage: completion.usage };
     },
     [db, loadTurn],
+  );
+
+  /**
+   * 场景场记（P1-5 的场景层）。
+   *
+   * 只压游标之后的消息，所以重跑不会把同一段压两遍；攒不够就**连调用都不发**
+   * （`called: false`，不进账单）。摘要写回场景的 `recap`，原文一个字都不动。
+   */
+  const runSceneSummary = useCallback(
+    async (payload: SummaryTaskPayload, config: BackgroundProviderConfig): Promise<TaskOutcome> => {
+      if (!db || payload.sceneId === undefined) return { called: false, usage: null };
+
+      const scene = await db.repository.getScene(payload.sceneId);
+      if (!scene) return { called: false, usage: null };
+
+      const messages = await db.repository.listMessages(payload.roomId);
+      // **触发判断只在这一处**：界面只负责「这一轮结算完了，来看一眼」，
+      // 攒够没攒够由拿到最新数据的人判断。放在界面侧会让过期的场景对象
+      // 重复触发（真机第一轮就出现过两次摘要调用）。
+      if (!shouldSummarizeScene(scene, messages)) return { called: false, usage: null };
+      const pending = pendingSummary(scene, messages);
+
+      const room = await db.repository.getRoom(payload.roomId);
+      const instances = await db.repository.listInstances(payload.roomId);
+      const audience = new Set(pending.messages.flatMap((message) => message.audience));
+      // 场记里的人名要与原文对得上：谁在这场戏里说过话，或者本来就在名单上
+      const cast = instances.filter((instance) => audience.has(instance.id) || scene.cast.includes(instance.id));
+
+      const completion = await collectCompletionWithTools(
+        makeProvider(config),
+        buildSceneSummaryMessages({
+          scene,
+          cast: cast.map((instance) => ({ id: instance.id, displayName: instance.displayName })),
+          playerName: room?.playerName ?? '玩家',
+          messages: pending.messages,
+          previousSummary: scene.recap ?? '',
+        }),
+        { temperature: 0.2 },
+      );
+
+      const parsed = parseSummary(completion.text);
+      if (parsed.summary !== '') {
+        const recap =
+          parsed.keyFacts.length === 0 ? parsed.summary : `${parsed.summary}\n要点：${parsed.keyFacts.join('；')}`;
+        const lastSeq = pending.messages.reduce((max, message) => Math.max(max, message.seq), scene.recapUpToSeq ?? 0);
+        await db.repository.saveScene({
+          ...scene,
+          recap,
+          recapUpToSeq: lastSeq,
+          recapUpdatedAt: nowIso(),
+        });
+      }
+      // 空摘要也算调用过了：账照记，游标不动，下一轮重新攒
+      return { called: true, usage: completion.usage };
+    },
+    [db],
+  );
+
+  /**
+   * 章节回顾（P1-5 的章节层）。
+   *
+   * 只收「已经有场记」的场景——还有原文的场景不需要提前压。攒不够就返回，
+   * 不发调用。
+   */
+  const runChapterSummary = useCallback(
+    async (payload: SummaryTaskPayload, config: BackgroundProviderConfig): Promise<TaskOutcome> => {
+      if (!db) return { called: false, usage: null };
+
+      const scenes = await db.repository.listScenes(payload.roomId);
+      const scoped =
+        payload.conversationId === null
+          ? scenes
+          : scenes.filter((scene) => scene.conversationId === payload.conversationId);
+      const chapters = await db.repository.listChapterSummaries(
+        payload.roomId,
+        payload.conversationId === null ? {} : { conversationId: payload.conversationId },
+      );
+
+      const candidates = chapterCandidates({
+        scenes: scoped,
+        coveredSceneIds: chapters.flatMap((chapter) => chapter.sceneIds),
+      });
+      if (candidates.scenes.length === 0) return { called: false, usage: null };
+
+      const room = await db.repository.getRoom(payload.roomId);
+      const first = candidates.scenes[0];
+      const name = first === undefined ? '前情' : first.location.trim() === '' ? first.title : first.location.trim();
+
+      const completion = await collectCompletionWithTools(
+        makeProvider(config),
+        buildChapterSummaryMessages({
+          title: name,
+          playerName: room?.playerName ?? '玩家',
+          scenes: candidates.scenes.map((scene) => ({
+            title: scene.title,
+            location: scene.location,
+            summary: scene.recap ?? '',
+          })),
+        }),
+        { temperature: 0.2 },
+      );
+
+      const parsed = parseSummary(completion.text);
+      if (parsed.summary !== '') {
+        await db.repository.saveChapterSummary({
+          id: newId(),
+          roomId: payload.roomId,
+          conversationId: payload.conversationId,
+          title: `第 ${String(chapters.length + 1)} 章 · ${name}`,
+          sceneIds: candidates.scenes.map((scene) => scene.id),
+          summary: parsed.summary,
+          keyFacts: parsed.keyFacts,
+          createdAt: nowIso(),
+        });
+      }
+      return { called: true, usage: completion.usage };
+    },
+    [db],
+  );
+
+  /**
+   * 场记写完顺手看看够不够滚一章。
+   *
+   * 幂等键里带上「够了几场」：不够时什么都不做，等更多场戏攒起来之后
+   * 数字变大 → 是个新键 → 才会真的跑一次。这样不必额外判断「上次失败了吗」。
+   */
+  const enqueueChapterIfReady = useCallback(
+    async (payload: SummaryTaskPayload) => {
+      if (!db) return;
+
+      const scenes = await db.repository.listScenes(payload.roomId);
+      const scoped =
+        payload.conversationId === null
+          ? scenes
+          : scenes.filter((scene) => scene.conversationId === payload.conversationId);
+      const chapters = await db.repository.listChapterSummaries(
+        payload.roomId,
+        payload.conversationId === null ? {} : { conversationId: payload.conversationId },
+      );
+      const candidates = chapterCandidates({
+        scenes: scoped,
+        coveredSceneIds: chapters.flatMap((chapter) => chapter.sceneIds),
+      });
+      if (candidates.scenes.length === 0) return;
+
+      await db.queue.enqueue({
+        kind: CHAPTER_SUMMARY_TASK_KIND,
+        idempotencyKey: `${CHAPTER_SUMMARY_TASK_KIND}:${payload.conversationId ?? 'none'}:${String(candidates.scenes.length)}`,
+        roomId: payload.roomId,
+        turnId: null,
+        payload: { roomId: payload.roomId, conversationId: payload.conversationId },
+      });
+    },
+    [db],
   );
 
   const drain = useCallback(async () => {
@@ -290,29 +477,39 @@ export function useBackgroundWorker(options: {
           }
 
           const payload = task.payload as TurnTaskPayload;
-          let usage: TokenUsage | null = null;
+          let outcome: TaskOutcome = { called: false, usage: null };
           if (task.kind === TURN_ANALYSIS_TASK_KIND) {
-            usage = await runTurnAnalysis(payload, config);
+            outcome = await runTurnAnalysis(payload, config);
           } else if (task.kind === MEMORY_TASK_KIND) {
-            usage = await runMemoryExtraction(payload, config);
+            outcome = await runMemoryExtraction(payload, config);
           } else if (task.kind === AFFECT_TASK_KIND) {
-            usage = await runAffectUpdate(payload, config);
+            outcome = await runAffectUpdate(payload, config);
+          } else if (task.kind === SCENE_SUMMARY_TASK_KIND) {
+            outcome = await runSceneSummary(task.payload as SummaryTaskPayload, config);
+          } else if (task.kind === CHAPTER_SUMMARY_TASK_KIND) {
+            outcome = await runChapterSummary(task.payload as SummaryTaskPayload, config);
           }
 
           // 落一笔账。服务商没返回 usage 时 token 记 0，但**这一笔照样记**——
           // 调用确实发生过，不记的话用户会因为漏账而低估开销（T7）。
+          // 反过来，**没调用**的（内容没攒够）一笔都不记。
           const category = CATEGORY_BY_TASK[task.kind];
-          if (category !== undefined) {
+          if (category !== undefined && outcome.called) {
             await db.ledger.record({
               roomId: payload.roomId,
               conversationId: payload.conversationId,
               turnId: payload.turnId,
               category,
               model: config.model,
-              promptTokens: usage?.promptTokens ?? 0,
-              completionTokens: usage?.completionTokens ?? 0,
+              promptTokens: outcome.usage?.promptTokens ?? 0,
+              completionTokens: outcome.usage?.completionTokens ?? 0,
               price: config.price,
             });
+          }
+
+          // 场记更新完，顺手看看够不够滚一章（够了才入队，不够时那一趟是空跑）
+          if (task.kind === SCENE_SUMMARY_TASK_KIND && outcome.called) {
+            await enqueueChapterIfReady(task.payload as SummaryTaskPayload);
           }
 
           await db.queue.complete(task.id);
@@ -329,7 +526,16 @@ export function useBackgroundWorker(options: {
       setRunning(false);
       await refreshPending();
     }
-  }, [db, refreshPending, runAffectUpdate, runMemoryExtraction, runTurnAnalysis]);
+  }, [
+    db,
+    enqueueChapterIfReady,
+    refreshPending,
+    runAffectUpdate,
+    runChapterSummary,
+    runMemoryExtraction,
+    runSceneSummary,
+    runTurnAnalysis,
+  ]);
 
   const kick = useCallback(() => {
     void drain();

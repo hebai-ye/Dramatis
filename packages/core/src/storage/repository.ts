@@ -1,3 +1,4 @@
+import type { ChapterSummary } from '../memory/summary.js';
 import type { Card, WorldBook } from '../model/card.js';
 import { type Conversation, defaultConversationModes, restoreInstancesFromSnapshot } from '../model/conversation.js';
 import {
@@ -44,6 +45,7 @@ export const COLLECTIONS = {
   providerProfiles: 'providerProfiles',
   backgroundTasks: 'backgroundTasks',
   usageRecords: USAGE_COLLECTION,
+  chapterSummaries: 'chapterSummaries',
 } as const;
 
 export const META_KEYS = {
@@ -83,6 +85,8 @@ export interface RoomSnapshot {
   messages: Message[];
   /** 房间内的记忆条目，含客观条目与各角色视角条目。 */
   memories: MemoryEvent[];
+  /** 已经滚成章节的前情（P1-5），按时间正序。 */
+  chapters: ChapterSummary[];
   /** persona 是跨房间共用的身份表，一并返回方便 UI 直接切换。 */
   personas: Persona[];
 }
@@ -92,6 +96,8 @@ export interface ArchiveReport {
   conversationId: ConversationId;
   restoredInstances: number;
   removedMemories: number;
+  /** 一起收走的章节摘要条数（P1-5）。 */
+  removedChapters: number;
   nextConversationId: ConversationId | null;
 }
 
@@ -271,6 +277,9 @@ export class Repository {
     const instances = await this.store.list<CharacterInstance>(COLLECTIONS.instances, { where: { roomId: id } });
     const messages = await this.store.list<Message>(COLLECTIONS.messages, { where: { roomId: id } });
     const memories = await this.store.list<MemoryEvent>(COLLECTIONS.memories, { where: { roomId: id } });
+    const chapters = await this.store.list<ChapterSummary>(COLLECTIONS.chapterSummaries, {
+      where: { roomId: id },
+    });
     // 后台任务也要清掉：留下指向已删除房间的任务，只会在下次启动时反复失败
     const tasks = await this.store.list<{ id: string }>(COLLECTIONS.backgroundTasks, { where: { roomId: id } });
     // 账单跟着世界走：世界没了，账也就没有归属了。归档对话则**不**回滚账单——
@@ -282,6 +291,7 @@ export class Repository {
     for (const instance of instances) await this.store.remove(COLLECTIONS.instances, instance.id);
     for (const message of messages) await this.store.remove(COLLECTIONS.messages, message.id);
     for (const memory of memories) await this.store.remove(COLLECTIONS.memories, memory.id);
+    for (const chapter of chapters) await this.store.remove(COLLECTIONS.chapterSummaries, chapter.id);
     for (const task of tasks) await this.store.remove(COLLECTIONS.backgroundTasks, task.id);
     for (const record of usage) await this.store.remove(COLLECTIONS.usageRecords, record.id);
     await this.store.remove(COLLECTIONS.rooms, id);
@@ -320,10 +330,14 @@ export class Repository {
     const scenes = await this.store.list<Scene>(COLLECTIONS.scenes, { where: { conversationId: id } });
     const messages = await this.store.list<Message>(COLLECTIONS.messages, { where: { conversationId: id } });
     const memories = await this.store.list<MemoryEvent>(COLLECTIONS.memories, { where: { conversationId: id } });
+    const chapters = await this.store.list<ChapterSummary>(COLLECTIONS.chapterSummaries, {
+      where: { conversationId: id },
+    });
 
     for (const scene of scenes) await this.store.remove(COLLECTIONS.scenes, scene.id);
     for (const message of messages) await this.store.remove(COLLECTIONS.messages, message.id);
     for (const memory of memories) await this.store.remove(COLLECTIONS.memories, memory.id);
+    for (const chapter of chapters) await this.store.remove(COLLECTIONS.chapterSummaries, chapter.id);
     await this.store.remove(COLLECTIONS.conversations, id);
 
     const room = await this.getRoom(conversation.roomId);
@@ -353,6 +367,7 @@ export class Repository {
         conversationId: conversation.id,
         restoredInstances: 0,
         removedMemories: 0,
+        removedChapters: 0,
         nextConversationId: room?.activeConversationId ?? null,
       };
     }
@@ -374,6 +389,8 @@ export class Repository {
     }
 
     const removedMemories = await this.deleteMemoriesByConversation(conversation.id);
+    // 章节摘要也是「这条线发生过的事」，归档一并收走
+    const removedChapters = await this.deleteChapterSummariesByConversation(conversation.id);
     await this.store.put(COLLECTIONS.conversations, { ...conversation, archivedAt: at, updatedAt: at });
 
     const room = await this.getRoom(conversation.roomId);
@@ -384,7 +401,13 @@ export class Repository {
       await this.saveRoom({ ...room, activeConversationId: nextConversationId, updatedAt: at });
     }
 
-    return { conversationId: conversation.id, restoredInstances, removedMemories, nextConversationId };
+    return {
+      conversationId: conversation.id,
+      restoredInstances,
+      removedMemories,
+      removedChapters,
+      nextConversationId,
+    };
   }
 
   // ---- 场景 ----
@@ -614,7 +637,8 @@ export class Repository {
 
     const personas = await this.listPersonas();
     const memories = await this.listMemories(roomId);
-    return { room, conversations, scenes, instances, cards, worldBooks, messages, memories, personas };
+    const chapters = await this.listChapterSummaries(roomId);
+    return { room, conversations, scenes, instances, cards, worldBooks, messages, memories, chapters, personas };
   }
 
   // ---- 玩家身份（P0-3） ----
@@ -648,6 +672,43 @@ export class Repository {
 
   async saveMemories(events: readonly MemoryEvent[]): Promise<void> {
     await this.store.bulkPut(COLLECTIONS.memories, events);
+  }
+
+  // ---- 分层摘要（P1-5） ----
+
+  /**
+   * 章节摘要：几场戏滚成一条线索。
+   *
+   * 单独一个集合而不是挂在场景上：一章跨好几场戏，场景被换掉、被删掉时
+   * 这一章仍然成立——它记录的是一段已经发生过的历史。
+   */
+  async listChapterSummaries(
+    roomId: RoomId,
+    options: { conversationId?: ConversationId } = {},
+  ): Promise<ChapterSummary[]> {
+    const where: Record<string, unknown> = { roomId };
+    if (options.conversationId !== undefined) where.conversationId = options.conversationId;
+
+    return this.store.list<ChapterSummary>(COLLECTIONS.chapterSummaries, {
+      where,
+      orderBy: 'createdAt',
+      direction: 'asc',
+    });
+  }
+
+  async saveChapterSummary(chapter: ChapterSummary): Promise<void> {
+    await this.store.put(COLLECTIONS.chapterSummaries, chapter);
+  }
+
+  /** 删除一条对话产生的章节摘要，用于归档与彻底删除。 */
+  async deleteChapterSummariesByConversation(id: ConversationId): Promise<number> {
+    const chapters = await this.store.list<ChapterSummary>(COLLECTIONS.chapterSummaries, {
+      where: { conversationId: id },
+    });
+    for (const chapter of chapters) {
+      await this.store.remove(COLLECTIONS.chapterSummaries, chapter.id);
+    }
+    return chapters.length;
   }
 
   async updateMemory(id: EventId, patch: Partial<MemoryEvent>): Promise<MemoryEvent | null> {

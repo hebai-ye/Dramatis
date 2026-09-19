@@ -8,6 +8,7 @@ export * from './memory/affect.js';
 export * from './memory/extract.js';
 export * from './memory/ingest.js';
 export * from './memory/recall.js';
+export * from './memory/summary.js';
 export * from './memory/turn-analysis.js';
 export * from './memory/types.js';
 export * from './model/index.js';

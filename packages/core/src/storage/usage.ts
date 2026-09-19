@@ -25,7 +25,15 @@ export const USAGE_COLLECTION = 'usageRecords';
  * `memory` 与 `affect` 是旧版队列留下的两类任务（现在合并成 `analysis`），
  * 老库里可能还有它们的账单，所以保留这两个取值。
  */
-export type UsageCategory = 'generation' | 'intent' | 'analysis' | 'memory' | 'affect' | 'admin';
+export type UsageCategory =
+  | 'generation'
+  | 'intent'
+  | 'analysis'
+  /** 分层摘要（P1-5）：场景场记与章节回顾。 */
+  | 'summary'
+  | 'memory'
+  | 'affect'
+  | 'admin';
 
 export interface UsageRecord {
   id: string;

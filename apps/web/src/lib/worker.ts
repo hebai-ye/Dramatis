@@ -3,12 +3,14 @@ import {
   buildAffectMessages,
   buildExtractionMessages,
   buildMemoryEvents,
+  buildTurnAnalysisMessages,
   type ConversationId,
   collectCompletionWithTools,
   createOpenAICompatibleProvider,
   type ModelProvider,
   parseAffectUpdates,
   parseExtraction,
+  parseTurnAnalysis,
   type RoomId,
   type SceneId,
   type TokenUsage,
@@ -16,6 +18,14 @@ import {
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { DramatisDb } from './db';
 
+/**
+ * 一轮结束后要做的分析：记录记忆 + 推演状态，**合并成一次调用**（P1-9 批量合并）。
+ *
+ * 原来固定两次（抽取一次、推演一次），合并省下的那一格正好给 P1-6 的意图调用，
+ * 总额仍是「每回合额外调用 ≤ 2」。
+ */
+export const TURN_ANALYSIS_TASK_KIND = 'turn.analyze';
+/** 旧任务类型：老库的队列里可能还排着它们，worker 仍然认得。 */
 export const MEMORY_TASK_KIND = 'memory.extract';
 export const AFFECT_TASK_KIND = 'affect.update';
 
@@ -50,6 +60,8 @@ export interface BackgroundWorkerApi {
    * 这里给的是账单口径的数字，不是启发式估算（P3-7）。
    */
   usage: { promptTokens: number; completionTokens: number };
+  /** 把队列之外的调用（例如生成前的意图调用）也计入用量统计。 */
+  recordUsage: (usage: TokenUsage | null) => void;
   /** 立刻尝试清空队列。每轮对话结束后调用。 */
   kick: () => void;
 }
@@ -125,6 +137,67 @@ export function useBackgroundWorker(options: {
     [db],
   );
 
+  /**
+   * 一轮结束后的分析：一份提示词同时拿到「记忆」与「状态变化」（P1-9 批量合并）。
+   *
+   * 合并的前提是两件事吃同一批消息、同一批在场角色，所以不损失信息；
+   * 省下来的调用额度给 P1-6 的意图调用。解析层宽容，模型偶尔只写一半也不会整轮作废。
+   */
+  const runTurnAnalysis = useCallback(
+    async (payload: TurnTaskPayload, config: BackgroundProviderConfig): Promise<TokenUsage | null> => {
+      if (!db) return null;
+      const context = await loadTurn(payload);
+      if (!context) return null;
+
+      const completion = await collectCompletionWithTools(
+        makeProvider(config),
+        buildTurnAnalysisMessages({
+          scene: context.scene,
+          cast: context.participants,
+          playerName: context.room.playerName,
+          messages: context.messages,
+        }),
+        { temperature: 0.2 },
+      );
+
+      const { extraction, updates } = parseTurnAnalysis(completion.text);
+
+      const sequence = await db.repository.nextMemorySequence(payload.roomId);
+      const { events } = buildMemoryEvents({
+        roomId: payload.roomId,
+        sceneId: payload.sceneId,
+        conversationId: payload.conversationId,
+        worldTime: context.scene?.worldTime ?? '',
+        sequence,
+        participants: context.participants,
+        extraction,
+        turnId: payload.turnId,
+      });
+
+      // 先清掉这一轮可能残留的旧记忆，让重试天然幂等
+      await db.repository.deleteMemoriesByTurn(payload.roomId, payload.turnId);
+      await db.repository.saveMemories(events);
+
+      // 幂等：同一个回合已经推演过就不再叠加，否则重试会让关系翻倍
+      const already = context.participants.some((instance) =>
+        instance.affect.history.some((change) => change.turnId === payload.turnId),
+      );
+      if (!already) {
+        const { applied } = applyAffectUpdates(context.participants, updates, {
+          at: new Date().toISOString(),
+          turnId: payload.turnId,
+        });
+        for (const item of applied) {
+          await db.repository.saveInstance(item.next);
+        }
+      }
+
+      return completion.usage;
+    },
+    [db, loadTurn],
+  );
+
+  /** 旧任务类型：老库队列里可能还排着（抽取、推演各一次）。 */
   const runMemoryExtraction = useCallback(
     async (payload: TurnTaskPayload, config: BackgroundProviderConfig): Promise<TokenUsage | null> => {
       if (!db) return null;
@@ -216,7 +289,9 @@ export function useBackgroundWorker(options: {
 
           const payload = task.payload as TurnTaskPayload;
           let usage: TokenUsage | null = null;
-          if (task.kind === MEMORY_TASK_KIND) {
+          if (task.kind === TURN_ANALYSIS_TASK_KIND) {
+            usage = await runTurnAnalysis(payload, config);
+          } else if (task.kind === MEMORY_TASK_KIND) {
             usage = await runMemoryExtraction(payload, config);
           } else if (task.kind === AFFECT_TASK_KIND) {
             usage = await runAffectUpdate(payload, config);
@@ -243,11 +318,22 @@ export function useBackgroundWorker(options: {
       setRunning(false);
       await refreshPending();
     }
-  }, [db, refreshPending, runAffectUpdate, runMemoryExtraction]);
+  }, [db, refreshPending, runAffectUpdate, runMemoryExtraction, runTurnAnalysis]);
 
   const kick = useCallback(() => {
     void drain();
   }, [drain]);
+
+  const recordUsage = useCallback((usage: TokenUsage | null) => {
+    if (usage === null) return;
+    // 队列之外的调用（意图调用）也要计入「额外调用」次数：用户看的是每回合多花几次，
+    // 而不是它走的是哪条代码路径
+    setCompleted((value) => value + 1);
+    setUsage((previous) => ({
+      promptTokens: previous.promptTokens + (usage.promptTokens ?? 0),
+      completionTokens: previous.completionTokens + (usage.completionTokens ?? 0),
+    }));
+  }, []);
 
   // 启动时清一次积压，之后每 8 秒补一次，兜住页面被挂起的情况
   useEffect(() => {
@@ -259,5 +345,5 @@ export function useBackgroundWorker(options: {
     return () => clearInterval(timer);
   }, [db, kick, provider, refreshPending]);
 
-  return { pending, running, lastError, completed, usage, kick };
+  return { pending, running, lastError, completed, usage, recordUsage, kick };
 }

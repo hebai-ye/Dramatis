@@ -80,11 +80,12 @@ export interface Message {
   /**
    * 意图是从哪来的。
    *
+   * `planned`：生成前的导演调用给出的打算（P1-6，最可信的一种）。
    * `declared`：模型照格式写了「意图：…」那一行（取决于它是否听话）。
    * `reasoning`：它没有声明，但有推理流，取第一句当盘算——这是模型真实在想的事，
-   * 只是不是我们要求的格式。两者在界面上用不同的措辞区分，不混为一谈。
+   * 只是不是我们要求的格式。三者在界面上用不同措辞区分，不混为一谈。
    */
-  intentSource?: 'declared' | 'reasoning';
+  intentSource?: 'planned' | 'declared' | 'reasoning';
   /** 副对话里管理员这次产出的草稿；主对话的消息不带这个字段。 */
   artifacts?: AdminArtifact[];
   /**

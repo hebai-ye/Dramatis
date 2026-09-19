@@ -1,9 +1,11 @@
 import {
   type AssembledPrompt,
+  buildIntentPlanMessages,
   buildSceneTransitionNarration,
   type Card,
   type CharacterInstance,
   type ConversationModes,
+  collectCompletionWithTools,
   createCharacterMessage,
   createNarrationMessage,
   createOpenAICompatibleProvider,
@@ -13,12 +15,15 @@ import {
   type InstanceId,
   importCardFromJson,
   importCardFromPng,
+  isIntentFirst,
   type Message,
   type MessageId,
   type MessageUsage,
   matchWorldBookEntries,
   type PromptMemory,
+  parseIntentPlan,
   parseWorldBook,
+  pickPlannedSpeaker,
   type RecalledMemory,
   recallMemories,
   runTurn,
@@ -46,7 +51,7 @@ import { WorldTree } from './components/WorldTree';
 import { useAdminChat } from './lib/admin';
 import { useProviders } from './lib/providers';
 import { useDatabase, useSession } from './lib/session';
-import { AFFECT_TASK_KIND, MEMORY_BUDGET_TOKENS, MEMORY_TASK_KIND, useBackgroundWorker } from './lib/worker';
+import { MEMORY_BUDGET_TOKENS, TURN_ANALYSIS_TASK_KIND, useBackgroundWorker } from './lib/worker';
 
 const PNG_SIGNATURE = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
 
@@ -162,6 +167,8 @@ export function App() {
       memories?: readonly PromptMemory[];
       showStream: boolean;
       signal: AbortSignal;
+      /** 导演调用给出的这一轮打算（P1-6）；没有就退回让模型自己判断。 */
+      intent?: { intent: string; mode: string } | null;
     }): Promise<{ text: string; usage: MessageUsage | null; reasoning: string }> => {
       const profile = providers.active;
       if (!profile || !world || !scene) return { text: '', usage: null, reasoning: '' };
@@ -194,6 +201,9 @@ export function App() {
           worldBookMatches,
           memories: options.memories === undefined ? [] : [...options.memories],
           modes: conversation?.modes,
+          ...(options.intent === undefined || options.intent === null
+            ? {}
+            : { intent: options.intent.intent, intentMode: options.intent.mode as 'reply' }),
           budget: { maxTokens: profile.maxTokens, reserveForReply: profile.reserveForReply },
         },
         provider,
@@ -235,6 +245,56 @@ export function App() {
         audience: sceneValue.cast,
       }),
     [],
+  );
+
+  /**
+   * 生成前的导演调用（P1-6）。返回 null 表示这一轮不用它。
+   *
+   * 走后台/便宜模型配置；用户在对话模式里关掉「意图先行」时直接跳过。
+   */
+  const runIntentPlan = useCallback(
+    async (input: { text: string; history: Message[]; scene: Scene; instances: CharacterInstance[] }) => {
+      if (!isIntentFirst(conversation?.modes)) return null;
+      const config =
+        providers.background ??
+        (providers.active === null
+          ? null
+          : {
+              baseUrl: providers.active.baseUrl,
+              apiKey: providers.apiKey,
+              model: providers.active.model,
+              temperature: 0.2,
+            });
+      if (config === null || config.apiKey.trim() === '') return null;
+
+      try {
+        const completion = await collectCompletionWithTools(
+          createOpenAICompatibleProvider({
+            baseUrl: config.baseUrl,
+            apiKey: config.apiKey,
+            model: config.model,
+          }),
+          buildIntentPlanMessages({
+            scene: input.scene,
+            cast: input.instances.filter(
+              (instance) => instance.presence === 'onstage' && input.scene.cast.includes(instance.id),
+            ),
+            playerName: world?.playerName ?? '玩家',
+            playerInput: input.text,
+            recentMessages: input.history.slice(-8),
+            maxSpeakers: 1,
+          }),
+          { temperature: config.temperature },
+        );
+        // 这一调用的开销也要算进成本：它是每回合固定多出来的一次
+        worker.recordUsage(completion.usage);
+        return parseIntentPlan(completion.text);
+      } catch {
+        // 导演调用失败不该拦下这一轮：退回规则调度，照样能玩
+        return null;
+      }
+    },
+    [conversation, providers, worker, world],
   );
 
   const handleImport = useCallback(
@@ -348,8 +408,25 @@ export function App() {
           maxSpeakers: 1,
         });
 
+        /**
+         * 生成前的导演调用（P1-6）。
+         *
+         * 规则调度器读不懂「这句话其实是在刺秦娘」，这一调用能；它给出的意图还会
+         * 写进生成提示词，让角色照着自己的打算落笔。用便宜模型（后台配置）跑，
+         * 并且**只是建议**：名字不在名单里就退回规则调度，绝不让看不见的人上台。
+         * 用户可以在「对话模式」里关掉它，省下这一次调用。
+         */
+        const plan = await runIntentPlan({ text, history, scene, instances });
+        const sceneCast = instances.filter(
+          (instance) => instance.presence === 'onstage' && scene.cast.includes(instance.id),
+        );
+        const planned = plan === null ? null : pickPlannedSpeaker(plan, sceneCast);
+        const speakers = planned === null ? schedule.speakers : [planned.instance.id];
+        const intentByInstance = new Map<InstanceId, { intent: string; mode: string }>();
+        if (planned !== null) intentByInstance.set(planned.instance.id, { intent: planned.intent, mode: planned.mode });
+
         let first = true;
-        for (const speakerId of schedule.speakers) {
+        for (const speakerId of speakers) {
           const speaker = instances.find((item) => item.id === speakerId);
           if (!speaker) continue;
           const speakerCard = session.cards.find((item) => item.id === speaker.cardId);
@@ -369,6 +446,7 @@ export function App() {
           );
 
           setStreamSpeaker(speaker.displayName);
+          const plannedIntent = intentByInstance.get(speaker.id) ?? null;
           const generation = await runGeneration({
             speaker,
             card: speakerCard,
@@ -377,6 +455,7 @@ export function App() {
             memories: recalled.map(toPromptMemory),
             showStream: true,
             signal: controller.signal,
+            intent: plannedIntent,
           });
           const reply = generation.text;
           first = false;
@@ -394,8 +473,10 @@ export function App() {
               ...created,
               // 用量挂在消息上：刷新之后仍然能看见这一轮花了多少
               ...(generation.usage === null ? {} : { usage: generation.usage }),
+              // 导演调用给出的意图挂在消息上：用户能看到「他这一轮想做什么」
+              ...(plannedIntent === null ? {} : { intent: plannedIntent.intent, intentSource: 'planned' as const }),
               // 没按格式声明意图时，用它自己的推理首句当盘算（有推理流的模型才有）
-              ...(created.intent === undefined && generation.reasoning.trim() !== ''
+              ...(plannedIntent === null && created.intent === undefined && generation.reasoning.trim() !== ''
                 ? { intent: firstSentence(generation.reasoning), intentSource: 'reasoning' as const }
                 : {}),
             };
@@ -404,17 +485,14 @@ export function App() {
           }
         }
 
-        // 抽成两块后台任务，不阻塞对话；负载只存 id，内容现取
-        const payload = { roomId: world.id, sceneId: scene.id, turnId, conversationId: conversation.id };
-        for (const kind of [MEMORY_TASK_KIND, AFFECT_TASK_KIND]) {
-          await db.queue.enqueue({
-            kind,
-            idempotencyKey: `${kind}:${turnId}`,
-            roomId: world.id,
-            turnId,
-            payload,
-          });
-        }
+        // 一轮分析（记忆 + 状态变化）合成一次调用，不阻塞对话；负载只存 id，内容现取
+        await db.queue.enqueue({
+          kind: TURN_ANALYSIS_TASK_KIND,
+          idempotencyKey: `${TURN_ANALYSIS_TASK_KIND}:${turnId}`,
+          roomId: world.id,
+          turnId,
+          payload: { roomId: world.id, sceneId: scene.id, turnId, conversationId: conversation.id },
+        });
         worker.kick();
       } catch (sendError) {
         const message = sendError instanceof Error ? sendError.message : String(sendError);
@@ -435,6 +513,7 @@ export function App() {
       messages,
       providers,
       runGeneration,
+      runIntentPlan,
       scene,
       session,
       worker,
@@ -509,21 +588,18 @@ export function App() {
         // 不补这一步的话，被重抽的那一轮会永远不再抽取记忆——角色的记忆里
         // 就永久缺了一段（真实模型端到端测试里就是这样发现的：重抽两次之后
         // 记忆条数少了一条，再也没有回来）。
-        const payload = {
+        await db.queue.enqueue({
+          kind: TURN_ANALYSIS_TASK_KIND,
+          idempotencyKey: `${TURN_ANALYSIS_TASK_KIND}:${target.turnId}`,
           roomId: world.id,
-          sceneId: scene.id,
           turnId: target.turnId,
-          conversationId: conversation.id,
-        };
-        for (const kind of [MEMORY_TASK_KIND, AFFECT_TASK_KIND]) {
-          await db.queue.enqueue({
-            kind,
-            idempotencyKey: `${kind}:${target.turnId}`,
+          payload: {
             roomId: world.id,
+            sceneId: scene.id,
             turnId: target.turnId,
-            payload,
-          });
-        }
+            conversationId: conversation.id,
+          },
+        });
         worker.kick();
       } catch (regenerateError) {
         const message = regenerateError instanceof Error ? regenerateError.message : String(regenerateError);
@@ -572,20 +648,9 @@ export function App() {
       await db.queue.clearTurn(target.turnId);
       await session.revertTurn(target.turnId);
       await db.queue.enqueue({
-        kind: MEMORY_TASK_KIND,
-        idempotencyKey: `${MEMORY_TASK_KIND}:${target.turnId}:${String(Date.now())}`,
-        roomId: world.id,
-        turnId: target.turnId,
-        payload: {
-          roomId: world.id,
-          sceneId: target.sceneId,
-          turnId: target.turnId,
-          conversationId: conversation.id,
-        },
-      });
-      await db.queue.enqueue({
-        kind: AFFECT_TASK_KIND,
-        idempotencyKey: `${AFFECT_TASK_KIND}:${target.turnId}:${String(Date.now())}`,
+        kind: TURN_ANALYSIS_TASK_KIND,
+        // 带时间戳：clearTurn 已经清掉旧记录，这里再带上时间戳保证一定起一条新任务
+        idempotencyKey: `${TURN_ANALYSIS_TASK_KIND}:${target.turnId}:${String(Date.now())}`,
         roomId: world.id,
         turnId: target.turnId,
         payload: {

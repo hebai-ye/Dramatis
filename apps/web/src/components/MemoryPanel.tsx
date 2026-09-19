@@ -61,7 +61,7 @@ export function MemoryPanel({
         <h2>记忆</h2>
         <span className="hint">
           {memories.length} 条{pending > 0 ? ` · 排队 ${pending}` : ''}
-          {completed > 0 ? ` · 后台调用 ${completed} 次` : ''}
+          {completed > 0 ? ` · 额外调用 ${completed} 次` : ''}
           {usage.promptTokens + usage.completionTokens > 0
             ? ` · ${String(usage.promptTokens + usage.completionTokens)} token`
             : ''}

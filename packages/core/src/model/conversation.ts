@@ -31,10 +31,22 @@ export interface ConversationModes {
   playerFirst: boolean;
   /** 静默模式：主角长时间说话期间，其他角色只能做动作，不能开口。 */
   silent: boolean;
+  /**
+   * 意图先行（P1-6）：生成前先花一次便宜调用问「这一轮谁开口、他想做什么」。
+   *
+   * 缺省视为**开**——老数据里没有这个字段，但它正是增强体验的那一项；
+   * 想省调用的用户可以在这里关掉（额外调用从 2 次降到 1 次）。
+   */
+  intentFirst?: boolean;
 }
 
 export function defaultConversationModes(): ConversationModes {
-  return { playerFirst: false, silent: false };
+  return { playerFirst: false, silent: false, intentFirst: true };
+}
+
+/** 意图先行默认开：只有显式关掉才算关。 */
+export function isIntentFirst(modes: ConversationModes | undefined): boolean {
+  return modes?.intentFirst !== false;
 }
 
 /**

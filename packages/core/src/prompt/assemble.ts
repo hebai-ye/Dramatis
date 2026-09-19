@@ -41,6 +41,15 @@ export interface AssembleInput {
   cast?: readonly CharacterInstance[];
   /** 会话级对话模式：静默、是否必须等主角先开口（LAYOUT「输入区 · 加号」）。 */
   modes?: ConversationModes;
+  /**
+   * 这一轮的意图（P1-6）：由生成前的导演调用给出。
+   *
+   * 有了它，角色是**照着自己的打算**落笔的，而不是重新猜一遍「这轮该干嘛」；
+   * `hold_back`（想说没说）也靠它写成动作。它是提示，不是台词——明确要求不要写出来。
+   */
+  intent?: string;
+  /** 意图的模式；`hold_back` 时只写动作。 */
+  intentMode?: 'reply' | 'cut_in' | 'hold_back' | 'initiate';
   budget: {
     /** 模型的上下文窗口。 */
     maxTokens: number;
@@ -507,6 +516,11 @@ export function assemblePrompt(input: AssembleInput): AssembledPrompt {
       // 放在最后：这一句是模型生成前读到的最后一段。写在前面的规则它经常漏——
       // DeepSeek 网页版端到端测试里，动作 `#` 的遵守率只有约 2/9。
       '\n格式（必须遵守）：动作与神态用 `#` 独占一行开头；对白不加任何名字前缀。' +
+      // 导演调用已经判断过「这一轮他该做什么」，把结论给它，别让它再猜一遍
+      (input.intent === undefined || input.intent.trim() === ''
+        ? ''
+        : `\n你这一轮打算：${input.intent.trim()}。照着这个打算写，但不要把这一行写进回复。` +
+          (input.intentMode === 'hold_back' ? '（想说没说：只写动作与神态，不要开口。）' : '')) +
       // 意图先行（P1-6 的零额外调用版）：先声明这一轮想做什么，再落笔
       `\n${INTENT_FORMAT_RULE}`,
     priority: PRIORITY.instruction,

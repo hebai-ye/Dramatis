@@ -40,6 +40,11 @@ interface Props {
 const MODE_LABELS: Array<{ key: keyof ConversationModes; label: string; note: string }> = [
   { key: 'playerFirst', label: '角色等我先说', note: '所有角色都必须在你发言之后才能接话' },
   { key: 'silent', label: '静默模式', note: '你连续说话期间，其他角色只能做动作，不能开口' },
+  {
+    key: 'intentFirst',
+    label: '意图先行',
+    note: '发言前先花一次便宜调用判断「这一轮谁开口、他想做什么」；关掉可以省一次调用',
+  },
 ];
 
 function shorten(text: string, max: number): string {
@@ -179,7 +184,11 @@ export function MainChat({
               {message.intent === undefined ? null : (
                 <p className="intent-line">
                   {/* 两种来源用不同措辞：他照格式写的，与他实际在想的是两回事 */}
-                  {message.intentSource === 'reasoning' ? '盘算：' : '想做：'}
+                  {message.intentSource === 'reasoning'
+                    ? '盘算：'
+                    : message.intentSource === 'planned'
+                      ? '他这一轮想：'
+                      : '想做：'}
                   {message.intent}
                 </p>
               )}
@@ -349,7 +358,12 @@ export function MainChat({
                   <label key={mode.key} className="mode-option">
                     <input
                       type="checkbox"
-                      checked={conversation.modes[mode.key]}
+                      // 老数据里没有 intentFirst 这个字段，缺省视为开
+                      checked={
+                        mode.key === 'intentFirst'
+                          ? conversation.modes.intentFirst !== false
+                          : conversation.modes[mode.key] === true
+                      }
                       disabled={archived}
                       onChange={(event) => onToggleMode(mode.key, event.target.checked)}
                     />

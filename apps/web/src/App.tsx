@@ -55,6 +55,7 @@ import { useArchive } from './lib/archive';
 import { useProviders } from './lib/providers';
 import { useDatabase, useSession } from './lib/session';
 import { extraCalls, useUsage } from './lib/usage';
+import { NARROW_SCREEN_QUERY, useNarrowScreen } from './lib/viewport';
 import {
   MEMORY_BUDGET_TOKENS,
   SCENE_SUMMARY_TASK_KIND,
@@ -156,7 +157,20 @@ export function App() {
     onImported: (id) => session.openWorld(id),
   });
 
-  const [collapsed, setCollapsed] = useState(false);
+  /**
+   * 左栏的可见性。
+   *
+   * 桌面默认展开；**手机默认收起**——窄屏上左栏是抽屉，盖在对话上，
+   * 默认铺开会把对话挤没（ROADMAP P2-1）。
+   */
+  const narrow = useNarrowScreen();
+  const [collapsed, setCollapsed] = useState(
+    () => typeof window !== 'undefined' && window.matchMedia(NARROW_SCREEN_QUERY).matches,
+  );
+  /** 窄屏上「选完了就自动收起来」：抽屉不该一直挡着对话。 */
+  const closeRailOnNarrow = useCallback(() => {
+    if (narrow) setCollapsed(true);
+  }, [narrow]);
   const [pane, setPane] = useState<RailPane>('list');
   const [panelOpen, setPanelOpen] = useState(false);
   const [newConversationOpen, setNewConversationOpen] = useState(false);
@@ -947,8 +961,14 @@ export function App() {
           <LeftRail
             pane={pane}
             onPaneChange={setPane}
-            onNewConversation={() => setNewConversationOpen(true)}
-            onCreateWithAi={() => void handleCreateWithAi()}
+            onNewConversation={() => {
+              setNewConversationOpen(true);
+              closeRailOnNarrow();
+            }}
+            onCreateWithAi={() => {
+              void handleCreateWithAi();
+              closeRailOnNarrow();
+            }}
             onImportFile={(file) => void handleImport(file)}
             disabled={disabled}
             list={
@@ -990,8 +1010,14 @@ export function App() {
                   conversations={session.conversations}
                   activeConversationId={conversation?.id ?? null}
                   disabled={disabled}
-                  onOpenWorld={(id) => void session.openWorld(id)}
-                  onOpenConversation={(id) => void session.openConversation(id)}
+                  onOpenWorld={(id) => {
+                    void session.openWorld(id);
+                    closeRailOnNarrow();
+                  }}
+                  onOpenConversation={(id) => {
+                    void session.openConversation(id);
+                    closeRailOnNarrow();
+                  }}
                   onArchiveConversation={(target) => {
                     if (
                       window.confirm(
@@ -1053,6 +1079,14 @@ export function App() {
             }
           />
         )}
+
+        {/*
+          窄屏上左栏是抽屉（P2-1）：铺一层遮罩，点哪儿都收起来。
+          桌面上不渲染——那时左栏是常驻的一列，遮罩没有意义。
+        */}
+        {!collapsed && narrow ? (
+          <button type="button" className="rail-scrim" aria-label="收起左栏" onClick={() => setCollapsed(true)} />
+        ) : null}
 
         <div className="workspace">
           <MainHeader

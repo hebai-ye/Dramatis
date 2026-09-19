@@ -1520,3 +1520,75 @@ details summary {
   font-size: 12px;
   padding: 0 4px;
 }
+
+/**
+ * 手机（P2-1）：左栏从「一列」变成「抽屉」。
+ *
+ * 640px 以下没有并排的空间——左栏占 240px、右缘角色栏再占 104px，
+ * 留给对话的就只剩一条缝。所以：左栏盖在对话上（默认收起，点顶栏的 `≪` 打开），
+ * 点遮罩或选完东西自动收起；右缘角色栏先让位，名单在标题栏里已经有了。
+ */
+@media (max-width: 640px) {
+  .app {
+    gap: 6px;
+    padding: 6px;
+  }
+
+  .app-body,
+  .app-body.collapsed {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .app-body .left-rail {
+    border-radius: 0 var(--radius) var(--radius) 0;
+    bottom: 0;
+    left: 0;
+    overflow-y: auto;
+    position: fixed;
+    top: 0;
+    width: min(86vw, 320px);
+    z-index: 30;
+  }
+
+  /* 遮罩：抽屉开着时盖住对话，点一下收起 */
+  .rail-scrim {
+    background: rgba(0, 0, 0, 0.55);
+    border: 0;
+    inset: 0;
+    padding: 0;
+    position: fixed;
+    z-index: 20;
+  }
+
+  /* 角色栏让位：标题栏里已经列了此刻在场的角色 */
+  .cast-rail {
+    display: none;
+  }
+
+  .workspace {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  /* 运行时面板在小屏上占满宽度的绝大部分，别只露一条 */
+  .runtime-drawer.open {
+    width: min(88vw, 340px);
+  }
+
+  /* 触屏：按钮与输入区放大到能点得准 */
+  .rail-actions button,
+  .composer-tools .ghost,
+  .bubble-actions button {
+    font-size: 13px;
+    padding: 8px 10px;
+  }
+
+  .composer textarea {
+    /* 16px 以下 iOS 会在聚焦时自动放大页面 */
+    font-size: 16px;
+  }
+
+  .main-header {
+    gap: 6px;
+    padding: 6px 8px;
+  }
+}

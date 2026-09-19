@@ -51,6 +51,7 @@ import { WorldTree } from './components/WorldTree';
 import { useAdminChat } from './lib/admin';
 import { useProviders } from './lib/providers';
 import { useDatabase, useSession } from './lib/session';
+import { extraCalls, useUsage } from './lib/usage';
 import { MEMORY_BUDGET_TOKENS, TURN_ANALYSIS_TASK_KIND, useBackgroundWorker } from './lib/worker';
 
 const PNG_SIGNATURE = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
@@ -100,12 +101,24 @@ export function App() {
   const { db, boot, error: dbError } = useDatabase();
   const session = useSession(db);
   const providers = useProviders(db);
+  const world = session.world;
+  const conversation = session.conversation;
+
+  /**
+   * 用量账单（T7）。房间与对话一变就换一份账：跨对话、跨世界各算各的。
+   */
+  const usage = useUsage(db, {
+    roomId: world?.id ?? null,
+    conversationId: conversation?.id ?? null,
+  });
 
   const worker = useBackgroundWorker({
     db,
     provider: providers.background,
     onChanged: () => {
       void session.reloadWorld();
+      // 后台写完一笔账，界面上的数字要跟着动
+      void usage.reload();
     },
   });
 
@@ -134,8 +147,6 @@ export function App() {
   const [lastPrompt, setLastPrompt] = useState<AssembledPrompt | null>(null);
   const abortRef = useRef<AbortController | null>(null);
 
-  const world = session.world;
-  const conversation = session.conversation;
   const scene = session.scene;
   const messages = session.messages;
   const instances = session.instances;
@@ -253,7 +264,13 @@ export function App() {
    * 走后台/便宜模型配置；用户在对话模式里关掉「意图先行」时直接跳过。
    */
   const runIntentPlan = useCallback(
-    async (input: { text: string; history: Message[]; scene: Scene; instances: CharacterInstance[] }) => {
+    async (input: {
+      text: string;
+      history: Message[];
+      scene: Scene;
+      instances: CharacterInstance[];
+      turnId: string;
+    }) => {
       if (!isIntentFirst(conversation?.modes)) return null;
       const config =
         providers.background ??
@@ -264,6 +281,7 @@ export function App() {
               apiKey: providers.apiKey,
               model: providers.active.model,
               temperature: 0.2,
+              price: providers.active.price ?? null,
             });
       if (config === null || config.apiKey.trim() === '') return null;
 
@@ -286,15 +304,26 @@ export function App() {
           }),
           { temperature: config.temperature },
         );
-        // 这一调用的开销也要算进成本：它是每回合固定多出来的一次
-        worker.recordUsage(completion.usage);
+        // 这一调用的开销也要算进成本：它是每回合固定多出来的一次。
+        // 走账单而不是内存计数——刷新之后这笔钱还得在（T7）
+        await db?.ledger.record({
+          roomId: world?.id ?? null,
+          conversationId: conversation?.id ?? null,
+          turnId: input.turnId,
+          category: 'intent',
+          model: config.model,
+          promptTokens: completion.usage?.promptTokens ?? 0,
+          completionTokens: completion.usage?.completionTokens ?? 0,
+          price: config.price,
+        });
+        void usage.reload();
         return parseIntentPlan(completion.text);
       } catch {
         // 导演调用失败不该拦下这一轮：退回规则调度，照样能玩
         return null;
       }
     },
-    [conversation, providers, worker, world],
+    [conversation, db, providers, usage, world],
   );
 
   const handleImport = useCallback(
@@ -416,7 +445,7 @@ export function App() {
          * 并且**只是建议**：名字不在名单里就退回规则调度，绝不让看不见的人上台。
          * 用户可以在「对话模式」里关掉它，省下这一次调用。
          */
-        const plan = await runIntentPlan({ text, history, scene, instances });
+        const plan = await runIntentPlan({ text, history, scene, instances, turnId });
         const sceneCast = instances.filter(
           (instance) => instance.presence === 'onstage' && scene.cast.includes(instance.id),
         );
@@ -457,6 +486,22 @@ export function App() {
             signal: controller.signal,
             intent: plannedIntent,
           });
+
+          // 记一笔账。服务商没返回 usage 时 token 记 0，但调用确实发生过，
+          // 所以这一条照样记——漏账会让用户低估开销（T7）
+          await db.ledger.record({
+            roomId: world.id,
+            conversationId: conversation.id,
+            turnId,
+            category: 'generation',
+            model: profile.model,
+            promptTokens: generation.usage?.promptTokens ?? 0,
+            completionTokens: generation.usage?.completionTokens ?? 0,
+            speakerInstanceId: speaker.id,
+            speakerName: speaker.displayName,
+            price: profile.price ?? null,
+          });
+
           const reply = generation.text;
           first = false;
 
@@ -486,6 +531,7 @@ export function App() {
         }
 
         // 一轮分析（记忆 + 状态变化）合成一次调用，不阻塞对话；负载只存 id，内容现取
+        await usage.reload();
         await db.queue.enqueue({
           kind: TURN_ANALYSIS_TASK_KIND,
           idempotencyKey: `${TURN_ANALYSIS_TASK_KIND}:${turnId}`,
@@ -516,6 +562,7 @@ export function App() {
       runIntentPlan,
       scene,
       session,
+      usage,
       worker,
       world,
     ],
@@ -575,6 +622,21 @@ export function App() {
           signal: controller.signal,
         });
 
+        // 重抽同样是一次真实调用：旧的那笔账不撤销（钱花了），新的这笔记上
+        await db.ledger.record({
+          roomId: world.id,
+          conversationId: conversation.id,
+          turnId: target.turnId,
+          category: 'generation',
+          model: providers.active?.model ?? '',
+          promptTokens: generation.usage?.promptTokens ?? 0,
+          completionTokens: generation.usage?.completionTokens ?? 0,
+          speakerInstanceId: speaker.id,
+          speakerName: speaker.displayName,
+          price: providers.active?.price ?? null,
+        });
+        await usage.reload();
+
         if (generation.text.trim() !== '') {
           await session.appendMessages([
             {
@@ -611,7 +673,21 @@ export function App() {
         abortRef.current = null;
       }
     },
-    [busy, conversation, db, instances, makeCharacterLine, messages, runGeneration, scene, session, worker, world],
+    [
+      busy,
+      conversation,
+      db,
+      instances,
+      makeCharacterLine,
+      messages,
+      providers,
+      runGeneration,
+      scene,
+      session,
+      usage,
+      worker,
+      world,
+    ],
   );
 
   const handleDeleteMessage = useCallback(
@@ -965,8 +1041,9 @@ export function App() {
                     libraryCards={session.library.cards}
                     prompt={lastPrompt}
                     pending={worker.pending}
-                    completed={worker.completed}
-                    backgroundUsage={worker.usage}
+                    extraCalls={extraCalls(usage.world)}
+                    usage={{ world: usage.world, conversation: usage.conversation }}
+                    conversationTitle={conversation?.title ?? ''}
                     workerError={worker.lastError}
                     disabled={disabled}
                     onSceneChange={(patch) => void session.updateScene(patch)}

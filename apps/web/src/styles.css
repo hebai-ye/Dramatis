@@ -367,6 +367,40 @@ button.ghost {
   justify-content: space-between;
 }
 
+/* ---------- 用量与花费（T7） ---------- */
+
+.usage-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.usage-list li {
+  align-items: baseline;
+  border-bottom: 1px dashed var(--line);
+  display: flex;
+  gap: 8px;
+  padding: 4px 0;
+}
+
+.usage-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.usage-figure {
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  white-space: nowrap;
+}
+
 .memory-list {
   display: flex;
   flex-direction: column;

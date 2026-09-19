@@ -8,12 +8,14 @@ import {
   collectCompletionWithTools,
   createOpenAICompatibleProvider,
   type ModelProvider,
+  type ProviderPrice,
   parseAffectUpdates,
   parseExtraction,
   parseTurnAnalysis,
   type RoomId,
   type SceneId,
   type TokenUsage,
+  type UsageCategory,
 } from '@dramatis/core';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { DramatisDb } from './db';
@@ -45,23 +47,25 @@ export interface BackgroundProviderConfig {
   apiKey: string;
   model: string;
   temperature: number;
+  /**
+   * 这一档配置的单价（每百万 token），用来把 token 换算成钱。
+   *
+   * 没填就是 null：账单只报 token 数，不编一个假价格（P3-7）。
+   */
+  price: ProviderPrice | null;
 }
+
+/** 任务类型 → 账单分类。老库里的 `memory.extract` / `affect.update` 也各有归属。 */
+const CATEGORY_BY_TASK: Record<string, UsageCategory> = {
+  [TURN_ANALYSIS_TASK_KIND]: 'analysis',
+  [MEMORY_TASK_KIND]: 'memory',
+  [AFFECT_TASK_KIND]: 'affect',
+};
 
 export interface BackgroundWorkerApi {
   pending: number;
   running: boolean;
   lastError: string | null;
-  /** 本次会话完成的调用次数，用于观察后台开销。 */
-  completed: number;
-  /**
-   * 本次会话后台调用的真实用量合计。
-   *
-   * provider 只有在 `includeUsage` 打开时才会返回 usage，缺了就记 0；
-   * 这里给的是账单口径的数字，不是启发式估算（P3-7）。
-   */
-  usage: { promptTokens: number; completionTokens: number };
-  /** 把队列之外的调用（例如生成前的意图调用）也计入用量统计。 */
-  recordUsage: (usage: TokenUsage | null) => void;
   /** 立刻尝试清空队列。每轮对话结束后调用。 */
   kick: () => void;
 }
@@ -96,8 +100,6 @@ export function useBackgroundWorker(options: {
   const [pending, setPending] = useState(0);
   const [running, setRunning] = useState(false);
   const [lastError, setLastError] = useState<string | null>(null);
-  const [completed, setCompleted] = useState(0);
-  const [usage, setUsage] = useState({ promptTokens: 0, completionTokens: 0 });
 
   const drainingRef = useRef(false);
   const onChangedRef = useRef(onChanged);
@@ -297,14 +299,23 @@ export function useBackgroundWorker(options: {
             usage = await runAffectUpdate(payload, config);
           }
 
-          await db.queue.complete(task.id);
-          setCompleted((value) => value + 1);
-          if (usage !== null) {
-            setUsage((previous) => ({
-              promptTokens: previous.promptTokens + (usage?.promptTokens ?? 0),
-              completionTokens: previous.completionTokens + (usage?.completionTokens ?? 0),
-            }));
+          // 落一笔账。服务商没返回 usage 时 token 记 0，但**这一笔照样记**——
+          // 调用确实发生过，不记的话用户会因为漏账而低估开销（T7）。
+          const category = CATEGORY_BY_TASK[task.kind];
+          if (category !== undefined) {
+            await db.ledger.record({
+              roomId: payload.roomId,
+              conversationId: payload.conversationId,
+              turnId: payload.turnId,
+              category,
+              model: config.model,
+              promptTokens: usage?.promptTokens ?? 0,
+              completionTokens: usage?.completionTokens ?? 0,
+              price: config.price,
+            });
           }
+
+          await db.queue.complete(task.id);
           setLastError(null);
           onChangedRef.current();
         } catch (error) {
@@ -324,17 +335,6 @@ export function useBackgroundWorker(options: {
     void drain();
   }, [drain]);
 
-  const recordUsage = useCallback((usage: TokenUsage | null) => {
-    if (usage === null) return;
-    // 队列之外的调用（意图调用）也要计入「额外调用」次数：用户看的是每回合多花几次，
-    // 而不是它走的是哪条代码路径
-    setCompleted((value) => value + 1);
-    setUsage((previous) => ({
-      promptTokens: previous.promptTokens + (usage.promptTokens ?? 0),
-      completionTokens: previous.completionTokens + (usage.completionTokens ?? 0),
-    }));
-  }, []);
-
   // 启动时清一次积压，之后每 8 秒补一次，兜住页面被挂起的情况
   useEffect(() => {
     void refreshPending();
@@ -345,5 +345,5 @@ export function useBackgroundWorker(options: {
     return () => clearInterval(timer);
   }, [db, kick, provider, refreshPending]);
 
-  return { pending, running, lastError, completed, usage, recordUsage, kick };
+  return { pending, running, lastError, kick };
 }

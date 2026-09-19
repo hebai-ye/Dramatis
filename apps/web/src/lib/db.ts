@@ -3,10 +3,12 @@ import {
   type BackgroundRunner,
   createBackgroundRunner,
   createMemoryEntityStore,
+  createUsageLedger,
   type EntityQuery,
   type EntityStore,
   matchesWhere,
   Repository,
+  type UsageLedger,
 } from '@dramatis/core';
 import { type DBSchema, type IDBPDatabase, openDB } from 'idb';
 
@@ -104,6 +106,13 @@ export interface DramatisDb {
   backendKind: string;
   repository: Repository;
   queue: BackgroundRunner;
+  /**
+   * 用量账单（P3-7 / T7）。
+   *
+   * 与仓储共用同一个 EntityStore，因此也在这里一起建好：账单是只增不改的流水，
+   * 不参与剧情数据的级联语义（归档不回滚它，删世界才清）。
+   */
+  ledger: UsageLedger;
 }
 
 /**
@@ -127,5 +136,6 @@ export async function openDramatisDb(): Promise<DramatisDb> {
     backendKind: store.kind,
     repository: new Repository(store),
     queue: createBackgroundRunner(store),
+    ledger: createUsageLedger(store),
   };
 }

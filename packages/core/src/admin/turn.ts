@@ -1,6 +1,6 @@
 import type { ChatMessage, ChatToolCall } from '../prompt/types.js';
 import { collectCompletionWithTools } from '../provider/collect.js';
-import type { ModelParams, ModelProvider } from '../provider/openai-compatible.js';
+import type { ModelParams, ModelProvider, TokenUsage } from '../provider/openai-compatible.js';
 import { ADMIN_TOOLS, type AdminDraft, type AdminToolContext, parseAdminToolCall } from './tools.js';
 
 /** 一次工具调用的执行记录，界面据此显示「管理员改了什么」。 */
@@ -16,7 +16,21 @@ export interface AdminToolExecution {
 export type AdminTurnEvent =
   | { type: 'text'; text: string }
   | { type: 'tool'; execution: AdminToolExecution }
-  | { type: 'done'; text: string; executions: AdminToolExecution[] };
+  | {
+      type: 'done';
+      text: string;
+      executions: AdminToolExecution[];
+      /**
+       * 这一轮的用量合计。
+       *
+       * 管理员会为了回填工具结果跑好几轮调用（最多三轮），所以这里把每一轮的
+       * 用量加起来——只记最后一轮会漏掉大头（T7 的账单口径）。
+       * 服务商一次都没返回时是 null。
+       */
+      usage: TokenUsage | null;
+      /** 实际发生了几次调用（工具回填会让它大于 1）。 */
+      calls: number;
+    };
 
 export interface AdminTurnOptions {
   params?: ModelParams;
@@ -48,10 +62,16 @@ export async function* runAdminTurn(
   const conversation: ChatMessage[] = [...messages];
   const executions: AdminToolExecution[] = [];
   let fullText = '';
+  // 分两栏累加而不是每轮覆盖：管理员一次回合可能跑三次调用（工具回填），
+  // 只记最后一次会漏掉大头
+  let promptTokens = 0;
+  let completionTokens = 0;
+  let sawUsage = false;
+  let calls = 0;
 
   for (let round = 0; round < maxRounds; round += 1) {
     const isLastRound = round === maxRounds - 1;
-    const { text, toolCalls } = await collectCompletionWithTools(
+    const completion = await collectCompletionWithTools(
       provider,
       conversation,
       {
@@ -62,6 +82,13 @@ export async function* runAdminTurn(
       },
       options.signal,
     );
+    const { text, toolCalls } = completion;
+    calls += 1;
+    if (completion.usage !== null) {
+      sawUsage = true;
+      promptTokens += completion.usage.promptTokens ?? 0;
+      completionTokens += completion.usage.completionTokens ?? 0;
+    }
 
     if (text !== '') {
       fullText += text;
@@ -80,7 +107,8 @@ export async function* runAdminTurn(
     }
   }
 
-  yield { type: 'done', text: fullText, executions };
+  const usage: TokenUsage | null = sawUsage ? { promptTokens, completionTokens } : null;
+  yield { type: 'done', text: fullText, executions, usage, calls };
 }
 
 async function runToolCall(

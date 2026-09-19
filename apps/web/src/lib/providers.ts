@@ -7,6 +7,7 @@ import {
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { DramatisDb } from './db';
 import { createBrowserKeyStore, type KeyStorageMode } from './keystore';
+import type { BackgroundProviderConfig } from './worker';
 
 const META_ACTIVE_PROFILE = 'provider.activeId';
 const META_KEY_MODE = 'provider.keyMode';
@@ -31,7 +32,7 @@ export interface ProvidersApi {
    * 优先用标了 background 的配置，通常是更便宜的模型；没有单独配置时
    * 退回当前配置，保证功能可用。
    */
-  background: { baseUrl: string; apiKey: string; model: string; temperature: number } | null;
+  background: BackgroundProviderConfig | null;
   selectProfile: (id: string) => Promise<void>;
   addProfile: (input: CreateProviderProfileInput) => Promise<void>;
   updateProfile: (id: string, patch: Partial<ProviderProfile>) => Promise<void>;
@@ -241,11 +242,23 @@ export function useProviders(db: DramatisDb | null): ProvidersApi {
   function buildBackground(): ProvidersApi['background'] {
     const dedicated = profiles.find((item) => item.role === 'background');
     if (dedicated) {
-      return { baseUrl: dedicated.baseUrl, apiKey: backgroundKey, model: dedicated.model, temperature: 0.2 };
+      return {
+        baseUrl: dedicated.baseUrl,
+        apiKey: backgroundKey,
+        model: dedicated.model,
+        temperature: 0.2,
+        price: dedicated.price ?? null,
+      };
     }
 
     const fallback = profiles.find((item) => item.id === activeId);
     if (!fallback) return null;
-    return { baseUrl: fallback.baseUrl, apiKey, model: fallback.model, temperature: 0.2 };
+    return {
+      baseUrl: fallback.baseUrl,
+      apiKey,
+      model: fallback.model,
+      temperature: 0.2,
+      price: fallback.price ?? null,
+    };
   }
 }

@@ -20,6 +20,7 @@ import { createPersona, type Persona } from '../model/persona.js';
 import type { ProviderProfile } from '../model/provider.js';
 import type { Room, Scene } from '../model/room.js';
 import type { EntityStore } from '../platform/entity-store.js';
+import { USAGE_COLLECTION } from './usage.js';
 
 /**
  * 当前 schema 版本。
@@ -42,6 +43,7 @@ export const COLLECTIONS = {
   personas: 'personas',
   providerProfiles: 'providerProfiles',
   backgroundTasks: 'backgroundTasks',
+  usageRecords: USAGE_COLLECTION,
 } as const;
 
 export const META_KEYS = {
@@ -271,6 +273,9 @@ export class Repository {
     const memories = await this.store.list<MemoryEvent>(COLLECTIONS.memories, { where: { roomId: id } });
     // 后台任务也要清掉：留下指向已删除房间的任务，只会在下次启动时反复失败
     const tasks = await this.store.list<{ id: string }>(COLLECTIONS.backgroundTasks, { where: { roomId: id } });
+    // 账单跟着世界走：世界没了，账也就没有归属了。归档对话则**不**回滚账单——
+    // 时间线可以当作没发生过，钱不行
+    const usage = await this.store.list<{ id: string }>(COLLECTIONS.usageRecords, { where: { roomId: id } });
 
     for (const conversation of conversations) await this.store.remove(COLLECTIONS.conversations, conversation.id);
     for (const scene of scenes) await this.store.remove(COLLECTIONS.scenes, scene.id);
@@ -278,6 +283,7 @@ export class Repository {
     for (const message of messages) await this.store.remove(COLLECTIONS.messages, message.id);
     for (const memory of memories) await this.store.remove(COLLECTIONS.memories, memory.id);
     for (const task of tasks) await this.store.remove(COLLECTIONS.backgroundTasks, task.id);
+    for (const record of usage) await this.store.remove(COLLECTIONS.usageRecords, record.id);
     await this.store.remove(COLLECTIONS.rooms, id);
   }
 

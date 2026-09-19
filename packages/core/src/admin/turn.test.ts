@@ -306,4 +306,60 @@ describe('runAdminTurn', () => {
     expect(calls).toBe(3);
     expect(execute).toHaveBeenCalledTimes(2);
   });
+
+  it('用量按调用次数累加：工具回填让一次回合变成多次调用，不能只记最后一次', async () => {
+    const { room, card, alice, conversation } = fixture();
+    let round = 0;
+
+    const scripted: Provider = {
+      id: 'usage-scripted',
+      model: 'scripted',
+      async *chat(messages: ChatMessage[]): AsyncIterable<ProviderEvent> {
+        round += 1;
+        const usage = { promptTokens: 100 * round, completionTokens: 10 * round };
+
+        if (round === 1) {
+          yield {
+            type: 'done',
+            usage,
+            toolCalls: [
+              { id: 'c1', type: 'function', function: { name: 'set_scene', arguments: '{"location":"酒馆"}' } },
+            ],
+          };
+          return;
+        }
+
+        expect(messages.some((message) => message.role === 'tool')).toBe(true);
+        yield { type: 'text', text: '好了。' };
+        yield { type: 'done', usage };
+      },
+      async listModels() {
+        return ['scripted'];
+      },
+    };
+
+    const events: AdminTurnEvent[] = [];
+    for await (const event of runAdminTurn(
+      scripted,
+      buildAdminMessages({
+        room,
+        conversation,
+        scene: null,
+        instances: [alice],
+        cards: [card],
+        worldBooks: [],
+        history: [],
+        userInput: '换场景',
+      }),
+      { execute: async () => '已设置' },
+    )) {
+      events.push(event);
+    }
+
+    const final = events.at(-1);
+    if (final?.type !== 'done') throw new Error('没有 done 事件');
+    expect(final.calls).toBe(2);
+    // 100+200 提示、10+20 输出——只记最后一轮的话会得到 200 / 20
+    expect(final.usage).toEqual({ promptTokens: 300, completionTokens: 30 });
+  });
 });

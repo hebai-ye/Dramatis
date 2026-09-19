@@ -5,10 +5,13 @@ interface Props {
   memories: MemoryEvent[];
   instances: CharacterInstance[];
   pending: number;
-  /** 本次会话完成的后台调用次数，用来观察真实开销。 */
-  completed: number;
-  /** 后台任务的真实 token 合计（服务商没返回时是 0）。 */
-  usage: { promptTokens: number; completionTokens: number };
+  /**
+   * 生成之外的调用次数（意图判断 + 后台分析），来自落盘的账单。
+   *
+   * 以前这里记的是「本次会话」的次数，刷新就归零；长跑中途重载两次就把全程
+   * 账单冲没了（T7）。现在读的是流水，跨刷新、跨重启都对得上。
+   */
+  extraCalls: number;
   workerError: string | null;
   disabled: boolean;
   onUpdate: (id: EventId, patch: Partial<MemoryEvent>) => void;
@@ -33,8 +36,7 @@ export function MemoryPanel({
   memories,
   instances,
   pending,
-  completed,
-  usage,
+  extraCalls,
   workerError,
   disabled,
   onUpdate,
@@ -61,10 +63,7 @@ export function MemoryPanel({
         <h2>记忆</h2>
         <span className="hint">
           {memories.length} 条{pending > 0 ? ` · 排队 ${pending}` : ''}
-          {completed > 0 ? ` · 额外调用 ${completed} 次` : ''}
-          {usage.promptTokens + usage.completionTokens > 0
-            ? ` · ${String(usage.promptTokens + usage.completionTokens)} token`
-            : ''}
+          {extraCalls > 0 ? ` · 额外调用 ${extraCalls} 次` : ''}
         </span>
       </header>
 

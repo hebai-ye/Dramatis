@@ -1,4 +1,4 @@
-import type { ProviderRole } from '@dramatis/core';
+import type { ProviderPrice, ProviderRole } from '@dramatis/core';
 import { useEffect, useState } from 'react';
 import type { KeyStorageMode } from '../lib/keystore';
 import { describeKeyStore } from '../lib/keystore';
@@ -33,11 +33,20 @@ interface Draft {
   reserveForReply: number;
   apiKey: string;
   keyMode: KeyStorageMode;
+  /** 单价按字符串收：空字符串表示「没填」，比 0 更诚实。 */
+  priceInput: string;
+  priceOutput: string;
+  priceCurrency: string;
+}
+
+function priceField(value: number | undefined): string {
+  return value === undefined ? '' : String(value);
 }
 
 function draftOf(api: ProvidersApi): Draft | null {
   const active = api.active;
   if (!active) return null;
+  const price = active.price ?? null;
   return {
     name: active.name,
     model: active.model,
@@ -48,6 +57,24 @@ function draftOf(api: ProvidersApi): Draft | null {
     reserveForReply: active.reserveForReply,
     apiKey: api.apiKey,
     keyMode: api.keyMode,
+    priceInput: price === null ? '' : priceField(price.inputPerMillion),
+    priceOutput: price === null ? '' : priceField(price.outputPerMillion),
+    priceCurrency: price === null ? '¥' : price.currency,
+  };
+}
+
+/**
+ * 草稿里的单价 → 存进配置的单价。
+ *
+ * 两个价格都空着就是「没填」→ null：账单只报 token，不编钱。
+ * 只填了一个也算数（另一个按 0 计），这样「输入贵、输出便宜」这类模型也能表达。
+ */
+function priceOf(draft: Draft): ProviderPrice | null {
+  if (draft.priceInput.trim() === '' && draft.priceOutput.trim() === '') return null;
+  return {
+    inputPerMillion: Number(draft.priceInput) || 0,
+    outputPerMillion: Number(draft.priceOutput) || 0,
+    currency: draft.priceCurrency.trim() === '' ? '¥' : draft.priceCurrency.trim(),
   };
 }
 
@@ -62,7 +89,10 @@ function isSameDraft(left: Draft | null, right: Draft | null): boolean {
     left.maxTokens === right.maxTokens &&
     left.reserveForReply === right.reserveForReply &&
     left.apiKey === right.apiKey &&
-    left.keyMode === right.keyMode
+    left.keyMode === right.keyMode &&
+    left.priceInput === right.priceInput &&
+    left.priceOutput === right.priceOutput &&
+    left.priceCurrency === right.priceCurrency
   );
 }
 
@@ -112,6 +142,7 @@ export function ProviderPanel({ api, disabled }: Props) {
         temperature: draft.temperature,
         maxTokens: draft.maxTokens,
         reserveForReply: draft.reserveForReply,
+        price: priceOf(draft),
       },
       apiKey: draft.apiKey,
       keyMode: draft.keyMode,
@@ -271,6 +302,47 @@ export function ProviderPanel({ api, disabled }: Props) {
               />
             </label>
           </div>
+
+          <div className="grid-3">
+            <label>
+              输入价 / 百万 token
+              <input
+                type="number"
+                step="0.01"
+                min="0"
+                placeholder="留空＝不换算"
+                value={draft.priceInput}
+                disabled={disabled}
+                onChange={(event) => patch({ priceInput: event.target.value })}
+              />
+            </label>
+            <label>
+              输出价 / 百万 token
+              <input
+                type="number"
+                step="0.01"
+                min="0"
+                placeholder="留空＝不换算"
+                value={draft.priceOutput}
+                disabled={disabled}
+                onChange={(event) => patch({ priceOutput: event.target.value })}
+              />
+            </label>
+            <label>
+              币种
+              <input
+                type="text"
+                maxLength={4}
+                value={draft.priceCurrency}
+                disabled={disabled}
+                onChange={(event) => patch({ priceCurrency: event.target.value })}
+              />
+            </label>
+          </div>
+          <p className="hint">
+            单价由你自己填（各家价格不同、还会变）。填了之后，运行时的「用量」页会把 token 换算成钱； 留空就只报 token
+            数，绝不会用编出来的价格糊弄你。
+          </p>
 
           <div className="save-bar">
             <button type="button" disabled={disabled || !dirty} onClick={() => void save()}>

@@ -6,6 +6,7 @@ import {
   createPlayerMessage,
   createTurnId,
   type Message,
+  type MessageUsage,
   messageId,
   newId,
   nowIso,
@@ -122,6 +123,8 @@ export function useAdminChat(options: {
         baseUrl: profile.baseUrl,
         apiKey: providers.apiKey,
         model: profile.model,
+        // 副对话的调用也要进账单：它用的是同一个 Key，花的是同一笔钱
+        includeUsage: true,
       });
 
       const controller = new AbortController();
@@ -130,6 +133,7 @@ export function useAdminChat(options: {
 
       try {
         let answer = '';
+        let usage: MessageUsage | null = null;
         for await (const event of runAdminTurn(
           provider,
           buildAdminMessages({
@@ -171,6 +175,13 @@ export function useAdminChat(options: {
               break;
             case 'done':
               answer = event.text === '' ? answer : event.text;
+              usage =
+                event.usage === null
+                  ? null
+                  : {
+                      promptTokens: event.usage.promptTokens ?? 0,
+                      completionTokens: event.usage.completionTokens ?? 0,
+                    };
               break;
             default:
               break;
@@ -190,10 +201,24 @@ export function useAdminChat(options: {
           speakerName: '世界管理员',
           audience: [],
           content,
+          // 用量挂在消息上：副对话刷新之后仍能看到这一轮花了多少
+          ...(usage === null ? {} : { usage }),
           ...(artifacts.length > 0 ? { artifacts } : {}),
           createdAt: nowIso(),
         };
         await session.appendMessages([message]);
+
+        // 记账。世界管理员不属于任何角色，所以不填 speaker（T7）
+        await db.ledger.record({
+          roomId: world.id,
+          conversationId: conversation.id,
+          turnId: message.turnId,
+          category: 'admin',
+          model: profile.model,
+          promptTokens: usage?.promptTokens ?? 0,
+          completionTokens: usage?.completionTokens ?? 0,
+          price: profile.price ?? null,
+        });
         onChanged();
       } catch (sendError) {
         const message = sendError instanceof Error ? sendError.message : String(sendError);

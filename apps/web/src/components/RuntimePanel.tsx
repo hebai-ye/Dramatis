@@ -7,6 +7,7 @@ import type {
   MemoryEvent,
   Presence,
   Scene,
+  UsageSummary,
   WorldBook,
   WorldBookId,
 } from '@dramatis/core';
@@ -15,8 +16,9 @@ import { CastPanel } from './CastPanel';
 import { MemoryPanel } from './MemoryPanel';
 import { PromptInspector } from './PromptInspector';
 import { ScenePanel } from './ScenePanel';
+import { UsagePanel } from './UsagePanel';
 
-type Tab = 'scene' | 'memory' | 'prompt';
+type Tab = 'scene' | 'memory' | 'usage' | 'prompt';
 
 interface Props {
   scene: Scene | null;
@@ -26,9 +28,12 @@ interface Props {
   libraryCards: Card[];
   prompt: AssembledPrompt | null;
   pending: number;
-  completed: number;
-  /** 后台任务的真实 token 合计。 */
-  backgroundUsage: { promptTokens: number; completionTokens: number };
+  /** 生成之外的调用次数（意图判断 + 后台分析），来自落盘的账单。 */
+  extraCalls: number;
+  /** 账单：整个世界与当前对话各一份。 */
+  usage: { world: UsageSummary | null; conversation: UsageSummary | null };
+  /** 当前对话名，给用量面板做标题。 */
+  conversationTitle: string;
   workerError: string | null;
   disabled: boolean;
   onSceneChange: (patch: Partial<Scene>) => void;
@@ -45,6 +50,7 @@ interface Props {
 const TABS: Array<{ id: Tab; label: string }> = [
   { id: 'scene', label: '场景与阵容' },
   { id: 'memory', label: '记忆' },
+  { id: 'usage', label: '用量' },
   { id: 'prompt', label: 'Prompt' },
 ];
 
@@ -153,12 +159,19 @@ export function RuntimePanel(props: Props) {
           memories={props.memories}
           instances={props.instances}
           pending={props.pending}
-          completed={props.completed}
-          usage={props.backgroundUsage}
+          extraCalls={props.extraCalls}
           workerError={props.workerError}
           disabled={props.disabled}
           onUpdate={props.onUpdateMemory}
           onDelete={props.onDeleteMemory}
+        />
+      ) : null}
+
+      {tab === 'usage' ? (
+        <UsagePanel
+          world={props.usage.world}
+          conversation={props.usage.conversation}
+          conversationTitle={props.conversationTitle}
         />
       ) : null}
 

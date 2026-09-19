@@ -2,6 +2,7 @@ export * from './admin/prompt.js';
 export * from './admin/tools.js';
 export * from './admin/turn.js';
 export * from './compat/sillytavern/index.js';
+export * from './crypto/index.js';
 export * from './director/intent-plan.js';
 export * from './director/scheduler.js';
 export * from './memory/affect.js';

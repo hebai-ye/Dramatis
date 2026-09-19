@@ -109,16 +109,37 @@ GET  /spaces/{spaceId}/head   只问「现在到哪个 rev 了」
 ### 3.3 加密与鉴权
 
 ```
-同步密码 ──PBKDF2-SHA256(salt=spaceId, 600k)──┬─→ authKey ─ HMAC(spaceId) ─→ 凭证（Bearer）
-                                              └─→ encKey  ─ AES-GCM ───────→ 记录密文
+同步密码 / 恢复码 ──PBKDF2-SHA256(salt=spaceHandle|用途, 600k)──┬─→ authKey ─ HMAC ─→ 凭证（Bearer）
+                                                               └─→ KEK（只用来包/解主密钥）
+
+随机主密钥 encKey ──┬── KEK(密码) 包一份 ──→ 服务端
+                    └── KEK(恢复码) 包一份 ──→ 服务端
+                    └── AES-GCM ──────────→ 记录密文（服务端只看到这个）
 ```
+
+**实现后的修正（P2-6 第二步，2026-09-19）**：原方案写的是「密码派生出的第二半直接当
+`encKey`」。真去写的时候发现这句话和 §3.1 的「恢复码等价于凭证」**互相矛盾**：密码与
+恢复码是两个不同的字符串，各自派生出的 `encKey` 也必然不同——用恢复码登录进来，
+只会看到一堆解不开的密文。
+
+所以改成**随机主密钥 + 两份额外封装**：建空间时生成一个 256 bit 的随机 `encKey`，
+分别用「密码派生的 KEK」与「恢复码派生的 KEK」各包一份，两份都存服务端；谁登录成功
+谁就解开**同一个**主密钥。服务端因此多存两个字段（两份封装——密码一份、恢复码一份），
+以及两个凭证哈希（两个凭证等价，都能过鉴权）。它仍然看不到明文，也解不开封装：
+KEK 由用户密码派生，服务端手里没有密码。
+
+| 用途分开 | 盐里带 `password` / `recovery`，所以「拿恢复码那份封装去当密码那份解」会直接失败 |
+| --- | --- |
+| 封装算法 | AES-256-GCM（WebCrypto 的 `wrapKey` / `unwrapKey`），AAD 绑 `purpose|spaceHandle` |
+| 主密钥 | 解出来是**不可导出**的，只活在当前会话内存里 |
 
 | 项 | 做法 |
 | --- | --- |
 | 加密算法 | **AES-256-GCM**（WebCrypto 原生，浏览器与 Node 都有） |
-| 附加数据（AAD） | `spaceId \| collection \| id \| rev`——把密文绑死在它的坐标上，防止服务端把 A 的记录挪到 B 上 |
+| 附加数据（AAD） | `spaceHandle \| collection \| id \| rev`——把密文绑死在它的坐标上，防止服务端把 A 的记录挪到 B 上 |
 | 服务端存的凭证 | `SHA-256(凭证)`，不存明文；凭证本身是 HMAC 输出（256 bit 随机），拖库也无法反推 |
-| 服务端存的记录 | `spaceId, collection, id, rev, ciphertext, updatedAt(明文，用于 LWW 诊断), size` |
+| 服务端存的记录 | `spaceHandle, collection, id, rev, ciphertext, iv, updatedAt(明文，用于 LWW 诊断), size` |
+| 服务端存的空间 | `spaceHandle`、**两份凭证哈希**（密码的、恢复码的）、**两份主密钥封装**（同上） |
 | 不存的 | 对话内容、角色设定、记忆、API Key、邮箱、手机号、IP 之外的任何身份信息 |
 | 传输 | 一律 HTTPS；`Authorization: Bearer <凭证>` |
 
@@ -175,7 +196,8 @@ GET  /spaces/{spaceId}/head   只问「现在到哪个 rev 了」
 
 ## 五、这个选型要求数据层先补什么（P2-6 的第一步）
 
-现状盘点（2026-09-19）：
+现状盘点（2026-09-19，**清单已全部交付**：三个提交 + 三条迁移，实现说明见
+[ROADMAP.md](./ROADMAP.md) 的 P2-6，真机验证见 [EVAL.md](./EVAL.md) 第七节）：
 
 | 要求 | 现状 | 要做的 |
 | --- | --- | --- |

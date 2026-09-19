@@ -29,7 +29,7 @@ import { USAGE_COLLECTION } from './usage.js';
  * 任何会改变已落盘数据结构的改动都要 +1，并补一条 `Migration`。
  * 这是「从第一天就留好升级路径」的具体做法（ROADMAP P0-1）。
  */
-export const SCHEMA_VERSION = 3;
+export const SCHEMA_VERSION = 4;
 
 export const COLLECTIONS = {
   meta: 'meta',
@@ -175,6 +175,28 @@ export const MIGRATIONS: readonly Migration[] = [
 
         const { activeSceneId: _dropped, ...rest } = room;
         await store.put(COLLECTIONS.rooms, { ...rest, id, activeConversationId: conversation.id });
+      }
+    },
+  },
+  {
+    version: 4,
+    describe: '补齐 Scene / Message / MemoryEvent / ChapterSummary 的 updatedAt（P2-6 数据层前置）',
+    run: async (store) => {
+      // 这四类实体此前只有 createdAt。抄一个旧的 `updatedAt` 出来是不对的（那会让
+      // 老数据看起来「刚刚被改过」而抢走 LWW），所以回填成它们各自的 createdAt。
+      const collections = [
+        COLLECTIONS.scenes,
+        COLLECTIONS.messages,
+        COLLECTIONS.memories,
+        COLLECTIONS.chapterSummaries,
+      ];
+      for (const collection of collections) {
+        const records = await store.list<Record<string, unknown> & { id: string }>(collection);
+        for (const record of records) {
+          if (typeof record.updatedAt === 'string' && record.updatedAt !== '') continue;
+          const fallback = typeof record.createdAt === 'string' ? record.createdAt : nowIso();
+          await store.put(collection, { ...record, id: record.id, updatedAt: fallback });
+        }
       }
     },
   },
@@ -413,7 +435,7 @@ export class Repository {
   // ---- 场景 ----
 
   async saveScene(scene: Scene): Promise<void> {
-    await this.store.put(COLLECTIONS.scenes, scene);
+    await this.store.put(COLLECTIONS.scenes, { ...scene, updatedAt: nowIso() });
   }
 
   async getScene(id: SceneId): Promise<Scene | null> {
@@ -489,10 +511,11 @@ export class Repository {
     const counterKey = `seq:${roomId}`;
     let next = (await this.getMeta<number>(counterKey)) ?? 0;
 
+    const now = nowIso();
     const stamped: Message[] = [];
     for (const message of messages) {
       next += 1;
-      stamped.push({ ...message, roomId, seq: next });
+      stamped.push({ ...message, roomId, seq: next, updatedAt: now });
     }
 
     await this.store.bulkPut(COLLECTIONS.messages, stamped);
@@ -533,7 +556,14 @@ export class Repository {
   async updateMessage(id: MessageId, patch: Partial<Message>): Promise<Message | null> {
     const existing = await this.store.get<Message>(COLLECTIONS.messages, id);
     if (!existing) return null;
-    const updated = { ...existing, ...patch, id: existing.id, roomId: existing.roomId, seq: existing.seq };
+    const updated = {
+      ...existing,
+      ...patch,
+      id: existing.id,
+      roomId: existing.roomId,
+      seq: existing.seq,
+      updatedAt: nowIso(),
+    };
     await this.store.put(COLLECTIONS.messages, updated);
     return updated;
   }
@@ -577,6 +607,7 @@ export class Repository {
     const updated: Message = {
       ...message,
       artifacts: message.artifacts.map((item) => (item.id === artifactId ? adopted : item)),
+      updatedAt: nowIso(),
     };
     await this.store.put(COLLECTIONS.messages, updated);
     return { message: updated, artifact: adopted };
@@ -592,6 +623,7 @@ export class Repository {
       artifacts: message.artifacts.map((item) =>
         item.id === artifactId && item.status === 'pending' ? { ...item, status: 'discarded' } : item,
       ),
+      updatedAt: nowIso(),
     };
     await this.store.put(COLLECTIONS.messages, updated);
     return updated;
@@ -671,7 +703,11 @@ export class Repository {
   }
 
   async saveMemories(events: readonly MemoryEvent[]): Promise<void> {
-    await this.store.bulkPut(COLLECTIONS.memories, events);
+    const now = nowIso();
+    await this.store.bulkPut(
+      COLLECTIONS.memories,
+      events.map((event) => ({ ...event, updatedAt: now })),
+    );
   }
 
   // ---- 分层摘要（P1-5） ----
@@ -697,7 +733,7 @@ export class Repository {
   }
 
   async saveChapterSummary(chapter: ChapterSummary): Promise<void> {
-    await this.store.put(COLLECTIONS.chapterSummaries, chapter);
+    await this.store.put(COLLECTIONS.chapterSummaries, { ...chapter, updatedAt: nowIso() });
   }
 
   /** 删除一条对话产生的章节摘要，用于归档与彻底删除。 */
@@ -721,6 +757,7 @@ export class Repository {
       id: existing.id,
       roomId: existing.roomId,
       sourceTurnIds: existing.sourceTurnIds,
+      updatedAt: nowIso(),
     };
     await this.store.put(COLLECTIONS.memories, updated);
     return updated;

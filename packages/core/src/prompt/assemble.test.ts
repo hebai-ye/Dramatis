@@ -69,6 +69,7 @@ function fixtures(castPolicy: Scene['castPolicy'] = 'locked') {
     cast: [instanceIdValue],
     summary: '',
     createdAt: now,
+    updatedAt: now,
     endedAt: null,
   };
 
@@ -277,6 +278,7 @@ describe('assemblePrompt / 多角色场景', () => {
       summary: `第 ${String(index)} 章的经过。`,
       keyFacts: [`第 ${String(index)} 章的要点`],
       createdAt: nowIso(),
+      updatedAt: nowIso(),
     });
 
     const prompt = assemblePrompt({

@@ -284,4 +284,6 @@ export interface ChapterSummary {
   summary: string;
   keyFacts: string[];
   createdAt: string;
+  /** 最后一次写入的时间（P2-6）。章节是只增不改的，所以它通常等于 createdAt。 */
+  updatedAt: string;
 }

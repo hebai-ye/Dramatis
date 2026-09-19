@@ -37,6 +37,7 @@ function scene(overrides: Partial<Scene> = {}): Scene {
     createdAt: nowIso(),
     endedAt: null,
     ...overrides,
+    updatedAt: overrides.updatedAt ?? nowIso(),
   };
 }
 

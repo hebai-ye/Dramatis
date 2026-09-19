@@ -164,6 +164,7 @@ describe('长跑基线（P1-10）', () => {
       cast: [alice.id, bob.id],
       summary: '',
       createdAt: now,
+      updatedAt: now,
       endedAt: null,
     };
 
@@ -372,6 +373,7 @@ describe('长跑基线（P1-10）', () => {
       cast: [alice.id],
       summary: '',
       createdAt: now,
+      updatedAt: now,
       endedAt: null,
     };
 

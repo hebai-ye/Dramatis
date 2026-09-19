@@ -105,6 +105,7 @@ async function seed(): Promise<{ repository: Repository; roomId: Room['id'] }> {
       audience: [chen.id, man.id],
       content: '三十箱货是谁的？',
       createdAt: now,
+      updatedAt: now,
     },
     {
       id: messageId(newId()),
@@ -120,6 +121,7 @@ async function seed(): Promise<{ repository: Repository; roomId: Room['id'] }> {
       content: '「这你得去问跑船的。」',
       usage: { promptTokens: 100, completionTokens: 20 },
       createdAt: now,
+      updatedAt: now,
     },
   ];
   await repository.appendMessages(room.id, messages);
@@ -142,6 +144,7 @@ async function seed(): Promise<{ repository: Repository; roomId: Room['id'] }> {
       affects: [man.id],
       sourceTurnIds: ['turn-a'],
       createdAt: now,
+      updatedAt: now,
       lastRecalledAt: null,
       recallCount: 0,
     },
@@ -156,6 +159,7 @@ async function seed(): Promise<{ repository: Repository; roomId: Room['id'] }> {
     summary: '玩家开始追查一批没有清单的货。',
     keyFacts: ['三十箱货在胡记'],
     createdAt: now,
+    updatedAt: now,
   });
 
   await repository.saveRoom({ ...room, activeConversationId: main.id });

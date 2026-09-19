@@ -49,6 +49,7 @@ function memory(input: {
     affects: [],
     sourceTurnIds: ['turn-1'],
     createdAt: input.createdAt ?? OBSERVED,
+    updatedAt: input.createdAt ?? OBSERVED,
     lastRecalledAt: null,
     recallCount: input.recallCount ?? 0,
   };

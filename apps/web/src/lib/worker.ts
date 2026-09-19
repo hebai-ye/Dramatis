@@ -409,6 +409,7 @@ export function useBackgroundWorker(options: {
 
       const parsed = parseSummary(completion.text);
       if (parsed.summary !== '') {
+        const at = nowIso();
         await db.repository.saveChapterSummary({
           id: newId(),
           roomId: payload.roomId,
@@ -417,7 +418,8 @@ export function useBackgroundWorker(options: {
           sceneIds: candidates.scenes.map((scene) => scene.id),
           summary: parsed.summary,
           keyFacts: parsed.keyFacts,
-          createdAt: nowIso(),
+          createdAt: at,
+          updatedAt: at,
         });
       }
       return { called: true, usage: completion.usage };

@@ -49,6 +49,7 @@ function fixtures() {
     cast: [instance.id],
     summary: '',
     createdAt: now,
+    updatedAt: now,
     endedAt: null,
   };
 

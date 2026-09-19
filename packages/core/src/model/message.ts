@@ -96,6 +96,8 @@ export interface Message {
    */
   usage?: MessageUsage;
   createdAt: string;
+  /** 最后一次写入的时间（P2-6）：编辑、改归属、采纳草稿都会把它推到当下。 */
+  updatedAt: string;
 }
 
 /**
@@ -137,6 +139,8 @@ export interface MemoryEvent {
   /** 溯源，可展开回原文。 */
   sourceTurnIds: string[];
   createdAt: string;
+  /** 最后一次写入的时间（P2-6）：用户改重要度、置顶、被召回都会更新它。 */
+  updatedAt: string;
   lastRecalledAt: string | null;
   recallCount: number;
 }

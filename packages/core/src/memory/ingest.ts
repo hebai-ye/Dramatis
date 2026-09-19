@@ -59,6 +59,8 @@ export function buildMemoryEvents(input: IngestInput): IngestResult {
     affects: [] as MemoryEvent['affects'],
     sourceTurnIds: [input.turnId],
     createdAt,
+    // 落库时仓储层会再盖一次章；这里给一个默认值，让内存里刚造出来的条目也是完整的
+    updatedAt: createdAt,
     lastRecalledAt: null,
     recallCount: 0,
     pinned: false,

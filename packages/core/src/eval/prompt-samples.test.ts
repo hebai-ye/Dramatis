@@ -116,6 +116,7 @@ function fixture() {
     cast: [alice.id, bob.id],
     summary: '雨下了一整天，酒馆里只剩下几个躲雨的人。',
     createdAt: now,
+    updatedAt: now,
     endedAt: null,
   };
 
@@ -268,6 +269,7 @@ describe('真实模型验证取样器', () => {
           audience: [],
           content: '帮我给这个旧城补一点设定，再起草一个能在酒馆里遇到的角色。',
           createdAt: nowIso(),
+          updatedAt: nowIso(),
         },
       ],
       userInput: '顺便把当前场景的地点改成「旧城东侧的夜间酒馆」，时间是第三日 · 黄昏。',

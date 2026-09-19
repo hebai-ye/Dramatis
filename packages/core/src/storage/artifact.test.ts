@@ -36,6 +36,7 @@ async function adminMessage(artifacts: AdminArtifact[]): Promise<{ repository: R
     // 只有真的带过草稿的消息才谈得上采纳
     ...(artifacts.length > 0 ? { artifacts } : {}),
     createdAt: nowIso(),
+    updatedAt: nowIso(),
   };
   await repository.appendMessages(message.roomId, [message]);
   return { repository, message };

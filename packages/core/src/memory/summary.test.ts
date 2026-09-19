@@ -27,6 +27,7 @@ function scene(overrides: Partial<Scene> = {}): Scene {
     createdAt: '2026-09-19T00:00:00.000Z',
     endedAt: null,
     ...overrides,
+    updatedAt: overrides.updatedAt ?? '2026-09-19T00:00:00.000Z',
   };
 }
 
@@ -50,6 +51,7 @@ function line(input: {
     audience: [],
     content: input.content,
     createdAt: '2026-09-19T00:00:00.000Z',
+    updatedAt: '2026-09-19T00:00:00.000Z',
   };
 }
 

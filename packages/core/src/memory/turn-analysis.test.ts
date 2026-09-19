@@ -35,6 +35,7 @@ const scene: Scene = {
   cast: [],
   summary: '',
   createdAt: nowIso(),
+  updatedAt: nowIso(),
   endedAt: null,
 };
 

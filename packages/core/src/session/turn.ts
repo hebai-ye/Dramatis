@@ -67,6 +67,7 @@ export function createPlayerMessage(input: {
   /** 未落盘时留空，由仓储层的 appendMessages 分配。 */
   seq?: number;
 }): Message {
+  const now = nowIso();
   return {
     id: messageId(newId()),
     roomId: input.roomId,
@@ -79,7 +80,8 @@ export function createPlayerMessage(input: {
     speakerName: input.speakerName,
     audience: input.audience ?? [],
     content: input.content,
-    createdAt: nowIso(),
+    createdAt: now,
+    updatedAt: now,
   };
 }
 
@@ -97,6 +99,7 @@ export function createCharacterMessage(input: {
   seq?: number;
 }): Message {
   const sanitized = sanitizeCharacterContent(input.content, input.speakerName);
+  const now = nowIso();
 
   return {
     id: messageId(newId()),
@@ -111,7 +114,8 @@ export function createCharacterMessage(input: {
     audience: input.audience ?? [input.speakerInstanceId],
     content: sanitized.content,
     ...(sanitized.intent === null ? {} : { intent: sanitized.intent, intentSource: 'declared' as const }),
-    createdAt: nowIso(),
+    createdAt: now,
+    updatedAt: now,
   };
 }
 
@@ -157,6 +161,7 @@ export function createNarrationMessage(input: {
   turnId: string;
   content: string;
 }): Message {
+  const now = nowIso();
   return {
     id: messageId(newId()),
     roomId: input.roomId,
@@ -169,7 +174,8 @@ export function createNarrationMessage(input: {
     speakerName: '旁白',
     audience: [],
     content: input.content,
-    createdAt: nowIso(),
+    createdAt: now,
+    updatedAt: now,
   };
 }
 

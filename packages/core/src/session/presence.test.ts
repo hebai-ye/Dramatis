@@ -33,6 +33,7 @@ function sceneWith(cast: readonly CharacterInstance[]): Scene {
     cast: cast.map((member) => member.id),
     summary: '',
     createdAt: nowIso(),
+    updatedAt: nowIso(),
     endedAt: null,
   };
 }

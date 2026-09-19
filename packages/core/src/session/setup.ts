@@ -52,6 +52,7 @@ export function createSceneFor(
   cast: InstanceId[],
   options?: { title?: string; summary?: string; location?: string; worldTime?: string },
 ): Scene {
+  const now = nowIso();
   return {
     id: asSceneId(newId()),
     roomId: roomIdValue,
@@ -63,7 +64,8 @@ export function createSceneFor(
     cast,
     // M2 起由压缩流水线接管；现在用来装载角色卡里的场景设定
     summary: options?.summary ?? '',
-    createdAt: nowIso(),
+    createdAt: now,
+    updatedAt: now,
     endedAt: null,
   };
 }

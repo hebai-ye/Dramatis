@@ -35,6 +35,7 @@ function memory(overrides: Partial<MemoryEvent> = {}): MemoryEvent {
     lastRecalledAt: null,
     recallCount: 0,
     ...overrides,
+    updatedAt: overrides.updatedAt ?? '2026-01-01T00:00:00.000Z',
   };
 }
 

@@ -50,6 +50,14 @@ export interface Scene {
   /** 上次生成摘要的时间；界面据此显示「什么时候整理的」。 */
   recapUpdatedAt?: string;
   createdAt: string;
+  /**
+   * 最后一次写入的时间（P2-6）。
+   *
+   * 由仓储层的 `saveScene` 统一盖章：**所有写入路径都经过它**，
+   * 谁改的场景、改了几次都不影响这里记的是「最后那次」。
+   * 跨设备合并要拿它做 LWW，所以不能只靠调用方自觉。
+   */
+  updatedAt: string;
   endedAt: string | null;
 }
 

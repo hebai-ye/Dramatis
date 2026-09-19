@@ -42,6 +42,7 @@ function fixtures() {
     cast: [instanceIdValue],
     summary: '',
     createdAt: now,
+    updatedAt: now,
     endedAt: null,
   };
 
@@ -123,7 +124,7 @@ describe('Repository / schema', () => {
     const repo = new Repository(store);
     const report = await repo.migrate();
 
-    expect(report.applied.map((migration) => migration.version)).toEqual([2, 3]);
+    expect(report.applied.map((migration) => migration.version)).toEqual([2, 3, 4]);
 
     const personas = await repo.listPersonas();
     expect(personas).toHaveLength(1);
@@ -271,6 +272,7 @@ describe('Repository / 房间', () => {
         affects: [],
         sourceTurnIds: ['turn-1'],
         createdAt: nowIso(),
+        updatedAt: nowIso(),
         lastRecalledAt: null,
         recallCount: 0,
       },
@@ -285,15 +287,20 @@ describe('Repository / 房间', () => {
 });
 
 describe('Repository / 消息', () => {
-  it('追加消息时分配递增的 seq', async () => {
+  it('追加消息时分配递增的 seq，并盖上 updatedAt（P2-6）', async () => {
     const repo = new Repository(createMemoryEntityStore());
     const { room, scene } = fixtures();
 
-    const first = await repo.appendMessages(room.id, [message(room, scene, 'A')]);
+    // 故意带一个过期时间：写入路径必须自己盖章，不能信调用方
+    const first = await repo.appendMessages(room.id, [
+      { ...message(room, scene, 'A'), updatedAt: '2000-01-01T00:00:00.000Z' },
+    ]);
     const second = await repo.appendMessages(room.id, [message(room, scene, 'B')]);
 
     expect(first[0]?.seq).toBe(1);
     expect(second[0]?.seq).toBe(2);
+    expect(Date.parse(first[0]?.updatedAt ?? '')).toBeGreaterThan(Date.parse('2020-01-01T00:00:00.000Z'));
+    expect(Date.parse(second[0]?.updatedAt ?? '')).toBeGreaterThan(Date.parse('2020-01-01T00:00:00.000Z'));
   });
 
   it('同一毫秒落盘的消息仍有稳定顺序', async () => {
@@ -340,6 +347,7 @@ describe('Repository / 消息', () => {
     expect(updated?.id).toBe(saved.id);
     expect(updated?.roomId).toBe(saved.roomId);
     expect(updated?.seq).toBe(saved.seq);
+    expect(Date.parse(updated?.updatedAt ?? '')).toBeGreaterThanOrEqual(Date.parse(saved.updatedAt));
   });
 
   it('按回合删除消息，用于重抽', async () => {
@@ -413,6 +421,99 @@ describe('Repository / 模型服务配置', () => {
     const raw = await store.list<Record<string, unknown>>(COLLECTIONS.providerProfiles);
     expect(JSON.stringify(raw)).not.toContain('sk-secret');
     expect(await keyStore.get('provider:p1')).toBe('sk-secret');
+  });
+});
+
+describe('Repository / updatedAt（P2-6 数据层前置）', () => {
+  const OLD = '2000-01-01T00:00:00.000Z';
+  const isFresh = (value: string | undefined): boolean =>
+    Date.parse(value ?? '') > Date.parse('2020-01-01T00:00:00.000Z');
+
+  it('saveScene 覆盖调用方给的时间：写入路径自己盖章', async () => {
+    const repo = new Repository(createMemoryEntityStore());
+    const { scene } = fixtures();
+
+    await repo.saveScene({ ...scene, updatedAt: OLD });
+
+    expect(isFresh((await repo.getScene(scene.id))?.updatedAt)).toBe(true);
+  });
+
+  it('saveMemories / updateMemory 也会更新 updatedAt', async () => {
+    const repo = new Repository(createMemoryEntityStore());
+    const { room, scene, instance } = fixtures();
+    const event = {
+      id: eventId(newId()),
+      roomId: room.id,
+      conversationId: null,
+      sceneId: scene.id,
+      timeline: { worldTime: '第一日', sequence: 1 },
+      location: '',
+      participants: [instance.id],
+      summary: '一件发生过的事',
+      observerId: null,
+      perception: '',
+      importance: 0.5,
+      pinned: false,
+      importanceLocked: false,
+      affects: [],
+      sourceTurnIds: ['turn-1'],
+      createdAt: nowIso(),
+      updatedAt: OLD,
+      lastRecalledAt: null,
+      recallCount: 0,
+    };
+
+    await repo.saveMemories([event]);
+    const [saved] = await repo.listMemories(room.id);
+    expect(isFresh(saved?.updatedAt)).toBe(true);
+
+    const updated = await repo.updateMemory(event.id, { pinned: true, updatedAt: OLD });
+    expect(isFresh(updated?.updatedAt)).toBe(true);
+    expect(updated?.pinned).toBe(true);
+  });
+
+  it('saveChapterSummary 盖章', async () => {
+    const repo = new Repository(createMemoryEntityStore());
+    const { room, scene } = fixtures();
+
+    await repo.saveChapterSummary({
+      id: newId(),
+      roomId: room.id,
+      conversationId: null,
+      title: '第 1 章',
+      sceneIds: [scene.id],
+      summary: '前情',
+      keyFacts: [],
+      createdAt: OLD,
+      updatedAt: OLD,
+    });
+
+    const [chapter] = await repo.listChapterSummaries(room.id);
+    expect(isFresh(chapter?.updatedAt)).toBe(true);
+  });
+
+  it('迁移把老数据的 updatedAt 回填成 createdAt，而不是「现在」', async () => {
+    const store = createMemoryEntityStore();
+    const createdAt = '2026-01-02T03:04:05.000Z';
+    await store.put(COLLECTIONS.scenes, {
+      id: 'scene-legacy',
+      roomId: 'room-legacy',
+      conversationId: null,
+      title: '老场景',
+      location: '',
+      worldTime: '',
+      castPolicy: 'locked',
+      cast: [],
+      summary: '',
+      createdAt,
+      endedAt: null,
+    });
+
+    const repo = new Repository(store);
+    await repo.migrate();
+
+    const migrated = await store.get<Record<string, unknown>>(COLLECTIONS.scenes, 'scene-legacy');
+    expect(migrated?.updatedAt).toBe(createdAt);
   });
 });
 

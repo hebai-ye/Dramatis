@@ -91,6 +91,7 @@ describe('抽取提示词参考', () => {
       cast: [alice.id, bob.id],
       summary: '',
       createdAt: now,
+      updatedAt: now,
       endedAt: null,
     };
 

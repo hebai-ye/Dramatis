@@ -54,6 +54,7 @@ import { useAdminChat } from './lib/admin';
 import { useArchive } from './lib/archive';
 import { useProviders } from './lib/providers';
 import { useDatabase, useSession } from './lib/session';
+import { QUOTA_WARN_RATIO, useStorageStatus } from './lib/storage';
 import { extraCalls, useUsage } from './lib/usage';
 import { NARROW_SCREEN_QUERY, useNarrowScreen } from './lib/viewport';
 import {
@@ -157,6 +158,9 @@ export function App() {
     onImported: (id) => session.openWorld(id),
   });
 
+  /** 本机存储的持久化与配额（P2-3）：配额快满时在界面上提醒导出封存。 */
+  const storage = useStorageStatus();
+
   /**
    * 左栏的可见性。
    *
@@ -185,6 +189,28 @@ export function App() {
   const [busy, setBusy] = useState(false);
   const [lastPrompt, setLastPrompt] = useState<AssembledPrompt | null>(null);
   const abortRef = useRef<AbortController | null>(null);
+
+  /**
+   * 存储快满时提醒一次（P2-3）。
+   *
+   * 等到写不进去才说就晚了——那时候用户已经丢了一轮对话。所以到 80% 就提醒
+   * 导出封存；同一个提醒只出现一次，用户点掉之后不再重复烦他。
+   */
+  useEffect(() => {
+    const ratio = storage.ratio;
+    if (ratio === null || ratio < QUOTA_WARN_RATIO) return;
+    setWarnings((previous) =>
+      previous.some((item) => item.code === 'quota')
+        ? previous
+        : [
+            ...previous,
+            {
+              code: 'quota',
+              message: `浏览器给本站的存储已经用掉约 ${String(Math.round(ratio * 100))}%，再写可能失败。建议现在导出一份封存（设置 → 封存）。`,
+            },
+          ],
+    );
+  }, [storage.ratio]);
 
   const scene = session.scene;
   const messages = session.messages;
@@ -1073,6 +1099,8 @@ export function App() {
                     onDeleteArchived={(target) => void session.deleteConversation(target.id)}
                     onExportArchive={() => (world === null ? Promise.resolve(null) : archive.exportWorld(world.id))}
                     onImportArchive={archive.importArchive}
+                    storage={storage}
+                    backendKind={boot?.backendKind ?? ''}
                   />
                 ) : null}
               </>

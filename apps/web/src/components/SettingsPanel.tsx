@@ -1,6 +1,7 @@
 import type { Conversation, ConversationId, Persona } from '@dramatis/core';
 import { useState } from 'react';
 import type { ProvidersApi } from '../lib/providers';
+import { formatBytes, QUOTA_WARN_RATIO, type StorageApi } from '../lib/storage';
 import { PersonaLibrary } from './PersonaLibrary';
 import { ProviderPanel } from './ProviderPanel';
 
@@ -20,6 +21,10 @@ interface Props {
   onExportArchive: () => Promise<{ ok: boolean; message: string } | null>;
   /** 选一个封存文件导进来。 */
   onImportArchive: () => Promise<{ ok: boolean; message: string } | null>;
+  /** 本机存储：持久化状态与配额（P2-3）。 */
+  storage: StorageApi;
+  /** 后端类型（indexeddb / memory），用来如实说明数据存在哪。 */
+  backendKind: string;
 }
 
 function formatTime(iso: string): string {
@@ -48,6 +53,8 @@ export function SettingsPanel({
   onDeleteArchived,
   onExportArchive,
   onImportArchive,
+  storage,
+  backendKind,
 }: Props) {
   const [archiveNotice, setArchiveNotice] = useState<{ ok: boolean; message: string } | null>(null);
   const [archiveBusy, setArchiveBusy] = useState(false);
@@ -118,6 +125,53 @@ export function SettingsPanel({
             <p>{archiveNotice.message.replace(/\*\*/g, '')}</p>
           </div>
         )}
+      </section>
+
+      {/*
+        本机存储（P2-3）：数据存在浏览器里，而浏览器默认可以清掉它。
+        所以把「有没有拿到持久化」「用掉多少」直接摆出来。
+      */}
+      <section className="panel">
+        <h2>本机存储</h2>
+        <ul className="usage-list">
+          <li>
+            <span className="usage-name">存储后端</span>
+            <span className="usage-figure">{backendKind || '…'}</span>
+          </li>
+          <li>
+            <span className="usage-name">持久化</span>
+            <span className="usage-figure">
+              {storage.status.supported ? (storage.status.persisted ? '已获得' : '未获得') : '这个浏览器不支持'}
+            </span>
+          </li>
+          <li>
+            <span className="usage-name">已用 / 配额</span>
+            <span className="usage-figure">
+              {storage.status.usage === null || storage.status.quota === null
+                ? '未知'
+                : `${formatBytes(storage.status.usage)} / ${formatBytes(storage.status.quota)}`}
+            </span>
+          </li>
+        </ul>
+        <div className="save-bar">
+          <button
+            type="button"
+            disabled={disabled || !storage.status.supported || storage.status.persisted === true}
+            onClick={() => void storage.requestPersist()}
+          >
+            申请持久化存储
+          </button>
+        </div>
+        <p className="hint">
+          {storage.status.persisted === true
+            ? '已经拿到持久化：浏览器不会因为磁盘紧张或你很久没打开就清掉这些数据。'
+            : '没拿到持久化时，浏览器随时可能回收本地数据；拿到它通常要靠「把本站装到桌面 / 加进收藏」——这也是 PWA 那一步在做的事。无论哪种情况，导出封存都是最稳的备份。'}
+        </p>
+        {storage.ratio !== null && storage.ratio >= QUOTA_WARN_RATIO ? (
+          <div className="notice warn">
+            <p>浏览器给这个站点的空间已经用掉 {Math.round(storage.ratio * 100)}%，再写可能失败。建议先导出一份封存。</p>
+          </div>
+        ) : null}
       </section>
 
       <section className="panel">

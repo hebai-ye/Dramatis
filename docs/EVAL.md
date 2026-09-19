@@ -504,6 +504,35 @@ P1-9 的批量合并与熔断仍缺真实账单数据。
 | 场记与游标 | ✅ 原样带过来（`recap` 与 `recapUpToSeq`） |
 | 选错文件 | ✅ 「这不是 Dramatis 的世界封存（format=chara_card_v2）。角色卡与世界书请用左侧的『导入素材』。」 |
 
+### PWA 的离线验证（P2-2，2026-09-19）
+
+Service Worker 只在**生产构建**里注册（开发时不注册，免得把模块缓存住、改完代码刷新看不到变化）。
+所以验证走的是 `pnpm build` + `vite preview` + 无头 Chrome：
+
+| 检查项 | 结果 |
+| --- | --- |
+| manifest 被引用且能解析 | ✅ `name=Dramatis · 登场`、4 个图标、`display=standalone` |
+| Service Worker 安装 | ✅ 作用域 `/`，装完立刻接管页面 |
+| 预缓存的资源 | ✅ 10 项：`/`、`/index.html`、manifest、图标、**`/assets/index-<哈希>.js` 与 `.css`** |
+| 断网后刷新（服务器直接停掉） | ✅ 页面照常渲染 |
+| 模型请求不被缓存 | ✅ 清点缓存条目：发过跨域 POST 之后条数不变，缓存里没有任何跨域 URL |
+
+**验证过程抓出两个真问题**，都记在这里免得下次再踩：
+
+1. **外壳清单写死 → 断网白屏。** 第一版把 `['/', '/index.html', manifest, 图标]` 写死在
+   Service Worker 里，结果断网打开是一张白纸：真正的界面是 `/assets/index-<哈希>.js`，
+   哈希构建之后才知道；而首次加载时 Service Worker 还没接管页面，运行时缓存也抓不到。
+   改成**装的时候自己从 index.html 里读出 `<script src>` 与 `<link href>`**，
+   构建产物叫什么名字都不用管。
+2. **`Vary: Origin` 让缓存匹配失败。** 修好第 1 条之后白屏依旧。给 Service Worker 加了个
+   诊断钩子（最近 20 条请求的记录）才看清：导航命中缓存 ✅，`/icon.svg`（no-cors）命中 ✅，
+   而 `/assets/*`（cors，因为 Vite 给 module script 加了 `crossorigin`）**没命中**、
+   直接去网络、于是失败。原因是静态响应带 `Vary: Origin`，而预缓存时那个请求没有 `Origin`
+   头、页面请求有——按 Vary 一比就不匹配。修法：匹配时加 `{ ignoreVary: true }`。
+
+诊断钩子留在了 Service Worker 里（`postMessage('dramatis:debug')` 回一份最近处理的请求）。
+这次就是因为「缓存里明明有那个文件、外面却什么都看不见」才卡了半天，代价只有 20 条字符串。
+
 ## 五、召回评测（P1-11 的决策依据，2026-09-19）
 
 P1-11 的原文是「**只有在 P1-10 证明关键词召回确实不足时才做**」向量检索。所以这一节

@@ -16,6 +16,19 @@
   box-sizing: border-box;
 }
 
+/**
+ * 整个应用是一个**固定外壳**：滚动只发生在内层面板里。
+ *
+ * 之前在窄窗口下 `.app { height: auto }`（改版前 `.app` 还是 grid 时的遗留），
+ * 外壳会跟着内容一起长高——对话越聊越长，页面就越滚越长，顶栏、输入框、
+ * 两侧面板全都跟着跑。滚动位置属于对话区，不该属于页面。
+ */
+html,
+body,
+#root {
+  height: 100%;
+}
+
 body {
   margin: 0;
   background: var(--bg);
@@ -23,6 +36,7 @@ body {
   font-family: "PingFang SC", "Microsoft YaHei", "Segoe UI", system-ui, sans-serif;
   font-size: 14px;
   line-height: 1.6;
+  overflow: hidden;
 }
 
 /* ---------- 骨架（LAYOUT） ---------- */
@@ -31,7 +45,10 @@ body {
   display: flex;
   flex-direction: column;
   gap: 8px;
+  /* 100vh 是回退（不认 dvh 的浏览器）；dvh 用于地址栏收放时不把底部输入框顶出去 */
   height: 100vh;
+  /* biome-ignore lint/suspicious/noDuplicateProperties: 上一行是有意的回退，两行都要 */
+  height: 100dvh;
   padding: 10px;
 }
 
@@ -844,9 +861,13 @@ details summary {
 }
 
 @media (max-width: 900px) {
-  .app {
-    grid-template-columns: minmax(0, 1fr);
-    height: auto;
+  /*
+   * 窄窗口不是「把整页拉长」的理由：外壳仍然固定。
+   * 也不把两栏上下堆叠——那样对话区只剩几十像素高。左栏收窄就够：
+   * 240px 够放世界与对话列表，剩下的都给对话区。
+   */
+  .app-body {
+    grid-template-columns: 240px minmax(0, 1fr);
   }
 }
 
@@ -860,6 +881,7 @@ details summary {
   flex-direction: column;
   gap: 10px;
   min-height: 0;
+  overflow: hidden;
   padding: 10px;
 }
 

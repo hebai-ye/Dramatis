@@ -20,6 +20,19 @@
 
 Dramatis 是一个多角色扮演酒馆，兼容 SillyTavern 资产格式。**P0（9 项）全部完成，P1 全部收口（11/11，P1-11 以评测结论收口：证据不支持上向量）；P2 已完成响应式 / PWA / 存储持久化 / 封存导出；界面改版三批（A/B/C）全部完成；P1-10 七轮真模型验证 + 六次评测回归跑完**，441 个测试通过；**P2-6 已上线**：数据层 / 加密 / 同步循环 / 服务端 / 界面全部交付，并已部署在用户自己的腾讯云 Ubuntu 24.04 上（systemd + SQLite + 每 6 小时备份，冒烟测试通过）。**当前接续点：域名审核中 → 等 A 记录后签证书 + nginx 8443（同源托管网页），再切 443**。
 
+> **2026-09-20 晚更新（本轮：项目主体 + 桌面版 + 安卓壳）**：475 个测试通过。
+> 项目主体做了三件（都先复现再动手）：**T11 记忆面板的对话维度**（按对话筛选 / 对照视图 /
+> 跳到原句）、**T12 归档的可发现性与正文导出**、**每轮对话结束自动同步**（节流 20 秒 +
+> 尾随补一次）。中途撞上一个**会真丢数据的同步 bug 并修掉**：分页拉取把全局头号当游标，
+> 新设备同步超过一页（200 条）的空间时会「成功」地只拿到一小部分——详见 [SYNC.md](./SYNC.md) §4.7。
+> 桌面版：P2-9 的四条触发条件逐条量过，**Tauri 不触发**，改为补强启动器（`--prod` 会跳过
+> 无谓构建）+ 一条装快捷方式的路，证据见 [DESKTOP.md](./DESKTOP.md)。
+> 安卓：**P2-10 开工**——Capacitor 壳搭好、**本机真的构建出 APK**（4.8 MB），
+> 四项能力在与 WebView 同源的环境里验过；真机这一轮没条件跑，清单见 [ANDROID.md](./ANDROID.md)。
+>
+> **当前接续点**：① 安卓真机（文件下载 / 切后台 / 键盘安全区）；② 部署线的域名（等审核）；
+> ③ 项目主体的下一批候选（T13 管理员工具体验、T3 后半的记忆合并、记录分块与坏记录隔离）。
+
 **下一批做什么看 [TASKS.md](./TASKS.md)**：账号与同步**选型已定**（[SYNC.md](./SYNC.md)：
 同步空间 + 同步密码、AES-GCM 端到端加密、协议先行 + 可替换后端；用户 id 改成「用户自己填」，
 见该文档 §3.1 修订），**P2-6 前四步已完成**——
@@ -68,6 +81,12 @@ Dramatis 是一个多角色扮演酒馆，兼容 SillyTavern 资产格式。**P0
 | — | **P2-6 落地部署（2026-09-20）**：用户自己的腾讯云服务器（Ubuntu 24.04 + Node 22 + systemd + SQLite + 每 6 小时备份），先用 Tailscale 内网 HTTPS 过渡（用户之后放弃该方案）、改走「域名 + HTTPS」；服务器地址 / SSH / 域名等私有信息在 `deploy/LOCAL-NOTES.md`（**已 gitignore**） |
 | — | P2-6 界面接线：设置里「同步（多设备）」（地址 + 用户 id + 密码/恢复码 + 保存方式 + 上次结果）；两个独立浏览器端到端验证 |
 | — | P2-6 第四步（下，部署件）：`packages/core/src/sync/sqlite.ts`（SQLite 存储 + 7 条单测）+ `tools/sync-server/`（独立服务端 / systemd / 在线备份 / 部署手册）+ CORS；跨源真机验证 13 项；**方案答卷见 [SYNC-DEPLOY.md](./SYNC-DEPLOY.md)** |
+| — | **T11 记忆面板的对话维度**：对话 × 视角两个下拉、按轮分组的对照视图、「跳到原句」（切回那条对话并高亮那句话）；内核 `memory/panel-view.ts` + 10 条单测 |
+| — | **T12 归档的可发现性与正文导出**：归档提示条带「去看这条对话」入口、设置里每条归档对话可「导出正文」（Markdown）；内核 `storage/transcript.ts` + 8 条单测 |
+| — | **修掉一个会丢数据的同步 bug（分页拉取）**：`pull` 曾经返回全局头号当游标，新设备同步超过一页的空间时会静默只拿到一部分；现在服务端返回「这一批给到哪里」+ `serverHead` / `hasMore`，客户端分页拉到追平，**老服务器不用改也能修好**；另有「重新拉一遍」逃生口。详见 [SYNC.md](./SYNC.md) §4.7 与 EVAL 第十三节 |
+| — | **每轮对话结束自动同步**：`core/sync/auto-sync.ts`（节流 20 秒、窗口内合并、尾随补一次、不重入、失败不重试）+ 7 条单测；同步面板多一行状态 |
+| — | **桌面版复核（P2-9）**：四条触发条件逐条量过 → **不触发 Tauri**；补强启动器（`--prod` 判断产物是否最新、`--force-build`）+ `install-shortcut.ps1`（现场从 PNG 生成 `.ico`）；证据与复现步骤见 [DESKTOP.md](./DESKTOP.md) |
+| — | **安卓壳开工（P2-10）**：`apps/android/`（Capacitor 7 + `webDir=../web/dist` + `androidScheme=https`），本机 `gradlew assembleDebug` 构建成功（4.8 MB）；四项能力在 `https://localhost`（与 WebView 同源）逐项验过；见 [ANDROID.md](./ANDROID.md) |
 
 ## 仓库结构速查
 
@@ -87,6 +106,8 @@ packages/core            平台无关内核，零运行时依赖
   eval/                  长跑基线与抽取提示词参考
 apps/web                 React + Vite
 tools/desktop/           桌面启动器（零依赖，Chromium --app 模式）
+tools/fake-model/        假模型服务（零依赖：一轮对话能在本机不花钱跑完）
+apps/android/            Capacitor 安卓壳（原生工程 android/ 不进版本库）
 ```
 
 ## 不可回退的设计决定
@@ -152,7 +173,7 @@ P1-7/P1-8 情绪与抗漂移、P1-9 调用预算与熔断（T19）、P1-10 七�
 ```bash
 pnpm install
 pnpm desktop        # 起本地服务并用应用窗口打开
-pnpm test           # 441 个测试
+pnpm test           # 475 个测试
 pnpm typecheck
 pnpm lint
 pnpm build          # 生产构建（PWA 的 Service Worker 只在这个产物里注册）
@@ -166,6 +187,19 @@ pnpm build          # 生产构建（PWA 的 Service Worker 只在这个产物�
 pnpm --filter @dramatis/core test prompt-samples --silent=false --disableConsoleIntercept
 # 3) 召回探针（读本机真实记忆，用同一套内核跑评测）
 #    http://127.0.0.1:5273/tools/recall-probe.html
+```
+
+**不花钱跑整条链路的两件工具**（2026-09-20 加的，界面回归靠它们）：
+
+```bash
+# 假模型：OpenAI 兼容 + SSE，按提示词形状分派「意图 / 一轮分析 / 分层摘要 / 角色生成」，
+# 每个请求打到 stderr。在应用的「模型接入」里填 http://127.0.0.1:5280 + 随便一个非空密钥。
+node tools/fake-model/server.mjs --port 5280
+
+# 世界种子探针：往本机库里种一个已知规模的世界（三条主线 + 副对话 + 已归档线，78 条记忆），
+# 用来复现「面板里混了几条线」这类问题。**会先跑一次 migrate()**（否则应用下次打开会把
+# 它当成老库、重跑 v3 给世界再补一条空的主线对话——踩过）。
+#    http://127.0.0.1:5273/tools/world-seed-probe.html
 ```
 
 工作约定：每个批次结束时都必须能构建、能测试、能提交；提交信息带任务编号；实现与计划有偏差时写进 ROADMAP 而不是悄悄改掉。
@@ -195,34 +229,27 @@ deploy/LOCAL-NOTES.md（服务器私有信息在这里，已 gitignore，别提�
 
 ```text
 接着做 Dramatis（多角色扮演酒馆）。先读 docs/STATUS.md（接续点）、docs/TASKS.md（工作清单）、
-docs/ROADMAP.md 的 P2-9 / P2-10（桌面壳与安卓壳的触发条件）与 docs/LAYOUT.md（界面规格）。
+docs/ROADMAP.md（长期路线）与 docs/LAYOUT.md（界面规格）。
 
-现状（2026-09-20）：P2-6 账号与同步**已经全部落地**——数据层（updatedAt / deletedAt / deviceId /
-localSeq）、加密工具（core/crypto）、同步循环（core/sync）、独立服务端（tools/sync-server + SQLite）、
-界面「设置 → 同步」都完成并真机验证过；同步服务已部署在用户自己的腾讯云上（Ubuntu 24.04 + systemd +
-SQLite + 每 6 小时备份），两台设备验证通过。
-**部署那条线（域名 + HTTPS + 备案）暂时搁置**，等域名审核通过再继续；服务器私有信息在
-deploy/LOCAL-NOTES.md（已 gitignore，不要提交）。
+现状（2026-09-20 晚，475 个测试通过）：项目主体这一批做完了 T11（记忆面板的对话维度）、
+T12（归档的可发现性与正文导出）、每轮结束自动同步，并修掉一个会丢数据的同步 bug（分页拉取，
+见 SYNC.md §4.7 与 EVAL 第十三节）。桌面版复核完（P2-9 不触发 Tauri，见 DESKTOP.md）；
+安卓壳搭起来并本机构建出 APK，四项能力在与 WebView 同源的环境验过，**真机没跑**（见 ANDROID.md）。
+部署那条线（域名 + HTTPS + 备案）仍搁置，服务器私有信息在 deploy/LOCAL-NOTES.md（已 gitignore）。
 
-这一轮做【项目主体 + 桌面版 + 安卓软件】，按这个顺序推进：
+这一轮建议按这个顺序做：
 
-1) 项目主体：从 docs/TASKS.md 里挑当前最影响体验的 2~3 项（候选：T11 记忆面板的对话维度、
-   T12 归档的可发现性与导出、T13 世界管理员工具的体验、T3 剩下的「记忆合并成粗粒度印象」、
-   每轮对话结束自动同步、记录分块与坏记录隔离）。**先用真实数据或真机复现问题再动手**，
-   每项都拆成能构建 / 能测试 / 能提交的小步。
-2) 桌面版：现状是 tools/desktop/launch.mjs（零依赖：起 vite/preview + Chromium --app 窗口），
-   不是真正的壳；ROADMAP P2-9 说 Tauri 是「条件触发」。所以先把「PWA 在桌面上到底缺什么」
-   列成清单并给出证据（标签页回收导致后台任务中断？OS 级密钥存储？本地模型？文件夹监控？），
-   再决定是补强现有启动器还是上 Tauri；上 Tauri 前先确认本机有没有 Rust 工具链。
-3) 安卓版：现状是可安装的 PWA（manifest + Service Worker）。两条路：
-   · **Capacitor 壳**（.gitignore 已预留 apps/android/android/、*.keystore、local.properties）——
-     WebView 里的源是 https://localhost，属于安全上下文，**不依赖外部域名**，可以马上做；
-   · TWA（Bubblewrap）—— 最轻，但需要已部署的 HTTPS 域名 + assetlinks.json，得等域名那条线。
-   先做 Capacitor：把 apps/web/dist 包进去，逐项验证 **IndexedDB 持久化、文件导入导出、
-   同步可用、后台队列在切后台后的行为**，并在安卓真机上跑一遍。
+1) **安卓真机验证**（最该先做，因为桌面壳/手机这两条路都卡在这一步）：把
+   apps/android/android/app/build/outputs/apk/debug/app-debug.apk 装到手机上，按 ANDROID.md
+   末尾那张清单逐条跑——重点是 ① WebView 里的文件导出（可能要加 @capacitor/filesystem）
+   ② 切后台再回来时后台队列的行为 ③ 键盘与安全区 ④ IndexedDB 有没有拿到持久化。
+   发现问题就当场修（能构建/能测试/能提交），并把结论写回 ANDROID.md 与 EVAL。
+2) **项目主体**：从 docs/TASKS.md 挑 2~3 项（候选：T13 世界管理员工具的体验、T3 后半的
+   「记忆合并成粗粒度印象」、记录分块与坏记录隔离）。**先用真实数据或真机复现再动手**。
+3) 有域名了就插 部署线 那条（STATUS 末尾有现成的提示词）。
 
 要求：每一小步都能构建/测试/提交；提交信息带任务编号；实现与计划有偏差写进文档；
-真机验证（浏览器 / 桌面窗口 / 安卓真机）；**任何用户私有信息（域名/IP/凭据）都不进仓库**。
+真机验证；**任何用户私有信息（域名/IP/凭据）都不进仓库**。
 ```
 
 **环境与工具（这一轮踩过的，省得再摸一遍）**：
@@ -242,3 +269,9 @@ deploy/LOCAL-NOTES.md（已 gitignore，不要提交）。
 | 改完服务端怎么上线 | 本机 `pnpm build:sync-server` → `scp -r tools/sync-server/dist dramatis:/tmp/dist-new` → 服务器上 `sudo rm -rf /opt/dramatis-sync/dist && sudo mv /tmp/dist-new /opt/dramatis-sync/dist && sudo systemctl restart dramatis-sync` |
 | SSH/SCP 的坑 | Windows 下私钥必须先 `icacls <key> /inheritance:r /grant:r "<账户>:(R)"`，否则 OpenSSH 报 "bad permissions" 直接忽略；`scp`/`ssh` 一律要用**提权**执行，否则读不到 `~/.ssh/config`（表现为 `Could not resolve hostname dramatis`） |
 | 真模型验证 | 两条路：应用里直接聊（Key 在浏览器配置里），或 `pnpm --filter @dramatis/core test prompt-samples --silent=false --disableConsoleIntercept` 生成提示词、贴进 DeepSeek 网页版 |
+| 假模型（不花钱跑一整轮） | `node tools/fake-model/server.mjs --port 5280`，应用里把接口地址填 `http://127.0.0.1:5280`、模型 `fake-model`、密钥随便填一个非空值。日志打在 stderr，能核对这一回合发了几次调用 |
+| 世界种子探针 | `http://127.0.0.1:5273/tools/world-seed-probe.html`（种一个已知规模的世界；**先 migrate 再种**，否则应用会把库当成老库重跑 v3） |
+| 平台能力探针 | `http://127.0.0.1:5273/tools/platform-probe.html`（真浏览器里问一遍：后台执行 / 密钥存储 / 本地模型 / 文件夹监控各有没有） |
+| 桌面端（真机） | `pnpm desktop:prod`（会跳过无谓的构建；`--force-build` 强制重建）。给用户做快捷方式：`pwsh -File tools/desktop/install-shortcut.ps1 -Destination Both` |
+| 安卓构建 | **JDK 必须是 21**：`$env:JAVA_HOME='C:\Program Files\Android\Android Studio\jbr'`，然后 `pnpm --filter @dramatis/android apk`。本机缓存里的 AGP 是 8.7.3（模板写 8.7.2），且模板那行 `google-services` 本机没有、也用不到——都只影响被 gitignore 的生成目录 |
+| 安卓真机 | `adb install -r apps/android/android/app/build/outputs/apk/debug/app-debug.apk`（手机开 USB 调试；本机 adb 在 `%LOCALAPPDATA%\Android\Sdk\platform-tools\adb.exe`） |

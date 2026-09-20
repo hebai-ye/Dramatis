@@ -427,7 +427,58 @@ git ls-files | ForEach-Object {
 
 ---
 
-## 八、几点注意
+## 八、2026-09-20 晚这一批（项目主体 + 桌面版 + 安卓壳）
+
+七个提交，从 `66f7b74` 到 `80636fe`。新增的文件在这里逐条记，改过的文件只记「改了什么」。
+
+### 新增
+
+| 文件 | 时间 | 是什么 |
+| --- | --- | --- |
+| `packages/core/src/memory/panel-view.ts` | 2026-09-20 21:14 | 记忆面板的视图计算：对话 × 视角两个维度、按轮分组的对照视图（纯函数，T11） |
+| `packages/core/src/memory/panel-view.test.ts` | 2026-09-20 21:14 | 上面那份的 10 条单测（含「一轮里两条客观条目不丢数据」这类边界） |
+| `packages/core/src/storage/transcript.ts` | 2026-09-20 21:18 | 把一条对话导成可读 Markdown（抬头 + 按场景分段），T12 |
+| `packages/core/src/storage/transcript.test.ts` | 2026-09-20 21:18 | 8 条单测（排序、换行压平、场景外消息、已删场景、空对话、文件名） |
+| `packages/core/src/sync/auto-sync.ts` | 2026-09-20 21:26 | 自动同步的节流状态机：窗口内合并、尾随补一次、不重入、失败不重试 |
+| `packages/core/src/sync/auto-sync.test.ts` | 2026-09-20 21:26 | 7 条单测（用假定时器跑全部岔路） |
+| `apps/web/tools/world-seed-probe.html` / `.ts` | 2026-09-20 21:14 | 世界种子探针：往本机库种一个已知规模的世界（三条主线 + 副对话 + 已归档线） |
+| `apps/web/tools/platform-probe.html` / `.ts` | 2026-09-20 21:37 | 平台能力探针：真浏览器里问一遍后台执行 / 密钥存储 / 本地模型 / 文件夹监控 |
+| `tools/fake-model/server.mjs` | 2026-09-20 21:14 | 假模型服务（零依赖，OpenAI 兼容 + SSE）：一轮对话能在本机不花钱跑完 |
+| `tools/desktop/install-shortcut.ps1` | 2026-09-20 21:37 | 生成带图标的桌面 / 开始菜单快捷方式（图标在本机从 PNG 现场包成 `.ico`） |
+| `apps/android/package.json` | 2026-09-20 21:58 | `@dramatis/android`：`add:android` / `sync` / `open` / `apk` 四条命令 |
+| `apps/android/capacitor.config.json` | 2026-09-20 21:58 | `webDir=../web/dist`、`androidScheme=https`（WebView 因此是安全上下文） |
+| `apps/android/README.md` | 2026-09-20 21:58 | 安卓壳的入口说明，细节指向 docs/ANDROID.md |
+| `docs/DESKTOP.md` | 2026-09-20 21:37 | P2-9 复核：四条触发条件的实测、结论、什么时候回来重新评估 |
+| `docs/ANDROID.md` | 2026-09-20 21:58 | 安卓壳：命令、本机验到哪一步、真机上要盯的五件事、没验到的 |
+
+### 修改
+
+| 文件 | 时间 | 改了什么 |
+| --- | --- | --- |
+| `apps/web/src/components/MemoryPanel.tsx` | 2026-09-20 21:14 | 加对话 / 视角两个下拉、「逐条 / 对照」两个视图、归属标签、「跳到原句」 |
+| `apps/web/src/components/RuntimePanel.tsx` | 2026-09-20 21:14 | 把对话列表与「跳到原句」的回调透给记忆面板 |
+| `apps/web/src/components/MainChat.tsx` | 2026-09-20 21:14 | 消息节点带 `data-message-id`，接受 `focus` 请求并滚动 + 高亮 |
+| `apps/web/src/lib/session.ts` | 2026-09-20 21:14 | 新增 `locateTurn`（记忆→原句）与 `bundleOf`（一条对话的素材包） |
+| `apps/web/src/styles.css` | 2026-09-20 21:14 | 记忆筛选 / 对照视图 / 高亮动画的样式 |
+| `apps/web/src/lib/archive.ts` | 2026-09-20 21:18 | 新增 `exportTranscript`（导出对话正文） |
+| `apps/web/src/components/SettingsPanel.tsx` | 2026-09-20 21:18 | 归档列表每条加「导出正文」，并说明「没有取消归档」 |
+| `apps/web/src/lib/sync.ts` | 2026-09-20 21:26 | 接上自动同步（节流实例 + `requestAutoSync`）与「重新拉一遍」 |
+| `apps/web/src/components/SyncPanel.tsx` | 2026-09-20 21:26 | 状态里多一行「自动同步」；多一个「重新拉一遍」按钮 |
+| `apps/web/src/App.tsx` | 2026-09-20 21:14 起 | 跳原句、归档提示条的入口按钮、每轮结束排自动同步、归档正文导出接线 |
+| `packages/core/src/sync/types.ts` | 2026-09-20 21:26 | `SyncPullResult` 增加 `serverHead` / `hasMore`，并把 `head` 的语义写清楚 |
+| `packages/core/src/sync/server.ts` | 2026-09-20 21:26 | `pull` 返回「这一批给到哪里」，不再返回全局头号 |
+| `packages/core/src/sync/loop.ts` | 2026-09-20 21:26 | 分页拉到追平为止（逐页合并、上限 200 页），兼容老服务端 |
+| `packages/core/src/sync/index.ts` | 2026-09-20 21:26 | 导出 `auto-sync` |
+| `packages/core/src/index.ts` | 2026-09-20 21:14 / 21:18 | 导出 `memory/panel-view` 与 `storage/transcript` |
+| `packages/core/src/sync/sync.test.ts` | 2026-09-20 21:26 | 两条回归：多页拉完、老服务端也能拉完 |
+| `packages/core/src/sync/http.test.ts` | 2026-09-20 21:26 | 断言 `head` / `serverHead` / `hasMore` 的分页语义 |
+| `tools/desktop/launch.mjs` | 2026-09-20 21:37 | `--prod` 判断构建产物是否最新（可跳过构建）、`--force-build` 强制重建 |
+| `docs/ROADMAP.md` | 2026-09-20 21:37 / 21:58 | P2-9 记下「复核后不触发」、P2-10 记下「已开工」 |
+| `pnpm-lock.yaml` | 2026-09-20 21:58 | 新增 `apps/android` 这个工作区包的依赖 |
+
+---
+
+## 九、几点注意
 
 ---
 

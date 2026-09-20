@@ -7,9 +7,17 @@
  * 为什么不用 Tauri：那需要 Rust 工具链，而当前的需求只是「方便测试」。
  * Chromium 的 --app 模式已经能给出独立窗口与任务栏图标，成本为零。
  * 等真的需要常驻后台任务或 OS 级密钥存储时，再上 P2-9 的壳也不迟。
+ *
+ * 这条判断在 2026-09-20 复核过一次，四份证据见 docs/DESKTOP.md：
+ * 后台队列确实只在页面活着时推进（关掉 22 秒一动不动、开着 14 秒就跑完），
+ * 但它本来就是可恢复的（重新打开后把 running 的任务捡回来接着做）——
+ * 所以代价是「慢一点」，而不是「丢一轮」。剩下的三个触发条件也都没成立：
+ * OS 级密钥存储没有浏览器入口（但可以用口令加密替代）、本地模型走 HTTP 就能连、
+ * 文件夹监控这一代的 Chrome 有 FileSystemObserver。结论：Tauri 不触发，
+ * 补强启动器 + 支持装成 PWA。
  */
 import { spawn } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { existsSync, readdirSync, statSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import process from 'node:process';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -58,6 +66,7 @@ const ORIGIN = `http://${HOST}:${PORT}`;
 const args = new Set(process.argv.slice(2));
 const shouldOpen = !args.has('--no-open') && process.env.DRAMATIS_NO_OPEN !== '1';
 const useProductionBuild = args.has('--prod');
+const forceBuild = args.has('--force-build');
 
 const WINDOWS_BROWSERS = [
   process.env.ProgramFiles && `${process.env.ProgramFiles}\\Microsoft\\Edge\\Application\\msedge.exe`,
@@ -118,6 +127,47 @@ function openWindow(url) {
   return '已用系统默认浏览器打开（没找到 Edge 或 Chrome，无法使用应用窗口模式）';
 }
 
+/**
+ * 生产构建是不是已经是最新的。
+ *
+ * 每天用这个壳的人不希望每次双击都等一遍构建。判据是「构建产物的时间」比
+ * 「所有源码里最新的那个文件」还新——够糙，但方向总是安全的：
+ * 拿不准就重构建，绝不会拿旧产物当新的用。
+ */
+function productionBuildIsFresh() {
+  const indexPath = resolve(WEB_APP_DIR, 'dist', 'index.html');
+  if (!existsSync(indexPath)) return false;
+
+  const builtAt = statSync(indexPath).mtimeMs;
+  const watch = [resolve(WEB_APP_DIR, 'src'), resolve(REPO_ROOT, 'packages', 'core', 'src')];
+  const extraFiles = [
+    resolve(WEB_APP_DIR, 'index.html'),
+    resolve(WEB_APP_DIR, 'vite.config.ts'),
+    resolve(WEB_APP_DIR, 'package.json'),
+    resolve(REPO_ROOT, 'packages', 'core', 'package.json'),
+  ];
+
+  const newest = (dir) => {
+    let latest = 0;
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const full = resolve(dir, entry.name);
+      if (entry.isDirectory()) latest = Math.max(latest, newest(full));
+      else if (entry.isFile()) latest = Math.max(latest, statSync(full).mtimeMs);
+    }
+    return latest;
+  };
+
+  for (const dir of watch) {
+    if (!existsSync(dir)) continue;
+    if (newest(dir) > builtAt) return false;
+  }
+  for (const file of extraFiles) {
+    if (!existsSync(file)) continue;
+    if (statSync(file).mtimeMs > builtAt) return false;
+  }
+  return true;
+}
+
 async function main() {
   console.log('Dramatis · 登场');
   console.log(`地址：${ORIGIN}`);
@@ -139,13 +189,17 @@ async function main() {
   }
 
   if (useProductionBuild) {
-    console.log('先构建生产版本……');
-    const build = spawnVite(['build']);
-    const code = await new Promise((done) => build.on('exit', done));
-    if (code !== 0) {
-      console.error('构建失败，先把上面的错误解决掉。');
-      process.exitCode = 1;
-      return;
+    if (!forceBuild && productionBuildIsFresh()) {
+      console.log('构建产物是最新的，跳过构建（想看一遍构建过程就加 --force-build）。');
+    } else {
+      console.log('先构建生产版本……');
+      const build = spawnVite(['build']);
+      const code = await new Promise((done) => build.on('exit', done));
+      if (code !== 0) {
+        console.error('构建失败，先把上面的错误解决掉。');
+        process.exitCode = 1;
+        return;
+      }
     }
   }
 

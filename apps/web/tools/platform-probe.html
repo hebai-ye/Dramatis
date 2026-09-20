@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <title>平台能力探针</title>
+  </head>
+  <body style="font: 13px/1.6 ui-monospace, monospace; padding: 24px">
+    <h1 style="font-size: 15px">平台能力探针（P2-9 桌面壳决策用）</h1>
+    <p style="max-width: 44em">
+      在**真实的浏览器**里逐条问：PWA 到底有没有那四样东西（后台执行 / OS 级密钥存储 /
+      本地模型 / 文件夹监控）。同一份页面在 Windows 浏览器、安卓浏览器、
+      Capacitor 壳（https://localhost）里各跑一次，就能看出壳是不是真的需要。
+    </p>
+    <pre id="out">正在探测…</pre>
+    <script type="module" src="./platform-probe.ts"></script>
+  </body>
+</html>

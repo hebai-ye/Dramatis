@@ -666,6 +666,25 @@ fetch 风格：`POST /spaces`、`GET /spaces/{handle}`、`head`、`push`、`pull
 - 启用后 P2-8 可升级为 OS 凭据存储
 - **依赖**：P0-1（适配层）、P2-3
 
+**2026-09-20 复核：四条都没触发，继续用「启动器 + PWA」。** 逐条量过的结果与复现步骤
+见 [DESKTOP.md](./DESKTOP.md)，这里只记结论：
+
+1. **后台任务确实只在页面活着时推进**（实测：页面关着 22 秒，队列一动不动；
+   页面开着 14 秒就跑完），**但队列本来就是可恢复的**（重新打开后把 `running`
+   的任务捡回来做完，实测补写了那一轮的记忆）。代价是「晚一点」，不是「丢一轮」，
+   所以不构成上壳的理由。「关掉窗口还要后台整晚跑」才是真触发，目前没这个需求。
+2. OS 级密钥存储在浏览器里确实拿不到（`navigator.credentials` 只管 WebAuthn 与
+   密码填充），但 **P2-8 的口令加密落盘**是等价替代，不必为此上壳。
+3. 本地模型不需要壳：接入本来就是 OpenAI 兼容 HTTP，Ollama / LM Studio 直接可连
+   （`http://127.0.0.1:11434`）。
+4. 文件夹监控**这一代浏览器已经有了**：这台机器的 Chrome 153 同时有
+   `showSaveFilePicker` / `showDirectoryPicker` / `FileSystemObserver`。
+
+本机也根本没有 Rust 工具链（`rustc`、`cargo` 都不在 PATH），要上壳得先装
+Rust + MSVC 构建工具。**顺带把启动器补强了**：`--prod` 会判断构建产物是否最新
+（最新就跳过构建，`--force-build` 强制重建），另加 `tools/desktop/install-shortcut.ps1`
+生成带图标的桌面 / 开始菜单快捷方式。
+
 ### P2-10 Capacitor Android 壳（条件性） · L
 
 - **触发条件**：PWA 在安卓上确实无法满足时才做。典型缺口是可靠的后台任务与系统通知

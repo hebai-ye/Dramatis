@@ -11,6 +11,7 @@ import {
 } from '@dramatis/core';
 import { useEffect, useRef, useState } from 'react';
 import { Avatar, MessageBody } from './MessageBody';
+import { WebBridgePanel, type WebBridgeState } from './WebBridgePanel';
 
 interface Props {
   conversation: Conversation;
@@ -32,6 +33,13 @@ interface Props {
    * 它只负责滚动与高亮，不改数据。
    */
   focus?: FocusRequest | null;
+  /** 网页版桥接：非 null 时正等着用户把网页版的输出贴回来。 */
+  bridge?: WebBridgeState | null;
+  /** 没配 API Key：这一轮的提示词要用户自己贴到网页版。 */
+  manualMode?: boolean;
+  onBridgeReply?: (text: string) => void;
+  onBridgeAnalysis?: (text: string) => void;
+  onBridgeSkip?: () => void;
   onSend: (text: string) => void;
   onStop: () => void;
   onRegenerate: (id: MessageId) => void;
@@ -96,6 +104,11 @@ export function MainChat({
   ready,
   archived,
   focus = null,
+  bridge = null,
+  manualMode = false,
+  onBridgeReply,
+  onBridgeAnalysis,
+  onBridgeSkip,
   onSend,
   onStop,
   onRegenerate,
@@ -280,8 +293,17 @@ export function MainChat({
                     <button
                       type="button"
                       className="ghost"
-                      disabled={busy || archived}
-                      title="撤销这条回复，让角色重新说一次"
+                      /*
+                       * 网页版模式下不提供重抽：重抽会先删掉这条回复再让模型重写，
+                       * 而这里没有模型可用——点下去只会「删掉回复、什么都不写」。
+                       * 想重写就删掉这条再发一次（那会重新走一遍桥接）。
+                       */
+                      disabled={busy || archived || manualMode}
+                      title={
+                        manualMode
+                          ? '网页版模式下不重抽：删掉这条回复，再发一遍那句话，就会重新给你一段提示词'
+                          : '撤销这条回复，让角色重新说一次'
+                      }
                       onClick={() => onRegenerate(message.id)}
                     >
                       重抽
@@ -367,6 +389,28 @@ export function MainChat({
         <div ref={bottomRef} />
       </div>
 
+      {/*
+        网页版桥接（没有 API Key 时的第一条路）：面板就摆在输入框上方，
+        因为它和输入框是同一步——先贴出去，再把结果贴回来。
+      */}
+      {bridge === null || onBridgeReply === undefined || onBridgeAnalysis === undefined ? null : (
+        <WebBridgePanel
+          bridge={bridge}
+          busy={busy}
+          disabled={archived}
+          onReply={onBridgeReply}
+          onAnalysis={onBridgeAnalysis}
+          onSkip={onBridgeSkip ?? (() => {})}
+        />
+      )}
+
+      {manualMode && bridge === null && messages.length === 0 ? (
+        <p className="hint bridge-hint">
+          还没填 API Key——不要紧，先这么玩：把话发出去，应用会给你一段<strong>提示词</strong>， 贴进 DeepSeek
+          网页版，再把它的回复粘回来就行。想省掉这一步，去「设置 → 模型接入」填一个 Key。
+        </p>
+      ) : null}
+
       <div className="composer">
         <textarea
           value={input}
@@ -435,8 +479,17 @@ export function MainChat({
               停止
             </button>
           ) : (
-            <button type="button" disabled={!ready || archived || input.trim() === ''} onClick={submit}>
-              发送
+            <button
+              type="button"
+              /*
+               * 桥接开着的时候不让再发一句：那会把「正等着贴回来」的这一步冲掉，
+               * 而已经落盘的玩家消息又撤不回来。先把手上的这一轮转完。
+               */
+              disabled={!ready || archived || input.trim() === '' || bridge !== null}
+              title={bridge === null ? undefined : '先把这一轮贴回来（或点「放弃这一轮」）再发下一句'}
+              onClick={submit}
+            >
+              {manualMode && bridge === null ? '生成提示词' : '发送'}
             </button>
           )}
         </div>

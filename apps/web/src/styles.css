@@ -865,6 +865,76 @@ button.ghost {
   min-height: 56px;
 }
 
+/* ---------- 网页版桥接（没配 API Key 时的第一步） ---------- */
+
+.web-bridge {
+  background: rgba(217, 164, 65, 0.05);
+  border-top: 1px solid var(--line);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 10px 14px;
+}
+
+.bridge-head {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.bridge-steps {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.bridge-steps .ghost {
+  font-size: 12px;
+  padding: 4px 10px;
+}
+
+.bridge-link {
+  border: 1px solid var(--accent-soft);
+  border-radius: 6px;
+  color: var(--accent);
+  font-size: 12px;
+  padding: 4px 10px;
+  text-decoration: none;
+}
+
+.bridge-link:hover {
+  background: rgba(217, 164, 65, 0.12);
+}
+
+.bridge-prompt summary {
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.bridge-prompt pre {
+  background: var(--surface-2, rgba(0, 0, 0, 0.2));
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  font-size: 11px;
+  line-height: 1.5;
+  margin: 6px 0 0;
+  max-height: 220px;
+  overflow: auto;
+  padding: 8px;
+  white-space: pre-wrap;
+}
+
+.web-bridge textarea {
+  min-height: 88px;
+}
+
+.bridge-hint {
+  border-top: 1px solid var(--line);
+  margin: 0;
+  padding: 8px 14px;
+}
+
 .stats {
   display: flex;
   gap: 14px;

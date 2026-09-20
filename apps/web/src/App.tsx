@@ -1,12 +1,16 @@
 import {
   type AssembledPrompt,
+  applyTurnAnalysis,
   buildIntentPlanMessages,
   buildSceneTransitionNarration,
+  buildTurnAnalysisMessages,
   type Card,
   type CharacterInstance,
   type ConversationModes,
+  cleanPastedReply,
   collectCompletionWithTools,
   createCharacterMessage,
+  createManualProvider,
   createNarrationMessage,
   createOpenAICompatibleProvider,
   createPlayerMessage,
@@ -22,18 +26,21 @@ import {
   type MessageId,
   type MessageUsage,
   matchWorldBookEntries,
+  needsWebBridge,
   type PromptMemory,
   parseIntentPlan,
   parseWorldBook,
   pickPlannedSpeaker,
   type RecalledMemory,
   recallMemories,
+  renderPromptForWeb,
   runTurn,
   type Scene,
   scheduleSpeakers,
   selectSceneMembers,
   selectWithinBudget,
   turnsSinceLastSpoke,
+  WEB_BRIDGE_TARGET,
 } from '@dramatis/core';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { CardDesigner } from './components/CardDesigner';
@@ -48,6 +55,7 @@ import { SceneDialog } from './components/SceneDialog';
 import { SettingsPanel } from './components/SettingsPanel';
 import { SideChat } from './components/SideChat';
 import { TopBar } from './components/TopBar';
+import { WebBridgePanel, type WebBridgeState } from './components/WebBridgePanel';
 import { WorldDesigner } from './components/WorldDesigner';
 import { WorldTree } from './components/WorldTree';
 import { useAdminChat } from './lib/admin';
@@ -204,6 +212,14 @@ export function App() {
   /** 「跳到原句」的最近一次请求（T11）：带序号，重复点击同一条也能再闪一次。 */
   const [focus, setFocus] = useState<FocusRequest | null>(null);
   const focusSeqRef = useRef(0);
+  /**
+   * 网页版桥接的状态（没有 API Key 时的第一条路）。
+   *
+   * 非 null 表示「正等着用户把网页版的输出贴回来」：`reply` 阶段等角色回复，
+   * `analysis` 阶段等这一轮的记忆与情绪。它只活在内存里——刷新页面等于放弃这次转接，
+   * 但已经落盘的玩家消息还在，重新发一次接着走就行。
+   */
+  const [bridge, setBridge] = useState<WebBridgeState | null>(null);
   const [streamText, setStreamText] = useState('');
   const [streamSpeaker, setStreamSpeaker] = useState('');
   const [reasoningText, setReasoningText] = useState('');
@@ -266,17 +282,30 @@ export function App() {
       signal: AbortSignal;
       /** 导演调用给出的这一轮打算（P1-6）；没有就退回让模型自己判断。 */
       intent?: { intent: string; mode: string } | null;
-    }): Promise<{ text: string; usage: MessageUsage | null; reasoning: string }> => {
+    }): Promise<{
+      text: string;
+      usage: MessageUsage | null;
+      reasoning: string;
+      /** 这一次装配出来的提示词。网页版桥接要把它整段交给用户。 */
+      prompt: AssembledPrompt | null;
+    }> => {
       const profile = providers.active;
-      if (!profile || !world || !scene) return { text: '', usage: null, reasoning: '' };
+      if (!profile || !world || !scene) return { text: '', usage: null, reasoning: '', prompt: null };
 
-      const provider = createOpenAICompatibleProvider({
-        baseUrl: profile.baseUrl,
-        apiKey: providers.apiKey,
-        model: profile.model,
-        // 要真实用量：这是 P3-7 的成本统计，也是 P1-9 设熔断阈值的依据
-        includeUsage: true,
-      });
+      /*
+       * 没有 Key 的时候换成「不联网的模型」：装配照常跑（世界书、记忆召回、预算守卫、
+       * 视角裁剪一个都不少），但不产出任何内容——提示词随后交给网页版桥接。
+       * 这样两条路共用**同一份提示词**，而不是各写一套。
+       */
+      const provider = needsWebBridge(providers.apiKey)
+        ? createManualProvider(profile.model)
+        : createOpenAICompatibleProvider({
+            baseUrl: profile.baseUrl,
+            apiKey: providers.apiKey,
+            model: profile.model,
+            // 要真实用量：这是 P3-7 的成本统计，也是 P1-9 设熔断阈值的依据
+            includeUsage: true,
+          });
 
       // 世界书按关键词命中插入，扫描范围是玩家输入加最近几轮
       const scanText = [options.playerInput, ...options.history.slice(-8).map((message) => message.content)].join('\n');
@@ -286,6 +315,7 @@ export function App() {
       let usage: MessageUsage | null = null;
       // 推理流也算「模型自己的盘算」：它不肯按格式写意图时，这是唯一真实的计划来源
       let reasoning = '';
+      let assembled: AssembledPrompt | null = null;
       for await (const event of runTurn(
         {
           card: options.card,
@@ -310,6 +340,7 @@ export function App() {
       )) {
         switch (event.type) {
           case 'prompt':
+            assembled = event.prompt;
             setLastPrompt(event.prompt);
             break;
           case 'reasoning':
@@ -326,7 +357,7 @@ export function App() {
             break;
         }
       }
-      return { text: accumulated, usage, reasoning };
+      return { text: accumulated, usage, reasoning, prompt: assembled };
     },
     [conversation, instances, providers, scene, session.chapters, session.worldBooks, world],
   );
@@ -492,16 +523,19 @@ export function App() {
         setError('还没有模型配置');
         return;
       }
-      if (providers.apiKey.trim() === '') {
-        setError('还没有填 API Key');
-        return;
-      }
+      /*
+       * 没有 API Key 不再是死路：走**网页版桥接**——应用把提示词交给你，
+       * 你贴进 DeepSeek 网页版，再把回复粘回来。第一次打开这个应用的人
+       * 手里多半没有 Key，挡在这里等于挡掉「先看看好不好玩」这件事。
+       */
+      const manual = needsWebBridge(providers.apiKey);
 
       setError(null);
       setBusy(true);
       setStreamText('');
       setStreamSpeaker('');
       setReasoningText('');
+      setBridge(null);
 
       const turnId = createTurnId();
       const history = messages;
@@ -608,18 +642,21 @@ export function App() {
 
           // 记一笔账。服务商没返回 usage 时 token 记 0，但调用确实发生过，
           // 所以这一条照样记——漏账会让用户低估开销（T7）
-          await db.ledger.record({
-            roomId: world.id,
-            conversationId: conversation.id,
-            turnId,
-            category: 'generation',
-            model: profile.model,
-            promptTokens: generation.usage?.promptTokens ?? 0,
-            completionTokens: generation.usage?.completionTokens ?? 0,
-            speakerInstanceId: speaker.id,
-            speakerName: speaker.displayName,
-            price: profile.price ?? null,
-          });
+          // 网页版那一轮不经过服务商，没有 token 也没有钱——记一条 0 只会污染账单
+          if (!manual) {
+            await db.ledger.record({
+              roomId: world.id,
+              conversationId: conversation.id,
+              turnId,
+              category: 'generation',
+              model: profile.model,
+              promptTokens: generation.usage?.promptTokens ?? 0,
+              completionTokens: generation.usage?.completionTokens ?? 0,
+              speakerInstanceId: speaker.id,
+              speakerName: speaker.displayName,
+              price: profile.price ?? null,
+            });
+          }
 
           const reply = generation.text;
           first = false;
@@ -629,6 +666,25 @@ export function App() {
               recalled.map((item) => item.event),
               now,
             );
+          }
+
+          /*
+           * 网页版桥接：装配完了但没人接话（`createManualProvider` 不产出内容），
+           * 于是把这份提示词原样交给用户，进入第一阶段。
+           */
+          if (manual) {
+            if (generation.prompt === null) {
+              setError('提示词装配失败，这一轮没法转到网页版。');
+              continue;
+            }
+            setBridge({
+              stage: 'reply',
+              turnId,
+              speakerInstanceId: speaker.id,
+              speakerName: speaker.displayName,
+              prompt: renderPromptForWeb(generation.prompt.messages),
+            });
+            continue;
           }
 
           if (reply.trim() !== '') {
@@ -651,6 +707,11 @@ export function App() {
 
         // 一轮分析（记忆 + 状态变化）合成一次调用，不阻塞对话；负载只存 id，内容现取
         await usage.reload();
+        /*
+         * 网页版桥接下不排后台任务：这里没有模型可用，排进去只会变成一条失败记录。
+         * 记忆与情绪的落库改由桥接的第二步承担（用户贴回来时当场写）。
+         */
+        if (manual) return;
         // 让后台看一眼这一场要不要压场记（够不够由后台判断，不够不会发调用）
         await enqueueSceneSummary(scene, turnId);
         // 熔断时不再排后台任务：这一轮照常生成，但不写记忆、不推演状态
@@ -865,6 +926,41 @@ export function App() {
 
       await db.queue.clearTurn(target.turnId);
       await session.revertTurn(target.turnId);
+
+      /*
+       * 网页版模式：没有模型可调，所以「重算这一轮」改成再贴一次第二步。
+       * 不这么做的话，改完归属这一轮的记忆就永久空了（撤销容易、重写没路）。
+       */
+      if (needsWebBridge(providers.apiKey)) {
+        const turnMessages = [
+          ...messages.filter((message) => message.turnId === target.turnId && message.id !== id),
+          { ...target, speakerInstanceId: speaker.id, speakerName: speaker.displayName },
+        ].sort((left, right) => (left.createdAt < right.createdAt ? -1 : 1));
+        const cast = session.instances.filter((instance) => instance.presence === 'onstage');
+        setBridge({
+          stage: 'analysis',
+          turnId: target.turnId,
+          speakerInstanceId: speaker.id,
+          speakerName: speaker.displayName,
+          prompt: renderPromptForWeb(
+            buildTurnAnalysisMessages({
+              scene: session.scene,
+              cast,
+              playerName: world.playerName,
+              messages: turnMessages,
+            }),
+          ),
+        });
+        setWarnings([
+          {
+            code: 'bridge.reassign',
+            message:
+              '说话的人换了，所以这一轮已经写下的记忆与情绪被清掉了。把下面这段提示词再贴一次网页版，就能按新的归属重写。',
+          },
+        ]);
+        return;
+      }
+
       await db.queue.enqueue({
         kind: TURN_ANALYSIS_TASK_KIND,
         // 带时间戳：clearTurn 已经清掉旧记录，这里再带上时间戳保证一定起一条新任务
@@ -880,7 +976,7 @@ export function App() {
       });
       worker.kick();
     },
-    [conversation, db, messages, session, worker, world],
+    [conversation, db, messages, providers.apiKey, session, worker, world],
   );
 
   /** 切换场景：开一场新的，并留下一条旁白式动作（谁跟谁去了哪里）。 */
@@ -1022,6 +1118,123 @@ export function App() {
     },
     [conversation, session],
   );
+
+  /**
+   * 网页版桥接第一步：收下用户从网页版粘回来的**角色回复**。
+   *
+   * 走的落盘路径与自动生成完全一样（`makeCharacterLine` → `appendMessages`），
+   * 所以意图解析、转写标记清理、气泡分段、右侧角色栏……全都不用另写一遍。
+   * 收下之后立刻准备第二步的提示词：同一轮的记忆与情绪推演。
+   */
+  const handleBridgeReply = useCallback(
+    async (raw: string) => {
+      if (!db || !world || !scene || !conversation || bridge === null || bridge.stage !== 'reply') return;
+
+      const speaker = instances.find((item) => item.id === bridge.speakerInstanceId);
+      if (speaker === undefined) {
+        setError('找不到这一轮该说话的角色（也许它已经离开了这个世界）。');
+        setBridge(null);
+        return;
+      }
+
+      const text = cleanPastedReply(raw);
+      if (text === '') {
+        setError('贴回来的内容是空的。');
+        return;
+      }
+
+      setBusy(true);
+      try {
+        const line = makeCharacterLine(speaker, text, bridge.turnId, scene);
+        await session.appendMessages([line]);
+
+        // 这一轮要说给谁听：名单里在场的那几位，与自动路径的 audience 一致
+        const cast = instances.filter((instance) => scene.cast.includes(instance.id));
+        const turnMessages = [...session.messages.filter((message) => message.turnId === bridge.turnId), line];
+
+        setBridge({
+          stage: 'analysis',
+          turnId: bridge.turnId,
+          speakerInstanceId: speaker.id,
+          speakerName: speaker.displayName,
+          prompt: renderPromptForWeb(
+            buildTurnAnalysisMessages({
+              scene,
+              cast,
+              playerName: world.playerName,
+              messages: turnMessages,
+            }),
+          ),
+        });
+      } catch (bridgeError) {
+        setError(bridgeError instanceof Error ? bridgeError.message : String(bridgeError));
+      } finally {
+        setBusy(false);
+      }
+    },
+    [bridge, conversation, db, instances, makeCharacterLine, scene, session, world],
+  );
+
+  /**
+   * 网页版桥接第二步：收下这一轮的**记忆与情绪**。
+   *
+   * 落库走内核的 `applyTurnAnalysis`——与后台任务用的是同一个函数，
+   * 所以「贴回来的记忆」和「API 跑出来的记忆」在库里长得一模一样。
+   */
+  const handleBridgeAnalysis = useCallback(
+    async (raw: string) => {
+      if (!db || !world || !scene || !conversation || bridge === null || bridge.stage !== 'analysis') return;
+
+      setBusy(true);
+      try {
+        const result = await applyTurnAnalysis({
+          repository: db.repository,
+          roomId: world.id,
+          sceneId: scene.id,
+          conversationId: conversation.id,
+          turnId: bridge.turnId,
+          worldTime: scene.worldTime,
+          participants: instances.filter((instance) => scene.cast.includes(instance.id)),
+          raw,
+        });
+        await session.reloadWorld();
+        setBridge(null);
+        setWarnings([
+          {
+            code: 'bridge.analysis',
+            message: `这一轮记下了：${String(result.memories)} 条记忆${
+              result.updates > 0 ? `、${String(result.updates)} 名角色的状态有变化` : ''
+            }。${
+              result.unmatchedSpeakers.length > 0
+                ? `（有 ${String(result.unmatchedSpeakers.length)} 个名字没对上在场角色，那几条只记了客观经过）`
+                : ''
+            }`,
+          },
+        ]);
+        sync.requestAutoSync();
+      } catch (bridgeError) {
+        setError(bridgeError instanceof Error ? bridgeError.message : String(bridgeError));
+      } finally {
+        setBusy(false);
+      }
+    },
+    [bridge, conversation, db, instances, scene, session, sync, world],
+  );
+
+  /** 放弃这一次转接：第一步放弃等于这一轮没有回复，第二步放弃等于这一轮没写记忆。 */
+  const handleBridgeSkip = useCallback(() => {
+    const stage = bridge?.stage ?? null;
+    setBridge(null);
+    if (stage === 'analysis') {
+      setWarnings([
+        {
+          code: 'bridge.skip',
+          message:
+            '这一轮没有写记忆与情绪（第二步跳过了）。想让它记住，把第二步的提示词贴一次就行；或者在设置里填一个 API Key，之后这些都会自动跑。',
+        },
+      ]);
+    }
+  }, [bridge]);
 
   const handleToggleMode = useCallback(
     (key: keyof ConversationModes, value: boolean) => {
@@ -1212,6 +1425,12 @@ export function App() {
               <p className="hint">
                 导入一张角色卡，或者用左栏的「新对话」开一条线；也可以点「创建」让世界管理员陪你起草。
               </p>
+              {needsWebBridge(providers.apiKey) ? (
+                <p className="hint">
+                  <strong>没有 API Key 也能开始</strong>
+                  ：导入一张卡之后，应用会把每一轮要发的提示词交给你，贴进 DeepSeek 网页版，再把回复粘回来。
+                </p>
+              ) : null}
             </section>
           ) : (
             <div className="workspace-body">
@@ -1241,6 +1460,11 @@ export function App() {
                   ready={ready}
                   archived={archived}
                   focus={focus}
+                  bridge={bridge}
+                  manualMode={bridge !== null || needsWebBridge(providers.apiKey)}
+                  onBridgeReply={(text) => void handleBridgeReply(text)}
+                  onBridgeAnalysis={(text) => void handleBridgeAnalysis(text)}
+                  onBridgeSkip={handleBridgeSkip}
                   onSend={(text) => void handleSend(text)}
                   onStop={() => abortRef.current?.abort()}
                   onRegenerate={(id) => void handleRegenerate(id)}

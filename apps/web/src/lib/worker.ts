@@ -1,5 +1,6 @@
 import {
   applyAffectUpdates,
+  applyTurnAnalysis,
   buildAffectMessages,
   buildChapterSummaryMessages,
   buildExtractionMessages,
@@ -196,37 +197,20 @@ export function useBackgroundWorker(options: {
         { temperature: 0.2 },
       );
 
-      const { extraction, updates } = parseTurnAnalysis(completion.text);
-
-      const sequence = await db.repository.nextMemorySequence(payload.roomId);
-      const { events } = buildMemoryEvents({
+      /*
+       * 落库交给内核的那份共用实现（`applyTurnAnalysis`）：网页版桥接下用户粘回来的
+       * 那段输出走的是同一个函数，两条路的幂等与清理规则因此不会漂移。
+       */
+      await applyTurnAnalysis({
+        repository: db.repository,
         roomId: payload.roomId,
         sceneId: payload.sceneId,
         conversationId: payload.conversationId,
-        worldTime: context.scene?.worldTime ?? '',
-        sequence,
-        participants: context.participants,
-        extraction,
         turnId: payload.turnId,
+        worldTime: context.scene?.worldTime ?? '',
+        participants: context.participants,
+        raw: completion.text,
       });
-
-      // 先清掉这一轮可能残留的旧记忆，让重试天然幂等
-      await db.repository.deleteMemoriesByTurn(payload.roomId, payload.turnId);
-      await db.repository.saveMemories(events);
-
-      // 幂等：同一个回合已经推演过就不再叠加，否则重试会让关系翻倍
-      const already = context.participants.some((instance) =>
-        instance.affect.history.some((change) => change.turnId === payload.turnId),
-      );
-      if (!already) {
-        const { applied } = applyAffectUpdates(context.participants, updates, {
-          at: new Date().toISOString(),
-          turnId: payload.turnId,
-        });
-        for (const item of applied) {
-          await db.repository.saveInstance(item.next);
-        }
-      }
 
       return { called: true, usage: completion.usage };
     },

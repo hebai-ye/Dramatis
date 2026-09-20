@@ -84,6 +84,15 @@ export function SettingsPanel({
     <div className="stack">
       <section className="panel">
         <h2>模型接入</h2>
+        {/*
+          两种用法都摆在这里：填 Key 全自动；不填 Key 也能玩（网页版桥接，
+          提示词手动贴）。不给用户「必须先注册一个模型服务」的错觉。
+        */}
+        <p className="hint">
+          填好下面的接口地址、模型名与 API Key 之后，角色回复、记忆抽取、情绪推演都会自动跑。
+          <strong>不填也能用</strong>：应用会把每一轮要发的提示词交给你，你贴进 DeepSeek
+          网页版，再把回复粘回来——只是每轮多两次复制粘贴。
+        </p>
         <ProviderPanel api={providers} disabled={disabled} />
       </section>
 

@@ -223,6 +223,14 @@ export function App() {
   const [streamText, setStreamText] = useState('');
   const [streamSpeaker, setStreamSpeaker] = useState('');
   const [reasoningText, setReasoningText] = useState('');
+  /**
+   * 一轮正在做什么。
+   *
+   * 为什么要有它：生成之前还有一次「谁开口、他想做什么」的便宜调用，加上推理模型
+   * 会先流一段推理流，用户看到的是「气泡一直空着，过一会儿整段话砸下来」。
+   * 有了这个阶段名，界面从第一毫秒就有话说（正在判断谁开口 / 正在写）。
+   */
+  const [phase, setPhase] = useState<'idle' | 'planning' | 'writing'>('idle');
   const [busy, setBusy] = useState(false);
   const [lastPrompt, setLastPrompt] = useState<AssembledPrompt | null>(null);
   const abortRef = useRef<AbortController | null>(null);
@@ -609,6 +617,7 @@ export function App() {
          * 并且**只是建议**：名字不在名单里就退回规则调度，绝不让看不见的人上台。
          * 用户可以在「对话模式」里关掉它，省下这一次调用。
          */
+        setPhase('planning');
         const plan = await runIntentPlan({ text, history, scene, instances, turnId });
         const sceneCast = instances.filter(
           (instance) => instance.presence === 'onstage' && scene.cast.includes(instance.id),
@@ -644,6 +653,7 @@ export function App() {
           );
 
           setStreamSpeaker(speaker.displayName);
+          setPhase('writing');
           const plannedIntent = intentByInstance.get(speaker.id) ?? null;
           const generation = await runGeneration({
             speaker,
@@ -754,6 +764,7 @@ export function App() {
       } finally {
         setStreamText('');
         setReasoningText('');
+        setPhase('idle');
         setBusy(false);
         abortRef.current = null;
         /*
@@ -817,6 +828,8 @@ export function App() {
       setError(null);
       setBusy(true);
       setStreamText('');
+      setStreamSpeaker(speaker.displayName);
+      setPhase('writing');
       setReasoningText('');
 
       // 用 clearTurn 而不是 cancelByTurn：已经跑完的任务记录会占着幂等键，
@@ -888,6 +901,7 @@ export function App() {
       } finally {
         setStreamText('');
         setReasoningText('');
+        setPhase('idle');
         setBusy(false);
         abortRef.current = null;
       }
@@ -1478,6 +1492,7 @@ export function App() {
                   streamText={streamText}
                   streamSpeaker={streamSpeaker}
                   reasoningText={reasoningText}
+                  phase={phase}
                   busy={busy}
                   ready={ready}
                   archived={archived}

@@ -21,6 +21,8 @@ interface Props {
   streamText: string;
   streamSpeaker: string;
   reasoningText: string;
+  /** 这一轮正在做什么：判断谁开口 / 正在写。空转时是 idle。 */
+  phase?: 'idle' | 'planning' | 'writing';
   busy: boolean;
   ready: boolean;
   /** 已归档的对话只用于回顾，不能再说话。 */
@@ -75,6 +77,21 @@ function shorten(text: string, max: number): string {
 }
 
 /**
+ * 推理流的**尾巴**。
+ *
+ * 用户要的是「知道它在动」，不是读它全部的思考（读全了还容易被剧透）。
+ * 取最后一行、截断到 120 字，滚动着看就是活的。
+ */
+function tailOf(text: string, max = 120): string {
+  const lines = text
+    .trim()
+    .split('\n')
+    .filter((line) => line.trim() !== '');
+  const last = lines[lines.length - 1] ?? text.trim();
+  return last.length <= max ? last : `…${last.slice(-max)}`;
+}
+
+/**
  * 一条回复的用量。
  *
  * 显示成「提示 1.2k / 输出 240」而不是一个总数：BYOK 用户看的是钱，
@@ -100,6 +117,7 @@ export function MainChat({
   streamText,
   streamSpeaker,
   reasoningText,
+  phase = 'idle',
   busy,
   ready,
   archived,
@@ -233,16 +251,21 @@ export function MainChat({
                 他自己声明的意图（P1-6）。放在气泡上方而不是塞进正文：
                 它是「为什么这么回」的注解，不是他说出口的话。
               */}
+              {/*
+                他的心理活动**默认收起来**（用户要求：别把角色的心理摆在明面上）。
+                措辞按来源分：他自己写的、导演调用推出来的、还是从推理流里摘的。
+              */}
               {message.intent === undefined ? null : (
-                <p className="intent-line">
-                  {/* 两种来源用不同措辞：他照格式写的，与他实际在想的是两回事 */}
-                  {message.intentSource === 'reasoning'
-                    ? '盘算：'
-                    : message.intentSource === 'planned'
-                      ? '他这一轮想：'
-                      : '想做：'}
-                  {message.intent}
-                </p>
+                <details className="intent-line">
+                  <summary>
+                    {message.intentSource === 'reasoning'
+                      ? '他当时在想什么（点开看）'
+                      : message.intentSource === 'planned'
+                        ? '他这一轮想做什么（点开看）'
+                        : '他自己写的意图（点开看）'}
+                  </summary>
+                  <p>{message.intent}</p>
+                </details>
               )}
 
               {/*
@@ -356,10 +379,29 @@ export function MainChat({
         ))}
 
         {reasoningText !== '' ? (
-          <details className="reasoning">
+          <details className="reasoning" open={busy || undefined}>
             <summary>思考过程</summary>
             <pre>{reasoningText}</pre>
           </details>
+        ) : null}
+
+        {/*
+          流式的第一步是「让用户看见它在动」。
+          推理模型会先流一大段推理流，气泡在这期间是空的；没有下面这一块，
+          观感就是「等半天，整段话突然砸下来」（用户原话）。
+        */}
+        {busy && streamText === '' ? (
+          <article className="message-row character pending">
+            <Avatar name={streamSpeaker === '' ? '…' : streamSpeaker} />
+            <div className="message-column">
+              <span className="message-name">{streamSpeaker === '' ? '正在准备' : streamSpeaker}</span>
+              <p className="pending-line">
+                <span className="pending-dot" />
+                {phase === 'planning' ? '正在判断这一轮谁开口…' : '正在写…'}
+              </p>
+              {reasoningText === '' ? null : <p className="reasoning-peek">{tailOf(reasoningText)}</p>}
+            </div>
+          </article>
         ) : null}
 
         {streamText !== '' ? (

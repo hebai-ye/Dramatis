@@ -1375,9 +1375,65 @@ details summary {
 /* 归属可疑提示（T18）：只在真的可疑时出现，点按钮才改数据 */
 .intent-line {
   color: var(--muted-text);
-  font-size: 10px;
+  font-size: 11px;
   margin: 0 0 2px;
   opacity: 0.85;
+}
+
+.intent-line summary {
+  cursor: pointer;
+  opacity: 0.8;
+}
+
+.intent-line p {
+  border-left: 2px solid var(--line);
+  margin: 4px 0 2px;
+  padding-left: 8px;
+  white-space: pre-wrap;
+}
+
+/* 生成中的占位：让「它在动」这件事从第一毫秒就可见 */
+.message-row.pending {
+  opacity: 0.9;
+}
+
+.pending-line {
+  align-items: center;
+  color: var(--muted-text);
+  display: flex;
+  font-size: 12px;
+  gap: 6px;
+  margin: 0;
+}
+
+.pending-dot {
+  animation: pending-pulse 1.1s ease-in-out infinite;
+  background: var(--accent);
+  border-radius: 50%;
+  height: 7px;
+  width: 7px;
+}
+
+@keyframes pending-pulse {
+  0%,
+  100% {
+    opacity: 0.25;
+    transform: scale(0.8);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.1);
+  }
+}
+
+/* 推理流的尾巴：给个「在动」的观感，但不把整段思考摊开 */
+.reasoning-peek {
+  color: var(--muted-text);
+  font-size: 11px;
+  line-height: 1.5;
+  margin: 4px 0 0;
+  max-width: 46em;
+  opacity: 0.6;
 }
 
 .attr-warn {

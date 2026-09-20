@@ -15,6 +15,7 @@
  * ```bash
  * node tools/fake-model/server.mjs            # 默认 127.0.0.1:5280
  * node tools/fake-model/server.mjs --port 5290
+ * node tools/fake-model/server.mjs --reasoning --chunk-ms 120   # 模拟「先流推理、再流正文」的模型
  * ```
  *
  * 然后在应用的「模型接入」里填 接口地址 `http://127.0.0.1:5280`、模型 `fake-model`、
@@ -25,6 +26,11 @@ import { createServer } from 'node:http';
 const args = process.argv.slice(2);
 const portIndex = args.indexOf('--port');
 const PORT = Number(portIndex === -1 ? 5280 : args[portIndex + 1]);
+/** 每块之间的间隔：用来观察「流式到底有没有在动」（默认不睡，跑得最快）。 */
+const chunkIndex = args.indexOf('--chunk-ms');
+const CHUNK_MS = Number(chunkIndex === -1 ? 0 : args[chunkIndex + 1]);
+/** 先流一段推理流，再流正文：模仿 deepseek-reasoner 那种「先想很久」的形态。 */
+const WITH_REASONING = args.includes('--reasoning');
 const HOST = '127.0.0.1';
 
 /** 一次请求的判定结果。 */
@@ -105,7 +111,7 @@ function replyFor(kind, text) {
   return `「${tail}」${speaker}把手里的东西放下，抬眼看了看${place === '' ? '门口' : place}。\n\n他没再往下说。`;
 }
 
-function sse(res, status, cors, chunks) {
+async function sse(res, status, cors, chunks, chunkMs = 0) {
   res.writeHead(status, {
     ...cors,
     'Content-Type': 'text/event-stream; charset=utf-8',
@@ -114,6 +120,8 @@ function sse(res, status, cors, chunks) {
   });
   for (const chunk of chunks) {
     res.write(`data: ${JSON.stringify(chunk)}\n\n`);
+    // 有间隔才是真的「流式」：用它来观察界面有没有一段段地长出来
+    if (chunkMs > 0) await new Promise((resolve) => setTimeout(resolve, chunkMs));
   }
   res.write('data: [DONE]\n\n');
   res.end();
@@ -179,6 +187,15 @@ const server = createServer((req, res) => {
         model: parsed.model ?? 'fake-model',
         choices: [{ index: 0, delta: { role: 'assistant', content: '' }, finish_reason: null }],
       },
+      // 模仿推理模型：先把推理流一段段吐完，再吐正文
+      ...(WITH_REASONING
+        ? '先看这一轮谁在场、他刚才说了什么，再决定用哪种语气回。'.match(/[\s\S]{1,12}/g).map((piece) => ({
+            id: 'fake-1',
+            object: 'chat.completion.chunk',
+            model: parsed.model ?? 'fake-model',
+            choices: [{ index: 0, delta: { reasoning_content: piece }, finish_reason: null }],
+          }))
+        : []),
       ...content.match(/[\s\S]{1,24}/g).map((piece) => ({
         id: 'fake-1',
         object: 'chat.completion.chunk',
@@ -196,7 +213,7 @@ const server = createServer((req, res) => {
       });
     }
 
-    sse(res, 200, cors, chunks);
+    sse(res, 200, cors, chunks, CHUNK_MS);
   });
 });
 

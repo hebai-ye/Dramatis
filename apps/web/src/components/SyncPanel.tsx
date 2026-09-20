@@ -143,6 +143,12 @@ export function SyncPanel({ api, disabled }: Props) {
             <span className="usage-figure">{describeReport(api.config?.lastReport ?? null)}</span>
           </li>
           <li>
+            <span className="usage-name">自动同步</span>
+            <span className="usage-figure">
+              {api.autoSyncPending ? '正在推这一轮…' : '每轮对话结束后自动推（最快 20 秒一次）'}
+            </span>
+          </li>
+          <li>
             <span className="usage-name">空间</span>
             <span className="usage-figure">{api.config?.spaceHandle.slice(0, 10)}…</span>
           </li>
@@ -168,9 +174,20 @@ export function SyncPanel({ api, disabled }: Props) {
       {notice !== null ? <div className={notice.ok ? 'notice' : 'notice error'}>{notice.message}</div> : null}
 
       {connected ? (
-        <button type="button" className="ghost danger" disabled={api.busy} onClick={() => void run(api.disconnect)}>
-          断开同步（不影响本机数据，也不会删除服务端的数据）
-        </button>
+        <div className="save-bar">
+          <button
+            type="button"
+            className="ghost"
+            disabled={api.busy}
+            title="把本机的拉取游标清掉，从服务端完整拉一遍。本地数据与服务端数据都不会被删。"
+            onClick={() => void run(api.resync)}
+          >
+            重新拉一遍
+          </button>
+          <button type="button" className="ghost danger" disabled={api.busy} onClick={() => void run(api.disconnect)}>
+            断开同步（不影响本机数据，也不会删除服务端的数据）
+          </button>
+        </div>
       ) : null}
     </div>
   );

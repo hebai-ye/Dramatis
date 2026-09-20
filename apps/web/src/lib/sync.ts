@@ -1,4 +1,5 @@
 import {
+  createAutoSync,
   createHttpSyncTransport,
   createRemoteSpace,
   createSpaceCredentials,
@@ -36,6 +37,15 @@ import { createBrowserKeyStore, type KeyStorageMode } from './keystore';
 const META_CONFIG = 'sync.config';
 const KEY_REF_PASSWORD = 'sync:password';
 
+/**
+ * 两次自动同步之间的最小间隔。
+ *
+ * 一轮对话会连着写好几次（消息、记忆、情绪、账单），每次都推就是白跑流量；
+ * 但间隔又不能太长——用户聊完就想在手机上看到。20 秒是「刚聊完这一轮的内容
+ * 基本都落库了」与「不至于每次都推」之间的折中。
+ */
+const AUTO_SYNC_INTERVAL_MS = 20_000;
+
 export interface SyncConfig {
   endpoint: string;
   userId: string;
@@ -72,6 +82,22 @@ export interface SyncApi {
   dismissRecoveryCode: () => void;
   connect: (input: SyncConnectInput) => Promise<void>;
   syncNow: () => Promise<void>;
+  /**
+   * 把本地游标清回去，重新完整拉一遍（**修分页漏拉用的逃生口**）。
+   *
+   * 一页装不下的空间在旧版本客户端上会「同步成功但只拉到一部分」，而本地游标
+   * 已经被推到末尾——升级之后光靠再同步是拉不回来的，得先把这个游标清掉。
+   * 清的是「拉到哪儿」这一个数字，不动本地数据，也不动服务端。
+   */
+  resync: () => Promise<void>;
+  /**
+   * 每轮对话结束后的自动同步（P2-6 的收尾项）。
+   *
+   * 调用它本身不阻塞也不抛错：排进节流窗口，能跑就跑，跑失败只记在「上次结果」里。
+   */
+  requestAutoSync: () => void;
+  /** 有没有排着队的自动同步，界面用它显示「本轮会自动推」。 */
+  autoSyncPending: boolean;
   disconnect: () => Promise<void>;
   /** 切换「保存方式」（把密码在内存版与本地版之间搬一次）。 */
   setKeyMode: (mode: KeyStorageMode) => Promise<void>;
@@ -127,6 +153,7 @@ export function useSync(db: DramatisDb | null, options: { onChanged?: () => void
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [recoveryCode, setRecoveryCode] = useState<string | null>(null);
+  const [autoSyncPending, setAutoSyncPending] = useState(false);
 
   const sessionRef = useRef<SyncSession | null>(null);
   const configRef = useRef<SyncConfig | null>(null);
@@ -335,6 +362,52 @@ export function useSync(db: DramatisDb | null, options: { onChanged?: () => void
     [db, remember],
   );
 
+  /**
+   * 自动同步（每轮结束）。
+   *
+   * 与手动同步共用同一条推送路径（`doSync`），区别只有两点：不给界面加
+   * busy（一轮一转头整个面板都在转圈很吵），以及失败不抛错——失败会记进
+   * 「上次结果」，让用户看得见并自己决定要不要重试。
+   */
+  const quietRunRef = useRef<() => Promise<void>>(async () => {});
+  const autoRef = useRef<ReturnType<typeof createAutoSync> | null>(null);
+
+  quietRunRef.current = async (): Promise<void> => {
+    const current = configRef.current;
+    const session = sessionRef.current;
+    if (db === null || current === null || session === null) return;
+    await doSync(current, session);
+  };
+
+  if (autoRef.current === null) {
+    autoRef.current = createAutoSync({
+      // 没连上（没配置 / 没解锁）时静默跳过：每轮都在面板上留一条错没有意义
+      run: async () => {
+        if (configRef.current === null || sessionRef.current === null) return;
+        await quietRunRef.current();
+      },
+      intervalMs: AUTO_SYNC_INTERVAL_MS,
+      onResult: (result) => {
+        setError(result.ok ? null : result.error);
+      },
+      onBusyChange: setAutoSyncPending,
+    });
+  }
+
+  const requestAutoSync = useCallback((): void => {
+    if (configRef.current === null) return;
+    autoRef.current?.request();
+  }, []);
+
+  const resync = useCallback(async (): Promise<void> => {
+    const current = configRef.current;
+    if (db === null || current === null) throw new Error('还没有连上同步空间。');
+
+    // 只清游标与推送点：本地数据、服务端数据都不动
+    await db.repository.writeSyncState({ spaceHandle: current.spaceHandle, pulledHead: 0, pushedAt: null });
+    await syncNow();
+  }, [db, syncNow]);
+
   return {
     config,
     status,
@@ -344,6 +417,9 @@ export function useSync(db: DramatisDb | null, options: { onChanged?: () => void
     dismissRecoveryCode: () => setRecoveryCode(null),
     connect,
     syncNow,
+    resync,
+    requestAutoSync,
+    autoSyncPending,
     disconnect,
     setKeyMode,
   };

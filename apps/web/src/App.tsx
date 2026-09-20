@@ -139,6 +139,14 @@ export function App() {
   const budget = evaluateBudget(usage.world, world?.budget ?? null);
   const burned = budget.burned;
 
+  /**
+   * 多设备同步（P2-6）。
+   *
+   * 启动时如果配置与密码都在，会自动同步一次；之后**每轮结束自动推一次**
+   * （节流 20 秒，见 lib/sync.ts），用户也可以随时手动触发。
+   */
+  const sync = useSync(db, { onChanged: () => void session.refreshAll() });
+
   const worker = useBackgroundWorker({
     db,
     provider: providers.background,
@@ -146,6 +154,8 @@ export function App() {
       void session.reloadWorld();
       // 后台写完一笔账，界面上的数字要跟着动
       void usage.reload();
+      // 记忆与情绪通常比回复晚几秒才落库，这一趟请求走同一个节流窗口
+      sync.requestAutoSync();
     },
   });
 
@@ -168,14 +178,6 @@ export function App() {
 
   /** 本机存储的持久化与配额（P2-3）：配额快满时在界面上提醒导出封存。 */
   const storage = useStorageStatus();
-
-  /**
-   * 多设备同步（P2-6 第四步）。
-   *
-   * 启动时如果配置与密码都在，会自动同步一次；之后由用户在设置里手动触发
-   * （「每轮对话结束自动推」留给下一步）。
-   */
-  const sync = useSync(db, { onChanged: () => void session.refreshAll() });
 
   /**
    * 左栏的可见性。
@@ -677,6 +679,13 @@ export function App() {
         setReasoningText('');
         setBusy(false);
         abortRef.current = null;
+        /*
+         * 一轮结束就排一次同步（节流 20 秒，见 lib/sync.ts）。
+         *
+         * 放在 finally 而不是 try 末尾：中途报错、用户点了停止，这一轮已经落库的
+         * 东西照样该推出去——「聊完这轮手机上就能看到」不该因为一次调用失败而失效。
+         */
+        sync.requestAutoSync();
       }
     },
     [
@@ -694,6 +703,7 @@ export function App() {
       runIntentPlan,
       scene,
       session,
+      sync,
       usage,
       worker,
       world,

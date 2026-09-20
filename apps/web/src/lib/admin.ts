@@ -107,7 +107,12 @@ export function useAdminChat(options: {
     async (draft: AdminDraft, artifacts: AdminArtifact[]): Promise<string> => {
       if (draft.kind === 'scene') {
         const applied = await session.setWorldScene(draft.patch);
-        artifacts.push(draftToArtifact(draft));
+        /*
+         * 场景没落下去时**别把卡片标成「已生效」**（这是原来就有的小毛病：先 push 再判断）。
+         * 这个世界还没有主对话时 setWorldScene 会返回 null，那时标成「待你决定」更诚实。
+         */
+        const artifact = draftToArtifact(draft);
+        artifacts.push(applied === null ? { ...artifact, status: 'pending' } : artifact);
         return applied === null
           ? '这个世界还没有主对话，场景没能设置；请先让用户开一条主对话。'
           : `已把当前场景设为：${draft.summary}（生效于主对话）`;

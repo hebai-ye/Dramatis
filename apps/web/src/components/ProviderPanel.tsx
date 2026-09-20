@@ -266,6 +266,38 @@ export function ProviderPanel({ api, disabled }: Props) {
             {draft.keyMode === api.keyMode ? '' : '（保存后生效）'}
           </p>
 
+          {/*
+            用户一定会问「我填进去的 Key 到底被谁看见」。答案要写在**填的地方**，
+            而不是藏在文档里——顺序 8 那一项就是这件事。
+          */}
+          <details className="key-facts">
+            <summary>这个 Key 会被谁看见？（点开看）</summary>
+            <ul>
+              <li>
+                <strong>你的浏览器</strong>：选「仅本次会话」时只在内存里，关掉页面就没了；选「保存在本机浏览器」时 会
+                <strong>明文</strong>写进本站的
+                localStorage（同源脚本都读得到，所以别在这个域上装来路不明的脚本或扩展）。
+              </li>
+              <li>
+                <strong>模型服务商</strong>：会。请求由浏览器<strong>直连</strong>服务商（形如{' '}
+                <code>https://api.deepseek.com</code>），Key 放在 <code>Authorization</code>{' '}
+                请求头里——不经过本项目的任何中转。
+              </li>
+              <li>
+                <strong>同步服务端</strong>：不会。服务端只存密文与哈希，连「Key」这个字段都没有；模型配置也不在同步
+                白名单里，导出封存时同样不带它。
+              </li>
+              <li>
+                <strong>给你发这个网页的人</strong>：<strong>能</strong>。这是唯一的信任边界——能改这个网页的人
+                就能读你填进来的 Key。自己部署=自己；用别人的站点，等于把这项能力交给站主。
+              </li>
+            </ul>
+            <p className="hint">
+              想更稳：用「仅本次会话」（默认），或者自己在服务器上跑一份这个网页。任务清单里还有一步
+              「口令加密落盘」——做完之后即使选「保存在本机浏览器」，磁盘上也是密文。
+            </p>
+          </details>
+
           <div className="grid-3">
             <label>
               温度

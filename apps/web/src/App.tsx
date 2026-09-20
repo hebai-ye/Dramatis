@@ -1145,6 +1145,7 @@ export function App() {
   const handleBridgeReply = useCallback(
     async (raw: string) => {
       if (!db || !world || !scene || !conversation || bridge === null || bridge.stage !== 'reply') return;
+      if (bridge.turnId === undefined || bridge.speakerInstanceId === undefined) return;
 
       const speaker = instances.find((item) => item.id === bridge.speakerInstanceId);
       if (speaker === undefined) {
@@ -1200,6 +1201,7 @@ export function App() {
   const handleBridgeAnalysis = useCallback(
     async (raw: string) => {
       if (!db || !world || !scene || !conversation || bridge === null || bridge.stage !== 'analysis') return;
+      if (bridge.turnId === undefined) return;
 
       setBusy(true);
       try {
@@ -1458,6 +1460,10 @@ export function App() {
                   busy={admin.busy}
                   ready={ready}
                   archived={archived}
+                  bridge={admin.bridge}
+                  manualMode={needsWebBridge(providers.apiKey)}
+                  onBridgeCommit={(text) => void admin.commitBridge(text)}
+                  onBridgeCancel={admin.cancelBridge}
                   onSend={(text) => void admin.send(text)}
                   onStop={admin.stop}
                   onAdopt={(messageId, artifact) => void session.adoptArtifact(messageId, artifact.id)}

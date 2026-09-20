@@ -1,6 +1,7 @@
 import {
   type AdminArtifact,
   type AdminDraft,
+  buildAdminBridgeMessages,
   buildAdminMessages,
   createOpenAICompatibleProvider,
   createPlayerMessage,
@@ -8,8 +9,12 @@ import {
   type Message,
   type MessageUsage,
   messageId,
+  needsWebBridge,
   newId,
   nowIso,
+  parseAdminBridgeOutput,
+  parseAdminToolCall,
+  renderPromptForWeb,
   runAdminTurn,
 } from '@dramatis/core';
 import { useCallback, useRef, useState } from 'react';
@@ -23,6 +28,16 @@ export interface AdminChatApi {
   error: string | null;
   send: (text: string) => Promise<void>;
   stop: () => void;
+  /**
+   * 没有 API Key 时的网页版桥接（副对话）。
+   *
+   * 非 null 表示「正等着用户把网页版的输出贴回来」。管理员要调用工具，所以贴回来的
+   * 东西里除了正文还有 `{"tool":…,"arguments":{…}}` 代码块——解析之后走的是与 API
+   * 那条路**同一套校验与执行**（`parseAdminToolCall` → `execute`）。
+   */
+  bridge: { prompt: string } | null;
+  commitBridge: (raw: string) => Promise<void>;
+  cancelBridge: () => void;
 }
 
 function draftToArtifact(draft: AdminDraft): AdminArtifact {
@@ -79,7 +94,30 @@ export function useAdminChat(options: {
   const [busy, setBusy] = useState(false);
   const [streamText, setStreamText] = useState('');
   const [error, setError] = useState<string | null>(null);
+  const [bridge, setBridge] = useState<{ prompt: string } | null>(null);
   const abortRef = useRef<AbortController | null>(null);
+
+  /**
+   * 把解析出来的工具调用真正执行掉。
+   *
+   * 与 API 那条路**共用同一个 execute 函数**（`executeDraft`），所以「场景即时生效、
+   * 角色卡与世界书只落草稿」这些语义只写了一份。
+   */
+  const executeDraft = useCallback(
+    async (draft: AdminDraft, artifacts: AdminArtifact[]): Promise<string> => {
+      if (draft.kind === 'scene') {
+        const applied = await session.setWorldScene(draft.patch);
+        artifacts.push(draftToArtifact(draft));
+        return applied === null
+          ? '这个世界还没有主对话，场景没能设置；请先让用户开一条主对话。'
+          : `已把当前场景设为：${draft.summary}（生效于主对话）`;
+      }
+
+      artifacts.push(draftToArtifact(draft));
+      return `${draft.summary}：草稿已放到用户面前，等待他采纳或丢弃，不要重复起草。`;
+    },
+    [session],
+  );
 
   const send = useCallback(
     async (text: string) => {
@@ -92,14 +130,18 @@ export function useAdminChat(options: {
         setError('还没有模型配置');
         return;
       }
-      if (providers.apiKey.trim() === '') {
-        setError('还没有填 API Key');
-        return;
-      }
+      /*
+       * 没有 API Key 就走**网页版桥接**：把管理员的提示词（含三个工具的声明与
+       * 「这次没有工具接口，请写成 JSON 块」的特殊说明）交给用户贴进 DeepSeek 网页版，
+       * 再把回复贴回来。原来这里是一句「还没有填 API Key」——左栏最诱人的「创建」
+       * 按钮点下去直接失败，是当时唯一还会卡住的入口。
+       */
+      const manual = needsWebBridge(providers.apiKey);
 
       setError(null);
       setBusy(true);
       setStreamText('');
+      setBridge(null);
 
       const history = session.messages;
       await session.appendMessages([
@@ -118,6 +160,26 @@ export function useAdminChat(options: {
         .flatMap((message) => message.artifacts ?? [])
         .filter((artifact) => artifact.status === 'pending')
         .map((artifact) => artifact.summary);
+
+      if (manual) {
+        setBridge({
+          prompt: renderPromptForWeb(
+            buildAdminBridgeMessages({
+              room: world,
+              conversation,
+              scene: null,
+              instances: session.instances,
+              cards: session.library.cards,
+              worldBooks: session.library.worldBooks,
+              history,
+              userInput: text,
+              pendingDrafts,
+            }),
+          ),
+        });
+        setBusy(false);
+        return;
+      }
 
       const provider = createOpenAICompatibleProvider({
         baseUrl: profile.baseUrl,
@@ -154,18 +216,7 @@ export function useAdminChat(options: {
               knownCardIds: session.library.cards.map((card) => card.id),
               knownBookIds: session.library.worldBooks.map((book) => book.id),
             },
-            execute: async (draft) => {
-              if (draft.kind === 'scene') {
-                const applied = await session.setWorldScene(draft.patch);
-                artifacts.push(draftToArtifact(draft));
-                return applied === null
-                  ? '这个世界还没有主对话，场景没能设置；请先让用户开一条主对话。'
-                  : `已把当前场景设为：${draft.summary}（生效于主对话）`;
-              }
-
-              artifacts.push(draftToArtifact(draft));
-              return `${draft.summary}：草稿已放到用户面前，等待他采纳或丢弃，不要重复起草。`;
-            },
+            execute: (draft) => executeDraft(draft, artifacts),
           },
         )) {
           switch (event.type) {
@@ -232,10 +283,97 @@ export function useAdminChat(options: {
         abortRef.current = null;
       }
     },
-    [busy, db, onChanged, providers, session],
+    [busy, db, executeDraft, onChanged, providers, session],
+  );
+
+  /**
+   * 收下网页版贴回来的东西：解析出工具调用 → 走同一套校验 → 执行 → 落成一条管理员消息。
+   *
+   * 与 API 那条路的差别只有「谁把文本写出来」：解析、校验、执行、落库全都在这里复用。
+   */
+  const commitBridge = useCallback(
+    async (raw: string) => {
+      const world = session.world;
+      const conversation = session.conversation;
+      if (!db || !world || !conversation || conversation.kind !== 'side' || bridge === null || busy) return;
+
+      setBusy(true);
+      setError(null);
+      try {
+        const parsed = parseAdminBridgeOutput(raw);
+        const context = {
+          knownCardIds: session.library.cards.map((card) => card.id),
+          knownBookIds: session.library.worldBooks.map((book) => book.id),
+        };
+
+        const artifacts: AdminArtifact[] = [];
+        const failed: string[] = [];
+        for (const call of parsed.calls) {
+          const result = parseAdminToolCall(call, context);
+          if (!result.ok) {
+            failed.push(result.error);
+            continue;
+          }
+          await executeDraft(result.draft, artifacts);
+        }
+
+        const notes: string[] = [];
+        if (parsed.invalid.length > 0) {
+          notes.push(`它提到了一件这里没有的事（${parsed.invalid.join('、')}），那部分没有执行。`);
+        }
+        if (failed.length > 0) {
+          notes.push(`有一件没能落下：${failed.join('；')}。可以把要求说得更具体一点，再贴一次。`);
+        }
+
+        const fallback =
+          artifacts.length > 0 ? '（草稿已经放在下面，采纳后就能用。）' : '（它这次没有起草任何素材，只说了几句话。）';
+        const content =
+          [parsed.answer.trim(), ...notes].filter((part) => part !== '').join('\n\n') ||
+          (artifacts.length > 0 ? fallback : parsed.answer.trim() || fallback);
+
+        await session.appendMessages([
+          {
+            id: messageId(newId()),
+            roomId: world.id,
+            conversationId: conversation.id,
+            sceneId: null,
+            turnId: createTurnId(),
+            localSeq: 0,
+            deviceId: '',
+            role: 'admin',
+            speakerInstanceId: null,
+            speakerName: '世界管理员',
+            audience: [],
+            content,
+            // 网页版这一轮不经过服务商：没有 usage，也没有账单
+            ...(artifacts.length > 0 ? { artifacts } : {}),
+            createdAt: nowIso(),
+            updatedAt: nowIso(),
+            deletedAt: null,
+          },
+        ]);
+
+        setBridge(null);
+        onChanged();
+      } catch (commitError) {
+        setError(commitError instanceof Error ? commitError.message : String(commitError));
+      } finally {
+        setBusy(false);
+      }
+    },
+    [bridge, busy, db, executeDraft, onChanged, session],
   );
 
   const stop = useCallback(() => abortRef.current?.abort(), []);
 
-  return { busy, streamText, error, send, stop };
+  return {
+    busy,
+    streamText,
+    error,
+    send,
+    stop,
+    bridge,
+    commitBridge,
+    cancelBridge: () => setBridge(null),
+  };
 }

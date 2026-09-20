@@ -1,5 +1,6 @@
 import type { AdminArtifact, Conversation, Message, MessageId } from '@dramatis/core';
 import { useEffect, useRef, useState } from 'react';
+import { WebBridgePanel } from './WebBridgePanel';
 
 interface Props {
   conversation: Conversation;
@@ -12,6 +13,12 @@ interface Props {
   onStop: () => void;
   onAdopt: (messageId: MessageId, artifact: AdminArtifact) => void;
   onDiscard: (messageId: MessageId, artifact: AdminArtifact) => void;
+  /** 没有 API Key 时，起草这一步走网页版桥接。 */
+  bridge?: { prompt: string } | null;
+  /** 没配 API Key：发送按钮改成「生成提示词」，别让人以为点了会直接有回复。 */
+  manualMode?: boolean;
+  onBridgeCommit?: (text: string) => void;
+  onBridgeCancel?: () => void;
 }
 
 const STATUS_LABEL: Record<AdminArtifact['status'], string> = {
@@ -78,6 +85,10 @@ export function SideChat({
   onStop,
   onAdopt,
   onDiscard,
+  bridge = null,
+  manualMode = false,
+  onBridgeCommit,
+  onBridgeCancel,
 }: Props) {
   const [input, setInput] = useState('');
   const bottomRef = useRef<HTMLDivElement | null>(null);
@@ -137,6 +148,18 @@ export function SideChat({
         <div ref={bottomRef} />
       </div>
 
+      {bridge === null || onBridgeCommit === undefined ? null : (
+        <WebBridgePanel
+          bridge={{ stage: 'admin', prompt: bridge.prompt }}
+          busy={busy}
+          disabled={archived}
+          onReply={() => {}}
+          onAnalysis={() => {}}
+          onAdmin={onBridgeCommit}
+          onSkip={onBridgeCancel ?? (() => {})}
+        />
+      )}
+
       <div className="composer">
         <textarea
           value={input}
@@ -158,8 +181,13 @@ export function SideChat({
               停止
             </button>
           ) : (
-            <button type="button" disabled={!ready || archived || input.trim() === ''} onClick={submit}>
-              发送
+            <button
+              type="button"
+              disabled={!ready || archived || input.trim() === '' || bridge !== null}
+              title={bridge === null ? undefined : '先把这一轮贴回来（或点「放弃这次起草」）再发下一句'}
+              onClick={submit}
+            >
+              {bridge === null && manualMode ? '生成提示词' : '发送'}
             </button>
           )}
         </div>

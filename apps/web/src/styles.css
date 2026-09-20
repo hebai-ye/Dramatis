@@ -929,6 +929,26 @@ button.ghost {
   min-height: 88px;
 }
 
+/* 「这个 Key 会被谁看见」：折叠说明，默认收起，需要时才展开 */
+.key-facts summary {
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.key-facts ul {
+  font-size: 12px;
+  line-height: 1.7;
+  margin: 6px 0;
+  padding-left: 18px;
+}
+
+.key-facts code {
+  background: rgba(0, 0, 0, 0.25);
+  border-radius: 4px;
+  font-size: 11px;
+  padding: 0 4px;
+}
+
 /* 恢复码：等宽大字 + 可选中，手机上要一眼看清、能长按选中 */
 .recovery-code {
   background: var(--surface-2, rgba(0, 0, 0, 0.2));

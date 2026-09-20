@@ -1,3 +1,4 @@
+export * from './admin/bridge.js';
 export * from './admin/prompt.js';
 export * from './admin/tools.js';
 export * from './admin/turn.js';

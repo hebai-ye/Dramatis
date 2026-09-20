@@ -14,6 +14,16 @@ function formatTime(iso: string | null): string {
   return date.toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
 }
 
+/** 复制恢复码：非 https / 没授权时如实说，别假装成功。 */
+async function copyRecoveryCode(code: string): Promise<boolean> {
+  try {
+    await navigator.clipboard.writeText(code);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * 同步面板（P2-6 第四步·界面）。
  *
@@ -30,8 +40,19 @@ export function SyncPanel({ api, disabled }: Props) {
   const [secret, setSecret] = useState('');
   const [keyMode, setKeyMode] = useState<KeyStorageMode>(api.config?.keyMode ?? 'session');
   const [notice, setNotice] = useState<{ ok: boolean; message: string } | null>(null);
+  const [recoveryCopied, setRecoveryCopied] = useState(false);
 
   const connected = api.config !== null;
+
+  /**
+   * 同源推荐地址：`https://本站/sync`。
+   *
+   * 部署形态就是「同一张证书、同一个端口、网页与 /sync 并排」（deploy/README 第一节），
+   * 所以**应用自己就知道**服务端地址该填什么。手机上要用户手打
+   * `https://dramatissync.com:8443/sync` 是没道理的——给个一键填。
+   * 只在 https 上给：本地开发用 http://127.0.0.1:5273 时同样成立。
+   */
+  const sameOriginEndpoint = `${window.location.origin}/sync`;
 
   const run = async (action: () => Promise<void>): Promise<void> => {
     setNotice(null);
@@ -56,9 +77,22 @@ export function SyncPanel({ api, disabled }: Props) {
           id="sync-endpoint"
           value={endpoint}
           disabled={disabled || api.busy}
-          placeholder="https://dramatis-sync.xxxx.ts.net"
+          /* 手机上别自动大写、别自动纠正：地址里没有大写，改错了很难看出来 */
+          inputMode="url"
+          autoCapitalize="none"
+          autoCorrect="off"
+          spellCheck={false}
+          placeholder={sameOriginEndpoint}
           onChange={(event) => setEndpoint(event.target.value)}
         />
+        <button
+          type="button"
+          className="ghost"
+          disabled={disabled || api.busy || endpoint === sameOriginEndpoint}
+          onClick={() => setEndpoint(sameOriginEndpoint)}
+        >
+          用本站地址（{sameOriginEndpoint}）
+        </button>
       </div>
 
       <div className="field">
@@ -67,6 +101,9 @@ export function SyncPanel({ api, disabled }: Props) {
           id="sync-user"
           value={userId}
           disabled={disabled || api.busy || connected}
+          autoCapitalize="none"
+          autoCorrect="off"
+          spellCheck={false}
           placeholder="自己想一个（别用手机号）"
           onChange={(event) => setUserId(event.target.value)}
         />
@@ -80,6 +117,9 @@ export function SyncPanel({ api, disabled }: Props) {
           type="password"
           value={secret}
           disabled={disabled || api.busy}
+          autoCapitalize="none"
+          autoCorrect="off"
+          spellCheck={false}
           placeholder={connected ? '改了密码/恢复码才需要填' : '自己设一个够长的'}
           onChange={(event) => setSecret(event.target.value)}
         />
@@ -160,7 +200,28 @@ export function SyncPanel({ api, disabled }: Props) {
           <p>
             <strong>恢复码（只显示这一次，请抄到安全的地方）：</strong>
           </p>
-          <p style={{ fontFamily: 'ui-monospace, monospace', wordBreak: 'break-all' }}>{api.recoveryCode}</p>
+          {/*
+            手机上「抄下来」多半是复制粘贴，所以给一键复制 + 等宽大字 + 可选中；
+            抄错一位等于丢了这条线，值得把这一步做顺。
+          */}
+          <p className="recovery-code">{api.recoveryCode}</p>
+          <button
+            type="button"
+            className="ghost"
+            onClick={() => {
+              void copyRecoveryCode(api.recoveryCode ?? '').then((ok) => {
+                setRecoveryCopied(ok);
+                if (!ok) {
+                  setNotice({
+                    ok: false,
+                    message: '这个浏览器不让复制（可能是非 https 或没给剪贴板权限），请手动选中上面那串。',
+                  });
+                }
+              });
+            }}
+          >
+            {recoveryCopied ? '已复制 ✓' : '复制恢复码'}
+          </button>
           <p className="hint">
             忘了同步密码时，它就是你的密码（一样能解开数据、一样能登录）。丢了就只剩封存文件那条路。
           </p>

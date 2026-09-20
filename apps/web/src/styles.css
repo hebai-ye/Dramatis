@@ -929,6 +929,20 @@ button.ghost {
   min-height: 88px;
 }
 
+/* 恢复码：等宽大字 + 可选中，手机上要一眼看清、能长按选中 */
+.recovery-code {
+  background: var(--surface-2, rgba(0, 0, 0, 0.2));
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  font-family: ui-monospace, monospace;
+  font-size: 14px;
+  letter-spacing: 0.5px;
+  line-height: 1.7;
+  padding: 8px 10px;
+  user-select: all;
+  word-break: break-all;
+}
+
 .bridge-hint {
   border-top: 1px solid var(--line);
   margin: 0;
@@ -1517,6 +1531,12 @@ details summary {
   width: 340px;
 }
 
+/* 手机上的关面板按钮：桌面用标题栏的「面板」，不需要它 */
+.drawer-close {
+  align-self: flex-start;
+  display: none;
+}
+
 /* ---------- 副对话 ---------- */
 
 .admin-hint {
@@ -1660,7 +1680,15 @@ details summary {
 @media (max-width: 640px) {
   .app {
     gap: 6px;
+    /*
+     * 左右/顶部留 6px，底部再加上安全区（iPhone 的横条、安卓的手势条）。
+     * 这一条与 index.html 的 `viewport-fit=cover` 配套，缺一个 env() 就恒为 0。
+     */
     padding: 6px;
+    padding-bottom: calc(6px + env(safe-area-inset-bottom));
+    padding-left: calc(6px + env(safe-area-inset-left));
+    padding-right: calc(6px + env(safe-area-inset-right));
+    padding-top: calc(6px + env(safe-area-inset-top));
   }
 
   .app-body,
@@ -1698,9 +1726,40 @@ details summary {
     grid-template-columns: minmax(0, 1fr);
   }
 
-  /* 运行时面板在小屏上占满宽度的绝大部分，别只露一条 */
+  /*
+   * 运行时面板在小屏上改成**覆盖层**。
+   *
+   * 实测（390×844，侧边浏览器）：它原本是 `.workspace-body` 这个 flex 行里的一项，
+   * 宽 340px → 会话区被挤到 **30px**，文字一字一行，手机上半个应用不能用。
+   * 现在照左栏抽屉那套做：固定定位、从右侧盖上来、带遮罩、自己就能关。
+   */
   .runtime-drawer.open {
-    width: min(88vw, 340px);
+    background: var(--panel);
+    border-left: 1px solid var(--line);
+    bottom: 0;
+    box-shadow: -12px 0 28px rgba(0, 0, 0, 0.4);
+    padding: 12px;
+    position: fixed;
+    right: 0;
+    top: 0;
+    width: min(92vw, 400px);
+    z-index: 30;
+  }
+
+  .runtime-scrim {
+    background: rgba(0, 0, 0, 0.55);
+    border: 0;
+    inset: 0;
+    padding: 0;
+    position: fixed;
+    z-index: 20;
+  }
+
+  .drawer-close {
+    align-self: stretch;
+    display: block;
+    font-size: 13px;
+    padding: 8px 10px;
   }
 
   /* 触屏：按钮与输入区放大到能点得准 */
@@ -1714,6 +1773,32 @@ details summary {
   .composer textarea {
     /* 16px 以下 iOS 会在聚焦时自动放大页面 */
     font-size: 16px;
+  }
+
+  /*
+   * 网页版桥接在窄屏上竖着排：三个控件横着放会挤成两行半，
+   * 而这一步的动作是**顺序**的（复制 → 打开 → 贴回来），竖排正好对上。
+   */
+  .bridge-steps {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .bridge-steps .ghost,
+  .bridge-link {
+    text-align: center;
+  }
+
+  .web-bridge {
+    /* 键盘弹起时输入区在下面，别让桥接面板把它顶出屏幕 */
+    max-height: 52dvh;
+    overflow-y: auto;
+  }
+
+  /* 底部安全区（iPhone 的横条）：不加的话最后一行会被系统手势条盖住 */
+  .composer,
+  .web-bridge {
+    padding-bottom: calc(12px + env(safe-area-inset-bottom));
   }
 
   .main-header {

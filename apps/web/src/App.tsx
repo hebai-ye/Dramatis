@@ -501,6 +501,11 @@ export function App() {
         if (session.world === null) {
           await session.createWorld({ title: result.card.name, persona: activePersona, cards: [result.card] });
         }
+        /*
+         * 手机上导入完就把左抽屉收起来：导完卡最想看的是刚开出来的那条线，
+         * 而抽屉正盖着它（实测要再点一次「收起左栏」才看得见）。
+         */
+        closeRailOnNarrow();
 
         if (result.card.embeddedWorldBook !== null) {
           const { book } = parseWorldBook(result.card.embeddedWorldBook, `${result.card.name} 的内嵌世界书`);
@@ -511,12 +516,23 @@ export function App() {
         setError(importError instanceof Error ? importError.message : String(importError));
       }
     },
-    [activePersona, session],
+    [activePersona, closeRailOnNarrow, session],
   );
 
   const handleSend = useCallback(
     async (text: string) => {
-      if (!db || !world || !scene || !conversation || busy) return;
+      /*
+       * 以前这里是一句 `return`：世界/场景/对话还没加载完时点发送，**什么都不发生**，
+       * 用户只会觉得「按钮坏了」（侧边浏览器真机测试里撞到过一次这种静默失败）。
+       * 现在把话说出来——这一句只在真正没准备好的那一瞬间出现。
+       */
+      if (!db || !world || !scene || !conversation) {
+        setWarnings([
+          { code: 'turn.not-ready', message: '这条世界线还在加载（世界 / 场景 / 对话），稍等一下再点一次。' },
+        ]);
+        return;
+      }
+      if (busy) return;
 
       const profile = providers.active;
       if (!profile) {
@@ -1477,38 +1493,57 @@ export function App() {
                 />
               )}
 
+              {/*
+                手机上运行时面板是**覆盖层**（CSS 里 ≤640px 那段）：铺一层遮罩，
+                点哪儿都收起来。桌面上不渲染——那时它是一个常驻的窄列。
+              */}
+              {panelOpen && narrow ? (
+                <button
+                  type="button"
+                  className="runtime-scrim"
+                  aria-label="收起运行时面板"
+                  onClick={() => setPanelOpen(false)}
+                />
+              ) : null}
+
               <div className={panelOpen ? 'runtime-drawer open' : 'runtime-drawer'}>
                 {panelOpen ? (
-                  <RuntimePanel
-                    scene={scene}
-                    instances={instances}
-                    memories={session.memories}
-                    conversations={session.conversations}
-                    activeConversationId={conversation?.id ?? null}
-                    chapters={session.chapters}
-                    attachedWorldBooks={session.worldBooks}
-                    libraryCards={session.library.cards}
-                    prompt={lastPrompt}
-                    pending={worker.pending}
-                    extraCalls={extraCalls(usage.world)}
-                    usage={{ world: usage.world, conversation: usage.conversation }}
-                    budget={budget}
-                    budgetLimits={world?.budget ?? null}
-                    onSaveBudget={(limits) => void session.setBudget(limits)}
-                    conversationTitle={conversation?.title ?? ''}
-                    workerError={worker.lastError}
-                    disabled={disabled}
-                    onSceneChange={(patch) => void session.updateScene(patch)}
-                    onStartNewScene={(title) => void handleStartNewScene({ title, location: '', worldTime: '' })}
-                    onSetPresence={(id, presence) => void session.setPresence(id, presence)}
-                    onRenameInstance={(id, name) => void session.updateInstance(id, { displayName: name })}
-                    onRemoveInstance={(id) => void session.removeInstance(id)}
-                    onAddInstance={(card) => void session.addInstance(card)}
-                    onDetachWorldBook={(id) => void session.detachWorldBook(id)}
-                    onUpdateMemory={(id, patch) => void session.updateMemory(id, patch)}
-                    onDeleteMemory={(id) => void session.deleteMemory(id)}
-                    onLocateMemory={handleLocateMemory}
-                  />
+                  <>
+                    {/* 手机上「面板」按钮被盖住了，抽屉里要有一个能自己关的出口 */}
+                    <button type="button" className="ghost drawer-close" onClick={() => setPanelOpen(false)}>
+                      收起面板
+                    </button>
+                    <RuntimePanel
+                      scene={scene}
+                      instances={instances}
+                      memories={session.memories}
+                      conversations={session.conversations}
+                      activeConversationId={conversation?.id ?? null}
+                      chapters={session.chapters}
+                      attachedWorldBooks={session.worldBooks}
+                      libraryCards={session.library.cards}
+                      prompt={lastPrompt}
+                      pending={worker.pending}
+                      extraCalls={extraCalls(usage.world)}
+                      usage={{ world: usage.world, conversation: usage.conversation }}
+                      budget={budget}
+                      budgetLimits={world?.budget ?? null}
+                      onSaveBudget={(limits) => void session.setBudget(limits)}
+                      conversationTitle={conversation?.title ?? ''}
+                      workerError={worker.lastError}
+                      disabled={disabled}
+                      onSceneChange={(patch) => void session.updateScene(patch)}
+                      onStartNewScene={(title) => void handleStartNewScene({ title, location: '', worldTime: '' })}
+                      onSetPresence={(id, presence) => void session.setPresence(id, presence)}
+                      onRenameInstance={(id, name) => void session.updateInstance(id, { displayName: name })}
+                      onRemoveInstance={(id) => void session.removeInstance(id)}
+                      onAddInstance={(card) => void session.addInstance(card)}
+                      onDetachWorldBook={(id) => void session.detachWorldBook(id)}
+                      onUpdateMemory={(id, patch) => void session.updateMemory(id, patch)}
+                      onDeleteMemory={(id) => void session.deleteMemory(id)}
+                      onLocateMemory={handleLocateMemory}
+                    />
+                  </>
                 ) : null}
               </div>
             </div>

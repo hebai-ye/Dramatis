@@ -2,7 +2,11 @@
 <html lang="zh-CN">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!--
+      `viewport-fit=cover`：让页面铺到 iPhone 的刘海/横条区域里，配合 CSS 里的
+      `env(safe-area-inset-*)` 才拿得到真实的安全区数值（否则那几个 env() 恒为 0）。
+    -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <meta name="theme-color" content="#14110f" />
     <meta name="description" content="多角色扮演酒馆：一条世界线里同时有几个角色，各自记得不同的事。" />
     <!-- PWA（P2-2）：装到手机桌面后离线也能打开；模型请求一概不缓存，见 public/sw.js -->

@@ -1,0 +1,22 @@
+{
+  "name": "@dramatis/android",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Dramatis 的安卓壳（Capacitor）：把 apps/web 的生产构建装进 WebView",
+  "scripts": {
+    "build:web": "pnpm --filter @dramatis/web build",
+    "sync": "pnpm run build:web && cap sync android",
+    "add:android": "cap add android",
+    "open": "cap open android",
+    "apk": "pnpm run sync && cd android && gradlew.bat assembleDebug"
+  },
+  "dependencies": {
+    "@capacitor/android": "^7.4.3",
+    "@capacitor/core": "^7.4.3"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "^7.4.3",
+    "typescript": "^7.0.2"
+  }
+}

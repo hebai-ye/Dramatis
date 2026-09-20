@@ -692,6 +692,24 @@ Rust + MSVC 构建工具。**顺带把启动器补强了**：`--prod` 会判断�
 - 复用 Web 的 React 层；具备 Keystore 访问能力时，P2-8 同样可升级
 - **依赖**：P2-1、P2-3
 
+**2026-09-20：开工了，但走的不是「等 PWA 不够用」这条触发逻辑。** 原因是另一条：
+TWA 要等「域名 + 证书 + assetlinks.json」，而那条线卡在域名审核上；Capacitor 壳的
+WebView 源是 `https://localhost`，**自己就是安全上下文**，今天就能装进手机。
+详细记录见 [ANDROID.md](./ANDROID.md)，要点：
+
+- `apps/android/`：`capacitor.config.json`（`webDir=../web/dist`、`androidScheme=https`）
+  + 四个 npm 脚本（`add:android` / `sync` / `open` / `apk`）；原生工程在
+  `apps/android/android/`，**沿用既有的 gitignore 决定**（不进版本库，用 `add:android` 还原）
+- 本机 `gradlew assembleDebug` **构建成功**，产出 4.8 MB 的 debug APK；
+  包内确认有 `assets/public/index.html` 与生产构建的同一个 JS 哈希
+- 四项能力在**与 WebView 同源**的环境（解出 APK 资源 + 自签证书 + `https://localhost`
+  + Chrome 移动视口）里逐条验过：IndexedDB 重载后仍在、导入卡成功、导出两条路都通、
+  同步（推 7 拉 7）可用；顺带验掉「https 页面能不能 fetch `http://127.0.0.1`」
+  这个混合内容疑问——**没被拦**（Chromium 把 127.0.0.1 当可信来源）
+- **没验到的**：真机 / 模拟器（本机没有设备、没有 system image、没有硬件虚拟化），
+  以及「切后台后队列还跑不跑」「WebView 里的文件下载」这两件必须在真机上看的事；
+  ANDROID.md 里留了一份到手就照着跑的清单
+
 ### P2 完成后的状态
 
 在 Windows 浏览器里聊了一半，躺到床上用手机接着聊，是同一局。

@@ -1,0 +1,8 @@
+{
+  "appId": "app.dramatis.tavern",
+  "appName": "Dramatis",
+  "webDir": "../web/dist",
+  "server": {
+    "androidScheme": "https"
+  }
+}

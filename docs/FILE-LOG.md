@@ -294,6 +294,7 @@ git ls-files | ForEach-Object {
 | 09-19 23:30 | `ae8cbb6` | **P2-6 第二步**：`core/crypto` 加密工具（折 id / PBKDF2 / AES-GCM + AAD / 两种凭证 / 恢复码 / 主密钥封装）+ 真浏览器探针页 |
 | 09-19 23:37 | `f9c55b8` | **P2-6 第二步补**：AAD 改用 `updatedAt`，并让每条记录的 `updatedAt` 严格递增（定 SYNC §4.4 的空隙） |
 | 09-19 23:54 | `c485c44` | **P2-6 第三步**：`core/sync` 同步循环（传输层契约 / 合并规则 / 内存服务端 / 本地游标）+ 真机探针页 |
+| 09-20 17:43 | `b1eca18` | **P2-6 第四步（上）**：服务端侧——`server.ts` + `http.ts`（一份逻辑三宿主）/ 开发后端（vite `/sync/*`）/ fetch 传输层；顺手修掉「同毫秒写入推不出去」 |
 
 ---
 
@@ -351,7 +352,13 @@ git ls-files | ForEach-Object {
 | `packages/core/src/sync/loop.ts` | 2026-09-19 23:43 | 2026-09-19 23:53 | 2026-09-19 23:54（`c485c44`） | 推 → 拉 → 合并 → 推进游标；失败不推进游标；回声不再推回去 |
 | `packages/core/src/sync/memory-transport.ts` | 2026-09-19 23:42 | 2026-09-19 23:52 | 2026-09-19 23:54（`c485c44`） | 内存服务端：校验凭证哈希、分配 `serverRev`、按游标发记录、只存密文（也是 Worker 的对照物） |
 | `packages/core/src/sync/sync.test.ts` | 2026-09-19 23:45 | 2026-09-19 23:53 | 2026-09-19 23:54（`c485c44`） | 13 条：合并岔路、两台设备全流程、删除传墓碑、LWW、幂等、换空间、凭证错、服务端改密文 |
-| `apps/web/tools/sync-probe.html` `sync-probe.ts` | 2026-09-19 23:51 | 2026-09-19 23:53 | 2026-09-19 23:54（`c485c44`） | 开发用探针页：真浏览器跑两台设备完整链路（13 项检查、1.1 秒） |
+| `packages/core/src/sync/server.ts` | 2026-09-20 17:33 | 2026-09-20 17:40 | 2026-09-20 17:43（`b1eca18`） | **P2-6 第四步**：空间登记 + 凭证校验 + 记录存取 + 游标，全靠 `SyncServerStore` 五个方法（内存 / JSON 文件 / D1 都能实现） |
+| `packages/core/src/sync/http.ts` | 2026-09-20 17:34 | 2026-09-20 17:41 | 2026-09-20 17:43（`b1eca18`） | `handleSyncRequest`：五个路由（建空间 / 空间元数据 / head / push / pull），两个宿主共用 |
+| `packages/core/src/sync/http.test.ts` | 2026-09-20 17:37 | 2026-09-20 17:41 | 2026-09-20 17:43（`b1eca18`） | 9 条：状态码 201/400/401/404/405/409、凭证校验、空间隔离、分页、走真实加密的推拉往返 |
+| `packages/core/src/sync/credential.ts` | 2026-09-20 17:40 | 2026-09-20 17:40 | 2026-09-20 17:43（`b1eca18`） | 凭证 → 哈希的小工具（避免 keys 与 server 互相 import） |
+| `apps/web/tools/sync-dev-backend.ts` | 2026-09-20 17:35 | 2026-09-20 17:42 | 2026-09-20 17:43（`b1eca18`） | 开发后端：挂在 vite 的 `/sync/*`，JSON 文件存储，**配置期不引 core**（走 `ssrLoadModule`） |
+| `apps/web/src/lib/sync-transport.ts` | 2026-09-20 17:36 | 2026-09-20 17:39 | 2026-09-20 17:43（`b1eca18`） | 客户端 fetch 版 `SyncTransport` + 建空间 / 取空间元数据，错误消息原样抛给用户 |
+| `apps/web/tools/sync-http-probe.html` `sync-http-probe.ts` | 2026-09-20 17:38 | 2026-09-20 17:41 | 2026-09-20 17:43（`b1eca18`） | 开发用探针页：**走真 HTTP** 的两台设备完整链路（EVAL 第十节） || `apps/web/tools/sync-probe.html` `sync-probe.ts` | 2026-09-19 23:51 | 2026-09-19 23:53 | 2026-09-19 23:54（`c485c44`） | 开发用探针页：真浏览器跑两台设备完整链路（13 项检查、1.1 秒） |
 
 ### 改动文件（最近一次提交时间）
 
@@ -403,7 +410,10 @@ git ls-files | ForEach-Object {
 | `packages/core/src/storage/archive.ts` | 2026-09-19 23:03 | 导出按 `localSeqOf` 排序（老封存文件也能读），导入时序号与设备号由仓储层重发 |
 | `apps/web/src/lib/worker.ts` `admin.ts` | 2026-09-19 23:03 | 新建实体补新字段；场记游标改用 `message.localSeq` |
 | `packages/core/src/index.ts` | 2026-09-19 23:30 | 导出 `crypto/*`（折 id、派生、加解密、凭证） |
-| `packages/core/src/index.ts` | 2026-09-19 23:54 | 再导出 `sync/*`（传输层契约、合并规则、内存服务端、同步循环） |
+| `packages/core/src/index.ts` | 2026-09-20 17:43 | 再导出 `sync/server.ts`、`http.ts`、`credential.ts` |
+| `packages/core/src/storage/repository.ts` | 2026-09-20 17:43 | 本机逻辑时钟（meta `clock.lastStamped`）：新写入的 `updatedAt` 一定大于同步推送水位线 |
+| `packages/core/src/sync/memory-transport.ts` | 2026-09-20 17:43 | 改成「把 `createSyncServer` 装到内存存储上」，与开发后端 / Worker 共用同一份逻辑 |
+| `apps/web/vite.config.ts` `apps/web/tsconfig.json` | 2026-09-20 17:43 | 挂上同步开发后端插件；`allowImportingTsExtensions`（配置里要带 `.ts` 后缀 import） || `packages/core/src/index.ts` | 2026-09-19 23:54 | 再导出 `sync/*`（传输层契约、合并规则、内存服务端、同步循环） |
 | `packages/core/src/model/room.ts` | 2026-09-19 23:52 | `Scene` 新增 `recapUpToMessageId`（合并后 `localSeq` 会撞号，场记游标改按消息 id） |
 | `packages/core/src/memory/summary.ts` | 2026-09-19 23:52 | `pendingSummary` 优先用消息 id 游标，老数据退回序号 |
 

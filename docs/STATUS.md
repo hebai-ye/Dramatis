@@ -18,7 +18,7 @@
 
 ## 一句话
 
-Dramatis 是一个多角色扮演酒馆，兼容 SillyTavern 资产格式。**P0（9 项）全部完成，P1 全部收口（11/11，P1-11 以评测结论收口：证据不支持上向量）；P2 已完成响应式 / PWA / 存储持久化 / 封存导出；界面改版三批（A/B/C）全部完成；P1-10 七轮真模型验证 + 六次评测回归跑完**，430 个测试通过；**P2-6 前四步（数据层 / 加密工具 / 同步循环 / 服务端侧）已交付**。
+Dramatis 是一个多角色扮演酒馆，兼容 SillyTavern 资产格式。**P0（9 项）全部完成，P1 全部收口（11/11，P1-11 以评测结论收口：证据不支持上向量）；P2 已完成响应式 / PWA / 存储持久化 / 封存导出；界面改版三批（A/B/C）全部完成；P1-10 七轮真模型验证 + 六次评测回归跑完**，441 个测试通过；**P2-6 前四步已交付，部署件（独立服务端 + SQLite + 部署方案）已备好**。
 
 **下一批做什么看 [TASKS.md](./TASKS.md)**：账号与同步**选型已定**（[SYNC.md](./SYNC.md)：
 同步空间 + 同步密码、AES-GCM 端到端加密、协议先行 + 可替换后端；用户 id 改成「用户自己填」，
@@ -65,6 +65,7 @@ Dramatis 是一个多角色扮演酒馆，兼容 SillyTavern 资产格式。**P0
 | — | P2-6 第二步（加密工具）：`core/crypto`——折 id、PBKDF2、AES-GCM + AAD 绑坐标、两种凭证、恢复码、主密钥封装；真浏览器 19 项自测（含「恢复码解出同一把主密钥」） |
 | — | P2-6 第三步（同步循环）：`core/sync`——`SyncTransport`（head / push / pull）+ 内存服务端 + 合并规则（LWW、墓碑、记忆全留、消息按时间交错）+ 本地游标；真浏览器两台设备全链路 13 项自测 |
 | — | P2-6 第四步（上，服务端侧）：`core/sync/server.ts` + `http.ts`（一份逻辑、三个宿主）+ 开发后端（vite `/sync/*`，本机就能同步）+ fetch 传输层；真浏览器走 HTTP 的两台设备验证 13 项 |
+| — | P2-6 第四步（下，部署件）：`packages/core/src/sync/sqlite.ts`（SQLite 存储 + 7 条单测）+ `tools/sync-server/`（独立服务端 / systemd / 在线备份 / 部署手册）+ CORS；跨源真机验证 13 项；**方案答卷见 [SYNC-DEPLOY.md](./SYNC-DEPLOY.md)** |
 
 ## 仓库结构速查
 
@@ -139,18 +140,19 @@ P1-7/P1-8 情绪与抗漂移、P1-9 调用预算与熔断（T19）、P1-10 七�
 运行时面板默认折叠，由主区标题栏的「面板」按钮开关），三批全部完成，
 差异表与实现取舍见 [LAYOUT.md](./LAYOUT.md)。
 
-**下一批建议**：P2-6 **第四步（下）——界面与部署**：
-① 把同步接进界面：设置里填「用户 id + 同步密码（或恢复码）」，显示上次同步时间与结果，
-有冲突时给一句人话摘要（内核 `runSync` 与 `apps/web/src/lib/sync-transport.ts` 都已就绪，
-本机开发后端也已经能跑）；② Cloudflare Worker 参考实现（`deploy/cloudflare/` + D1，
-同一份 `handleSyncRequest`，只换存储适配器）；③ 记录分块与坏记录隔离。
+**下一批建议**：P2-6 **第四步（下）的收尾——界面接线与部署落地**：
+① 把同步接进界面：设置里填「服务端地址 + 用户 id + 同步密码（或恢复码）」，
+显示上次同步时间与结果，有冲突时给一句人话摘要；② 按
+[SYNC-DEPLOY.md](./SYNC-DEPLOY.md) 把 `tools/sync-server/` 部署到你的服务器
+（形态 A/B 待定，见该文档第三节）；③ Cloudflare Worker 参考实现（同一份
+`handleSyncRequest`，只换存储适配器）；④ 记录分块与坏记录隔离。
 
 ## 怎么继续
 
 ```bash
 pnpm install
 pnpm desktop        # 起本地服务并用应用窗口打开
-pnpm test           # 430 个测试
+pnpm test           # 441 个测试
 pnpm typecheck
 pnpm lint
 pnpm build          # 生产构建（PWA 的 Service Worker 只在这个产物里注册）

@@ -619,6 +619,24 @@ fetch 风格：`POST /spaces`、`GET /spaces/{handle}`、`head`、`push`、`pull
 「B 加入后合并、删一条传墓碑、幂等空转」13 项检查全过，用时 1.2 秒；
 服务端返回的原始 JSON 里没有任何明文。
 
+**第四步（下）：部署件 ✅（2026-09-20）**
+
+`packages/core/src/sync/sqlite.ts`（SQLite 存储，不 import 驱动、只要求「长得像
+`node:sqlite`」的对象）、`tools/sync-server/`（独立服务端 + systemd + `VACUUM INTO`
+在线备份 + 部署手册）、`core/sync/http.ts` 的 CORS 支持、
+以及**方案答卷** [SYNC-DEPLOY.md](./SYNC-DEPLOY.md)。
+
+1. **服务端仍然只有一份逻辑**：现在四个宿主共用 `createSyncServer` + `handleSyncRequest`
+   ——内存、vite 开发后端、独立 Node 服务、将来的 Worker。
+2. **CORS 是部署绕不开的一步**：应用在 `127.0.0.1` 是安全上下文（WebCrypto 可用），
+   服务在另一台机器上就是跨源；配 `DRAMATIS_SYNC_ORIGINS` 精确放行，来源不对回 403，
+   连 401 也带 CORS 头（否则页面读不到「凭证不对」那句话）。
+3. **隐私分层写进文档**：仓库只放协议与占位符；服务器地址 / id / 密码只存在应用设置与
+   本机 `.env`；`.gitignore` 已经挡住 `.env` / `*.db` / `backups/` / `dist/`。
+4. **日志刻意不记凭证与请求体**（`GET /health → 200 (1 ms)`），备份是密文且用
+   `VACUUM INTO` 做在线快照。
+5. **实测**：独立服务端 + 跨源浏览器请求，两台设备完整链路 13 项全过、1.1 秒（EVAL 第十一节）。
+
 **还没做的**：Cloudflare Worker 参考实现（`deploy/cloudflare/` + D1）、把同步接进界面
 （设置里填 id + 密码、显示上次同步结果）、记录分块、坏记录隔离。
 

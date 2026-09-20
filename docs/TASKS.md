@@ -197,10 +197,16 @@
       客户端 `apps/web/src/lib/sync-transport.ts`（fetch 版传输层）
       · 补了两个接口（建空间 / 取空间元数据），写进 [SYNC.md](./SYNC.md) §4.6
       · 顺手修掉「同毫秒写入永远推不出去」的时间戳问题（本机逻辑时钟 + 水位线）
+- [x] 部署件：`packages/core/src/sync/sqlite.ts`（SQLite 存储）+ `tools/sync-server/`
+      （独立服务端、systemd、在线备份、部署手册）+ CORS；跨源真机验证 13 项
+      · 方案答卷 [docs/SYNC-DEPLOY.md](./SYNC-DEPLOY.md)：信息分层、三种部署形态、
+      验收标准、待用户提供的信息清单
+- [ ] 按方案部署到用户自己的服务器（形态 A：Tailscale / 形态 B：域名 + HTTPS）
+- [ ] 把同步接进界面：设置里填「服务端地址 + 用户 id + 同步密码（或恢复码）」、
+      显示上次同步结果
 - [ ] Cloudflare Worker 参考实现（`deploy/cloudflare/` + D1）——同一份
       `handleSyncRequest`，只换存储适配器
-- [ ] 把同步接进界面：设置里填 id + 同步密码（或恢复码）、显示上次同步结果，
-      以及记录分块、坏记录隔离
+- [ ] 记录分块与坏记录隔离
 
 - **来源**：ROADMAP P2，是「手机和电脑同一条世界线」的前提
 - **验证**：EVAL 第七节——真机（无头 Chrome）跑 v2→v6 迁移、导出/导入往返、

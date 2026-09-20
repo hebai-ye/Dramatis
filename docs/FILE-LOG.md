@@ -294,6 +294,7 @@ git ls-files | ForEach-Object {
 | 09-19 23:30 | `ae8cbb6` | **P2-6 第二步**：`core/crypto` 加密工具（折 id / PBKDF2 / AES-GCM + AAD / 两种凭证 / 恢复码 / 主密钥封装）+ 真浏览器探针页 |
 | 09-19 23:37 | `f9c55b8` | **P2-6 第二步补**：AAD 改用 `updatedAt`，并让每条记录的 `updatedAt` 严格递增（定 SYNC §4.4 的空隙） |
 | 09-19 23:54 | `c485c44` | **P2-6 第三步**：`core/sync` 同步循环（传输层契约 / 合并规则 / 内存服务端 / 本地游标）+ 真机探针页 |
+| 09-20 18:35 | `9f31022` | **P2-6 第四步（下）**：独立同步服务端 `tools/sync-server/`（SQLite / systemd / 备份 / 手册）+ CORS + 方案答卷 `docs/SYNC-DEPLOY.md` |
 | 09-20 17:43 | `b1eca18` | **P2-6 第四步（上）**：服务端侧——`server.ts` + `http.ts`（一份逻辑三宿主）/ 开发后端（vite `/sync/*`）/ fetch 传输层；顺手修掉「同毫秒写入推不出去」 |
 
 ---
@@ -352,6 +353,12 @@ git ls-files | ForEach-Object {
 | `packages/core/src/sync/loop.ts` | 2026-09-19 23:43 | 2026-09-19 23:53 | 2026-09-19 23:54（`c485c44`） | 推 → 拉 → 合并 → 推进游标；失败不推进游标；回声不再推回去 |
 | `packages/core/src/sync/memory-transport.ts` | 2026-09-19 23:42 | 2026-09-19 23:52 | 2026-09-19 23:54（`c485c44`） | 内存服务端：校验凭证哈希、分配 `serverRev`、按游标发记录、只存密文（也是 Worker 的对照物） |
 | `packages/core/src/sync/sync.test.ts` | 2026-09-19 23:45 | 2026-09-19 23:53 | 2026-09-19 23:54（`c485c44`） | 13 条：合并岔路、两台设备全流程、删除传墓碑、LWW、幂等、换空间、凭证错、服务端改密文 |
+| `packages/core/src/sync/sqlite.ts` | 2026-09-20 18:20 | 2026-09-20 18:30 | 2026-09-20 18:35（`9f31022`） | **P2-6 部署**：SQLite 存储（建表、号单调递增、坐标唯一、游标拉取、事务）；不 import 驱动 |
+| `packages/core/src/sync/sqlite.test.ts` | 2026-09-20 18:22 | 2026-09-20 18:30 | 2026-09-20 18:35（`9f31022`） | 7 条：建空间不覆盖、号递增与覆盖、since/limit、墓碑、空间隔离、两种凭证、空 push 不跳号 |
+| `packages/core/src/types/node-sqlite.d.ts` | 2026-09-20 18:21 | 2026-09-20 18:21 | 2026-09-20 18:35（`9f31022`） | `node:sqlite` 的最小类型声明（不引 @types/node） |
+| `tools/sync-server/src/main.ts` `src/node.d.ts` | 2026-09-20 18:24 | 2026-09-20 18:33 | 2026-09-20 18:35（`9f31022`） | 独立服务端：配置解析、HTTP/HTTPS、CORS、健康检查、日志（不记凭证与请求体）、优雅退出 |
+| `tools/sync-server/start.mjs` `tsconfig.json` `backup.mjs` `.env.example` `systemd/…` `README.md` | 2026-09-20 18:25 | 2026-09-20 18:34 | 2026-09-20 18:35（`9f31022`） | 部署件：启动入口、编译配置、在线备份、配置模板、systemd 单元、从编译到排错的操作手册 |
+| `docs/SYNC-DEPLOY.md` | 2026-09-20 18:30 | 2026-09-20 18:34 | 2026-09-20 18:35（`9f31022`） | **方案答卷**：信息分层、三种部署形态、实施步骤、待用户提供的信息、验收与回滚 |
 | `packages/core/src/sync/server.ts` | 2026-09-20 17:33 | 2026-09-20 17:40 | 2026-09-20 17:43（`b1eca18`） | **P2-6 第四步**：空间登记 + 凭证校验 + 记录存取 + 游标，全靠 `SyncServerStore` 五个方法（内存 / JSON 文件 / D1 都能实现） |
 | `packages/core/src/sync/http.ts` | 2026-09-20 17:34 | 2026-09-20 17:41 | 2026-09-20 17:43（`b1eca18`） | `handleSyncRequest`：五个路由（建空间 / 空间元数据 / head / push / pull），两个宿主共用 |
 | `packages/core/src/sync/http.test.ts` | 2026-09-20 17:37 | 2026-09-20 17:41 | 2026-09-20 17:43（`b1eca18`） | 9 条：状态码 201/400/401/404/405/409、凭证校验、空间隔离、分页、走真实加密的推拉往返 |

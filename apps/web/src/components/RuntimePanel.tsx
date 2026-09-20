@@ -5,6 +5,8 @@ import type {
   Card,
   ChapterSummary,
   CharacterInstance,
+  Conversation,
+  ConversationId,
   EventId,
   InstanceId,
   MemoryEvent,
@@ -27,6 +29,9 @@ interface Props {
   scene: Scene | null;
   instances: CharacterInstance[];
   memories: MemoryEvent[];
+  /** 这个世界的对话：记忆面板的对话维度要用（T11）。 */
+  conversations: Conversation[];
+  activeConversationId: ConversationId | null;
   /** 已滚成章节的前情（P1-5）。 */
   chapters: ChapterSummary[];
   attachedWorldBooks: WorldBook[];
@@ -55,6 +60,8 @@ interface Props {
   onDetachWorldBook: (id: WorldBookId) => void;
   onUpdateMemory: (id: EventId, patch: Partial<MemoryEvent>) => void;
   onDeleteMemory: (id: EventId) => void;
+  /** 跳回这条记忆产生的原句所在的对话（T11）。 */
+  onLocateMemory: (turnId: string) => void;
 }
 
 const TABS: Array<{ id: Tab; label: string }> = [
@@ -169,12 +176,15 @@ export function RuntimePanel(props: Props) {
           memories={props.memories}
           chapters={props.chapters}
           instances={props.instances}
+          conversations={props.conversations}
+          activeConversationId={props.activeConversationId}
           pending={props.pending}
           extraCalls={props.extraCalls}
           workerError={props.workerError}
           disabled={props.disabled}
           onUpdate={props.onUpdateMemory}
           onDelete={props.onDeleteMemory}
+          onLocate={props.onLocateMemory}
         />
       ) : null}
 

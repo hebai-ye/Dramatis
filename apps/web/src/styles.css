@@ -535,6 +535,65 @@ button.ghost {
   border-top: 1px dashed var(--line);
 }
 
+/* ---------- 记忆面板的对话维度与对照视图（T11） ---------- */
+
+.memory-filters {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: 1fr 1fr;
+}
+
+.memory-view-toggle {
+  display: flex;
+  gap: 6px;
+}
+
+.memory-view-toggle button {
+  font-size: 12px;
+  padding: 2px 10px;
+}
+
+/* 选中的那个视图：和左栏「设置」是同一套 .ghost.active 语义 */
+.ghost.active {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.memory-list.contrast li {
+  gap: 8px;
+}
+
+.contrast-row {
+  align-items: flex-start;
+  border-left: 2px solid var(--line);
+  display: grid;
+  gap: 8px;
+  grid-template-columns: 84px 1fr;
+  padding-left: 8px;
+}
+
+.contrast-row .tag {
+  justify-self: start;
+}
+
+/* 跳到原句：亮一下就走，不常驻 */
+.message-row.highlighted {
+  animation: memory-flash 2.6s ease-out;
+  border-radius: 8px;
+}
+
+@keyframes memory-flash {
+  0%,
+  60% {
+    background: rgba(217, 164, 65, 0.22);
+    box-shadow: 0 0 0 2px rgba(217, 164, 65, 0.35);
+  }
+  100% {
+    background: transparent;
+    box-shadow: none;
+  }
+}
+
 .inline input {
   flex: 1;
 }

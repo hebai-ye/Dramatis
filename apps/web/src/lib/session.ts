@@ -44,6 +44,14 @@ export interface BootReport {
   migrationsApplied: number;
 }
 
+/** 一条对话的只读素材包：导出正文、抓原句都用它。 */
+export interface ConversationBundle {
+  conversation: Conversation;
+  scenes: Scene[];
+  messages: Message[];
+  instances: CharacterInstance[];
+}
+
 /**
  * 打开数据库（ROADMAP P0-1 / P0-2）。
  *
@@ -144,6 +152,21 @@ export interface SessionApi {
   setBudget: (limits: BudgetLimits | null) => Promise<void>;
 
   openConversation: (id: ConversationId) => Promise<void>;
+  /**
+   * 这条记忆是哪条对话里的哪一句（T11「点回当时的对话」）。
+   *
+   * 记忆里存的是 `sourceTurnIds`，而界面要的是「哪条对话 + 哪条消息」：
+   * 前者只有内核认识，后者才能拿来切对话、滚动、高亮。找不到就返回 null
+   * （原句被删过），界面负责说人话而不是静默什么都不做。
+   */
+  locateTurn: (turnId: string) => { conversationId: ConversationId; messageId: MessageId } | null;
+  /**
+   * 一条对话的完整素材（T12 导出归档对话的正文）。
+   *
+   * 已归档的对话不在主列表里，但它的消息仍然在快照里——导出正文要的正是
+   * 「这条线当时到底聊了什么」，所以这里按 conversationId 取一份只读的打包。
+   */
+  bundleOf: (id: ConversationId) => ConversationBundle | null;
   startConversation: (input: StartConversationInput) => Promise<Conversation | null>;
   /** 打开（或新建）这个世界的副对话。 */
   openSideConversation: () => Promise<Conversation | null>;
@@ -1163,6 +1186,38 @@ export function useSession(db: DramatisDb | null): SessionApi {
         snapshot.conversations.find((item) => item.archivedAt === null) ??
         null);
 
+  /**
+   * 记忆 → 原句（T11）。
+   *
+   * 只在快照里找，不额外查库：快照本来就是这个世界此刻的全部消息。
+   * 同一个 turnId 会有多条消息（玩家那句 + 角色那句），取第一条即可——
+   * 界面要的是「跳到这一段对话」，不是「跳到某个精确的字节」。
+   */
+  const locateTurn = useCallback((turnId: string): { conversationId: ConversationId; messageId: MessageId } | null => {
+    const current = snapshotRef.current;
+    if (current === null) return null;
+
+    const hit = current.messages.find((message) => message.turnId === turnId && message.conversationId !== null);
+    if (hit === undefined || hit.conversationId === null) return null;
+    return { conversationId: hit.conversationId, messageId: hit.id };
+  }, []);
+
+  /** 一条对话的素材包（归档对话的正文导出用）。 */
+  const bundleOf = useCallback((id: ConversationId): ConversationBundle | null => {
+    const current = snapshotRef.current;
+    if (current === null) return null;
+
+    const target = current.conversations.find((item) => item.id === id);
+    if (target === undefined) return null;
+
+    return {
+      conversation: target,
+      scenes: current.scenes.filter((scene) => scene.conversationId === id),
+      messages: current.messages.filter((message) => message.conversationId === id),
+      instances: current.instances,
+    };
+  }, []);
+
   const scene =
     snapshot === null
       ? null
@@ -1204,6 +1259,8 @@ export function useSession(db: DramatisDb | null): SessionApi {
     renameWorld,
     setBudget,
     openConversation,
+    locateTurn,
+    bundleOf,
     startConversation,
     openSideConversation,
     updateConversation,

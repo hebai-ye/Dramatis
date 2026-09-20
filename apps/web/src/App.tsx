@@ -40,7 +40,7 @@ import { CardDesigner } from './components/CardDesigner';
 import { CastDetail } from './components/CastDetail';
 import { CastRail } from './components/CastRail';
 import { LeftRail, type RailPane } from './components/LeftRail';
-import { MainChat } from './components/MainChat';
+import { type FocusRequest, MainChat } from './components/MainChat';
 import { MainHeader } from './components/MainHeader';
 import { NewConversationDialog } from './components/NewConversationDialog';
 import { RuntimePanel } from './components/RuntimePanel';
@@ -192,6 +192,9 @@ export function App() {
 
   const [warnings, setWarnings] = useState<Notice[]>([]);
   const [error, setError] = useState<string | null>(null);
+  /** 「跳到原句」的最近一次请求（T11）：带序号，重复点击同一条也能再闪一次。 */
+  const [focus, setFocus] = useState<FocusRequest | null>(null);
+  const focusSeqRef = useRef(0);
   const [streamText, setStreamText] = useState('');
   const [streamSpeaker, setStreamSpeaker] = useState('');
   const [reasoningText, setReasoningText] = useState('');
@@ -963,6 +966,38 @@ export function App() {
     [session],
   );
 
+  /**
+   * 「跳到原句」（T11）：切回产生这条记忆的那条对话，并让那条消息闪一下。
+   *
+   * 记忆面板里的条目大多来自别的对话——这正是需要它的原因：用户看到
+   * 「秦娘眼中的事」，想知道她当时到底听见了什么，一步就该到那里。
+   */
+  const handleLocateMemory = useCallback(
+    (turnId: string) => {
+      const hit = session.locateTurn(turnId);
+      if (hit === null) {
+        setWarnings([
+          {
+            code: 'memory.locate',
+            message: '这条记忆对应的原句已经不在了（那一轮可能被重抽或删掉过）。',
+          },
+        ]);
+        return;
+      }
+
+      focusSeqRef.current += 1;
+      const request: FocusRequest = { id: hit.messageId, seq: focusSeqRef.current };
+
+      if (hit.conversationId !== conversation?.id) {
+        // 先切对话，再亮原句：立刻亮会落在一个还没渲染出来的节点上
+        void session.openConversation(hit.conversationId).then(() => setFocus(request));
+        return;
+      }
+      setFocus(request);
+    },
+    [conversation, session],
+  );
+
   const handleToggleMode = useCallback(
     (key: keyof ConversationModes, value: boolean) => {
       if (!conversation) return;
@@ -1172,6 +1207,7 @@ export function App() {
                   busy={busy}
                   ready={ready}
                   archived={archived}
+                  focus={focus}
                   onSend={(text) => void handleSend(text)}
                   onStop={() => abortRef.current?.abort()}
                   onRegenerate={(id) => void handleRegenerate(id)}
@@ -1190,6 +1226,8 @@ export function App() {
                     scene={scene}
                     instances={instances}
                     memories={session.memories}
+                    conversations={session.conversations}
+                    activeConversationId={conversation?.id ?? null}
                     chapters={session.chapters}
                     attachedWorldBooks={session.worldBooks}
                     libraryCards={session.library.cards}
@@ -1212,6 +1250,7 @@ export function App() {
                     onDetachWorldBook={(id) => void session.detachWorldBook(id)}
                     onUpdateMemory={(id, patch) => void session.updateMemory(id, patch)}
                     onDeleteMemory={(id) => void session.deleteMemory(id)}
+                    onLocateMemory={handleLocateMemory}
                   />
                 ) : null}
               </div>

@@ -24,6 +24,14 @@ interface Props {
   ready: boolean;
   /** 已归档的对话只用于回顾，不能再说话。 */
   archived: boolean;
+  /**
+   * 从记忆面板「跳到原句」时亮一下的那条消息（T11）。
+   *
+   * 带上 `seq` 是为了让「同一条记忆连点两次」也能重新高亮一次——
+   * 只比 id 的话第二次点击什么都不发生，用户会以为按钮坏了。
+   * 它只负责滚动与高亮，不改数据。
+   */
+  focus?: FocusRequest | null;
   onSend: (text: string) => void;
   onStop: () => void;
   onRegenerate: (id: MessageId) => void;
@@ -35,6 +43,12 @@ interface Props {
   onDropInstance: (id: InstanceId) => void;
   /** 改归属：这条其实是别人说的（T18）。 */
   onReassign: (id: MessageId, instanceId: InstanceId) => void;
+}
+
+/** 「跳到原句」的一次请求：`seq` 让重复点击同一条也能再闪一次。 */
+export interface FocusRequest {
+  id: MessageId;
+  seq: number;
 }
 
 const MODE_LABELS: Array<{ key: keyof ConversationModes; label: string; note: string }> = [
@@ -81,6 +95,7 @@ export function MainChat({
   busy,
   ready,
   archived,
+  focus = null,
   onSend,
   onStop,
   onRegenerate,
@@ -96,14 +111,34 @@ export function MainChat({
   const [editingText, setEditingText] = useState('');
   const [modeMenuOpen, setModeMenuOpen] = useState(false);
   const [dragOver, setDragOver] = useState(false);
+  const [highlightId, setHighlightId] = useState<MessageId | null>(null);
   const bottomRef = useRef<HTMLDivElement | null>(null);
 
   const contentLength = messages.reduce((total, message) => total + message.content.length, 0) + streamText.length;
 
   useEffect(() => {
     if (contentLength === 0) return;
+    // 正在跳原句时别把用户又拽到底部——下面那条 effect 会自己滚到位
+    if (focus !== null) return;
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [contentLength]);
+  }, [contentLength, focus]);
+
+  /**
+   * 跳到原句（T11）。
+   *
+   * 高亮的时长是刻意的：闪一下就走，用户看得到「就是这一条」，
+   * 又不会让整屏一直有人在发光。
+   */
+  useEffect(() => {
+    if (focus === null) return;
+    const node = document.querySelector(`[data-message-id="${focus.id}"]`);
+    if (node === null) return;
+
+    node.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    setHighlightId(focus.id);
+    const timer = window.setTimeout(() => setHighlightId(null), 2600);
+    return () => window.clearTimeout(timer);
+  }, [focus]);
 
   // 只有最后一条角色回复可以重抽：重抽更早的消息会让后面的对话失去前提
   const lastCharacterId = [...messages].reverse().find((message) => message.role === 'character')?.id ?? null;
@@ -171,7 +206,11 @@ export function MainChat({
         ) : null}
 
         {messages.map((message) => (
-          <article key={message.id} className={`message-row ${message.role}`}>
+          <article
+            key={message.id}
+            data-message-id={message.id}
+            className={`message-row ${message.role}${highlightId === message.id ? ' highlighted' : ''}`}
+          >
             {message.role === 'character' ? <Avatar name={nameOf(message)} /> : null}
 
             <div className="message-column">

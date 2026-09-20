@@ -52,13 +52,14 @@ import { MainHeader } from './components/MainHeader';
 import { NewConversationDialog } from './components/NewConversationDialog';
 import { RuntimePanel } from './components/RuntimePanel';
 import { SceneDialog } from './components/SceneDialog';
-import { SettingsPanel } from './components/SettingsPanel';
+import { type SettingsCategory, SettingsDialog } from './components/SettingsDialog';
 import { SideChat } from './components/SideChat';
 import { TopBar } from './components/TopBar';
 import { WebBridgePanel, type WebBridgeState } from './components/WebBridgePanel';
 import { WorldDesigner } from './components/WorldDesigner';
 import { WorldTree } from './components/WorldTree';
 import { useAdminChat } from './lib/admin';
+import { useAppearance } from './lib/appearance';
 import { useArchive } from './lib/archive';
 import { useProviders } from './lib/providers';
 import { useDatabase, useSession } from './lib/session';
@@ -187,6 +188,9 @@ export function App() {
   /** 本机存储的持久化与配额（P2-3）：配额快满时在界面上提醒导出封存。 */
   const storage = useStorageStatus();
 
+  /** 外观偏好：色调（酒馆 / 浅色 / 深色）、对话区背景、意图是否默认展开。 */
+  const appearance = useAppearance();
+
   /**
    * 左栏的可见性。
    *
@@ -203,6 +207,11 @@ export function App() {
   }, [narrow]);
   const [pane, setPane] = useState<RailPane>('list');
   const [panelOpen, setPanelOpen] = useState(false);
+  /**
+   * 设置改成了弹窗（用户要求）：分六个大类，从哪一类进由调用方决定
+   * （比如归档后那条提示会把「已归档」直接打开）。
+   */
+  const [settingsCategory, setSettingsCategory] = useState<SettingsCategory | null>(null);
   const [newConversationOpen, setNewConversationOpen] = useState(false);
   const [sceneOpen, setSceneOpen] = useState(false);
   const [detailId, setDetailId] = useState<InstanceId | null>(null);
@@ -1107,7 +1116,7 @@ export function App() {
             // 归档后对话就从主列表消失了，给一步到位的入口（T12）
             label: '去看这条对话',
             run: () => {
-              setPane('settings');
+              setSettingsCategory('archive');
               setWarnings([]);
             },
           },
@@ -1287,7 +1296,19 @@ export function App() {
   }, [worldId]);
 
   return (
-    <div className="app">
+    /*
+     * 对话区背景通过两个 CSS 变量下发：`.chat-surface::before` 拿它画背景。
+     * 背景挂在不滚动的那一层上，所以滑动时它固定、只有对话在动。
+     */
+    <div
+      className={appearance.value.background === '' ? 'app' : 'app has-bg'}
+      style={
+        {
+          '--chat-bg': appearance.value.background === '' ? 'none' : `url("${appearance.value.background}")`,
+          '--chat-bg-opacity': appearance.value.background === '' ? 0 : appearance.value.backgroundOpacity,
+        } as React.CSSProperties
+      }
+    >
       <TopBar
         collapsed={collapsed}
         onToggleCollapsed={() => setCollapsed((value) => !value)}
@@ -1310,6 +1331,7 @@ export function App() {
               closeRailOnNarrow();
             }}
             onImportFile={(file) => void handleImport(file)}
+            onOpenSettings={() => setSettingsCategory('model')}
             disabled={disabled}
             list={
               <>
@@ -1404,28 +1426,6 @@ export function App() {
                     />
                   </section>
                 ) : null}
-
-                {pane === 'settings' ? (
-                  <SettingsPanel
-                    providers={providers}
-                    personas={personas}
-                    activePersonaId={activePersona?.id ?? null}
-                    archivedConversations={session.archivedConversations}
-                    activeConversationId={conversation?.id ?? null}
-                    disabled={disabled}
-                    onSelectPersona={(persona) => void session.setPersona(persona)}
-                    onSavePersona={(persona) => void session.savePersona(persona)}
-                    onDeletePersona={(id) => void session.deletePersona(id)}
-                    onOpenArchived={(id) => void session.openConversation(id)}
-                    onDeleteArchived={(target) => void session.deleteConversation(target.id)}
-                    onExportArchive={() => (world === null ? Promise.resolve(null) : archive.exportWorld(world.id))}
-                    onImportArchive={archive.importArchive}
-                    onExportTranscript={(id) => archive.exportTranscript(session.bundleOf(id), world?.title ?? '')}
-                    storage={storage}
-                    backendKind={boot?.backendKind ?? ''}
-                    sync={sync}
-                  />
-                ) : null}
               </>
             }
           />
@@ -1497,6 +1497,7 @@ export function App() {
                   ready={ready}
                   archived={archived}
                   focus={focus}
+                  showIntent={appearance.value.showIntent}
                   bridge={bridge}
                   manualMode={bridge !== null || needsWebBridge(providers.apiKey)}
                   onBridgeReply={(text) => void handleBridgeReply(text)}
@@ -1620,6 +1621,36 @@ export function App() {
             setDetailId(null);
             void session.removeInstance(id);
           }}
+        />
+      )}
+
+      {/* 设置弹窗：分六个大类（模型配置 / 个性化 / 身份 / 同步 / 数据 / 已归档） */}
+      {settingsCategory === null ? null : (
+        <SettingsDialog
+          category={settingsCategory}
+          onCategoryChange={setSettingsCategory}
+          onClose={() => setSettingsCategory(null)}
+          providers={providers}
+          appearance={appearance}
+          personas={personas}
+          activePersonaId={activePersona?.id ?? null}
+          archivedConversations={session.archivedConversations}
+          activeConversationId={conversation?.id ?? null}
+          disabled={disabled}
+          onSelectPersona={(persona) => void session.setPersona(persona)}
+          onSavePersona={(persona) => void session.savePersona(persona)}
+          onDeletePersona={(id) => void session.deletePersona(id)}
+          onOpenArchived={(id) => {
+            void session.openConversation(id);
+            setSettingsCategory(null);
+          }}
+          onDeleteArchived={(target) => void session.deleteConversation(target.id)}
+          onExportArchive={() => (world === null ? Promise.resolve(null) : archive.exportWorld(world.id))}
+          onImportArchive={archive.importArchive}
+          onExportTranscript={(id) => archive.exportTranscript(session.bundleOf(id), world?.title ?? '')}
+          storage={storage}
+          backendKind={boot?.backendKind ?? ''}
+          sync={sync}
         />
       )}
     </div>

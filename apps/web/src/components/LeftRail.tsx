@@ -1,6 +1,12 @@
 import { type ReactNode, useRef } from 'react';
 
-export type RailPane = 'list' | 'worldbooks' | 'cards' | 'settings';
+/**
+ * 左栏里的三段（列表 / 世界书 / 角色卡）。
+ *
+ * `settings` 不在其中：设置改成**弹窗**（用户要求），从底部那个按钮直接开，
+ * 不再占用左栏的一块地方——否则「看设置」与「看世界列表」得来回切。
+ */
+export type RailPane = 'list' | 'worldbooks' | 'cards';
 
 interface Props {
   pane: RailPane;
@@ -10,6 +16,8 @@ interface Props {
   onCreateWithAi: () => void;
   /** 导入角色卡或世界书（按 JSON 结构自动分辨）。 */
   onImportFile: (file: File) => void;
+  /** 打开设置弹窗。 */
+  onOpenSettings: () => void;
   disabled: boolean;
   /** 世界与对话列表。 */
   list: ReactNode;
@@ -20,7 +28,6 @@ interface Props {
 const PANES: Array<{ id: RailPane; label: string; hint: string }> = [
   { id: 'worldbooks', label: '世界书', hint: '导入、删除、微调世界设定' },
   { id: 'cards', label: '角色卡', hint: '导入、删除、微调角色模板' },
-  { id: 'settings', label: '设置', hint: '模型接入、身份、已归档的对话' },
 ];
 
 /**
@@ -40,6 +47,7 @@ export function LeftRail({
   onNewConversation,
   onCreateWithAi,
   onImportFile,
+  onOpenSettings,
   disabled,
   list,
   panel,
@@ -119,12 +127,7 @@ export function LeftRail({
       </div>
 
       <footer className="rail-foot">
-        <button
-          type="button"
-          className={pane === 'settings' ? 'ghost active' : 'ghost'}
-          disabled={disabled}
-          onClick={() => onPaneChange(pane === 'settings' ? 'list' : 'settings')}
-        >
+        <button type="button" className="ghost" disabled={disabled} onClick={onOpenSettings}>
           设置
         </button>
       </footer>

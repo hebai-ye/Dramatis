@@ -35,6 +35,8 @@ interface Props {
    * 它只负责滚动与高亮，不改数据。
    */
   focus?: FocusRequest | null;
+  /** 心理活动是否默认展开（个性化里可改；默认收起）。 */
+  showIntent?: boolean;
   /** 网页版桥接：非 null 时正等着用户把网页版的输出贴回来。 */
   bridge?: WebBridgeState | null;
   /** 没配 API Key：这一轮的提示词要用户自己贴到网页版。 */
@@ -122,6 +124,7 @@ export function MainChat({
   ready,
   archived,
   focus = null,
+  showIntent = false,
   bridge = null,
   manualMode = false,
   onBridgeReply,
@@ -256,7 +259,7 @@ export function MainChat({
                 措辞按来源分：他自己写的、导演调用推出来的、还是从推理流里摘的。
               */}
               {message.intent === undefined ? null : (
-                <details className="intent-line">
+                <details className="intent-line" open={showIntent || undefined}>
                   <summary>
                     {message.intentSource === 'reasoning'
                       ? '他当时在想什么（点开看）'

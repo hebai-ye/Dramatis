@@ -71,6 +71,13 @@ const PNG_SIGNATURE = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
 interface Notice {
   code: string;
   message: string;
+  /**
+   * 可选的「去那儿」按钮（T12）。
+   *
+   * 归档之后对话就不在主列表里了——只告诉用户「保留在设置里」，他下一刻
+   * 还是得自己找。给一个能点的入口，这件事才算说清楚。
+   */
+  action?: { label: string; run: () => void };
 }
 
 function looksLikePng(bytes: Uint8Array): boolean {
@@ -959,7 +966,15 @@ export function App() {
           code: 'conversation.archived',
           message: `已归档：回滚了 ${String(report.restoredInstances)} 名角色的状态，撤销了 ${String(
             report.removedMemories,
-          )} 条记忆。对话本身保留在设置里。`,
+          )} 条记忆。对话本身没有删——它在「设置 → 已归档的对话」里，可以回顾、也能导出正文。`,
+          action: {
+            // 归档后对话就从主列表消失了，给一步到位的入口（T12）
+            label: '去看这条对话',
+            run: () => {
+              setPane('settings');
+              setWarnings([]);
+            },
+          },
         },
       ]);
     },
@@ -1065,7 +1080,14 @@ export function App() {
                     <strong>提示</strong>
                     <ul>
                       {warnings.map((item, index) => (
-                        <li key={`${String(index)}-${item.message.slice(0, 12)}`}>{item.message}</li>
+                        <li key={`${String(index)}-${item.message.slice(0, 12)}`}>
+                          {item.message}
+                          {item.action === undefined ? null : (
+                            <button type="button" className="ghost" onClick={item.action?.run}>
+                              {item.action.label}
+                            </button>
+                          )}
+                        </li>
                       ))}
                     </ul>
                     <button type="button" className="ghost" onClick={() => setWarnings([])}>
@@ -1143,6 +1165,7 @@ export function App() {
                     onDeleteArchived={(target) => void session.deleteConversation(target.id)}
                     onExportArchive={() => (world === null ? Promise.resolve(null) : archive.exportWorld(world.id))}
                     onImportArchive={archive.importArchive}
+                    onExportTranscript={(id) => archive.exportTranscript(session.bundleOf(id), world?.title ?? '')}
                     storage={storage}
                     backendKind={boot?.backendKind ?? ''}
                     sync={sync}

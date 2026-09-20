@@ -1,7 +1,16 @@
-import { buildWorldArchive, countArchive, importWorldArchive, parseWorldArchive, type RoomId } from '@dramatis/core';
+import {
+  buildConversationTranscript,
+  buildWorldArchive,
+  countArchive,
+  importWorldArchive,
+  parseWorldArchive,
+  type RoomId,
+  suggestTranscriptName,
+} from '@dramatis/core';
 import { useCallback, useMemo } from 'react';
 import type { DramatisDb } from './db';
 import { createBrowserFileIO } from './fileio';
+import type { ConversationBundle } from './session';
 
 /** 导出/导入的结果，交给界面如实显示。 */
 export interface ArchiveOutcome {
@@ -14,6 +23,13 @@ export interface ArchiveApi {
   exportWorld: (roomId: RoomId) => Promise<ArchiveOutcome | null>;
   /** 选一个封存文件导进来（永远是新建一个世界）；用户取消时返回 null。 */
   importArchive: () => Promise<ArchiveOutcome | null>;
+  /**
+   * 把一条对话导出成**可读的正文**（T12）。
+   *
+   * 归档之后这条线只剩「回顾」，而只能在应用里点着看的回顾很脆弱：
+   * 用户要的是能带走的一份。传 null（对话不存在）时返回错误说明。
+   */
+  exportTranscript: (bundle: ConversationBundle | null, worldTitle: string) => Promise<ArchiveOutcome | null>;
 }
 
 /** 文件名里不能出现的字符换成短横线；顺便限个长度，免得标题很长时文件系统受不了。 */
@@ -93,6 +109,33 @@ export function useArchive(options: {
     [db, fileIO],
   );
 
+  const exportTranscript = useCallback(
+    async (bundle: ConversationBundle | null, worldTitle: string): Promise<ArchiveOutcome | null> => {
+      if (bundle === null) return { ok: false, message: '找不到这条对话（也许它已经被删掉了）。' };
+
+      const text = buildConversationTranscript({
+        conversation: bundle.conversation,
+        scenes: bundle.scenes,
+        messages: bundle.messages,
+        instances: bundle.instances,
+        worldTitle,
+        exportedAt: new Date().toISOString(),
+      });
+      const name = suggestTranscriptName(bundle.conversation, new Date());
+      const bytes = new TextEncoder().encode(text);
+      const saved = await fileIO.save(name, bytes, { mime: 'text/markdown' });
+      if (!saved.saved) return null;
+
+      return {
+        ok: true,
+        message: `已导出「${bundle.conversation.title}」的正文：${name}（${describeBytes(saved.bytes)}，${String(
+          bundle.messages.length,
+        )} 条消息）。`,
+      };
+    },
+    [fileIO],
+  );
+
   const importArchive = useCallback(async (): Promise<ArchiveOutcome | null> => {
     if (!db) return { ok: false, message: '数据库还没准备好。' };
 
@@ -119,5 +162,5 @@ export function useArchive(options: {
     }
   }, [db, fileIO, onImported]);
 
-  return { exportWorld, importArchive };
+  return { exportWorld, importArchive, exportTranscript };
 }

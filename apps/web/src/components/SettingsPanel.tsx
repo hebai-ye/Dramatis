@@ -23,6 +23,8 @@ interface Props {
   onExportArchive: () => Promise<{ ok: boolean; message: string } | null>;
   /** 选一个封存文件导进来。 */
   onImportArchive: () => Promise<{ ok: boolean; message: string } | null>;
+  /** 把某条对话的正文导出成可读文件（T12）。 */
+  onExportTranscript: (id: ConversationId) => Promise<{ ok: boolean; message: string } | null>;
   /** 本机存储：持久化状态与配额（P2-3）。 */
   storage: StorageApi;
   /** 后端类型（indexeddb / memory），用来如实说明数据存在哪。 */
@@ -57,6 +59,7 @@ export function SettingsPanel({
   onDeleteArchived,
   onExportArchive,
   onImportArchive,
+  onExportTranscript,
   storage,
   backendKind,
   sync,
@@ -192,7 +195,9 @@ export function SettingsPanel({
       <section className="panel">
         <h2>已归档的对话</h2>
         <p className="hint">
-          归档意味着这条时间线没有发生过：情绪、关系与记忆都已经回滚到它开始之前。对话本身保留在这里，只用于回顾。
+          归档意味着这条时间线没有发生过：情绪、关系与记忆都已经回滚到它开始之前。对话本身保留在这里， 只用于回顾——
+          <strong>没有「取消归档」</strong>，要接着往下聊得开一条新对话；但你可以把正文导出带走
+          （导出的是当时一句句说了什么，与「封存」那份可再导入的数据文件不是一回事）。
         </p>
 
         {archivedConversations.length === 0 ? (
@@ -209,6 +214,15 @@ export function SettingsPanel({
                 >
                   <span className="room-title">{conversation.title}</span>
                   <span className="hint">归档于 {formatTime(conversation.archivedAt ?? conversation.updatedAt)}</span>
+                </button>
+                <button
+                  type="button"
+                  className="ghost"
+                  disabled={disabled || archiveBusy}
+                  title="把这条对话的正文导出成 Markdown 文件"
+                  onClick={() => void runArchive(() => onExportTranscript(conversation.id))}
+                >
+                  导出正文
                 </button>
                 <button
                   type="button"

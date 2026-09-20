@@ -55,3 +55,6 @@ desktop.ini
 # test & coverage
 coverage/
 .nyc_output/
+
+# 本机私有部署笔记（含服务器地址、域名、凭据线索）
+deploy/LOCAL-NOTES.md

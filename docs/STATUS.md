@@ -18,7 +18,7 @@
 
 ## 一句话
 
-Dramatis 是一个多角色扮演酒馆，兼容 SillyTavern 资产格式。**P0（9 项）全部完成，P1 全部收口（11/11，P1-11 以评测结论收口：证据不支持上向量）；P2 已完成响应式 / PWA / 存储持久化 / 封存导出；界面改版三批（A/B/C）全部完成；P1-10 七轮真模型验证 + 六次评测回归跑完**，441 个测试通过；**P2-6 已上线**：数据层 / 加密 / 同步循环 / 服务端 / 界面全部交付，并在腾讯云 Ubuntu 24.04 上真机部署验证过（Tailscale 内网 HTTPS）。
+Dramatis 是一个多角色扮演酒馆，兼容 SillyTavern 资产格式。**P0（9 项）全部完成，P1 全部收口（11/11，P1-11 以评测结论收口：证据不支持上向量）；P2 已完成响应式 / PWA / 存储持久化 / 封存导出；界面改版三批（A/B/C）全部完成；P1-10 七轮真模型验证 + 六次评测回归跑完**，441 个测试通过；**P2-6 已上线**：数据层 / 加密 / 同步循环 / 服务端 / 界面全部交付，并已部署在用户自己的腾讯云 Ubuntu 24.04 上（systemd + SQLite + 每 6 小时备份，冒烟测试通过）。**当前接续点：域名审核中 → 等 A 记录后签证书 + nginx 8443（同源托管网页），再切 443**。
 
 **下一批做什么看 [TASKS.md](./TASKS.md)**：账号与同步**选型已定**（[SYNC.md](./SYNC.md)：
 同步空间 + 同步密码、AES-GCM 端到端加密、协议先行 + 可替换后端；用户 id 改成「用户自己填」，
@@ -65,6 +65,7 @@ Dramatis 是一个多角色扮演酒馆，兼容 SillyTavern 资产格式。**P0
 | — | P2-6 第二步（加密工具）：`core/crypto`——折 id、PBKDF2、AES-GCM + AAD 绑坐标、两种凭证、恢复码、主密钥封装；真浏览器 19 项自测（含「恢复码解出同一把主密钥」） |
 | — | P2-6 第三步（同步循环）：`core/sync`——`SyncTransport`（head / push / pull）+ 内存服务端 + 合并规则（LWW、墓碑、记忆全留、消息按时间交错）+ 本地游标；真浏览器两台设备全链路 13 项自测 |
 | — | P2-6 第四步（上，服务端侧）：`core/sync/server.ts` + `http.ts`（一份逻辑、三个宿主）+ 开发后端（vite `/sync/*`，本机就能同步）+ fetch 传输层；真浏览器走 HTTP 的两台设备验证 13 项 |
+| — | **P2-6 落地部署（2026-09-20）**：用户自己的腾讯云服务器（Ubuntu 24.04 + Node 22 + systemd + SQLite + 每 6 小时备份），先用 Tailscale 内网 HTTPS 过渡（用户之后放弃该方案）、改走「域名 + HTTPS」；服务器地址 / SSH / 域名等私有信息在 `deploy/LOCAL-NOTES.md`（**已 gitignore**） |
 | — | P2-6 界面接线：设置里「同步（多设备）」（地址 + 用户 id + 密码/恢复码 + 保存方式 + 上次结果）；两个独立浏览器端到端验证 |
 | — | P2-6 第四步（下，部署件）：`packages/core/src/sync/sqlite.ts`（SQLite 存储 + 7 条单测）+ `tools/sync-server/`（独立服务端 / systemd / 在线备份 / 部署手册）+ CORS；跨源真机验证 13 项；**方案答卷见 [SYNC-DEPLOY.md](./SYNC-DEPLOY.md)** |
 
@@ -141,12 +142,10 @@ P1-7/P1-8 情绪与抗漂移、P1-9 调用预算与熔断（T19）、P1-10 七�
 运行时面板默认折叠，由主区标题栏的「面板」按钮开关），三批全部完成，
 差异表与实现取舍见 [LAYOUT.md](./LAYOUT.md)。
 
-**下一批建议**：P2-6 **第四步（下）的收尾——界面接线与部署落地**：
-① 把同步接进界面：设置里填「服务端地址 + 用户 id + 同步密码（或恢复码）」，
-显示上次同步时间与结果，有冲突时给一句人话摘要；② 按
-[SYNC-DEPLOY.md](./SYNC-DEPLOY.md) 把 `tools/sync-server/` 部署到你的服务器
-（形态 A/B 待定，见该文档第三节）；③ Cloudflare Worker 参考实现（同一份
-`handleSyncRequest`，只换存储适配器）；④ 记录分块与坏记录隔离。
+等域名审核通过后：**A 记录 → DNS-01 证书 → nginx 8443 同源托管「网页 + /sync」→
+应用里把服务端地址换成 `https://sync.<域名>:8443` → 两台设备复验 → 并行推备案 → 备案下来切 443**。
+之后还剩：手机装 PWA、本机每日拉备份到 `D:\dramatis-backup`、每轮对话结束自动同步、
+记录分块与坏记录隔离、Cloudflare Worker 参考实现（可选）。
 
 ## 怎么继续
 
@@ -176,21 +175,28 @@ pnpm --filter @dramatis/core test prompt-samples --silent=false --disableConsole
 > 直接复制下面这段作为新会话的第一条消息：
 
 ```text
-接着做 Dramatis（多角色扮演酒馆）。先读 docs/STATUS.md（接续点，里面有当前进度、
-下一步与「下一轮怎么开」），再读 docs/SYNC.md（账号与同步的选型，P2-5 已定稿）与
-docs/TASKS.md（工作清单）。
+接着做 Dramatis（多角色扮演酒馆）。先读 docs/STATUS.md（接续点）、
+docs/SYNC-DEPLOY.md（部署方案）与 docs/TASKS.md（工作清单）。
 
-这次要做：P2-6 的第四步「后端与界面」——数据层、加密工具（core/crypto）
-与同步循环（core/sync）都已交付，照 docs/SYNC.md 第四节与 core/sync/types.ts 的契约写：
+现状：P2-6（账号与同步）**已经全部落地并在真机验证过**——数据层
+（updatedAt / deletedAt / deviceId / localSeq）、加密工具（core/crypto）、
+同步循环（core/sync）、独立服务端（tools/sync-server + SQLite）、
+界面接线（设置 → 同步）都已完成；同步服务**已经部署在用户自己的腾讯云服务器上**
+（Ubuntu 24.04 + systemd + 每 6 小时备份 + 冒烟测试通过）。
+服务器地址、SSH 别名、域名等私有信息在 deploy/LOCAL-NOTES.md（**已 gitignore，
+不要提交、不要写进任何仓库文件**）。
 
-1) Cloudflare Worker 参考实现（deploy/cloudflare/）：head / push / pull 三个接口、
-   只存密文与坐标、校验凭证哈希、分配 serverRev，一条命令部署；
-2) 把同步接进界面：设置里填「用户 id + 同步密码（或恢复码）」，
-   显示上次同步时间与结果，冲突给一句人话摘要；
-3) 记录分块（超过行大小上限按 id + part 切）与坏记录隔离。
+这次要做：把「用域名访问」这条路打通（用户已放弃 Tailscale，域名正在审核）：
+
+1) 域名 A 记录生效后，用 DNS-01 签证书（80/443 未备案会被拦）——
+   需要在 DNS 加一条 _acme-challenge 的 TXT 记录；
+2) 配 nginx：https://sync.<域名>:8443 **同时**提供网页（apps/web/dist）与
+   /sync 反向代理（同源，免 CORS）——手机能打开网页的前提；
+3) 把应用里的服务端地址从 tailnet 换成新域名，两台设备各同步一次验证；
+4) 并行推进备案；备案通过后切到 443（朋友那边不用改配置）。
 
 要求：每一小步都能构建/测试/提交；提交信息带任务编号；实现与计划有偏差写进文档；
-做完在浏览器里真机验一遍（导出/导入、离线、手机视口都别回归）。
+真机验证（桌面 + 手机视口）；**任何用户私有信息（域名/IP/凭据）都不进仓库**。
 ```
 
 **环境与工具（这一轮踩过的，省得再摸一遍）**：
@@ -205,4 +211,8 @@ docs/TASKS.md（工作清单）。
 | 加密探针 | `http://127.0.0.1:5273/tools/crypto-probe.html`（真浏览器跑一遍 PBKDF2 / AES-GCM / 恢复码，并打出耗时） |
 | 同步探针 | `http://127.0.0.1:5273/tools/sync-probe.html`（两台设备 + 内存服务端跑完整链路：加入 / 离线各聊两轮 / 合并 / 删一条 / 幂等） |
 | 同步探针（走 HTTP） | 需要带 `/sync` 后端的开发服务器（vite 插件）：另起一个端口（如 `--port 5275`）后打开 `http://127.0.0.1:5275/tools/sync-http-probe.html`。**原有的开发服务器要重启才有这个中间件**（vite 配置文件改了不会热更） |
+| 部署服务器 | 用户自己的腾讯云（Ubuntu 24.04，`ssh dramatis`，sudo 免密）——**地址与凭据只在 `deploy/LOCAL-NOTES.md`（gitignore）**，不要写进任何仓库文件 |
+| 服务器上的服务 | `systemctl status dramatis-sync`；`curl -s 127.0.0.1:8787/health`；`journalctl -u dramatis-sync`；数据在 `/var/lib/dramatis-sync/sync.db`，备份在 `/var/backups/dramatis` |
+| 改完服务端怎么上线 | 本机 `pnpm build:sync-server` → `scp -r tools/sync-server/dist dramatis:/tmp/dist-new` → 服务器上 `sudo rm -rf /opt/dramatis-sync/dist && sudo mv /tmp/dist-new /opt/dramatis-sync/dist && sudo systemctl restart dramatis-sync` |
+| SSH/SCP 的坑 | Windows 下私钥必须先 `icacls <key> /inheritance:r /grant:r "<账户>:(R)"`，否则 OpenSSH 报 "bad permissions" 直接忽略；`scp`/`ssh` 一律要用**提权**执行，否则读不到 `~/.ssh/config`（表现为 `Could not resolve hostname dramatis`） |
 | 真模型验证 | 两条路：应用里直接聊（Key 在浏览器配置里），或 `pnpm --filter @dramatis/core test prompt-samples --silent=false --disableConsoleIntercept` 生成提示词、贴进 DeepSeek 网页版 |

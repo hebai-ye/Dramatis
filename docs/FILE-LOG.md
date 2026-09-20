@@ -413,7 +413,8 @@ git ls-files | ForEach-Object {
 | `packages/core/src/index.ts` | 2026-09-20 17:43 | 再导出 `sync/server.ts`、`http.ts`、`credential.ts` |
 | `packages/core/src/storage/repository.ts` | 2026-09-20 17:43 | 本机逻辑时钟（meta `clock.lastStamped`）：新写入的 `updatedAt` 一定大于同步推送水位线 |
 | `packages/core/src/sync/memory-transport.ts` | 2026-09-20 17:43 | 改成「把 `createSyncServer` 装到内存存储上」，与开发后端 / Worker 共用同一份逻辑 |
-| `apps/web/vite.config.ts` `apps/web/tsconfig.json` | 2026-09-20 17:43 | 挂上同步开发后端插件；`allowImportingTsExtensions`（配置里要带 `.ts` 后缀 import） || `packages/core/src/index.ts` | 2026-09-19 23:54 | 再导出 `sync/*`（传输层契约、合并规则、内存服务端、同步循环） |
+| `apps/web/vite.config.ts` `apps/web/tsconfig.json` | 2026-09-20 17:43 | 挂上同步开发后端插件；`allowImportingTsExtensions`（配置里要带 `.ts` 后缀 import） |
+| `packages/core/src/index.ts` | 2026-09-19 23:54 | 再导出 `sync/*`（传输层契约、合并规则、内存服务端、同步循环） |
 | `packages/core/src/model/room.ts` | 2026-09-19 23:52 | `Scene` 新增 `recapUpToMessageId`（合并后 `localSeq` 会撞号，场记游标改按消息 id） |
 | `packages/core/src/memory/summary.ts` | 2026-09-19 23:52 | `pendingSummary` 优先用消息 id 游标，老数据退回序号 |
 

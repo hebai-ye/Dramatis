@@ -1,0 +1,28 @@
+# Caddy 模板：域名 + 443（已备案时用这个）
+#
+# 把 sync.你的域名 换成你自己的域名；Caddy 会自动申请并续期 Let's Encrypt 证书。
+# 这个文件里不该出现任何密码/令牌——它不需要。
+#
+# 前置：域名 A 记录已指向服务器；服务器 80/443 已放行（备案已通过）。
+# 用法：sudo cp Caddyfile.example /etc/caddy/Caddyfile && sudo systemctl reload caddy
+
+sync.你的域名 {
+	# 网页（apps/web/dist 拷到这里）
+	root * /var/www/dramatis
+	file_server
+
+	# 同步 API：同源，所以不需要 CORS
+	handle_path /sync/* {
+		reverse_proxy 127.0.0.1:8787
+	}
+
+	# PWA 的 service worker 需要这个头才能覆盖整个站点
+	header /sw.js Cache-Control "no-cache"
+
+	encode zstd gzip
+
+	# 访问日志：默认不记请求体与 Authorization（Caddy 也不会记这两个）
+	log {
+		output file /var/log/caddy/dramatis.log
+	}
+}

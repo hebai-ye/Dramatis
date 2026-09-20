@@ -1,0 +1,47 @@
+# nginx 模板：域名 + 8443（备案还没下来时用这个）
+#
+# 为什么用 8443：国内服务器上，未备案的域名访问 80/443 会被拦，换成非标端口可以绕开。
+# 代价是网址要带端口（https://sync.你的域名:8443），而且这属于灰色地带（见 deploy/README.md）。
+#
+# 证书：80/443 用不了 → 走 DNS-01 签发，例如
+#   acme.sh --issue --dns dns_dp -d sync.你的域名 --keylength ec-256
+#   acme.sh --install-cert -d sync.你的域名 --ecc \
+#     --fullchain-file /etc/ssl/dramatis/fullchain.pem \
+#     --key-file      /etc/ssl/dramatis/privkey.pem \
+#     --reloadcmd     "systemctl reload nginx"
+#
+# 用法：sudo cp nginx-8443.conf.example /etc/nginx/conf.d/dramatis.conf && sudo nginx -t && sudo systemctl reload nginx
+
+server {
+    listen 8443 ssl;
+    http2 on;
+    server_name sync.你的域名;
+
+    ssl_certificate     /etc/ssl/dramatis/fullchain.pem;
+    ssl_certificate_key /etc/ssl/dramatis/privkey.pem;
+
+    # 网页（apps/web/dist 拷到这里）
+    root /var/www/dramatis;
+    index index.html;
+
+    # 单页应用：找不到的路径回 index.html
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+
+    # service worker 不要缓存，否则更新发布不出去
+    location = /sw.js {
+        add_header Cache-Control "no-cache";
+    }
+
+    # 同步 API：转发到本机服务端
+    location /sync/ {
+        proxy_pass http://127.0.0.1:8787/;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        # 不记 Authorization 与请求体：nginx 默认也不记，这两行只是别让人误加
+        # access_log off;   # 想完全关掉访问日志就打开这行
+    }
+}

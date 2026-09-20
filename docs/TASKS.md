@@ -192,8 +192,15 @@
       本地游标与推送点存 meta
       · 两步落地修正写进 [SYNC.md](./SYNC.md) §4.5：消息排序改成
       `createdAt → deviceId → localSeq`；场记游标新增 `recapUpToMessageId`
-- [ ] Cloudflare Worker 参考实现（`deploy/cloudflare/`）+ 把同步接进界面
-      （设置里填 id + 密码、显示进度），以及记录分块、坏记录隔离
+- [x] 服务端侧：`core/sync/server.ts` + `core/sync/http.ts`（一份逻辑，三个宿主），
+      **开发后端**挂在 vite 的 `/sync/*`（本机就能两台设备同步），
+      客户端 `apps/web/src/lib/sync-transport.ts`（fetch 版传输层）
+      · 补了两个接口（建空间 / 取空间元数据），写进 [SYNC.md](./SYNC.md) §4.6
+      · 顺手修掉「同毫秒写入永远推不出去」的时间戳问题（本机逻辑时钟 + 水位线）
+- [ ] Cloudflare Worker 参考实现（`deploy/cloudflare/` + D1）——同一份
+      `handleSyncRequest`，只换存储适配器
+- [ ] 把同步接进界面：设置里填 id + 同步密码（或恢复码）、显示上次同步结果，
+      以及记录分块、坏记录隔离
 
 - **来源**：ROADMAP P2，是「手机和电脑同一条世界线」的前提
 - **验证**：EVAL 第七节——真机（无头 Chrome）跑 v2→v6 迁移、导出/导入往返、

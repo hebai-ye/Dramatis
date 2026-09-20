@@ -590,6 +590,38 @@ P1-6 的「意图先行」则在生成端直接用上了这一轮打算。
 **还没做的**：Cloudflare Worker 参考实现（`deploy/cloudflare/`）、把同步接进界面
 （设置里填 id + 密码、显示进度与冲突摘要）、记录分块、坏记录隔离。
 
+**第四步（上）：服务端侧 ✅（2026-09-19）**
+
+`packages/core/src/sync/server.ts`（纯逻辑 + 存储接口）、`http.ts`（`handleSyncRequest`，
+fetch 风格：`POST /spaces`、`GET /spaces/{handle}`、`head`、`push`、`pull`）、
+`credential.ts`；宿主两份：内存服务端（单测/探针）与**开发后端**
+（`apps/web/tools/sync-dev-backend.ts`，挂在 vite 的 `/sync/*`，数据存系统临时目录的 JSON）
++ 客户端的 `apps/web/src/lib/sync-transport.ts`（fetch 版 `SyncTransport`）。
+
+实现说明：
+
+1. **服务端逻辑只有一份**：三个宿主（内存、开发后端、将来的 Worker）都跑
+   `createSyncServer` + `handleSyncRequest`，只有存储适配器不同。第五个宿主接进来时
+   不需要重读协议。
+2. **补了两个接口**（SYNC §4.6）：`POST /spaces` 建空间、`GET /spaces/{handle}`
+   取「包起来的主密钥」。它们只能公开——加入的人还没有凭证；换来的是「拿到也解不开」。
+3. **开发后端零额外进程**：`pnpm dev` 起来就有 `/sync/*`，本机就能两台浏览器同一条世界线。
+   数据文件在系统临时目录，不进仓库。它不打算当生产后端（没有备份/并发/限流）。
+4. **配置期不引 core**：vite 配置文件在 Node 里先跑一遍，那一刻不认 core 的 TS 源码，
+   所以插件只做 `import type`，真取用走 `ssrLoadModule`（vite 自己的模块加载器）。
+   踩到的坑写在代码注释里，省得下次再撞。
+5. **顺手修掉一个会丢数据的时间戳问题**：推送水位线是「这一毫秒推过了」，若新写入
+   恰好落在同一毫秒，`updatedAt > 水位线` 不成立——那条永远推不出去。做法是给仓储层
+   加本机逻辑时钟（meta）并让它同时参考水位线：**新写入的时间一定大于水位线**。
+   单测里有一条专门守着它。
+
+**实测**（EVAL 第十节）：真浏览器 + 真 HTTP + 600k 迭代，两台设备从「A 建空间」到
+「B 加入后合并、删一条传墓碑、幂等空转」13 项检查全过，用时 1.2 秒；
+服务端返回的原始 JSON 里没有任何明文。
+
+**还没做的**：Cloudflare Worker 参考实现（`deploy/cloudflare/` + D1）、把同步接进界面
+（设置里填 id + 密码、显示上次同步结果）、记录分块、坏记录隔离。
+
 ### P2-7 端到端加密同步 · L
 
 - 用同步密码派生密钥，服务端不接触明文

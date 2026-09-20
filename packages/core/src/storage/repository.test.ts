@@ -472,6 +472,45 @@ describe('Repository / updatedAt（P2-6 数据层前置）', () => {
     expect(Date.parse(third)).toBeGreaterThan(Date.parse(second));
   });
 
+  it('全库单调：不同记录之间也不会撞时间（推送水位线靠它）', async () => {
+    const repo = new Repository(createMemoryEntityStore());
+    const { room, scene, instance, card, book } = fixtures();
+
+    // 一口气写五条不同的记录：本机逻辑时钟保证五条各不相同、且依次递增
+    await repo.saveRoom(room);
+    await repo.saveScene(scene);
+    await repo.saveInstance(instance);
+    await repo.saveCard(card);
+    await repo.saveWorldBook(book);
+
+    const stamps = [
+      (await repo.getRoom(room.id))?.updatedAt ?? '',
+      (await repo.getScene(scene.id))?.updatedAt ?? '',
+      (await repo.listInstances(room.id))[0]?.updatedAt ?? '',
+      (await repo.getCard(card.id))?.updatedAt ?? '',
+      (await repo.getWorldBook(book.id))?.updatedAt ?? '',
+    ];
+
+    for (let index = 1; index < stamps.length; index += 1) {
+      expect(Date.parse(stamps[index] ?? '')).toBeGreaterThan(Date.parse(stamps[index - 1] ?? ''));
+    }
+  });
+
+  it('推送水位线之前的时间不会发给新记录（否则那条永远推不出去）', async () => {
+    const repo = new Repository(createMemoryEntityStore());
+    const { room, scene } = fixtures();
+    // 假装刚同步过，水位线被一台「时钟偏快」的设备抬到了未来
+    const future = new Date(Date.now() + 60_000).toISOString();
+    await repo.writeSyncState({ spaceHandle: 'space-1', pulledHead: 3, pushedAt: future });
+
+    const [saved] = await repo.appendMessages(room.id, [message(room, scene, '同步之后写的')]);
+    expect(Date.parse(saved?.updatedAt ?? '')).toBeGreaterThan(Date.parse(future));
+
+    // 增量推送按水位线筛，这条必须在里面
+    const outbound = await repo.listSyncRecords({ since: future });
+    expect(outbound.map((record) => record.id)).toEqual([saved?.id]);
+  });
+
   it('saveMemories / updateMemory 也会更新 updatedAt', async () => {
     const repo = new Repository(createMemoryEntityStore());
     const { room, scene, instance } = fixtures();

@@ -1,5 +1,4 @@
 import { describe, expect, it } from 'vitest';
-import { CryptoError } from '../crypto/errors.js';
 import { createSpaceCredentials, openSpace } from '../crypto/keys.js';
 import { createBlankCard } from '../model/card.js';
 import { eventId, newId, nowIso, type RoomId, type SceneId } from '../model/ids.js';
@@ -12,6 +11,7 @@ import { Repository } from '../storage/repository.js';
 import { runSync } from './loop.js';
 import { createMemorySyncTransport, type MemorySyncServer } from './memory-transport.js';
 import { decideMerge } from './merge.js';
+import { SyncServerError } from './server.js';
 import type { SyncTransport } from './types.js';
 
 /** 测试里把 KDF 迭代数调小：这里验的是协议与合并，不是 KDF 的强度。 */
@@ -288,7 +288,7 @@ describe('同步循环', () => {
 
     await expect(
       peer.server.transport.head({ spaceHandle: peer.spaceHandle, credential: '伪造的凭证' }),
-    ).rejects.toBeInstanceOf(CryptoError);
+    ).rejects.toBeInstanceOf(SyncServerError);
     await expect(
       runSync({
         repository: peer.b.repository,

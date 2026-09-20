@@ -74,6 +74,14 @@ export const META_KEYS = {
    * （同步它只会让两台设备抢同一个游标）。
    */
   syncState: 'sync.state',
+  /**
+   * 本机逻辑时钟（P2-6 第四步）：最后一次盖章的时间。
+   *
+   * 有了它，`updatedAt` 才是**全库单调**的，而不只是每条记录自己递增。
+   * 这解决一个真会丢数据的问题：推送水位线是「这一毫秒推过了」，若新写入
+   * 恰好落在同一毫秒，`updatedAt > 水位线` 就不成立——那条消息永远推不出去。
+   */
+  clock: 'clock.lastStamped',
 } as const;
 
 export interface Migration {
@@ -487,16 +495,32 @@ export class Repository {
    * （见 SYNC §4.4）。要是两次写入撞上同一个时间戳，两件事都会退化：
    * 「谁最后改的」分不出来，密文也不再能区分版本。
    *
-   * 做法：新时间若不比这条记录的旧时间晚，就取「旧时间 + 1 ms」。代价是时间戳
-   * 可能略超前于墙钟——这是逻辑时钟的常规代价，换来的是每条记录的写入顺序可判定。
+   * 取三个下限里最大的那个，再加 1 ms（如果撞上）：
+   *
+   * 1. **这条记录的旧时间**：不能倒退（LWW 与 AAD 都要它往前走）；
+   * 2. **本机逻辑时钟**（meta）：让全库的时间戳单调，而不是每条记录各自为政；
+   * 3. **同步推送水位线**：新写入必须大于「已经推出去过的时间」，否则
+   *    `updatedAt > 水位线` 筛不出来，那条数据会永远推不出去。水位线可能来自
+   *    另一台时钟偏快的设备，所以这条尤其重要。
+   *
+   * 代价是时间戳可能明显超前于墙钟——这是逻辑时钟的常规代价，换来的是
+   * 「每条写入都能被同步到」这个硬保证。
    */
   private async stampUpdatedAt(collection: string, id: string, at: string = nowIso()): Promise<string> {
     const existing = await this.store.get<{ updatedAt?: string }>(collection, id);
     const previous = typeof existing?.updatedAt === 'string' ? existing.updatedAt : '';
-    if (previous === '' || previous < at) return at;
+    const localClock = (await this.getMeta<string>(META_KEYS.clock)) ?? '';
+    const watermark = (await this.readSyncState()).pushedAt ?? '';
 
-    const parsed = Date.parse(previous);
-    return Number.isNaN(parsed) ? at : new Date(parsed + 1).toISOString();
+    let candidate = at;
+    for (const floor of [previous, localClock, watermark]) {
+      if (floor === '' || candidate > floor) continue;
+      const parsed = Date.parse(floor);
+      candidate = Number.isNaN(parsed) ? at : new Date(parsed + 1).toISOString();
+    }
+
+    await this.setMeta(META_KEYS.clock, candidate);
+    return candidate;
   }
 
   /** 查询默认口径：软删除的记录不返回。`includeDeleted` 是给同步与诊断用的后门。 */

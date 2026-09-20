@@ -522,7 +522,25 @@ git ls-files | ForEach-Object {
 
 ---
 
-## 十一、几点注意
+## 十一、2026-09-21 凌晨：副对话桥接（顺序 6）与 Key 可见面（顺序 8）
+
+两个提交（`079bcc0`、`e923bc5`）。
+
+| 文件 | 新增/改动 | 是什么 |
+| --- | --- | --- |
+| `packages/core/src/admin/bridge.ts` | 新增 | 管理员桥接：把工具声明渲染成文本、生成「这次请写成 JSON 块」的说明、把贴回来的文本解析成 `ChatToolCall`（容忍无围栏、参数是字符串、前后有散文） |
+| `packages/core/src/admin/bridge.test.ts` | 新增 | 10 条单测：工具渲染（含嵌套必填）、格式变体、坏 JSON、无关 JSON 不误判、解析结果直接喂给同一套校验 |
+| `apps/web/src/lib/admin.ts` | 改 | `useAdminChat` 增加桥接：无 Key 时不再报错，改为给出提示词；`commitBridge` 解析 → 同一套校验 → 执行 → 落成管理员消息；`executeDraft` 抽出来给两条路共用；顺带修「场景没落下也标已生效」 |
+| `apps/web/src/components/WebBridgePanel.tsx` | 改 | 新增 `admin` 阶段（文案、按钮） |
+| `apps/web/src/components/SideChat.tsx` | 改 | 副对话挂上桥接面板；无 Key 时发送按钮叫「生成提示词」 |
+| `apps/web/src/components/ProviderPanel.tsx` | 改 | 「这个 Key 会被谁看见？」折叠说明（四个面 + 信任边界） |
+| `apps/web/src/components/MainChat.tsx` / `App.tsx` | 改 | 与上面几处对齐的 props（桥接面板的第三种阶段、副对话的桥接口） |
+| `apps/web/src/styles.css` | 改 | `.key-facts` 的样式 |
+| `docs/TASKS.md` / `docs/EVAL.md` / `docs/STATUS.md` / `docs/LAYOUT.md` | 改 | 顺序 6/8 标为已交付、第十八节验证记录、接续点、界面取舍 23 |
+
+---
+
+## 十二、几点注意
 
 ---
 

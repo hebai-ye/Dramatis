@@ -72,7 +72,9 @@ async function append(repository: Repository, roomId: RoomId, sceneId: SceneId, 
 
 async function main(): Promise<void> {
   const started = performance.now();
-  const endpoint = `${location.origin}/sync`;
+  // 默认打本机 vite 上的开发后端；也可以显式指定（例如指向独立服务端）：
+  //   ?endpoint=http://127.0.0.1:8790
+  const endpoint = new URLSearchParams(location.search).get('endpoint') ?? `${location.origin}/sync`;
   say(`服务端：${endpoint}`);
 
   // 每次跑用一个新 id：开发后端是持久化的，重复用同一个 id 会撞上「已存在」

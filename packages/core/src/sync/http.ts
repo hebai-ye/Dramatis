@@ -33,6 +33,18 @@ export interface SyncHttpDeps {
   server: SyncServer;
   /** 服务端自己的时间（用于记录 `createdAt`），缺省取当前时刻。 */
   now?: () => string;
+  /**
+   * 允许哪些源跨域调用（P2-6 第四步·部署）。
+   *
+   * 为什么需要它：应用可能跑在 `http://127.0.0.1:5273`（浏览器里 WebCrypto 只在
+   * 安全上下文可用，所以应用多半开在 localhost），而同步服务在另一台机器上——
+   * 那就是**跨源**请求，浏览器会先发一个 `OPTIONS` 预检（因为我们带了
+   * `Authorization` 头）。不配这一项时行为不变：不加任何 CORS 头，只允许同源调用。
+   *
+   * 只接受**精确匹配**的源，或者 `'*'`（不推荐：任何网页都能调用你的服务端；
+   * 虽然拿不到凭证就没有数据，但没有必要放开）。
+   */
+  cors?: { allowedOrigins: readonly string[] };
 }
 
 const JSON_HEADERS = { 'content-type': 'application/json; charset=utf-8' } as const;
@@ -43,6 +55,22 @@ function json(body: unknown, status = 200): Response {
 
 function fail(status: number, code: string, message: string): Response {
   return json({ error: { code, message } }, status);
+}
+
+/** 给响应挂上 CORS 头（只在配了 `cors` 时）。 */
+function withCors(response: Response, origin: string | null, allowed: readonly string[]): Response {
+  if (origin === null) return response;
+  const permit = allowed.includes('*') || allowed.includes(origin);
+  if (!permit) return response;
+
+  const headers = new Headers(response.headers);
+  headers.set('access-control-allow-origin', allowed.includes('*') ? '*' : origin);
+  // 带上 origin 才能让缓存按源分开：否则一个源拿到另一个源的响应
+  headers.append('vary', 'origin');
+  headers.set('access-control-allow-methods', 'GET, POST, OPTIONS');
+  headers.set('access-control-allow-headers', 'authorization, content-type');
+  headers.set('access-control-max-age', '600');
+  return new Response(response.body, { status: response.status, headers });
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -110,9 +138,27 @@ function readCreateSpace(value: unknown): CreateSyncSpaceInput | null {
  * （vite 中间件、Worker）都只需要把请求喂进来。
  */
 export async function handleSyncRequest(request: Request, deps: SyncHttpDeps): Promise<Response> {
+  const response = await route(request, deps);
+  if (deps.cors === undefined) return response;
+
+  const origin = request.headers.get('origin');
+  const allowed = deps.cors.allowedOrigins;
+  if (origin !== null && !allowed.includes('*') && !allowed.includes(origin)) {
+    // 明确回 403，而不是默默不加头——后者在浏览器里只报一句含糊的 CORS 错误
+    return fail(403, 'origin-not-allowed', '这个来源没有被允许调用同步服务端。');
+  }
+  return withCors(response, origin, allowed);
+}
+
+async function route(request: Request, deps: SyncHttpDeps): Promise<Response> {
   const url = new URL(request.url);
   const now = deps.now ?? (() => new Date().toISOString());
   const segments = url.pathname.split('/').filter((part) => part !== '');
+
+  // 跨源预检：只回头，不碰业务（浏览器只关心能不能发那个真请求）
+  if (request.method === 'OPTIONS') {
+    return new Response(null, { status: 204, headers: JSON_HEADERS });
+  }
 
   // /sync/spaces... —— 前缀里的 `sync` 可有可无（Worker 挂在根上，vite 挂在 /sync 下）
   const start = segments[0] === 'sync' ? 1 : 0;

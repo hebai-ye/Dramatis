@@ -253,3 +253,69 @@ describe('HTTP 外壳 · 走一遍真实推拉', () => {
     expect(fromOtherSpace.records).toHaveLength(0);
   });
 });
+
+describe('HTTP 外壳 · 跨源（部署到另一台机器时用）', () => {
+  /** 起一个只放行指定来源的服务端。 */
+  async function corsHarness(allowedOrigins: readonly string[]) {
+    const created = await createSpaceCredentials({ userId: '旅人', password: '密码', ...FAST });
+    const server = createSyncServer(createMemorySyncStore());
+    // 空间先登记好，这样下面测的是「凭证不对」而不是「空间不存在」
+    await server.createSpace({
+      spaceHandle: created.spaceHandle,
+      credentialHash: created.credentialHash,
+      recoveryCredentialHash: created.recoveryCredentialHash,
+      at: AT,
+    });
+    const call = (init: RequestInit = {}): Promise<Response> =>
+      handleSyncRequest(new Request(`http://sync.test/spaces/${created.spaceHandle}/head`, init), {
+        server,
+        cors: { allowedOrigins },
+      });
+    return { created, call };
+  }
+
+  it('放行的来源：预检回 204 并带上允许头', async () => {
+    const { call } = await corsHarness(['http://127.0.0.1:5273']);
+    const response = await call({
+      method: 'OPTIONS',
+      headers: { origin: 'http://127.0.0.1:5273', 'access-control-request-method': 'GET' },
+    });
+
+    expect(response.status).toBe(204);
+    expect(response.headers.get('access-control-allow-origin')).toBe('http://127.0.0.1:5273');
+    expect(response.headers.get('access-control-allow-headers')).toContain('authorization');
+    expect(response.headers.get('vary')).toContain('origin');
+  });
+
+  it('真请求也带 CORS 头（浏览器才把响应交给页面）', async () => {
+    const { call } = await corsHarness(['http://127.0.0.1:5273']);
+    const response = await call({
+      headers: { origin: 'http://127.0.0.1:5273', authorization: 'Bearer wrong-credential' },
+    });
+
+    // 401 也要带头：否则页面连「凭证不对」这句话都读不到
+    expect(response.status).toBe(401);
+    expect(response.headers.get('access-control-allow-origin')).toBe('http://127.0.0.1:5273');
+  });
+
+  it('没放行的来源：403，且写清原因', async () => {
+    const { call } = await corsHarness(['http://127.0.0.1:5273']);
+    const response = await call({ headers: { origin: 'https://someone-else.example' } });
+
+    expect(response.status).toBe(403);
+    expect(((await response.json()) as { error: { code: string } }).error.code).toBe('origin-not-allowed');
+  });
+
+  it('没配 cors 时不加任何头（同源部署的默认行为不变）', async () => {
+    const created = await createSpaceCredentials({ userId: '旅人', password: '密码', ...FAST });
+    const server = createSyncServer(createMemorySyncStore());
+    const response = await handleSyncRequest(
+      new Request(`http://sync.test/spaces/${created.spaceHandle}/head`, {
+        headers: { origin: 'http://127.0.0.1:5273' },
+      }),
+      { server },
+    );
+
+    expect(response.headers.get('access-control-allow-origin')).toBeNull();
+  });
+});

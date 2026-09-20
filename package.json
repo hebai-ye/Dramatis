@@ -13,6 +13,7 @@
     "desktop": "node tools/desktop/launch.mjs",
     "desktop:prod": "node tools/desktop/launch.mjs --prod",
     "build": "pnpm -r build",
+    "build:sync-server": "tsc -p tools/sync-server/tsconfig.json",
     "typecheck": "pnpm -r typecheck",
     "test": "pnpm -r test",
     "lint": "biome check .",

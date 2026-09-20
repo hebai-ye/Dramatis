@@ -1,0 +1,33 @@
+# 同步服务端的 systemd 单元模板。
+#
+# 安装步骤（README 里有完整版）：
+#   1) sudo mkdir -p /opt/dramatis-sync /var/lib/dramatis-sync
+#   2) 把 tools/sync-server 整个目录（含 dist）拷到 /opt/dramatis-sync
+#   3) 把下面两行里的 User=/Group= 改成你自己的用户名（别用 root）
+#   4) sudo systemctl enable --now dramatis-sync
+[Unit]
+Description=Dramatis sync server (end-to-end encrypted, ciphertext only)
+After=network.target
+
+[Service]
+Type=simple
+# 用你自己的普通用户跑，不要 root
+User=CHANGE_ME
+Group=CHANGE_ME
+WorkingDirectory=/opt/dramatis-sync
+Environment=DRAMATIS_SYNC_DATA=/var/lib/dramatis-sync/sync.db
+Environment=DRAMATIS_SYNC_HOST=127.0.0.1
+Environment=DRAMATIS_SYNC_PORT=8787
+# 允许调用它的网页来源（写你自己的应用地址，精确匹配）
+Environment=DRAMATIS_SYNC_ORIGINS=
+ExecStart=/usr/bin/node /opt/dramatis-sync/start.mjs
+Restart=always
+RestartSec=3
+# 基本加固：系统只读、只有数据目录可写
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ReadWritePaths=/var/lib/dramatis-sync
+
+[Install]
+WantedBy=multi-user.target

@@ -1,5 +1,6 @@
 export * from './credential.js';
 export * from './http.js';
+export * from './http-client.js';
 export * from './loop.js';
 export * from './memory-transport.js';
 export * from './merge.js';

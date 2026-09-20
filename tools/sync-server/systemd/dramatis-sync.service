@@ -20,7 +20,7 @@ Environment=DRAMATIS_SYNC_HOST=127.0.0.1
 Environment=DRAMATIS_SYNC_PORT=8787
 # 允许调用它的网页来源（写你自己的应用地址，精确匹配）
 Environment=DRAMATIS_SYNC_ORIGINS=
-ExecStart=/usr/bin/node /opt/dramatis-sync/start.mjs
+ExecStart=/usr/bin/node --no-warnings /opt/dramatis-sync/start.mjs
 Restart=always
 RestartSec=3
 # 基本加固：系统只读、只有数据目录可写

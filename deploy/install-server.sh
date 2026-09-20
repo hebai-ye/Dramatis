@@ -70,7 +70,7 @@ Environment=DRAMATIS_SYNC_PORT=8787
 # 同源部署（网页与 API 同一个域名）时不需要跨源白名单；
 # 如果你把网页放到别处，再在这里加 DRAMATIS_SYNC_ORIGINS=https://...
 Environment=DRAMATIS_SYNC_ORIGINS=
-ExecStart=$(command -v node) ${APP_DIR}/start.mjs
+ExecStart=$(command -v node) --no-warnings ${APP_DIR}/start.mjs
 Restart=always
 RestartSec=3
 NoNewPrivileges=true
@@ -110,5 +110,5 @@ cat <<'NEXT'
     两者都要把网页放在 /var/www/dramatis，并让应用里的服务端地址填同源的 /sync。
 
 备份（建议放进 crontab）：
-    node /opt/dramatis-sync/backup.mjs /var/lib/dramatis-sync/sync.db /var/backups/dramatis 30
+    node --no-warnings /opt/dramatis-sync/backup.mjs /var/lib/dramatis-sync/sync.db /var/backups/dramatis 30
 NEXT

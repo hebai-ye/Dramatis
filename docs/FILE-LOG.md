@@ -478,7 +478,34 @@ git ls-files | ForEach-Object {
 
 ---
 
-## 九、几点注意
+## 九、2026-09-20 深夜：网页版桥接（没有 API Key 也能聊第一轮）
+
+一个提交（`db97d7c`）。新增：
+
+| 文件 | 是什么 |
+| --- | --- |
+| `packages/core/src/provider/manual.ts` | 「不联网的模型」：让 `runTurn` 走完提示词装配就停下，把提示词交给人 |
+| `packages/core/src/prompt/web-bridge.ts` | 网页版桥接的共用件：把装配好的消息渲染成可整段粘贴的文本（格式与 eval 取样器一致）、清洗粘回来的文本、目标域名与「有没有 Key」的判断 |
+| `packages/core/src/prompt/web-bridge.test.ts` | 9 条单测（渲染格式、围栏清洗、不改台词、中文里的反引号不误判） |
+| `packages/core/src/memory/apply-analysis.ts` | 把「一轮分析」的输出落库（记忆 + 情绪），后台任务与网页版桥接**共用同一个实现** |
+| `packages/core/src/memory/apply-analysis.test.ts` | 6 条单测（1 客观 + N 视角、脏文本也能收、重复贴幂等、名字对不上、归属对话、参与者从库里现取） |
+| `apps/web/src/components/WebBridgePanel.tsx` | 桥接面板：复制提示词 / 打开网页版 / 贴回回复；两阶段（回复 → 记忆） |
+
+修改：
+
+| 文件 | 改了什么 |
+| --- | --- |
+| `apps/web/src/App.tsx` | 没有 Key 时不再报错，改走桥接；捕获装配出来的提示词；两个提交处理器（回复 / 记忆）；重抽在桥接下禁用、改归属改成再贴一次 |
+| `apps/web/src/components/MainChat.tsx` | 桥接面板的挂载与文案；发送按钮在无 Key 时叫「生成提示词」；桥接开着时不让再发一句；重抽的禁用理由 |
+| `apps/web/src/components/SettingsPanel.tsx` | 模型接入多一段说明：「填 Key 全自动，不填也能用」 |
+| `apps/web/src/lib/worker.ts` | 一轮分析的落库改为调用内核的 `applyTurnAnalysis`（消掉重复实现） |
+| `apps/web/src/styles.css` | 桥接面板与提示的样式 |
+| `packages/core/src/index.ts` | 导出 manual provider、web-bridge、apply-analysis |
+| `README.md` / `docs/*` | 状态、清单（6.5）、界面取舍（21）、协议无关的验证记录（EVAL 十五）、文件日志 |
+
+---
+
+## 十、几点注意
 
 ---
 

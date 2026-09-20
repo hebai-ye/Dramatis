@@ -33,6 +33,18 @@ Dramatis 是一个多角色扮演酒馆，兼容 SillyTavern 资产格式。**P0
 > **当前接续点**：① 安卓真机（文件下载 / 切后台 / 键盘安全区）；② 部署线的域名（等审核）；
 > ③ 项目主体的下一批候选（T13 管理员工具体验、T3 后半的记忆合并、记录分块与坏记录隔离）。
 
+> **2026-09-20 深夜（体验优先）**：域名 `dramatissync.com:8443` **已经上线**（nginx 托管网页 +
+> `/sync` 反代，Let's Encrypt 证书），所以按用户要求**暂停桌面版与安卓**，先修体验。
+> 这一批做的是「**没有 API Key 也能聊第一轮**」：发送时不再拦「还没有填 API Key」，
+> 而是把这一轮**本来要发出去的提示词**交给用户，贴进 DeepSeek 网页版，再把回复粘回来；
+> 第二步可选地把这一轮的记忆与情绪也贴回来。484 个测试通过。
+> 新构建（含分页修复 / T11 / T12 / 自动同步 / 这一批）**已经部署到线上**，
+> 老目录备份在 `/var/www/dramatis.bak-20260920-223245`（回滚就是改名换回来）。
+> 细节见 [EVAL.md](./EVAL.md) 第十五节。
+>
+> **接下来的接续点**：④ 网页版桥接的体验打磨（要不要在手机上也顺手、要不要记住「上次贴到哪一步」）；
+> ⑤ 安卓真机（清单在 ANDROID.md）；⑥ 有域名之后部署线可以收尾（备案切 443）。
+
 **下一批做什么看 [TASKS.md](./TASKS.md)**：账号与同步**选型已定**（[SYNC.md](./SYNC.md)：
 同步空间 + 同步密码、AES-GCM 端到端加密、协议先行 + 可替换后端；用户 id 改成「用户自己填」，
 见该文档 §3.1 修订），**P2-6 前四步已完成**——
@@ -88,6 +100,7 @@ Dramatis 是一个多角色扮演酒馆，兼容 SillyTavern 资产格式。**P0
 | — | **每轮对话结束自动同步**：`core/sync/auto-sync.ts`（节流 20 秒、窗口内合并、尾随补一次、不重入、失败不重试）+ 7 条单测；同步面板多一行状态 |
 | — | **桌面版复核（P2-9）**：四条触发条件逐条量过 → **不触发 Tauri**；补强启动器（`--prod` 判断产物是否最新、`--force-build`）+ `install-shortcut.ps1`（现场从 PNG 生成 `.ico`）；证据与复现步骤见 [DESKTOP.md](./DESKTOP.md) |
 | — | **安卓壳开工（P2-10）**：`apps/android/`（Capacitor 7 + `webDir=../web/dist` + `androidScheme=https`），本机 `gradlew assembleDebug` 构建成功（4.8 MB）；四项能力在 `https://localhost`（与 WebView 同源）逐项验过；见 [ANDROID.md](./ANDROID.md) |
+| — | **没有 API Key 也能聊第一轮（网页版桥接）**：发送时不再拦「还没有填 API Key」，改成把**本来要发出去的提示词**交给用户贴进 DeepSeek 网页版，回复粘回来就走与自动生成相同的落盘路径（意图解析 / 转写清理 / 气泡分段）；第二步可选地把这一轮的记忆与情绪也贴回来（内核新增 `applyTurnAnalysis`，与后台任务共用）。**已部署到线上**并真机跑通 |
 
 ## 仓库结构速查
 
@@ -274,6 +287,7 @@ T12（归档的可发现性与正文导出）、每轮结束自动同步，并�
 | 部署服务器 | 用户自己的腾讯云（Ubuntu 24.04，`ssh dramatis`，sudo 免密）——**地址与凭据只在 `deploy/LOCAL-NOTES.md`（gitignore）**，不要写进任何仓库文件 |
 | 服务器上的服务 | `systemctl status dramatis-sync`；`curl -s 127.0.0.1:8787/health`；`journalctl -u dramatis-sync`；数据在 `/var/lib/dramatis-sync/sync.db`，备份在 `/var/backups/dramatis` |
 | 改完服务端怎么上线 | 本机 `pnpm build:sync-server` → `scp -r tools/sync-server/dist dramatis:/tmp/dist-new` → 服务器上 `sudo rm -rf /opt/dramatis-sync/dist && sudo mv /tmp/dist-new /opt/dramatis-sync/dist && sudo systemctl restart dramatis-sync` |
+| **改完网页怎么上线**（2026-09-20 实践过） | 本机 `pnpm build` → `scp -r apps/web/dist dramatis:/tmp/dist-web-new` → 服务器上 `sudo mv /var/www/dramatis /var/www/dramatis.bak-$(date +%Y%m%d-%H%M%S) && sudo mv /tmp/dist-web-new /var/www/dramatis && sudo chown -R root:root /var/www/dramatis && sudo chmod -R a+rX /var/www/dramatis`。**权限那一步不能省**（scp 过来是 700，nginx 读不到就是 500）。验证：`curl -s https://dramatissync.com:8443/ \| grep -o 'assets/index-[A-Za-z0-9_-]*\.js'` 看哈希有没有变；`curl -s -o /dev/null -w '%{http_code}' https://dramatissync.com:8443/sync/spaces/probe/head` 应该是 404（说明反代活着）而不是 502 |
 | SSH/SCP 的坑 | Windows 下私钥必须先 `icacls <key> /inheritance:r /grant:r "<账户>:(R)"`，否则 OpenSSH 报 "bad permissions" 直接忽略；`scp`/`ssh` 一律要用**提权**执行，否则读不到 `~/.ssh/config`（表现为 `Could not resolve hostname dramatis`） |
 | 真模型验证 | 两条路：应用里直接聊（Key 在浏览器配置里），或 `pnpm --filter @dramatis/core test prompt-samples --silent=false --disableConsoleIntercept` 生成提示词、贴进 DeepSeek 网页版 |
 | 假模型（不花钱跑一整轮） | `node tools/fake-model/server.mjs --port 5280`，应用里把接口地址填 `http://127.0.0.1:5280`、模型 `fake-model`、密钥随便填一个非空值。日志打在 stderr，能核对这一回合发了几次调用 |

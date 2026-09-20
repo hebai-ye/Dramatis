@@ -340,4 +340,34 @@ describe('HTTP 外壳 · 跨源（部署到另一台机器时用）', () => {
 
     expect(response.headers.get('access-control-allow-origin')).toBeNull();
   });
+
+  it('白名单为空 = 只跑同源：带着 Origin 的同源 POST 不该被拒', async () => {
+    const created = await createSpaceCredentials({ userId: '旅人', password: '密码', ...FAST });
+    const server = createSyncServer(createMemorySyncStore());
+    await server.createSpace({
+      spaceHandle: created.spaceHandle,
+      credentialHash: created.credentialHash,
+      recoveryCredentialHash: created.recoveryCredentialHash,
+      at: AT,
+    });
+
+    // 浏览器发 POST 时，同源请求也会带 Origin 头（fetch 规范）。部署到服务器当天
+    // 就是因为这点让「同一个域名下打开的网页调不了自己的后端」。
+    const response = await handleSyncRequest(
+      new Request('http://sync.test/spaces', {
+        method: 'POST',
+        headers: { origin: 'https://dramatissync.example', 'content-type': 'application/json' },
+        body: JSON.stringify({
+          spaceHandle: created.spaceHandle,
+          credentialHash: created.credentialHash,
+          recoveryCredentialHash: created.recoveryCredentialHash,
+        }),
+      }),
+      { server, cors: { allowedOrigins: [] } },
+    );
+
+    // 空间已存在 → 409；关键是**不是** 403（来源没有被误判成跨源）
+    expect(response.status).toBe(409);
+    expect(response.headers.get('access-control-allow-origin')).toBeNull();
+  });
 });

@@ -164,9 +164,6 @@ export function useSync(db: DramatisDb | null, options: { onChanged?: () => void
   const onChangedRef = useRef(options.onChanged);
   onChangedRef.current = options.onChanged;
 
-  /** 每次都用当前的保存方式建 KeyStore（切换档位后立刻生效）。 */
-  const keyStore = useCallback(() => createBrowserKeyStore(keyModeRef.current), []);
-
   const remember = useCallback(
     async (next: SyncConfig, secret: string | null): Promise<void> => {
       configRef.current = next;

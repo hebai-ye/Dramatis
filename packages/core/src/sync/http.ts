@@ -143,7 +143,13 @@ export async function handleSyncRequest(request: Request, deps: SyncHttpDeps): P
 
   const origin = request.headers.get('origin');
   const allowed = deps.cors.allowedOrigins;
-  if (origin !== null && !allowed.includes('*') && !allowed.includes(origin)) {
+  // 白名单为空 = 「只跑同源」：不加任何 CORS 头，也不拒绝。
+  //
+  // 为什么不能顺手把空名单当成「谁都不许」：浏览器**发 POST 时连
+  // 同源请求也会带 Origin 头**（fetch 规范如此）。真按"空名单就拒绝"实现，
+  // 同一个域名下打开的网页会连自己的后端都调不动——部署到服务器当天就踩到了。
+  // 跨源页面拿不到 CORS 头，浏览器本来就不会把响应交给它，安全性并不因此降低。
+  if (allowed.length > 0 && origin !== null && !allowed.includes('*') && !allowed.includes(origin)) {
     // 明确回 403，而不是默默不加头——后者在浏览器里只报一句含糊的 CORS 错误
     return fail(403, 'origin-not-allowed', '这个来源没有被允许调用同步服务端。');
   }

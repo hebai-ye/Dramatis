@@ -182,6 +182,13 @@ export interface SessionApi {
   updateMessage: (id: MessageId, patch: Partial<Message>) => Promise<Message | null>;
   /** 重新从存储载入当前世界；后台任务写入记忆后调用。 */
   reloadWorld: () => Promise<void>;
+  /**
+   * 把左栏的世界列表、素材库、当前世界的快照全部重读一遍。
+   *
+   * 同步（P2-6）写完库之后要调它：另一台设备推过来的世界不在当前状态里，
+   * 只 reloadWorld 的话用户会以为"同步成功但什么都没来"。
+   */
+  refreshAll: () => Promise<void>;
   updateMemory: (id: EventId, patch: Partial<MemoryEvent>) => Promise<void>;
   deleteMemory: (id: EventId) => Promise<void>;
   markRecalled: (events: readonly MemoryEvent[], now: string) => Promise<void>;
@@ -278,6 +285,13 @@ export function useSession(db: DramatisDb | null): SessionApi {
     const loaded = await db.repository.loadRoom(current.room.id);
     if (loaded) setSnapshot(loaded);
   }, [db, setSnapshot]);
+
+  const refreshAll = useCallback(async () => {
+    if (!db) return;
+    await refreshWorlds();
+    await refreshLibrary();
+    await reloadWorld();
+  }, [db, refreshLibrary, refreshWorlds, reloadWorld]);
 
   useEffect(() => {
     if (!db) return;
@@ -1205,6 +1219,7 @@ export function useSession(db: DramatisDb | null): SessionApi {
     deleteMessage,
     updateMessage,
     reloadWorld,
+    refreshAll,
     updateMemory,
     deleteMemory,
     markRecalled,

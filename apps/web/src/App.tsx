@@ -55,6 +55,7 @@ import { useArchive } from './lib/archive';
 import { useProviders } from './lib/providers';
 import { useDatabase, useSession } from './lib/session';
 import { QUOTA_WARN_RATIO, useStorageStatus } from './lib/storage';
+import { useSync } from './lib/sync';
 import { extraCalls, useUsage } from './lib/usage';
 import { NARROW_SCREEN_QUERY, useNarrowScreen } from './lib/viewport';
 import {
@@ -160,6 +161,14 @@ export function App() {
 
   /** 本机存储的持久化与配额（P2-3）：配额快满时在界面上提醒导出封存。 */
   const storage = useStorageStatus();
+
+  /**
+   * 多设备同步（P2-6 第四步）。
+   *
+   * 启动时如果配置与密码都在，会自动同步一次；之后由用户在设置里手动触发
+   * （「每轮对话结束自动推」留给下一步）。
+   */
+  const sync = useSync(db, { onChanged: () => void session.refreshAll() });
 
   /**
    * 左栏的可见性。
@@ -1101,6 +1110,7 @@ export function App() {
                     onImportArchive={archive.importArchive}
                     storage={storage}
                     backendKind={boot?.backendKind ?? ''}
+                    sync={sync}
                   />
                 ) : null}
               </>

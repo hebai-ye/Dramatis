@@ -2,8 +2,10 @@ import type { Conversation, ConversationId, Persona } from '@dramatis/core';
 import { useState } from 'react';
 import type { ProvidersApi } from '../lib/providers';
 import { formatBytes, QUOTA_WARN_RATIO, type StorageApi } from '../lib/storage';
+import type { SyncApi } from '../lib/sync';
 import { PersonaLibrary } from './PersonaLibrary';
 import { ProviderPanel } from './ProviderPanel';
+import { SyncPanel } from './SyncPanel';
 
 interface Props {
   providers: ProvidersApi;
@@ -25,6 +27,8 @@ interface Props {
   storage: StorageApi;
   /** 后端类型（indexeddb / memory），用来如实说明数据存在哪。 */
   backendKind: string;
+  /** 多设备同步（P2-6）：服务端地址、用户 id、同步密码。 */
+  sync: SyncApi;
 }
 
 function formatTime(iso: string): string {
@@ -55,6 +59,7 @@ export function SettingsPanel({
   onImportArchive,
   storage,
   backendKind,
+  sync,
 }: Props) {
   const [archiveNotice, setArchiveNotice] = useState<{ ok: boolean; message: string } | null>(null);
   const [archiveBusy, setArchiveBusy] = useState(false);
@@ -89,6 +94,16 @@ export function SettingsPanel({
           onSave={onSavePersona}
           onDelete={onDeletePersona}
         />
+      </section>
+
+      {/*
+        多设备同步（P2-6）：本机加密后上传，服务端只存密文。
+        放在「我是谁」之后、封存之前——这三件事是同一条线：
+        本机有数据 → 换设备搬 → 多设备自动同步。
+      */}
+      <section className="panel">
+        <h2>同步（多设备）</h2>
+        <SyncPanel api={sync} disabled={disabled} />
       </section>
 
       {/*

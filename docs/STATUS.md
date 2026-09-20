@@ -170,33 +170,59 @@ pnpm --filter @dramatis/core test prompt-samples --silent=false --disableConsole
 
 工作约定：每个批次结束时都必须能构建、能测试、能提交；提交信息带任务编号；实现与计划有偏差时写进 ROADMAP 而不是悄悄改掉。
 
+### 部署线（搁置中，等域名审核通过再接）
+
+这一条不属于「下一轮要做的事」，但别丢：域名审核通过后，用下面这段开一条单独的会话。
+
+```text
+接着做 Dramatis 的部署收尾（P2-6 的部署线）。先读 docs/STATUS.md、docs/SYNC-DEPLOY.md 与
+deploy/LOCAL-NOTES.md（服务器私有信息在这里，已 gitignore，别提交）。
+
+现状：同步服务已经跑在用户自己的腾讯云上（Ubuntu 24.04 + systemd + SQLite + 每 6 小时备份），
+界面「设置 → 同步」已完成并真机验证；只差「用域名访问」这一步。
+
+这次要做：
+1) 用户给一个已解析到服务器的域名（A 记录 sync → 服务器 IP）；
+2) 用 DNS-01 签证书（80/443 未备案会被拦），需要给用户一条 _acme-challenge 的 TXT 记录；
+3) 配 nginx：https://sync.<域名>:8443 同时提供网页（apps/web/dist）与 /sync 反代（同源免 CORS）；
+4) 应用里换地址并两台设备复验；并行推备案，通过后切 443。
+
+要求同上：能构建/测试/提交；真机验证；私有信息不进仓库。
+```
 ## 下一轮怎么开（给新会话的提示词）
 
 > 直接复制下面这段作为新会话的第一条消息：
 
 ```text
-接着做 Dramatis（多角色扮演酒馆）。先读 docs/STATUS.md（接续点）、
-docs/SYNC-DEPLOY.md（部署方案）与 docs/TASKS.md（工作清单）。
+接着做 Dramatis（多角色扮演酒馆）。先读 docs/STATUS.md（接续点）、docs/TASKS.md（工作清单）、
+docs/ROADMAP.md 的 P2-9 / P2-10（桌面壳与安卓壳的触发条件）与 docs/LAYOUT.md（界面规格）。
 
-现状：P2-6（账号与同步）**已经全部落地并在真机验证过**——数据层
-（updatedAt / deletedAt / deviceId / localSeq）、加密工具（core/crypto）、
-同步循环（core/sync）、独立服务端（tools/sync-server + SQLite）、
-界面接线（设置 → 同步）都已完成；同步服务**已经部署在用户自己的腾讯云服务器上**
-（Ubuntu 24.04 + systemd + 每 6 小时备份 + 冒烟测试通过）。
-服务器地址、SSH 别名、域名等私有信息在 deploy/LOCAL-NOTES.md（**已 gitignore，
-不要提交、不要写进任何仓库文件**）。
+现状（2026-09-20）：P2-6 账号与同步**已经全部落地**——数据层（updatedAt / deletedAt / deviceId /
+localSeq）、加密工具（core/crypto）、同步循环（core/sync）、独立服务端（tools/sync-server + SQLite）、
+界面「设置 → 同步」都完成并真机验证过；同步服务已部署在用户自己的腾讯云上（Ubuntu 24.04 + systemd +
+SQLite + 每 6 小时备份），两台设备验证通过。
+**部署那条线（域名 + HTTPS + 备案）暂时搁置**，等域名审核通过再继续；服务器私有信息在
+deploy/LOCAL-NOTES.md（已 gitignore，不要提交）。
 
-这次要做：把「用域名访问」这条路打通（用户已放弃 Tailscale，域名正在审核）：
+这一轮做【项目主体 + 桌面版 + 安卓软件】，按这个顺序推进：
 
-1) 域名 A 记录生效后，用 DNS-01 签证书（80/443 未备案会被拦）——
-   需要在 DNS 加一条 _acme-challenge 的 TXT 记录；
-2) 配 nginx：https://sync.<域名>:8443 **同时**提供网页（apps/web/dist）与
-   /sync 反向代理（同源，免 CORS）——手机能打开网页的前提；
-3) 把应用里的服务端地址从 tailnet 换成新域名，两台设备各同步一次验证；
-4) 并行推进备案；备案通过后切到 443（朋友那边不用改配置）。
+1) 项目主体：从 docs/TASKS.md 里挑当前最影响体验的 2~3 项（候选：T11 记忆面板的对话维度、
+   T12 归档的可发现性与导出、T13 世界管理员工具的体验、T3 剩下的「记忆合并成粗粒度印象」、
+   每轮对话结束自动同步、记录分块与坏记录隔离）。**先用真实数据或真机复现问题再动手**，
+   每项都拆成能构建 / 能测试 / 能提交的小步。
+2) 桌面版：现状是 tools/desktop/launch.mjs（零依赖：起 vite/preview + Chromium --app 窗口），
+   不是真正的壳；ROADMAP P2-9 说 Tauri 是「条件触发」。所以先把「PWA 在桌面上到底缺什么」
+   列成清单并给出证据（标签页回收导致后台任务中断？OS 级密钥存储？本地模型？文件夹监控？），
+   再决定是补强现有启动器还是上 Tauri；上 Tauri 前先确认本机有没有 Rust 工具链。
+3) 安卓版：现状是可安装的 PWA（manifest + Service Worker）。两条路：
+   · **Capacitor 壳**（.gitignore 已预留 apps/android/android/、*.keystore、local.properties）——
+     WebView 里的源是 https://localhost，属于安全上下文，**不依赖外部域名**，可以马上做；
+   · TWA（Bubblewrap）—— 最轻，但需要已部署的 HTTPS 域名 + assetlinks.json，得等域名那条线。
+   先做 Capacitor：把 apps/web/dist 包进去，逐项验证 **IndexedDB 持久化、文件导入导出、
+   同步可用、后台队列在切后台后的行为**，并在安卓真机上跑一遍。
 
 要求：每一小步都能构建/测试/提交；提交信息带任务编号；实现与计划有偏差写进文档；
-真机验证（桌面 + 手机视口）；**任何用户私有信息（域名/IP/凭据）都不进仓库**。
+真机验证（浏览器 / 桌面窗口 / 安卓真机）；**任何用户私有信息（域名/IP/凭据）都不进仓库**。
 ```
 
 **环境与工具（这一轮踩过的，省得再摸一遍）**：

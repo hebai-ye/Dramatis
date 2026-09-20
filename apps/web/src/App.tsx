@@ -1332,6 +1332,7 @@ export function App() {
             }}
             onImportFile={(file) => void handleImport(file)}
             onOpenSettings={() => setSettingsCategory('model')}
+            onOpenAccount={() => setSettingsCategory('account')}
             disabled={disabled}
             list={
               <>

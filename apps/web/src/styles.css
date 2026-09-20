@@ -1126,11 +1126,23 @@ details summary {
 
 .rail-foot {
   border-top: 1px dashed var(--line);
+  display: flex;
+  gap: 6px;
   padding-top: 8px;
 }
 
 .rail-foot button {
-  width: 100%;
+  flex: 1;
+}
+
+/* 「个人账户」占 1/4，「设置」占剩下的 3/4（用户要求这样分） */
+.rail-foot .account-button {
+  flex: 1 1 25%;
+  min-width: 0;
+}
+
+.rail-foot button:not(.account-button) {
+  flex: 1 1 75%;
 }
 
 .rail-caption {

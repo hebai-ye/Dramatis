@@ -21,13 +21,12 @@ import { SyncPanel } from './SyncPanel';
  * SyncPanel / …），它们各自读写自己的那一份配置。
  */
 
-export type SettingsCategory = 'model' | 'appearance' | 'persona' | 'sync' | 'data' | 'archive';
+export type SettingsCategory = 'model' | 'appearance' | 'account' | 'data' | 'archive';
 
 const CATEGORIES: { id: SettingsCategory; label: string; hint: string }[] = [
   { id: 'model', label: '模型配置', hint: '接口地址、模型名、Key' },
   { id: 'appearance', label: '个性化', hint: '色调、对话区背景、显示' },
-  { id: 'persona', label: '身份', hint: '你在故事里是谁' },
-  { id: 'sync', label: '同步', hint: '多设备同一条世界线' },
+  { id: 'account', label: '账户', hint: '我是谁、多设备同步' },
   { id: 'data', label: '数据', hint: '封存导出 / 本机存储' },
   { id: 'archive', label: '已归档', hint: '归档过的对话' },
 ];
@@ -35,8 +34,7 @@ const CATEGORIES: { id: SettingsCategory; label: string; hint: string }[] = [
 export const SETTINGS_CATEGORY_LABELS: Record<SettingsCategory, string> = {
   model: '模型配置',
   appearance: '个性化',
-  persona: '身份',
-  sync: '同步',
+  account: '账户',
   data: '数据',
   archive: '已归档',
 };
@@ -75,6 +73,7 @@ export function SettingsDialog(props: Props) {
   const { category, onCategoryChange, onClose } = props;
   const [archiveNotice, setArchiveNotice] = useState<{ ok: boolean; message: string } | null>(null);
   const [archiveBusy, setArchiveBusy] = useState(false);
+  const [persistNotice, setPersistNotice] = useState<string | null>(null);
 
   const runArchive = async (action: () => Promise<{ ok: boolean; message: string } | null>): Promise<void> => {
     setArchiveBusy(true);
@@ -142,25 +141,33 @@ export function SettingsDialog(props: Props) {
 
             {category === 'appearance' ? <AppearancePanel api={props.appearance} disabled={props.disabled} /> : null}
 
-            {category === 'persona' ? (
-              <section className="panel">
-                <h2>我是谁</h2>
-                <PersonaLibrary
-                  personas={props.personas}
-                  activeId={props.activePersonaId}
-                  disabled={props.disabled}
-                  onSelect={props.onSelectPersona}
-                  onSave={props.onSavePersona}
-                  onDelete={props.onDeletePersona}
-                />
-              </section>
-            ) : null}
+            {/*
+              「账户」= 我是谁 + 多设备同步。左栏底部那个「个人账户」按钮直接开这一档：
+              用户要找的是「我的账号」，而账号在这套设计里就是同步空间（id + 密码 + 恢复码）。
+            */}
+            {category === 'account' ? (
+              <>
+                <section className="panel">
+                  <h2>我是谁</h2>
+                  <PersonaLibrary
+                    personas={props.personas}
+                    activeId={props.activePersonaId}
+                    disabled={props.disabled}
+                    onSelect={props.onSelectPersona}
+                    onSave={props.onSavePersona}
+                    onDelete={props.onDeletePersona}
+                  />
+                </section>
 
-            {category === 'sync' ? (
-              <section className="panel">
-                <h2>同步（多设备）</h2>
-                <SyncPanel api={props.sync} disabled={props.disabled} />
-              </section>
+                <section className="panel">
+                  <h2>多设备同步</h2>
+                  <p className="hint">
+                    账号就是「同步空间」：用户 id 与密码由你自己定，没有邮箱、没有验证码，也没有找回密码——
+                    所以建空间时显示的恢复码要抄下来。服务端只存密文与哈希。
+                  </p>
+                  <SyncPanel api={props.sync} disabled={props.disabled} />
+                </section>
+              </>
             ) : null}
 
             {category === 'data' ? (
@@ -227,15 +234,47 @@ export function SettingsDialog(props: Props) {
                       disabled={
                         props.disabled || !props.storage.status.supported || props.storage.status.persisted === true
                       }
-                      onClick={() => void props.storage.requestPersist()}
+                      onClick={() => {
+                        setPersistNotice(null);
+                        void props.storage.requestPersist().then((granted) => {
+                          setPersistNotice(
+                            granted
+                              ? '拿到了 ✓ 浏览器不会再因为磁盘紧张、或你很久没打开，就悄悄清掉这些数据。'
+                              : '浏览器这次没给。Chrome 不弹窗，它按「有没有把这个站点装成应用 / 来过几次」自己判断——下一步：装成应用（下面那个按钮），然后再点一次。没拿到也不影响使用，导出封存照样是最后的保险。',
+                          );
+                        });
+                      }}
                     >
                       申请持久化存储
                     </button>
+                    <button
+                      type="button"
+                      className="ghost"
+                      onClick={() => {
+                        setPersistNotice(null);
+                        void props.storage.installApp().then((outcome) => {
+                          setPersistNotice(
+                            outcome === 'accepted'
+                              ? '安装开始了。装完回到这里再点一次「申请持久化存储」，一般就能拿到。'
+                              : outcome === 'dismissed'
+                                ? '这次取消了。想装的话，地址栏右边或浏览器菜单里也有「安装应用 / 添加到主屏幕」。'
+                                : '这个浏览器现在没给一键安装的口子：看地址栏右边的安装图标，或者浏览器菜单里的「安装应用」「添加到主屏幕」（安卓上叫「添加到主屏幕」）。',
+                          );
+                        });
+                      }}
+                    >
+                      {props.storage.canInstall ? '装成应用（更容易拿到持久化）' : '怎么装成应用'}
+                    </button>
                   </div>
+                  {persistNotice === null ? null : <p className="hint">{persistNotice}</p>}
                   <p className="hint">
                     {props.storage.status.persisted === true
                       ? '已经拿到持久化：浏览器不会因为磁盘紧张或你很久没打开就清掉这些数据。'
-                      : '没拿到持久化时，浏览器随时可能回收本地数据；拿到它通常要靠「把本站装到桌面 / 加进收藏」——这也是 PWA 那一步在做的事。无论哪种情况，导出封存都是最稳的备份。'}
+                      : '没拿到持久化时，浏览器随时可能回收本地数据。Chrome 上拿到它的正路是把这个站点'}
+                    {props.storage.status.persisted === true ? null : <strong>装成应用</strong>}
+                    {props.storage.status.persisted === true
+                      ? null
+                      : '（安卓上叫「添加到主屏幕」），装完再点一次申请；应用也会自动申请一次，所以常来同样会慢慢拿到。无论哪种情况，导出封存都是最稳的备份。'}
                   </p>
                 </section>
               </>

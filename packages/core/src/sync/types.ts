@@ -101,7 +101,22 @@ export interface SyncPullInput extends SyncCredentials {
 }
 
 export interface SyncPullResult {
+  /**
+   * 这一批**真正给到**的最后一条的号；一条都没有时等于 `since`。
+   *
+   * 客户端拿它当新游标。**不能返回服务端的全局头号**：一次拉取是分页的
+   * （服务端默认一页 200 条），返回全局头号会让客户端以为「我已经拉完了」，
+   * 剩下的记录再也不会传过来——换设备时表现为「只同步了一部分就静默结束」。
+   */
   head: number;
+  /**
+   * 服务端此刻的全局头号（仅供参考：界面显示「还差多少」）。
+   *
+   * 老服务端（部署在用户服务器上的那一版）不发这个字段，客户端要能兜住。
+   */
+  serverHead?: number;
+  /** 还有没有下一批。老服务端不发，客户端按「游标是否追平全局头号」自己判断。 */
+  hasMore?: boolean;
   records: readonly SyncPulledRecord[];
 }
 

@@ -142,6 +142,86 @@ describe('decideMerge（LWW 的全部岔路）', () => {
 });
 
 describe('同步循环', () => {
+  /**
+   * 分页拉取的回归（真实换设备时复现过）。
+   *
+   * 病：服务端一页只给 200 条，却把**全局头号**当游标回给客户端。客户端拉到一页
+   * 就把游标推到末尾，剩下的记录再也不会来——一台新设备同步一个超过一页的空间时，
+   * 「同步成功」却只拿到一部分，而且下次同步还说「两端一致」。
+   */
+  it('记录多到一页装不下时，一次同步要把所有页都拉完（不是只拉一页）', async () => {
+    const peer = await twoDevices();
+    const world = await seedWorld(peer.a.repository, '大世界');
+    for (let index = 0; index < 12; index += 1) {
+      await remember(peer.a.repository, world.room.id, `第 ${String(index)} 条记忆`);
+    }
+    await say(peer.a.repository, world.room.id, world.scene.id, '都记下了吗？');
+
+    await sync(peer, peer.a);
+
+    // 页大小压到 3，逼出分页；记录数远大于一页
+    const report = await runSync({
+      repository: peer.b.repository,
+      transport: peer.server.transport,
+      spaceHandle: peer.spaceHandle,
+      credential: peer.b.credential,
+      encKey: peer.b.encKey,
+      limit: 3,
+    });
+
+    expect(report.pulled).toBe(report.applied);
+    expect(report.pulled).toBeGreaterThan(9);
+
+    const memories = await peer.b.repository.listMemories(world.room.id);
+    expect(memories).toHaveLength(12);
+    const messages = await peer.b.repository.listMessages(world.room.id);
+    expect(messages.map((message) => message.content)).toEqual(['都记下了吗？']);
+
+    // 游标推到了真正拉到的位置：再同步一次就是「没东西可拉」，而不是又拉一批
+    const again = await runSync({
+      repository: peer.b.repository,
+      transport: peer.server.transport,
+      spaceHandle: peer.spaceHandle,
+      credential: peer.b.credential,
+      encKey: peer.b.encKey,
+      limit: 3,
+    });
+    expect(again.pulled).toBe(0);
+    expect((await peer.b.repository.readSyncState()).pulledHead).toBe(report.head);
+  });
+
+  it('老服务端（不发 serverHead / hasMore）也能分页拉完', async () => {
+    const peer = await twoDevices();
+    const world = await seedWorld(peer.a.repository, '老服务端');
+    for (let index = 0; index < 7; index += 1) {
+      await remember(peer.a.repository, world.room.id, `记忆 ${String(index)}`);
+    }
+    await sync(peer, peer.a);
+
+    // 模拟部署在用户服务器上的那一版服务端：不发 serverHead / hasMore，
+    // 而且把**全局头号**当 head 回给客户端（正是那个坑）
+    const legacy = {
+      head: peer.server.transport.head,
+      push: peer.server.transport.push,
+      pull: async (input: Parameters<SyncTransport['pull']>[0]) => {
+        const page = await peer.server.transport.pull(input);
+        return { head: peer.server.stats().head, records: page.records };
+      },
+    } satisfies SyncTransport;
+
+    const report = await runSync({
+      repository: peer.b.repository,
+      transport: legacy,
+      spaceHandle: peer.spaceHandle,
+      credential: peer.b.credential,
+      encKey: peer.b.encKey,
+      limit: 2,
+    });
+
+    expect(report.pulled).toBe(report.applied);
+    expect(await peer.b.repository.listMemories(world.room.id)).toHaveLength(7);
+  });
+
   it('空设备第一次同步就拿到同一条世界线（房间/对话/场景/角色/消息）', async () => {
     const peer = await twoDevices();
     const world = await seedWorld(peer.a.repository, '老世界');

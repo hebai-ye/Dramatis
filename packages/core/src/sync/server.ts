@@ -171,7 +171,18 @@ export function createSyncServer(store: SyncServerStore): SyncServer {
       const requested = input.limit ?? DEFAULT_PULL_LIMIT;
       const limit = Math.max(1, Math.min(MAX_PULL_LIMIT, Math.floor(requested)));
       const records = await store.list(input.spaceHandle, { since: input.since, limit });
-      return { head: await store.head(input.spaceHandle), records };
+
+      /*
+       * 分页的游标语义（踩过）：`head` 必须是**这一批的最后一条**，不是全局头号。
+       *
+       * 返回全局头号时，客户端拉到一页就把游标推到末尾，剩下的记录永远不会再来——
+       * 一台新设备同步一个超过一页（200 条）的空间时，会「成功同步」出一份残缺的数据。
+       * 全局头号另用 `serverHead` 告诉客户端「还差多少」，它只用于显示。
+       */
+      const serverHead = await store.head(input.spaceHandle);
+      const last = records[records.length - 1];
+      const head = last === undefined ? input.since : last.serverRev;
+      return { head, serverHead, hasMore: head < serverHead, records };
     },
   };
 }

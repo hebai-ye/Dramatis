@@ -196,19 +196,41 @@ describe('HTTP 外壳 · 走一遍真实推拉', () => {
       body: JSON.stringify({ baseHead: 0, records }),
     });
 
-    const firstPage = await body<{ records: { serverRev: number }[] }>(
+    const firstPage = await body<{
+      head: number;
+      serverHead: number;
+      hasMore: boolean;
+      records: { serverRev: number }[];
+    }>(
       await call(`/spaces/${created.spaceHandle}/pull?since=0&limit=2`, {
         headers: { authorization: `Bearer ${created.credential}` },
       }),
     );
     expect(firstPage.records.map((record) => record.serverRev)).toEqual([1, 2]);
+    // 分页语义：head 是「这一批给到哪里」，不是全局头号，
+    // 否则客户端会把游标推到末尾、把没拉到的记录永久漏掉
+    expect(firstPage.head).toBe(2);
+    expect(firstPage.serverHead).toBe(3);
+    expect(firstPage.hasMore).toBe(true);
 
-    const secondPage = await body<{ records: { serverRev: number }[] }>(
+    const secondPage = await body<{ head: number; hasMore: boolean; records: { serverRev: number }[] }>(
       await call(`/spaces/${created.spaceHandle}/pull?since=2&limit=2`, {
         headers: { authorization: `Bearer ${created.credential}` },
       }),
     );
     expect(secondPage.records.map((record) => record.serverRev)).toEqual([3]);
+    expect(secondPage.head).toBe(3);
+    expect(secondPage.hasMore).toBe(false);
+
+    // 拉完之后再来一次：一条都没有，head 停在原地（不会倒退成 0）
+    const empty = await body<{ head: number; hasMore: boolean; records: unknown[] }>(
+      await call(`/spaces/${created.spaceHandle}/pull?since=3`, {
+        headers: { authorization: `Bearer ${created.credential}` },
+      }),
+    );
+    expect(empty.records).toHaveLength(0);
+    expect(empty.head).toBe(3);
+    expect(empty.hasMore).toBe(false);
   });
 
   it('空间之间完全隔离：同一个 id 在不同空间里互不可见', async () => {

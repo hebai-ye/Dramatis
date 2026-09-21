@@ -710,7 +710,16 @@ git ls-files | ForEach-Object {
 | `apps/web/src/styles.css` | 改 | 附件预览与来源链样式 |
 | `docs/EVAL.md` / `docs/MEMORY.md` / `docs/TASKS.md` / `docs/STATUS.md` | 改 | 第三十六节、27e 完成与全链路 6/6 |
 
-## 二十六、几点注意
+## 二十六、2026-09-21 深夜：账户重构 A1（名称、ID 与数据容器分层）
+
+| 文件 | 新增/修改 | 说明 |
+| --- | --- | --- |
+| `apps/web/src/lib/db.ts` | 改 | 账户注册表 v2、旧账户迁移、稳定 storageId、改名/新建/切换 |
+| `apps/web/src/components/AccountPanel.tsx` | 改 | 账户列表、创建、改名、切换；技术数据库名退出界面 |
+| `apps/web/src/styles.css` | 改 | 账户列表与创建区样式 |
+| `docs/EVAL.md` / `docs/TASKS.md` / `docs/STATUS.md` | 改 | 第三十七节、任务 46 与接续状态 |
+
+## 二十七、几点注意
 
 ---
 

@@ -1,51 +1,55 @@
 import { useEffect, useState } from 'react';
-import { accountDbName, type LocalAccount, listLocalDatabases, readActiveAccount, writeActiveAccount } from '../lib/db';
+import {
+  type AccountRegistry,
+  activeDbName,
+  copyLocalDatabase,
+  createAccount,
+  type LocalAccount,
+  loadAccountRegistry,
+  readActiveAccount,
+  renameAccount,
+  writeActiveAccount,
+} from '../lib/db';
 
 /**
- * 本地账户（顺序 37）。
+ * 账户中心（账户重构 A1）。
  *
- * 「账户」在这里的准确含义是：**一份独立的本地数据**（一个 IndexedDB 库）。
- * 用户 2026-09-21 提的「切账户换对话数据」就是这件事——以前所有世界堆在同一个库里，
- * 换同步空间只换「推到哪」，两边会合并。
+ * 用户看到的两条事实：
  *
- * 两条规矩写在这里，也写在界面上：
+ * 1. **账户名**可以重复，也可以随时改；
+ * 2. **账户 ID**由用户设置，是设备与同步空间的稳定标识，创建后不能改。
  *
- * 1. **切换 = 换一份数据**，看不到另一个账户的世界（这正是想要的隔离）；
- * 2. **新建账户默认把现在这份数据带过去**，否则用户会以为「我的世界没了」——
- *    要一份干净的就勾「不带过去」。
- *
- * 切换之后要**整页重载**：库换了，仓储、后台队列、同步状态全都要重新建。
- * 这比在内存里热切换安全得多，也不会留下两套状态。
+ * 内部 `storageId` 与数据库名不展示。旧版账户会显示一个「旧账户」标记，
+ * 它仍然可以改名、切换和继续同步，只是账户 ID 会保持迁移时的值。
  */
 export function AccountPanel({ disabled }: { disabled: boolean }) {
-  const [active, setActive] = useState<LocalAccount | null>(null);
-  const [databases, setDatabases] = useState<string[]>([]);
+  const [registry, setRegistry] = useState<AccountRegistry | null>(null);
+  const [active, setActive] = useState<LocalAccount>(() => readActiveAccount());
+  const [draftName, setDraftName] = useState('');
   const [draftId, setDraftId] = useState('');
-  const [carryData, setCarryData] = useState(true);
+  const [carryData, setCarryData] = useState(false);
+  const [renamingId, setRenamingId] = useState<string | null>(null);
+  const [renameDraft, setRenameDraft] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    setActive(readActiveAccount());
-    void listLocalDatabases().then(setDatabases);
+    void loadAccountRegistry()
+      .then((next) => {
+        setRegistry(next);
+        setActive(next.accounts.find((account) => account.id === next.activeId) ?? (next.accounts[0] as LocalAccount));
+      })
+      .catch((reason: unknown) => setError(reason instanceof Error ? reason.message : String(reason)));
   }, []);
 
-  const openAccount = async (id: string, carry: boolean): Promise<void> => {
-    const clean = id.trim();
-    if (clean === '') {
-      setError('给这个账户起个名字（它就是这台设备上那份数据的名字）。');
-      return;
-    }
+  const switchTo = async (account: LocalAccount, carry: boolean): Promise<void> => {
     setBusy(true);
     setError(null);
     try {
-      // 动态导入：切换账户只发生一次，不必让它进主包
-      const { copyLocalDatabase, activeDbName } = await import('../lib/db');
-      const from = activeDbName();
-      const to = accountDbName(clean);
-      const exists = databases.includes(to);
-      if (!exists && carry) await copyLocalDatabase(from, to);
-      writeActiveAccount({ id: clean, label: clean });
+      if (carry && account.dbName !== activeDbName()) {
+        await copyLocalDatabase(activeDbName(), account.dbName);
+      }
+      writeActiveAccount(account);
       window.location.reload();
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason));
@@ -53,74 +57,156 @@ export function AccountPanel({ disabled }: { disabled: boolean }) {
     }
   };
 
-  const backToLocal = (): void => {
-    writeActiveAccount(null);
-    window.location.reload();
+  const createAndSwitch = async (): Promise<void> => {
+    setBusy(true);
+    setError(null);
+    try {
+      const account = createAccount({ accountId: draftId, name: draftName });
+      await switchTo(account, carryData);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : String(reason));
+      setBusy(false);
+    }
   };
+
+  const commitRename = (account: LocalAccount): void => {
+    try {
+      const next = renameAccount(account.id, renameDraft);
+      setRegistry((current) =>
+        current === null
+          ? current
+          : { ...current, accounts: current.accounts.map((item) => (item.id === next.id ? next : item)) },
+      );
+      if (active.id === next.id) setActive(next);
+      setRenamingId(null);
+      setRenameDraft('');
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : String(reason));
+    }
+  };
+
+  const accounts = registry?.accounts ?? [active];
 
   return (
     <section className="panel">
-      <h2>本地账户</h2>
+      <h2>个人账户</h2>
       <p className="hint">
-        一个账户就是<strong>一份独立的本地数据</strong>。切到另一个账户，看到的就是它自己的世界与对话——
-        两边不会混在一起。账户与「多设备同步」是两件事：同步负责把当前账户的数据加密送到你的服务器，
-        账户负责决定这台设备上有几份数据。
+        一个账户包含你的所有世界、对话、卡片、记忆、模型配置与账户密钥。账户名可以重复； 账户 ID
+        用来区分同名账户，创建后不再修改。
       </p>
 
-      <ul className="usage-list">
-        <li>
-          <span className="usage-name">当前账户</span>
-          <span className="usage-figure">{active === null ? '本机数据（未分账户）' : active.label}</span>
-        </li>
-        <li>
-          <span className="usage-name">这台设备上的账户</span>
-          <span className="usage-figure">
-            {databases.length === 0
-              ? '（正在统计）'
-              : databases.map((name) => name.split(':').slice(2).join(':') || '本机数据').join('、')}
-          </span>
-        </li>
+      <ul className="account-list">
+        {accounts.map((account) => {
+          const isActive = account.id === active.id;
+          return (
+            <li key={account.id} className={isActive ? 'account-row active' : 'account-row'}>
+              <div>
+                {renamingId === account.id ? (
+                  <div className="account-rename">
+                    <input
+                      value={renameDraft}
+                      disabled={disabled || busy}
+                      aria-label="账户名"
+                      onChange={(event) => setRenameDraft(event.target.value)}
+                    />
+                    <button
+                      type="button"
+                      className="ghost"
+                      disabled={disabled || busy}
+                      onClick={() => commitRename(account)}
+                    >
+                      保存名称
+                    </button>
+                    <button type="button" className="ghost" onClick={() => setRenamingId(null)}>
+                      取消
+                    </button>
+                  </div>
+                ) : (
+                  <strong>{account.name}</strong>
+                )}
+                <p className="hint">
+                  ID：{account.accountId}
+                  {account.legacy ? ' · 旧账户' : ''}
+                </p>
+              </div>
+              <div className="account-actions">
+                {isActive ? (
+                  <span className="tag accent">当前</span>
+                ) : (
+                  <button
+                    type="button"
+                    className="ghost"
+                    disabled={disabled || busy}
+                    onClick={() => void switchTo(account, false)}
+                  >
+                    切换
+                  </button>
+                )}
+                <button
+                  type="button"
+                  className="ghost"
+                  disabled={disabled || busy}
+                  onClick={() => {
+                    setRenamingId(account.id);
+                    setRenameDraft(account.name);
+                  }}
+                >
+                  改名
+                </button>
+              </div>
+            </li>
+          );
+        })}
       </ul>
 
-      <label>
-        账户名
-        <input
-          value={draftId}
-          disabled={disabled || busy}
-          placeholder="例如：我自己 / 朋友的号"
-          autoCapitalize="none"
-          autoCorrect="off"
-          spellCheck={false}
-          onChange={(event) => setDraftId(event.target.value)}
-        />
-      </label>
-      <label className="inline-check">
-        <input
-          type="checkbox"
-          checked={carryData}
-          disabled={disabled || busy}
-          onChange={(event) => setCarryData(event.target.checked)}
-        />
-        <span>
-          新建时把当前数据带过去
-          <span className="hint">不勾就是一份干净的新数据（想让两个账户彻底互不相干时用）。</span>
-        </span>
-      </label>
-
-      <div className="save-bar">
-        <button type="button" disabled={disabled || busy} onClick={() => void openAccount(draftId, carryData)}>
-          {busy ? '切换中…' : '切到这个账户'}
-        </button>
-        <button type="button" className="ghost" disabled={disabled || busy || active === null} onClick={backToLocal}>
-          回到本机数据
-        </button>
-      </div>
+      <details className="account-create">
+        <summary>新建账户</summary>
+        <label>
+          账户名（可以重复）
+          <input
+            value={draftName}
+            disabled={disabled || busy}
+            placeholder="例如：小满"
+            onChange={(event) => setDraftName(event.target.value)}
+          />
+        </label>
+        <label>
+          账户 ID（设备内唯一，创建后不可改）
+          <input
+            value={draftId}
+            disabled={disabled || busy}
+            autoCapitalize="none"
+            autoCorrect="off"
+            spellCheck={false}
+            placeholder="例如：xiaoman-01"
+            onChange={(event) => setDraftId(event.target.value)}
+          />
+        </label>
+        <label className="inline-check">
+          <input
+            type="checkbox"
+            checked={carryData}
+            disabled={disabled || busy}
+            onChange={(event) => setCarryData(event.target.checked)}
+          />
+          <span>
+            复制当前账户的数据
+            <span className="hint">高级选项；默认创建一份空白账户。</span>
+          </span>
+        </label>
+        <div className="save-bar">
+          <button
+            type="button"
+            disabled={disabled || busy || draftId.trim() === ''}
+            onClick={() => void createAndSwitch()}
+          >
+            {busy ? '创建中…' : '创建并切换'}
+          </button>
+        </div>
+      </details>
 
       {error === null ? null : <div className="notice error">{error}</div>}
-      <p className="hint">
-        切换会<strong>重新加载页面</strong>（库换了，仓储、后台队列、同步都要重新建）。数据不会因为切换而删除：
-        每个账户的东西都留在自己的库里，随时切回去就能看到。
-      </p>
+      <p className="hint">切换账户会重新加载页面；每个账户的数据互相隔离，不会自动合并。</p>
     </section>
   );
 }

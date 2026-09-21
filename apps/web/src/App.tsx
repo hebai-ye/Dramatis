@@ -61,6 +61,7 @@ import { WorldTree } from './components/WorldTree';
 import { useAdminChat } from './lib/admin';
 import { useAppearance } from './lib/appearance';
 import { useArchive } from './lib/archive';
+import { loadBridge, saveBridge } from './lib/bridge-store';
 import { useProviders } from './lib/providers';
 import { useDatabase, useSession } from './lib/session';
 import { QUOTA_WARN_RATIO, useStorageStatus } from './lib/storage';
@@ -219,6 +220,15 @@ export function App() {
   const [detailId, setDetailId] = useState<InstanceId | null>(null);
 
   const [warnings, setWarnings] = useState<Notice[]>([]);
+  /**
+   * 手机上的「装到桌面」引导（顺序 29）。
+   *
+   * 手机上浏览器会把地址栏与底部工具栏一直摆在那儿，装成应用之后才是真全屏——顺带还更容易
+   * 拿到持久化存储。只在窄屏、且用户没关过的时候提一次。
+   */
+  const [installHint, setInstallHint] = useState(
+    () => typeof window !== 'undefined' && window.localStorage.getItem('dramatis.installHint.dismissed') !== '1',
+  );
   const [error, setError] = useState<string | null>(null);
   /** 「跳到原句」的最近一次请求（T11）：带序号，重复点击同一条也能再闪一次。 */
   const [focus, setFocus] = useState<FocusRequest | null>(null);
@@ -230,7 +240,12 @@ export function App() {
    * `analysis` 阶段等这一轮的记忆与情绪。它只活在内存里——刷新页面等于放弃这次转接，
    * 但已经落盘的玩家消息还在，重新发一次接着走就行。
    */
-  const [bridge, setBridge] = useState<WebBridgeState | null>(null);
+  const [bridge, setBridge] = useState<WebBridgeState | null>(() => loadBridge<WebBridgeState>('main'));
+
+  /** 桥接进度落进 sessionStorage：刷新（或切后台回来）之后还在原来的那一步（顺序 25）。 */
+  useEffect(() => {
+    saveBridge('main', bridge);
+  }, [bridge]);
   const [streamText, setStreamText] = useState('');
   const [streamSpeaker, setStreamSpeaker] = useState('');
   const [reasoningText, setReasoningText] = useState('');
@@ -1588,6 +1603,27 @@ export function App() {
           ) : null}
         </div>
       </div>
+
+      {narrow && installHint ? (
+        <div className="notice warn install-hint">
+          <strong>手机上想要全屏，把它装成应用</strong>
+          <p>
+            地址栏与底部工具栏会一直占着地方。用浏览器菜单里的「安装应用」／「添加到主屏幕」 （iPhone 上是分享 →
+            添加到主屏幕）装一次，打开就是全屏，也更容易拿到持久化存储。
+            现在也可以点顶栏的「全屏」先把浏览器界面收起来。
+          </p>
+          <button
+            type="button"
+            className="ghost"
+            onClick={() => {
+              window.localStorage.setItem('dramatis.installHint.dismissed', '1');
+              setInstallHint(false);
+            }}
+          >
+            知道了
+          </button>
+        </div>
+      ) : null}
 
       {newConversationOpen ? (
         <NewConversationDialog

@@ -17,7 +17,8 @@ import {
   renderPromptForWeb,
   runAdminTurn,
 } from '@dramatis/core';
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { loadBridge, saveBridge } from './bridge-store';
 import type { DramatisDb } from './db';
 import type { ProvidersApi } from './providers';
 import type { SessionApi } from './session';
@@ -94,7 +95,12 @@ export function useAdminChat(options: {
   const [busy, setBusy] = useState(false);
   const [streamText, setStreamText] = useState('');
   const [error, setError] = useState<string | null>(null);
-  const [bridge, setBridge] = useState<{ prompt: string } | null>(null);
+  const [bridge, setBridge] = useState<{ prompt: string } | null>(() => loadBridge<{ prompt: string }>('admin'));
+
+  // 副对话的桥接进度同样落进 sessionStorage（顺序 25）
+  useEffect(() => {
+    saveBridge('admin', bridge);
+  }, [bridge]);
   const abortRef = useRef<AbortController | null>(null);
 
   /**

@@ -2115,3 +2115,8 @@ details summary {
     padding: 6px 8px;
   }
 }
+
+/* 手机上的「装成应用」引导（顺序 29）：贴在底部，可关，只出现一次 */
+.install-hint {
+  margin: 0 6px 6px;
+}

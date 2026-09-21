@@ -183,6 +183,16 @@ export function SyncPanel({ api, disabled }: Props) {
             <span className="usage-figure">{describeReport(api.config?.lastReport ?? null)}</span>
           </li>
           <li>
+            <span className="usage-name">上次合并</span>
+            <span className="usage-figure">
+              {api.config?.lastReport === null || api.config?.lastReport === undefined
+                ? '还没同步过'
+                : `写进本机 ${String(api.config.lastReport.applied)} 条 · 本机更新较新保留 ${String(
+                    api.config.lastReport.skipped,
+                  )} 条`}
+            </span>
+          </li>
+          <li>
             <span className="usage-name">自动同步</span>
             <span className="usage-figure">
               {api.autoSyncPending ? '正在推这一轮…' : '每轮对话结束后自动推（最快 20 秒一次）'}
@@ -231,7 +241,23 @@ export function SyncPanel({ api, disabled }: Props) {
         </div>
       ) : null}
 
-      {api.error !== null ? <div className="notice error">{api.error}</div> : null}
+      {/*
+        顺序 11：服务端上的空间没了（被清过库、或者换了服务器），客户端只会报一句
+        「服务端上没有这个空间了」——用户不知道下一步该干嘛。这里把路指出来：
+        填回同一套 id + 密码再连一次，就会用同样的空间名重新开通，并把本机数据推上去。
+      */}
+      {api.error !== null && api.error.includes('空间') ? (
+        <div className="notice warn">
+          <strong>服务端上的这个空间不在了</strong>
+          <p>{api.error}</p>
+          <p className="hint">
+            本机数据<strong>没有丢</strong>。上面把「用户 id 与同步密码」再填一次，点「开通 / 加入并同步」——
+            会用同一个空间名重新开通，然后把本机这份数据推上去（服务端上原本那份已经没了，找不回来）。
+          </p>
+        </div>
+      ) : api.error !== null ? (
+        <div className="notice error">{api.error}</div>
+      ) : null}
       {notice !== null ? <div className={notice.ok ? 'notice' : 'notice error'}>{notice.message}</div> : null}
 
       {connected ? (

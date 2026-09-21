@@ -5,6 +5,7 @@ import type { ProvidersApi } from '../lib/providers';
 import type { StorageApi } from '../lib/storage';
 import { formatBytes } from '../lib/storage';
 import type { SyncApi } from '../lib/sync';
+import { AccountPanel } from './AccountPanel';
 import { AppearancePanel } from './AppearancePanel';
 import { PersonaLibrary } from './PersonaLibrary';
 import { ProviderPanel } from './ProviderPanel';
@@ -147,6 +148,7 @@ export function SettingsDialog(props: Props) {
             */}
             {category === 'account' ? (
               <>
+                <AccountPanel disabled={props.disabled} />
                 <section className="panel">
                   <h2>我是谁</h2>
                   <PersonaLibrary

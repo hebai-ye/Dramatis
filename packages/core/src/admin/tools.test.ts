@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { newId } from '../model/ids.js';
+import { createPersona } from '../model/persona.js';
 import type { ChatToolCall } from '../prompt/types.js';
 import { ADMIN_TOOLS, parseAdminToolCall } from './tools.js';
 
@@ -12,10 +13,12 @@ function call(name: string, args: unknown): ChatToolCall {
 }
 
 describe('工具声明', () => {
-  it('只暴露约定好的三件工具', () => {
+  it('只暴露约定好的五件工具', () => {
     expect(ADMIN_TOOLS.map((tool) => tool.function.name)).toEqual([
       'upsert_character_card',
       'upsert_world_book',
+      'upsert_persona',
+      'delete_persona',
       'set_scene',
     ]);
   });
@@ -128,6 +131,41 @@ describe('upsert_world_book', () => {
 
   it('entries 不是数组时报错', () => {
     expect(parseAdminToolCall(call('upsert_world_book', { name: 'x', entries: 'oops' })).ok).toBe(false);
+  });
+});
+
+describe('玩家身份工具', () => {
+  it('新建 Persona 草稿，修改时沿用旧 id 与创建时间', () => {
+    const existing = createPersona({ name: '旅人', description: '四处漂泊' });
+    const created = parseAdminToolCall(call('upsert_persona', { name: '沈砚', description: '旧信的主人' }));
+    if (!created.ok) throw new Error(created.error);
+    if (created.draft.kind !== 'persona-upsert') throw new Error('类型不对');
+    expect(created.draft.personaId).toBeNull();
+    expect(created.draft.persona.name).toBe('沈砚');
+
+    const updated = parseAdminToolCall(
+      call('upsert_persona', { personaId: existing.id, name: '沈砚', description: '旧信的主人' }),
+      { knownPersonas: [existing] },
+    );
+    if (!updated.ok) throw new Error(updated.error);
+    if (updated.draft.kind !== 'persona-upsert') throw new Error('类型不对');
+    expect(updated.draft.persona.id).toBe(existing.id);
+    expect(updated.draft.persona.createdAt).toBe(existing.createdAt);
+    expect(updated.draft.previous?.name).toBe('旅人');
+  });
+
+  it('删除必须用当前名字二次确认', () => {
+    const existing = createPersona({ name: '沈砚', description: '旧信的主人' });
+    const wrong = parseAdminToolCall(call('delete_persona', { personaId: existing.id, confirmName: '旅人' }), {
+      knownPersonas: [existing],
+    });
+    expect(wrong.ok).toBe(false);
+
+    const right = parseAdminToolCall(call('delete_persona', { personaId: existing.id, confirmName: '沈砚' }), {
+      knownPersonas: [existing],
+    });
+    if (!right.ok) throw new Error(right.error);
+    expect(right.draft.kind).toBe('persona-delete');
   });
 });
 

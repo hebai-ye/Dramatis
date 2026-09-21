@@ -743,7 +743,19 @@ git ls-files | ForEach-Object {
 | `packages/core/src/storage/conversation.test.ts` / `repository.test.ts` / `prompt/assemble.test.ts` | 改 | 身份快照、继承、覆盖、v10 迁移回归 |
 | `docs/EVAL.md` / `docs/TASKS.md` / `docs/STATUS.md` | 改 | 第三十九节、任务 48 与接续状态 |
 
-## 二十九、几点注意
+## 二十九、2026-09-21 深夜：账户重构 A5（副对话 Persona 工具）
+
+| 文件 | 新增/修改 | 说明 |
+| --- | --- | --- |
+| `packages/core/src/admin/tools.ts` | 改 | `upsert_persona` / `delete_persona` 声明、校验与草稿 |
+| `packages/core/src/admin/prompt.ts` | 改 | 提示词列出当前账户 Persona |
+| `packages/core/src/model/message.ts` | 改 | AdminArtifact 增加 Persona 草稿类型与旧版本 |
+| `packages/core/src/storage/repository.ts` | 改 | Persona 草稿采纳与撤回恢复 |
+| `apps/web/src/lib/admin.ts` / `apps/web/src/components/SideChat.tsx` | 改 | 管理员上下文、草稿预览与确认删除 |
+| `packages/core/src/admin/tools.test.ts` / `storage/artifact-revoke.test.ts` | 改 | Persona 工具与草稿采纳回归 |
+| `docs/EVAL.md` / `docs/TASKS.md` / `docs/STATUS.md` | 改 | 第四十节、任务 49 与接续状态 |
+
+## 三十、几点注意
 
 ---
 

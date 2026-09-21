@@ -27,12 +27,14 @@ export type MessageRole = 'player' | 'character' | 'system' | 'narration' | 'adm
  */
 export interface AdminArtifact {
   id: string;
-  kind: 'character-card' | 'world-book' | 'scene';
+  kind: 'character-card' | 'world-book' | 'persona-upsert' | 'persona-delete' | 'scene';
   title: string;
   summary: string;
   status: 'pending' | 'adopted' | 'discarded' | 'applied';
   /** 待采纳的实体内容（序列化后的角色卡 / 世界书）。 */
   payload: unknown;
+  /** 修改已有素材时保留旧版本，供「撤回这次采纳」恢复。 */
+  previousPayload?: unknown;
   /** 采纳后落库得到的 id；场景类草稿在执行时就写入，直接记目标场景。 */
   targetId: string | null;
   createdAt: string;

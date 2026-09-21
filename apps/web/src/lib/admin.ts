@@ -64,6 +64,25 @@ function draftToArtifact(draft: AdminDraft): AdminArtifact {
         status: 'pending',
         payload: draft.book,
       };
+    case 'persona-upsert':
+      return {
+        ...base,
+        kind: 'persona-upsert',
+        title: draft.persona.name,
+        summary: draft.summary,
+        status: 'pending',
+        payload: draft.persona,
+        ...(draft.previous === null ? {} : { previousPayload: draft.previous }),
+      };
+    case 'persona-delete':
+      return {
+        ...base,
+        kind: 'persona-delete',
+        title: draft.name,
+        summary: draft.summary,
+        status: 'pending',
+        payload: { id: draft.personaId, name: draft.name },
+      };
     default:
       return {
         ...base,
@@ -182,6 +201,7 @@ export function useAdminChat(options: {
               instances: session.instances,
               cards: session.library.cards,
               worldBooks: session.library.worldBooks,
+              personas: session.personas,
               history,
               userInput: text,
               pendingDrafts,
@@ -216,6 +236,7 @@ export function useAdminChat(options: {
             instances: session.instances,
             cards: session.library.cards,
             worldBooks: session.library.worldBooks,
+            personas: session.personas,
             history,
             userInput: text,
             pendingDrafts,
@@ -226,6 +247,7 @@ export function useAdminChat(options: {
             context: {
               knownCardIds: session.library.cards.map((card) => card.id),
               knownBookIds: session.library.worldBooks.map((book) => book.id),
+              knownPersonas: session.personas,
             },
             execute: (draft) => executeDraft(draft, artifacts),
           },
@@ -315,6 +337,7 @@ export function useAdminChat(options: {
         const context = {
           knownCardIds: session.library.cards.map((card) => card.id),
           knownBookIds: session.library.worldBooks.map((book) => book.id),
+          knownPersonas: session.personas,
         };
 
         const artifacts: AdminArtifact[] = [];

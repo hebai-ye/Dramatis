@@ -1139,6 +1139,17 @@ export class Repository {
       const book = target.payload as WorldBook;
       await this.saveWorldBook(book);
       targetId = book.id;
+    } else if (target.kind === 'persona-upsert') {
+      const persona = target.payload as Persona;
+      await this.savePersona(persona);
+      targetId = persona.id;
+    } else if (target.kind === 'persona-delete') {
+      const payload = target.payload as { id?: unknown };
+      const id = typeof payload.id === 'string' ? payload.id : target.targetId;
+      if (id !== null) {
+        await this.deletePersona(id);
+        targetId = id;
+      }
     } else {
       targetId = target.targetId;
     }
@@ -1200,6 +1211,12 @@ export class Repository {
       await this.deleteCard(target.targetId as CardId);
     } else if (target.kind === 'world-book' && target.targetId !== null) {
       await this.deleteWorldBook(target.targetId as WorldBookId);
+    } else if (target.kind === 'persona-upsert' && target.targetId !== null) {
+      if (target.previousPayload !== undefined) {
+        await this.savePersona(target.previousPayload as Persona);
+      } else {
+        await this.deletePersona(target.targetId);
+      }
     }
 
     const reverted: AdminArtifact = { ...target, status: 'pending', targetId: null };

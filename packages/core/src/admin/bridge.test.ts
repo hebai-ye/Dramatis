@@ -36,6 +36,7 @@ describe('buildAdminBridgeMessages', () => {
       instances: [world.instance],
       cards: [card],
       worldBooks: [],
+      personas: [],
       history: [],
       userInput: '帮我起草一个角色',
     });

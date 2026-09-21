@@ -32,6 +32,14 @@ const STATUS_LABEL: Record<AdminArtifact['status'], string> = {
   applied: '已生效',
 };
 
+const ARTIFACT_LABEL: Record<AdminArtifact['kind'], string> = {
+  'character-card': '角色卡',
+  'world-book': '世界书',
+  'persona-upsert': '玩家身份',
+  'persona-delete': '删除身份',
+  scene: '场景',
+};
+
 function ArtifactCard({
   artifact,
   disabled,
@@ -54,7 +62,11 @@ function ArtifactCard({
    * 世界书给前几条词条，让人看得到粒度。
    */
   // 字段名跟着 `Card` 走：开场白叫 `firstMessage`（不是 firstMes），别自己造一个
-  const payload = artifact.payload as { firstMessage?: unknown; description?: unknown; entries?: unknown } | null;
+  const payload = artifact.payload as {
+    firstMessage?: unknown;
+    description?: unknown;
+    entries?: unknown;
+  } | null;
   const firstMes = typeof payload?.firstMessage === 'string' ? payload.firstMessage.trim() : '';
   const description = typeof payload?.description === 'string' ? payload.description.trim() : '';
   const entryCount = Array.isArray(payload?.entries) ? payload.entries.length : 0;
@@ -62,9 +74,7 @@ function ArtifactCard({
   return (
     <div className={`artifact ${artifact.status}`}>
       <div className="artifact-head">
-        <span className="tag accent">
-          {artifact.kind === 'character-card' ? '角色卡' : artifact.kind === 'world-book' ? '世界书' : '场景'}
-        </span>
+        <span className="tag accent">{ARTIFACT_LABEL[artifact.kind]}</span>
         <strong>{artifact.title}</strong>
         <span className="hint">{STATUS_LABEL[artifact.status]}</span>
       </div>
@@ -95,8 +105,13 @@ function ArtifactCard({
 
       {artifact.status === 'pending' ? (
         <div className="inline">
-          <button type="button" disabled={disabled} onClick={onAdopt}>
-            采纳
+          <button
+            type="button"
+            className={artifact.kind === 'persona-delete' ? 'ghost danger' : undefined}
+            disabled={disabled}
+            onClick={onAdopt}
+          >
+            {artifact.kind === 'persona-delete' ? '确认删除' : '采纳'}
           </button>
           <button type="button" className="ghost danger" disabled={disabled} onClick={onDiscard}>
             丢弃
@@ -104,7 +119,7 @@ function ArtifactCard({
         </div>
       ) : null}
 
-      {artifact.status === 'adopted' && onRevoke !== undefined ? (
+      {artifact.status === 'adopted' && onRevoke !== undefined && artifact.kind !== 'persona-delete' ? (
         <div className="inline">
           <span className="hint">已进素材库</span>
           <button
@@ -202,7 +217,9 @@ export function SideChat({
                 artifact={artifact}
                 disabled={busy || archived}
                 exists={
-                  artifact.kind !== 'scene' &&
+                  (artifact.kind === 'character-card' ||
+                    artifact.kind === 'world-book' ||
+                    artifact.kind === 'persona-upsert') &&
                   typeof (artifact.payload as { id?: unknown } | null)?.id === 'string' &&
                   (existingIds ?? []).includes((artifact.payload as { id: string }).id)
                 }

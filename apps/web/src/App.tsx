@@ -1577,6 +1577,7 @@ export function App() {
                   existingIds={[
                     ...session.library.cards.map((card) => card.id),
                     ...session.library.worldBooks.map((book) => book.id),
+                    ...session.personas.map((persona) => persona.id),
                   ]}
                 />
               ) : (

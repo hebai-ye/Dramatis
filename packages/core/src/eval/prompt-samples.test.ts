@@ -264,6 +264,7 @@ describe('真实模型验证取样器', () => {
           deletedAt: null,
         },
       ],
+      personas: [],
       history: [
         {
           id: newId() as never,

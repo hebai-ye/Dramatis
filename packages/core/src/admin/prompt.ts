@@ -2,12 +2,13 @@ import type { Card, WorldBook } from '../model/card.js';
 import type { Conversation } from '../model/conversation.js';
 import type { CharacterInstance } from '../model/instance.js';
 import type { Message } from '../model/message.js';
+import type { Persona } from '../model/persona.js';
 import type { Room, Scene } from '../model/room.js';
 import type { ChatMessage } from '../prompt/types.js';
 import { ADMIN_TOOLS } from './tools.js';
 
 const SYSTEM_PROMPT = [
-  '你是这个世界管理员，负责帮用户把素材搭起来：角色卡、世界书、当前场景。',
+  '你是这个世界管理员，负责帮用户把素材搭起来：角色卡、世界书、玩家身份（Persona）与当前场景。',
   '你不扮演任何角色，也不写剧情台词——那是主对话的事。',
   '需要落成素材时，直接调用工具，不要在正文里贴 JSON 或代码块。',
   '工具只会产出草稿：用户点「采纳」才会进入素材库，所以要一次把内容写完整、写好。',
@@ -22,6 +23,7 @@ export interface AdminPromptInput {
   instances: readonly CharacterInstance[];
   cards: readonly Card[];
   worldBooks: readonly WorldBook[];
+  personas: readonly Persona[];
   /** 副对话自己的历史，不含主对话的任何消息。 */
   history: readonly Message[];
   userInput: string;
@@ -45,7 +47,11 @@ function preview(value: string): string {
  * 这里必须给出**原有内容**，不能只给「有几条」：修改是整本替换（工具语义如此），
  * 模型看不到旧条目就会把原设定弄丢——这正是真实模型验证里第一次跑出来的问题。
  */
-function describeLibrary(cards: readonly Card[], worldBooks: readonly WorldBook[]): string {
+function describeLibrary(
+  cards: readonly Card[],
+  worldBooks: readonly WorldBook[],
+  personas: readonly Persona[],
+): string {
   const cardLines =
     cards.length === 0
       ? '（还没有角色卡）'
@@ -82,7 +88,15 @@ function describeLibrary(cards: readonly Card[], worldBooks: readonly WorldBook[
           })
           .join('\n');
 
-  return [`角色卡：\n${cardLines}`, `世界书：\n${bookLines}`].join('\n\n');
+  const personaLines =
+    personas.length === 0
+      ? '（还没有玩家身份）'
+      : personas
+          .slice(0, MAX_LISTED)
+          .map((persona) => `- ${persona.name}（id: ${persona.id}）：${preview(persona.description)}`)
+          .join('\n');
+
+  return [`角色卡：\n${cardLines}`, `世界书：\n${bookLines}`, `玩家身份：\n${personaLines}`].join('\n\n');
 }
 
 /**
@@ -112,7 +126,7 @@ export function buildAdminMessages(input: AdminPromptInput): ChatMessage[] {
     {
       role: 'system',
       content: [
-        `当前素材：\n${describeLibrary(input.cards, input.worldBooks)}`,
+        `当前素材：\n${describeLibrary(input.cards, input.worldBooks, input.personas)}`,
         '',
         '注意：修改角色卡与世界书是**整份替换**——你必须把原有内容一并写回去，',
         '再在此基础上增补，不要只写你新加的那部分，也不要在用户没要求时删掉已有设定。',

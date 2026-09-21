@@ -1304,8 +1304,9 @@ export function useSession(db: DramatisDb | null): SessionApi {
         messages: current.messages.map((message) => (message.id === messageId ? result.message : message)),
       });
       await refreshLibrary();
+      await refreshPersonas();
     },
-    [db, refreshLibrary, setSnapshot],
+    [db, refreshLibrary, refreshPersonas, setSnapshot],
   );
 
   const discardArtifact = useCallback(
@@ -1334,8 +1335,9 @@ export function useSession(db: DramatisDb | null): SessionApi {
       });
       // 素材库跟着变（刚删掉的那份要消失）
       await refreshLibrary();
+      await refreshPersonas();
     },
-    [db, refreshLibrary, setSnapshot],
+    [db, refreshLibrary, refreshPersonas, setSnapshot],
   );
 
   const conversation =

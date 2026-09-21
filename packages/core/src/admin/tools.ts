@@ -13,6 +13,7 @@ import {
   nowIso,
   type WorldBookId,
 } from '../model/ids.js';
+import type { Persona } from '../model/persona.js';
 import type { CastPolicy, Scene } from '../model/room.js';
 import type { ChatToolCall, ToolDefinition } from '../prompt/types.js';
 
@@ -22,7 +23,12 @@ import type { ChatToolCall, ToolDefinition } from '../prompt/types.js';
  * 三件事都对应一种素材：角色卡、世界书、当前场景。刻意不多给——
  * 管理员的职责是「帮你起草素材」，不是「替你玩这个游戏」。
  */
-export type AdminToolName = 'upsert_character_card' | 'upsert_world_book' | 'set_scene';
+export type AdminToolName =
+  | 'upsert_character_card'
+  | 'upsert_world_book'
+  | 'upsert_persona'
+  | 'delete_persona'
+  | 'set_scene';
 
 export const ADMIN_TOOLS: readonly ToolDefinition[] = [
   {
@@ -85,6 +91,41 @@ export const ADMIN_TOOLS: readonly ToolDefinition[] = [
   {
     type: 'function',
     function: {
+      name: 'upsert_persona',
+      description:
+        '起草或修改一份玩家身份（Persona）。身份描述玩家在对话中是谁；' +
+        '修改已有身份时必须带 personaId，改动先作为草稿等待用户采纳。',
+      parameters: {
+        type: 'object',
+        properties: {
+          personaId: { type: 'string', description: '修改已有身份时填它的 id；新建时留空' },
+          name: { type: 'string', description: '玩家身份的名字' },
+          description: { type: 'string', description: '外貌、来历、性格与扮演设定' },
+        },
+        required: ['name', 'description'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'delete_persona',
+      description:
+        '申请彻底删除一份玩家身份。必须同时给出 personaId 与 confirmName（身份的当前名字）；' +
+        '这里只会生成待确认删除草稿，用户点确认后才真正删除。',
+      parameters: {
+        type: 'object',
+        properties: {
+          personaId: { type: 'string', description: '要删除的身份 id' },
+          confirmName: { type: 'string', description: '身份的当前名字，用于防止删错' },
+        },
+        required: ['personaId', 'confirmName'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
       name: 'set_scene',
       description:
         '设置当前场景：地点、世界内时间、场景设定或入场策略。**只写用户明确要求改的字段**，' +
@@ -128,7 +169,22 @@ export interface SceneDraft {
   summary: string;
 }
 
-export type AdminDraft = CharacterCardDraft | WorldBookDraft | SceneDraft;
+export interface PersonaUpsertDraft {
+  kind: 'persona-upsert';
+  personaId: string | null;
+  persona: Persona;
+  previous: Persona | null;
+  summary: string;
+}
+
+export interface PersonaDeleteDraft {
+  kind: 'persona-delete';
+  personaId: string;
+  name: string;
+  summary: string;
+}
+
+export type AdminDraft = CharacterCardDraft | WorldBookDraft | PersonaUpsertDraft | PersonaDeleteDraft | SceneDraft;
 
 export type AdminToolParseResult = { ok: true; draft: AdminDraft } | { ok: false; error: string };
 
@@ -136,6 +192,8 @@ export interface AdminToolContext {
   /** 素材库里已有的卡与世界书，用来校验 cardId / bookId。 */
   knownCardIds?: readonly string[];
   knownBookIds?: readonly string[];
+  /** 当前账户里的 Persona；删除时用 name 做二次确认。 */
+  knownPersonas?: readonly Persona[];
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -286,6 +344,67 @@ function parseWorldBookDraft(args: Record<string, unknown>, context: AdminToolCo
   };
 }
 
+function parsePersonaUpsertDraft(args: Record<string, unknown>, context: AdminToolContext): AdminToolParseResult {
+  const name = text(args.name);
+  const description = longText(args.description);
+  if (name === '') return { ok: false, error: 'name 不能为空' };
+  if (description === '') return { ok: false, error: 'description 不能为空' };
+
+  const rawId = text(args.personaId);
+  const known = context.knownPersonas;
+  const previous = rawId === '' ? null : (known?.find((persona) => persona.id === rawId) ?? null);
+  if (rawId !== '' && known !== undefined && previous === null) {
+    return { ok: false, error: `账户里没有 id 为 ${rawId} 的玩家身份；要新建就留空 personaId` };
+  }
+
+  const now = nowIso();
+  const persona: Persona = {
+    id: rawId === '' ? newId() : rawId,
+    name,
+    description,
+    createdAt: previous?.createdAt ?? now,
+    updatedAt: now,
+    deletedAt: null,
+  };
+
+  return {
+    ok: true,
+    draft: {
+      kind: 'persona-upsert',
+      personaId: rawId === '' ? null : rawId,
+      persona,
+      previous,
+      summary: `${rawId === '' ? '新建' : '修改'}玩家身份「${name}」`,
+    },
+  };
+}
+
+function parsePersonaDeleteDraft(args: Record<string, unknown>, context: AdminToolContext): AdminToolParseResult {
+  const personaId = text(args.personaId);
+  const confirmName = text(args.confirmName);
+  if (personaId === '') return { ok: false, error: 'personaId 不能为空' };
+  if (confirmName === '') return { ok: false, error: 'confirmName 不能为空' };
+
+  const known = context.knownPersonas;
+  const persona = known?.find((item) => item.id === personaId) ?? null;
+  if (known !== undefined && persona === null) {
+    return { ok: false, error: `账户里没有 id 为 ${personaId} 的玩家身份` };
+  }
+  if (persona !== null && persona.name !== confirmName) {
+    return { ok: false, error: `confirmName 与身份当前名字不一致；要删除请写「${persona.name}」` };
+  }
+
+  return {
+    ok: true,
+    draft: {
+      kind: 'persona-delete',
+      personaId,
+      name: persona?.name ?? confirmName,
+      summary: `彻底删除玩家身份「${persona?.name ?? confirmName}」（等待用户确认）`,
+    },
+  };
+}
+
 function parseSceneDraft(args: Record<string, unknown>): AdminToolParseResult {
   const patch: Partial<Scene> = {};
 
@@ -330,6 +449,10 @@ export function parseAdminToolCall(call: ChatToolCall, context: AdminToolContext
       return parseCardDraft(parsed.value, context);
     case 'upsert_world_book':
       return parseWorldBookDraft(parsed.value, context);
+    case 'upsert_persona':
+      return parsePersonaUpsertDraft(parsed.value, context);
+    case 'delete_persona':
+      return parsePersonaDeleteDraft(parsed.value, context);
     case 'set_scene':
       return parseSceneDraft(parsed.value);
     default:

@@ -540,7 +540,19 @@ git ls-files | ForEach-Object {
 
 ---
 
-## 十二、几点注意
+## 十二、2026-09-21 夜：消息操作与输入区（顺序 39–41）
+
+| 文件 | 新增/修改 | 说明 |
+| --- | --- | --- |
+| `apps/web/src/components/Icons.tsx` | **新增** | 输入区那四个内联 SVG 图标（加号 / 地图钉 / 向上箭头 / 方块）；不引图标库，吃 `currentColor` |
+| `apps/web/src/components/MainChat.tsx` | 改 | 消息操作改悬停 / 右键 / 长按（`menuFor` / `pressTimer` / `swallowNextClick`，菜单走 `createPortal`）；输入区改成 `.composer-box` + `.composer-chip` + `.composer-action`，输入框自动长高 |
+| `apps/web/src/components/MessageBody.tsx` | 改 | 挂在最后一段上的操作从 `.bubble-actions` 换成 `.row-actions`（平时不可见，可见性交给样式） |
+| `apps/web/src/components/SideChat.tsx` | 改 | 副对话的输入区换成与主对话同一套（盒子 + 圆形发送键） |
+| `apps/web/src/styles.css` | 改 | `.row-actions` / `.row-menu`（fixed + portal 定位）、`.composer-box` / `.composer-chip` / `.composer-action` 与窄屏规则；删掉随之失效的 `.usage-hint` |
+| `apps/web/tools/world-seed-probe.ts` | 改 | 角色回复补上 `usage`——线上每条都有，回归数据也得有（菜单里的 Token 那行靠它） |
+| `docs/TASKS.md` / `docs/EVAL.md` / `docs/LAYOUT.md` / `docs/STATUS.md` | 改 | 总表加 39/40/41，验证记录第二十四、二十五节，界面取舍 28–31，接续点 |
+
+## 十三、几点注意
 
 ---
 

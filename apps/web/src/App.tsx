@@ -130,7 +130,6 @@ function firstSentence(text: string): string {
 export function App() {
   const { db, boot, error: dbError } = useDatabase();
   const session = useSession(db);
-  const providers = useProviders(db);
   const world = session.world;
   const conversation = session.conversation;
 
@@ -158,6 +157,7 @@ export function App() {
    * （节流 20 秒，见 lib/sync.ts），用户也可以随时手动触发。
    */
   const sync = useSync(db, { onChanged: () => void session.refreshAll() });
+  const providers = useProviders(db, sync);
 
   const worker = useBackgroundWorker({
     db,

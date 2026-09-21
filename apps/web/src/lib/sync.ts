@@ -3,7 +3,10 @@ import {
   createHttpSyncTransport,
   createRemoteSpace,
   createSpaceCredentials,
+  decryptRecord,
   deriveSpaceHandle,
+  type EncryptedRecord,
+  encryptRecord,
   fetchRemoteSpace,
   normalizeRecoveryCode,
   openSpace,
@@ -133,6 +136,10 @@ export interface SyncApi {
   exportSnapshot: () => Promise<{ records: number; bytes: number; name: string } | null>;
   /** 把一份快照灌回**当前**服务端（服务端被清空后的恢复路）。 */
   restoreSnapshot: (snapshot: ServerSnapshot) => Promise<{ pushed: number; head: number }>;
+  /** 把一条账户秘密封进同步主密钥，供账户内实体携带。 */
+  sealSecret: (id: string, revision: string, secret: string) => Promise<EncryptedRecord | null>;
+  /** 解开账户内携带的秘密；还没解锁同步时返回 null。 */
+  openSecret: (id: string, revision: string, sealed: EncryptedRecord) => Promise<string | null>;
 }
 
 function normalizeEndpoint(raw: string): string {
@@ -407,6 +414,35 @@ export function useSync(db: DramatisDb | null, options: { onChanged?: () => void
     [db, remember],
   );
 
+  const sealSecret = useCallback(
+    async (id: string, revision: string, secret: string): Promise<EncryptedRecord | null> => {
+      const current = configRef.current;
+      const session = sessionRef.current;
+      if (current === null || session === null) return null;
+      return encryptRecord(
+        session.encKey,
+        { spaceHandle: current.spaceHandle, collection: 'providerCredentials', id, updatedAt: revision },
+        { secret },
+      );
+    },
+    [],
+  );
+
+  const openSecret = useCallback(
+    async (id: string, revision: string, sealed: EncryptedRecord): Promise<string | null> => {
+      const current = configRef.current;
+      const session = sessionRef.current;
+      if (current === null || session === null) return null;
+      const opened = await decryptRecord<{ secret?: unknown }>(
+        session.encKey,
+        { spaceHandle: current.spaceHandle, collection: 'providerCredentials', id, updatedAt: revision },
+        sealed,
+      );
+      return typeof opened.secret === 'string' ? opened.secret : null;
+    },
+    [],
+  );
+
   /**
    * 这个空间最近有哪些设备在写（顺序 14）。
    *
@@ -634,6 +670,8 @@ export function useSync(db: DramatisDb | null, options: { onChanged?: () => void
     spaceFull,
     exportSnapshot,
     restoreSnapshot,
+    sealSecret,
+    openSecret,
   };
 }
 

@@ -3,6 +3,8 @@ import {
   createProviderProfile,
   createVault,
   type KeyStore,
+  newId,
+  nowIso,
   type ProviderProfile,
 } from '@dramatis/core';
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -15,6 +17,7 @@ import {
   openBrowserVault,
   type VaultSession,
 } from './keystore';
+import type { SyncApi } from './sync';
 import type { BackgroundProviderConfig } from './worker';
 
 const META_ACTIVE_PROFILE = 'provider.activeId';
@@ -26,6 +29,14 @@ const DEFAULT_PROFILE: CreateProviderProfileInput = {
   model: 'deepseek-chat',
   role: 'main',
 };
+
+function isAutoCreatedDefault(profile: ProviderProfile): boolean {
+  return (
+    profile.name === DEFAULT_PROFILE.name &&
+    profile.baseUrl === DEFAULT_PROFILE.baseUrl &&
+    profile.model === DEFAULT_PROFILE.model
+  );
+}
 
 export interface ProvidersApi {
   profiles: ProviderProfile[];
@@ -75,7 +86,10 @@ export interface ProvidersApi {
  * 配置本身落在实体表里，密钥落在 KeyStore 里，两者通过 keyRef 关联。
  * 这样配置将来可以安全同步，密钥永远不会离开设备。
  */
-export function useProviders(db: DramatisDb | null): ProvidersApi {
+export function useProviders(
+  db: DramatisDb | null,
+  sync: Pick<SyncApi, 'config' | 'status' | 'requestAutoSync' | 'sealSecret' | 'openSecret'>,
+): ProvidersApi {
   const [profiles, setProfiles] = useState<ProviderProfile[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
   /**
@@ -117,11 +131,17 @@ export function useProviders(db: DramatisDb | null): ProvidersApi {
 
       const storedMode = await db.repository.getMeta<KeyStorageMode>(META_KEY_MODE);
       const storedActive = await db.repository.getMeta<string>(META_ACTIVE_PROFILE);
+      const activeIdValue = storedActive ?? list.find((profile) => profile.active === true)?.id ?? list[0]?.id ?? null;
+      if (activeIdValue !== null && !list.some((profile) => profile.active === true)) {
+        list = list.map((profile) => (profile.id === activeIdValue ? { ...profile, active: true } : profile));
+        const selected = list.find((profile) => profile.id === activeIdValue);
+        if (selected !== undefined) await db.repository.saveProviderProfile(selected);
+      }
 
       if (cancelled) return;
       setProfiles(list);
       setKeyModeState(storedMode === 'session' ? 'session' : storedMode === 'encrypted' ? 'encrypted' : 'device');
-      setActiveId(storedActive ?? list[0]?.id ?? null);
+      setActiveId(activeIdValue);
     })();
 
     // 本机有没有口令库：不需要口令就能问，界面靠它决定显示「解锁」还是「设口令」
@@ -160,6 +180,88 @@ export function useProviders(db: DramatisDb | null): ProvidersApi {
     void store.get(backgroundProfile.keyRef).then((secret) => setBackgroundKey(secret ?? ''));
   }, [keyMode, vault, activeId, profiles]);
 
+  const syncCredential = useCallback(
+    async (profile: ProviderProfile, secret: string): Promise<void> => {
+      if (db === null || sync.config === null || sync.status !== 'ready') return;
+      if (secret.trim() === '') {
+        await db.repository.deleteProviderCredential(profile.keyRef);
+        sync.requestAutoSync();
+        return;
+      }
+
+      const existing = (await db.repository.listProviderCredentials()).find((item) => item.id === profile.keyRef);
+      const revision = newId();
+      const encryptedSecret = await sync.sealSecret(profile.keyRef, revision, secret);
+      if (encryptedSecret === null) return;
+      await db.repository.saveProviderCredential({
+        id: profile.keyRef,
+        providerId: profile.id,
+        revision,
+        encryptedSecret,
+        createdAt: existing?.createdAt ?? nowIso(),
+        updatedAt: nowIso(),
+        deletedAt: null,
+      });
+      sync.requestAutoSync();
+    },
+    [db, sync.config, sync.requestAutoSync, sync.sealSecret, sync.status],
+  );
+
+  /**
+   * 账户同步接通后，把两边的模型 Key 对齐：
+   *
+   * - 本机有 Key、账户里还没有密文：补一条加密凭据；
+   * - 账户里有密文、本机没有缓存：解开并写回当前 KeyStore；
+   * - 本机已有缓存：不回写，避免覆盖用户刚编辑的值。
+   */
+  useEffect(() => {
+    if (db === null || sync.status !== 'ready' || profiles.length === 0) return;
+    if (keyMode === 'encrypted' && vault === null) return;
+    let cancelled = false;
+
+    void (async () => {
+      const remoteProfiles = await db.repository.listProviderProfiles();
+      const remoteIds = new Set(remoteProfiles.map((profile) => profile.id));
+      let nextActiveId =
+        remoteProfiles.find((profile) => profile.active === true)?.id ??
+        (activeId !== null && remoteIds.has(activeId) ? activeId : (remoteProfiles[0]?.id ?? null));
+      for (const localProfile of profiles) {
+        if (remoteIds.has(localProfile.id) || !isAutoCreatedDefault(localProfile)) continue;
+        const localSecret = await keyStoreRef.current.get(localProfile.keyRef);
+        if (localSecret !== null && localSecret !== '') continue;
+        await db.repository.deleteProviderProfile(localProfile.id);
+        if (nextActiveId === localProfile.id) nextActiveId = remoteProfiles[0]?.id ?? null;
+      }
+      if (remoteProfiles.length > 0) setProfiles(remoteProfiles);
+      if (nextActiveId !== activeId) {
+        setActiveId(nextActiveId);
+        await db.repository.setMeta(META_ACTIVE_PROFILE, nextActiveId);
+      }
+      const credentials = await db.repository.listProviderCredentials();
+      const byId = new Map(credentials.map((credential) => [credential.id, credential]));
+      for (const profile of remoteProfiles) {
+        if (cancelled) return;
+        const local = await keyStoreRef.current.get(profile.keyRef);
+        if (local !== null && local !== '') {
+          if (!byId.has(profile.keyRef)) await syncCredential(profile, local);
+          continue;
+        }
+
+        const credential = byId.get(profile.keyRef);
+        if (credential === undefined) continue;
+        const opened = await sync.openSecret(profile.keyRef, credential.revision, credential.encryptedSecret);
+        if (opened === null || opened === '') continue;
+        await keyStoreRef.current.set(profile.keyRef, opened);
+        if (profile.id === nextActiveId) setApiKeyState(opened);
+        if (profile.role === 'background') setBackgroundKey(opened);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeId, db, keyMode, profiles, sync.openSecret, sync.status, syncCredential, vault]);
+
   /**
    * 解开本机的口令库（顺序 10）。
    *
@@ -176,19 +278,31 @@ export function useProviders(db: DramatisDb | null): ProvidersApi {
     async (id: string) => {
       setActiveId(id);
       await db?.repository.setMeta(META_ACTIVE_PROFILE, id);
+      const next = profiles.map((profile) =>
+        profile.active === (profile.id === id) ? profile : { ...profile, active: profile.id === id },
+      );
+      setProfiles(next);
+      for (const profile of next) {
+        const previous = profiles.find((item) => item.id === profile.id);
+        if (previous?.active === profile.active) continue;
+        await db?.repository.saveProviderProfile(profile);
+      }
     },
-    [db],
+    [db, profiles],
   );
 
   const addProfile = useCallback(
     async (input: CreateProviderProfileInput) => {
       if (!db) return;
-      const created = createProviderProfile(input);
+      const created = { ...createProviderProfile(input), active: true };
+      for (const profile of profiles.filter((item) => item.active === true)) {
+        await db.repository.saveProviderProfile({ ...profile, active: false });
+      }
       await db.repository.saveProviderProfile(created);
       await refresh();
       await selectProfile(created.id);
     },
-    [db, refresh, selectProfile],
+    [db, profiles, refresh, selectProfile],
   );
 
   const updateProfile = useCallback(
@@ -225,11 +339,13 @@ export function useProviders(db: DramatisDb | null): ProvidersApi {
 
       if (value === '') {
         await keyStoreRef.current.remove(profile.keyRef);
+        await syncCredential(profile, '');
         return;
       }
       await keyStoreRef.current.set(profile.keyRef, value);
+      await syncCredential(profile, value);
     },
-    [activeId, profiles],
+    [activeId, profiles, syncCredential],
   );
 
   const setKeyMode = useCallback(
@@ -294,8 +410,9 @@ export function useProviders(db: DramatisDb | null): ProvidersApi {
       setKeyKind(store.kind);
       setApiKeyState(input.apiKey);
       await updateProfile(profile.id, input.profile);
+      await syncCredential(profile, input.apiKey);
     },
-    [activeId, db, keyMode, profiles, updateProfile],
+    [activeId, db, keyMode, profiles, syncCredential, updateProfile],
   );
 
   return {

@@ -1,3 +1,4 @@
+import type { EncryptedRecord } from '../crypto/records.js';
 import { newId, nowIso } from './ids.js';
 
 /**
@@ -40,10 +41,30 @@ export interface ProviderProfile {
   /** 为回复预留的空间。 */
   reserveForReply: number;
   role: ProviderRole;
+  /** 账户里当前选中的配置；随账户同步，但不参与调用参数。 */
+  active?: boolean;
   /** 单价，缺省表示「没填」——账单只报 token，不编钱。 */
   price?: ProviderPrice | null;
   createdAt: string;
   updatedAt: string;
+}
+
+/**
+ * 随账户同步的模型凭据（账户重构 A6/A7）。
+ *
+ * `encryptedSecret` 由账户同步主密钥加密；同步层还会再加密整条记录，
+ * 所以服务端拿到的是双层密文。换到新设备后，用同一个同步主密钥解出 Key，
+ * 再按本机选择写入 KeyStore。
+ */
+export interface ProviderCredential {
+  id: string;
+  providerId: string;
+  /** 加密 AAD 中的稳定修订号；不能用同步层的 updatedAt。 */
+  revision: string;
+  encryptedSecret: EncryptedRecord;
+  createdAt: string;
+  updatedAt: string;
+  deletedAt: string | null;
 }
 
 export interface CreateProviderProfileInput {
@@ -55,6 +76,7 @@ export interface CreateProviderProfileInput {
   maxTokens?: number;
   reserveForReply?: number;
   role?: ProviderRole;
+  active?: boolean;
   price?: ProviderPrice | null;
 }
 
@@ -87,6 +109,7 @@ export function createProviderProfile(input: CreateProviderProfileInput): Provid
     maxTokens: input.maxTokens ?? 65536,
     reserveForReply: input.reserveForReply ?? 4096,
     role: input.role ?? 'both',
+    active: input.active ?? false,
     price: input.price ?? null,
     createdAt: now,
     updatedAt: now,

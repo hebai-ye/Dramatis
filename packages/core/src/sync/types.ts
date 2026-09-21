@@ -33,6 +33,8 @@ export const SYNC_COLLECTIONS = [
   'memories',
   'chapterSummaries',
   'personas',
+  'providerProfiles',
+  'providerCredentials',
 ] as const;
 
 export type SyncCollection = (typeof SYNC_COLLECTIONS)[number];

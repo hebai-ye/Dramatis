@@ -19,7 +19,7 @@ import type { AffectChange, CharacterInstance, RelationshipChange } from '../mod
 import { aliveOnly, isAlive } from '../model/lifecycle.js';
 import { type AdminArtifact, localSeqOf, type MemoryEvent, type Message } from '../model/message.js';
 import { createPersona, type Persona } from '../model/persona.js';
-import type { ProviderProfile } from '../model/provider.js';
+import type { ProviderCredential, ProviderProfile } from '../model/provider.js';
 import type { Room, Scene } from '../model/room.js';
 import type { EntityQuery, EntityStore } from '../platform/entity-store.js';
 import {
@@ -54,6 +54,7 @@ export const COLLECTIONS = {
   backgroundTasks: 'backgroundTasks',
   usageRecords: USAGE_COLLECTION,
   chapterSummaries: 'chapterSummaries',
+  providerCredentials: 'providerCredentials',
 } as const;
 
 export const META_KEYS = {
@@ -1467,14 +1468,32 @@ export class Repository {
   // ---- 模型服务配置（P0-8） ----
 
   async listProviderProfiles(): Promise<ProviderProfile[]> {
-    return this.store.list<ProviderProfile>(COLLECTIONS.providerProfiles, { orderBy: 'createdAt' });
+    return this.listAlive<ProviderProfile>(COLLECTIONS.providerProfiles, { orderBy: 'createdAt' });
   }
 
   async saveProviderProfile(profile: ProviderProfile): Promise<void> {
-    await this.store.put(COLLECTIONS.providerProfiles, { ...profile, updatedAt: nowIso() });
+    const updatedAt = await this.stampUpdatedAt(COLLECTIONS.providerProfiles, profile.id);
+    await this.store.put(COLLECTIONS.providerProfiles, { ...profile, updatedAt, deletedAt: null });
   }
 
   async deleteProviderProfile(id: string): Promise<void> {
-    await this.store.remove(COLLECTIONS.providerProfiles, id);
+    const credentials = await this.listProviderCredentials();
+    for (const credential of credentials.filter((item) => item.providerId === id)) {
+      await this.softDelete(COLLECTIONS.providerCredentials, credential.id);
+    }
+    await this.softDelete(COLLECTIONS.providerProfiles, id);
+  }
+
+  async listProviderCredentials(): Promise<ProviderCredential[]> {
+    return this.listAlive<ProviderCredential>(COLLECTIONS.providerCredentials, { orderBy: 'createdAt' });
+  }
+
+  async saveProviderCredential(credential: ProviderCredential): Promise<void> {
+    const updatedAt = await this.stampUpdatedAt(COLLECTIONS.providerCredentials, credential.id);
+    await this.store.put(COLLECTIONS.providerCredentials, { ...credential, updatedAt, deletedAt: null });
+  }
+
+  async deleteProviderCredential(id: string): Promise<void> {
+    await this.softDelete(COLLECTIONS.providerCredentials, id);
   }
 }

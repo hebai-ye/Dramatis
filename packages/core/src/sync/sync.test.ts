@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import { createSpaceCredentials, openSpace } from '../crypto/keys.js';
+import { decryptRecord, encryptRecord } from '../crypto/records.js';
 import { createBlankCard } from '../model/card.js';
 import { eventId, newId, nowIso, type RoomId, type SceneId } from '../model/ids.js';
 import type { MemoryEvent } from '../model/message.js';
 import { createPersona } from '../model/persona.js';
+import { createProviderProfile } from '../model/provider.js';
 import { createMemoryEntityStore } from '../platform/memory-store.js';
 import { createWorldFromCard } from '../session/setup.js';
 import { createPlayerMessage, createTurnId } from '../session/turn.js';
@@ -142,6 +144,50 @@ describe('decideMerge（LWW 的全部岔路）', () => {
 });
 
 describe('同步循环', () => {
+  it('模型配置与 Key 密文随账户同步，新设备用同一主密钥解得回来', async () => {
+    const peer = await twoDevices();
+    const profile = createProviderProfile({
+      name: '假模型',
+      baseUrl: 'http://127.0.0.1:5280',
+      model: 'fake-model',
+      keyRef: 'provider:fake',
+    });
+    const revision = nowIso();
+    const encryptedSecret = await encryptRecord(
+      peer.a.encKey,
+      { spaceHandle: peer.spaceHandle, collection: 'providerCredentials', id: profile.keyRef, updatedAt: revision },
+      { secret: 'sk-sync-me' },
+    );
+    await peer.a.repository.saveProviderProfile(profile);
+    await peer.a.repository.saveProviderCredential({
+      id: profile.keyRef,
+      providerId: profile.id,
+      revision,
+      encryptedSecret,
+      createdAt: nowIso(),
+      updatedAt: nowIso(),
+      deletedAt: null,
+    });
+
+    await sync(peer, peer.a);
+    await sync(peer, peer.b);
+
+    const profiles = await peer.b.repository.listProviderProfiles();
+    const credentials = await peer.b.repository.listProviderCredentials();
+    const credential = credentials[0];
+    expect(profiles.map((item) => item.name)).toContain('假模型');
+    expect(credentials).toHaveLength(1);
+    expect(credential).toBeDefined();
+    if (credential === undefined) throw new Error('没有同步到模型凭据');
+    expect(JSON.stringify(credential.encryptedSecret)).not.toContain('sk-sync-me');
+    const opened = await decryptRecord<{ secret: string }>(
+      peer.b.encKey,
+      { spaceHandle: peer.spaceHandle, collection: 'providerCredentials', id: profile.keyRef, updatedAt: revision },
+      credential.encryptedSecret,
+    );
+    expect(opened.secret).toBe('sk-sync-me');
+  });
+
   /**
    * 分页拉取的回归（真实换设备时复现过）。
    *

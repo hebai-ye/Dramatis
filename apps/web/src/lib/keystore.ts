@@ -1,4 +1,4 @@
-import { createMemoryKeyStore, hasVault, type KeyStore, openVault, type VaultStorage } from '@dramatis/core';
+import { createMemoryKeyStore, hasVault, type KeyStore, openVault, readVault, type VaultStorage } from '@dramatis/core';
 
 /**
  * 密钥存储模式（ROADMAP P2-8）。
@@ -53,6 +53,42 @@ function writeAll(values: Record<string, string>): void {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(values));
   } catch {
     // 隐私模式或配额耗尽时退化为仅本次会话有效
+  }
+}
+
+/**
+ * 硬删除账户时清掉这些 ref 的本机缓存。
+ *
+ * 两个地方都要看：明文档在 `dramatis.keys.v1`，口令档在 `dramatis.vault.v1`。
+ * 口令库不需要口令也能删条目（删除不涉及解密；库损坏时也不能阻止账户删除）。
+ */
+export async function removeBrowserKeyRefs(refs: readonly string[]): Promise<void> {
+  const unique = [...new Set(refs)].filter((ref) => ref !== '');
+  if (unique.length === 0) return;
+
+  const all = readAll();
+  let plainChanged = false;
+  for (const ref of unique) {
+    if (Object.hasOwn(all, ref)) {
+      delete all[ref];
+      plainChanged = true;
+    }
+  }
+  if (plainChanged) writeAll(all);
+
+  try {
+    const file = await readVault(vaultStorage);
+    if (file === null) return;
+    let vaultChanged = false;
+    for (const ref of unique) {
+      if (Object.hasOwn(file.secrets, ref)) {
+        delete file.secrets[ref];
+        vaultChanged = true;
+      }
+    }
+    if (vaultChanged) await vaultStorage.write(JSON.stringify(file));
+  } catch {
+    // 坏掉的本地口令库不能挡住账户硬删除；数据库与明文缓存已经清理。
   }
 }
 

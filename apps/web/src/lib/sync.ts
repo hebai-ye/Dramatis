@@ -18,7 +18,7 @@ import {
   type SyncReport,
 } from '@dramatis/core';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { DramatisDb } from './db';
+import { type DramatisDb, readActiveAccount } from './db';
 import { createBrowserFileIO } from './fileio';
 import { createBrowserKeyStore, type KeyStorageMode } from './keystore';
 import { buildSnapshot, parseSnapshot, type ServerSnapshot, snapshotFileName } from './snapshot';
@@ -43,7 +43,18 @@ import { buildSnapshot, parseSnapshot, type ServerSnapshot, snapshotFileName } f
  */
 
 const META_CONFIG = 'sync.config';
-const KEY_REF_PASSWORD = 'sync:password';
+const LEGACY_SYNC_PASSWORD_KEY_REF = 'sync:password';
+
+/**
+ * 同步密码的本机缓存必须按账户分开。
+ *
+ * A1 之后一个账户一条同步空间；如果仍共用 `sync:password`，先连 A、再连 B
+ * 就会把 A 的密码覆盖掉，切回 A 时自动同步必然失败。键里带上内部 storageId，
+ * 并在首次读取时把旧版全局键迁移到当前账户。
+ */
+export function syncPasswordKeyRef(accountId: string): string {
+  return `${LEGACY_SYNC_PASSWORD_KEY_REF}:${accountId}`;
+}
 
 /**
  * 两次自动同步之间的最小间隔。
@@ -206,6 +217,7 @@ export function useSync(db: DramatisDb | null, options: { onChanged?: () => void
   const sessionRef = useRef<SyncSession | null>(null);
   const configRef = useRef<SyncConfig | null>(null);
   const keyModeRef = useRef<KeyStorageMode>('session');
+  const passwordRef = syncPasswordKeyRef(readActiveAccount().id);
 
   // 同步写完库之后要有人告诉界面「重新读一遍」——否则用户会以为
   // 「同步成功了但什么都没来」。用 ref 跟随，避免把 drain 变成依赖泥球。
@@ -218,9 +230,9 @@ export function useSync(db: DramatisDb | null, options: { onChanged?: () => void
       setConfig(next);
       if (db === null) return;
       await db.repository.setMeta(META_CONFIG, next);
-      if (secret !== null) await createBrowserKeyStore(next.keyMode).set(KEY_REF_PASSWORD, secret);
+      if (secret !== null) await createBrowserKeyStore(next.keyMode).set(passwordRef, secret);
     },
-    [db],
+    [db, passwordRef],
   );
 
   const doSync = useCallback(
@@ -265,9 +277,25 @@ export function useSync(db: DramatisDb | null, options: { onChanged?: () => void
 
         keyModeRef.current = stored.keyMode;
         configRef.current = stored;
-        setConfig(stored);
 
-        const secret = await createBrowserKeyStore(stored.keyMode).get(KEY_REF_PASSWORD);
+        /*
+         * 先迁移旧版全局同步密码，再更新 React 状态。
+         *
+         * StrictMode / 并发渲染下，setState 可能让这次 effect 很快进入清理；
+         * 把本机迁移放到 setState 之前，才能保证旧用户第一次打开就一定迁移。
+         */
+        const store = createBrowserKeyStore(stored.keyMode);
+        let secret = await store.get(passwordRef);
+        if (secret === null) {
+          const legacy = await store.get(LEGACY_SYNC_PASSWORD_KEY_REF);
+          if (legacy !== null) {
+            await store.set(passwordRef, legacy);
+            await store.remove(LEGACY_SYNC_PASSWORD_KEY_REF);
+            secret = legacy;
+          }
+        }
+        if (cancelled) return;
+        setConfig(stored);
         if (secret === null) {
           // 密码没存（用户选了"仅本次会话"，或者换了设备）
           if (!cancelled) setStatus('needs-secret');
@@ -292,7 +320,7 @@ export function useSync(db: DramatisDb | null, options: { onChanged?: () => void
     return () => {
       cancelled = true;
     };
-  }, [db, doSync]);
+  }, [db, doSync, passwordRef]);
 
   const connect = useCallback(
     async (input: SyncConnectInput): Promise<void> => {
@@ -388,30 +416,30 @@ export function useSync(db: DramatisDb | null, options: { onChanged?: () => void
   const disconnect = useCallback(async (): Promise<void> => {
     if (db === null) return;
     await db.repository.setMeta(META_CONFIG, null);
-    await createBrowserKeyStore(keyModeRef.current).remove(KEY_REF_PASSWORD);
+    await createBrowserKeyStore(keyModeRef.current).remove(passwordRef);
     sessionRef.current = null;
     configRef.current = null;
     setConfig(null);
     setStatus('off');
     setError(null);
     setRecoveryCode(null);
-  }, [db]);
+  }, [db, passwordRef]);
 
   const setKeyMode = useCallback(
     async (mode: KeyStorageMode): Promise<void> => {
       const current = configRef.current;
       if (db === null || current === null) return;
       const store = createBrowserKeyStore(keyModeRef.current);
-      const secret = await store.get(KEY_REF_PASSWORD);
+      const secret = await store.get(passwordRef);
 
       keyModeRef.current = mode;
-      if (secret !== null) await createBrowserKeyStore(mode).set(KEY_REF_PASSWORD, secret);
+      if (secret !== null) await createBrowserKeyStore(mode).set(passwordRef, secret);
       // 从"保存在本机"切回"仅本次会话"时，把落盘那份清掉——否则用户以为收回了，磁盘上还在
-      if (mode === 'session') await store.remove(KEY_REF_PASSWORD);
+      if (mode === 'session') await store.remove(passwordRef);
 
       await remember({ ...current, keyMode: mode }, null);
     },
-    [db, remember],
+    [db, passwordRef, remember],
   );
 
   const sealSecret = useCallback(
@@ -499,9 +527,9 @@ export function useSync(db: DramatisDb | null, options: { onChanged?: () => void
       // 服务端换完了：本机的凭证与密码都要跟着换，否则下一次同步自己就 401 了
       sessionRef.current = { credential: rotated.credential, encKey: session.encKey };
       await remember({ ...current, lastReport: current.lastReport }, newPassword);
-      await createBrowserKeyStore(current.keyMode).set(KEY_REF_PASSWORD, newPassword);
+      await createBrowserKeyStore(current.keyMode).set(passwordRef, newPassword);
     },
-    [db, remember],
+    [db, passwordRef, remember],
   );
 
   /**

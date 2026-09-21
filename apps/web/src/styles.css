@@ -649,9 +649,9 @@ button.ghost:focus-visible {
   align-items: flex-start;
   border: 1px solid var(--line);
   border-radius: 6px;
-  display: flex;
+  display: grid;
   gap: 10px;
-  justify-content: space-between;
+  grid-template-columns: minmax(0, 1fr) auto;
   padding: 9px 10px;
 }
 
@@ -674,6 +674,27 @@ button.ghost:focus-visible {
 
 .account-rename input {
   max-width: 180px;
+}
+
+.account-delete-confirm {
+  background: color-mix(in srgb, var(--danger) 7%, transparent);
+  border: 1px solid color-mix(in srgb, var(--danger) 32%, var(--line));
+  border-radius: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  grid-column: 1 / -1;
+  padding: 9px 10px;
+}
+
+.account-delete-confirm p {
+  margin: 0;
+}
+
+.account-delete-confirm code {
+  color: var(--text);
+  font-weight: 600;
+  overflow-wrap: anywhere;
 }
 
 .account-create {
@@ -905,8 +926,15 @@ button.ghost:focus-visible {
   }
 }
 
-.inline input {
+.inline input,
+.inline select {
   flex: 1;
+  min-width: 0;
+}
+
+.inline > button {
+  flex: 0 0 auto;
+  white-space: nowrap;
 }
 
 .inline-check input {

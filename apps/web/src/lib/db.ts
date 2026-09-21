@@ -13,6 +13,7 @@ import {
   type UsageLedger,
 } from '@dramatis/core';
 import { type DBSchema, type IDBPDatabase, openDB } from 'idb';
+import { removeBrowserKeyRefs } from './keystore';
 
 const DB_NAME = 'dramatis';
 
@@ -35,6 +36,7 @@ const DB_NAME = 'dramatis';
  */
 const LEGACY_ACCOUNT_STORAGE_KEY = 'dramatis.localAccount.v1';
 const ACCOUNT_REGISTRY_KEY = 'dramatis.accounts.v2';
+const PENDING_ACCOUNT_DELETIONS_KEY = 'dramatis.accounts.pendingDelete.v1';
 
 export interface LocalAccount {
   /** 内部稳定 id：数据库名与密钥命名空间使用它。 */
@@ -56,6 +58,13 @@ export interface AccountRegistry {
   version: 2;
   activeId: string;
   accounts: LocalAccount[];
+}
+
+interface PendingAccountDeletion {
+  dbName: string;
+  label: string;
+  secretRefs: string[];
+  queuedAt: string;
 }
 
 export function accountDbName(id: string): string {
@@ -126,6 +135,38 @@ function writeRegistry(registry: AccountRegistry): void {
     localStorage.setItem(ACCOUNT_REGISTRY_KEY, JSON.stringify(registry));
   } catch {
     // 隐私模式：本次会话仍能靠内存中的当前账户继续工作。
+  }
+}
+
+function readPendingAccountDeletions(): PendingAccountDeletion[] {
+  try {
+    const raw = localStorage.getItem(PENDING_ACCOUNT_DELETIONS_KEY);
+    if (raw === null) return [];
+    const parsed = JSON.parse(raw) as unknown;
+    if (typeof parsed !== 'object' || parsed === null || !Array.isArray((parsed as { items?: unknown }).items)) {
+      return [];
+    }
+    return (parsed as { items: unknown[] }).items.filter((item): item is PendingAccountDeletion => {
+      if (typeof item !== 'object' || item === null) return false;
+      const record = item as Record<string, unknown>;
+      return (
+        typeof record.dbName === 'string' &&
+        typeof record.label === 'string' &&
+        Array.isArray(record.secretRefs) &&
+        record.secretRefs.every((ref) => typeof ref === 'string') &&
+        typeof record.queuedAt === 'string'
+      );
+    });
+  } catch {
+    return [];
+  }
+}
+
+function writePendingAccountDeletions(items: readonly PendingAccountDeletion[]): void {
+  try {
+    localStorage.setItem(PENDING_ACCOUNT_DELETIONS_KEY, JSON.stringify({ items }));
+  } catch {
+    // 删不掉注册表时也不该让账户“复活”：调用方会保留内存里的注册表更新。
   }
 }
 
@@ -253,6 +294,84 @@ export function removeAccount(id: string): void {
 }
 
 /**
+ * 硬删除一个账户之前，先把要清理的本机密钥引用找出来。
+ *
+ * 账户的模型配置在 IndexedDB 里，但 API Key 的本机缓存可能在 localStorage
+ * 的明文键空间或口令库里。数据库删掉之前先读出 keyRef，才能真正把缓存也清掉。
+ */
+export async function listAccountSecretRefs(dbName: string): Promise<string[]> {
+  try {
+    const opened = await createIndexedDbEntityStore(dbName);
+    try {
+      const profiles = await opened.store.list<Record<string, unknown>>('providerProfiles');
+      const credentials = await opened.store.list<Record<string, unknown>>('providerCredentials');
+      const refs = new Set<string>();
+      for (const profile of profiles) {
+        if (typeof profile.keyRef === 'string' && profile.keyRef !== '') refs.add(profile.keyRef);
+      }
+      for (const credential of credentials) {
+        if (typeof credential.id === 'string' && credential.id !== '') refs.add(credential.id);
+      }
+      return [...refs];
+    } finally {
+      opened.db.close();
+    }
+  } catch {
+    // 库不存在、打不开或没有模型配置：没有需要额外清理的引用。
+    return [];
+  }
+}
+
+/**
+ * 把账户删除排进「下次启动一定执行」的队列。
+ *
+ * 为什么要排队：当前账户的 IndexedDB 连接正开着，直接 deleteDatabase 会被
+ * blocked。先在注册表里移除账户并关掉页面，下一次打开应用时旧连接已经释放，
+ * 再删库；如果其他标签页还占着，标记会保留并在之后每次启动重试。
+ */
+export function queueAccountDeletion(account: LocalAccount, secretRefs: readonly string[]): void {
+  const current = readPendingAccountDeletions().filter((item) => item.dbName !== account.dbName);
+  current.push({
+    dbName: account.dbName,
+    label: account.name,
+    secretRefs: [...new Set(secretRefs)].filter((ref) => ref !== ''),
+    queuedAt: nowIso(),
+  });
+  writePendingAccountDeletions(current);
+}
+
+/** IndexedDB 的 deleteDatabase 是事件式 API；封装成能 await 的 Promise。 */
+export function deleteLocalDatabase(dbName: string): Promise<void> {
+  if (typeof indexedDB === 'undefined') return Promise.resolve();
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.deleteDatabase(dbName);
+    request.onsuccess = () => resolve();
+    request.onerror = () => reject(request.error ?? new Error(`删除本机数据库失败：${dbName}`));
+    request.onblocked = () => reject(new Error(`账户数据仍被其他标签页占用：${dbName}。关闭其他标签页后会自动重试。`));
+  });
+}
+
+/** 启动时重试所有排队的硬删除；失败的保留标记，避免账户被扫描“复活”。 */
+export async function flushPendingAccountDeletions(): Promise<{ deleted: number; remaining: number }> {
+  const items = readPendingAccountDeletions();
+  if (items.length === 0) return { deleted: 0, remaining: 0 };
+
+  const remaining: PendingAccountDeletion[] = [];
+  let deleted = 0;
+  for (const item of items) {
+    try {
+      await removeBrowserKeyRefs(item.secretRefs);
+      await deleteLocalDatabase(item.dbName);
+      deleted += 1;
+    } catch {
+      remaining.push(item);
+    }
+  }
+  writePendingAccountDeletions(remaining);
+  return { deleted, remaining: remaining.length };
+}
+
+/**
  * 把浏览器里已经存在、但注册表还没记住的数据库补进来。
  *
  * 这是 A1 的兼容入口：老版本只把账户 id 塞在数据库名里，没有结构化注册表。
@@ -261,11 +380,13 @@ export function removeAccount(id: string): void {
 export async function loadAccountRegistry(): Promise<AccountRegistry> {
   const registry = readAccountRegistry();
   const databases = await listLocalDatabases();
+  const pendingDeletions = new Set(readPendingAccountDeletions().map((item) => item.dbName));
   const known = new Set(registry.accounts.map((account) => account.dbName));
   let changed = false;
   const accounts = [...registry.accounts];
 
   for (const dbName of databases) {
+    if (pendingDeletions.has(dbName)) continue;
     if (known.has(dbName)) continue;
     const accountId = legacyAccountIdFromDbName(dbName);
     const storageId = dbName === DB_NAME ? 'local' : `legacy-${accountId}`;
@@ -436,6 +557,14 @@ export interface DramatisDb {
  * 分成两个连接会让事务与缓存语义变得难以推理。
  */
 export async function openDramatisDb(): Promise<DramatisDb> {
+  /*
+   * 先执行上一轮排队的账户硬删除。
+   *
+   * 当前账户是最常见的删除对象：删除它时页面必须刷新，旧连接才会释放；
+   * 这次启动是最可靠的删除时机。失败时标记会保留，并由下次启动继续重试。
+   */
+  await flushPendingAccountDeletions().catch(() => undefined);
+
   // 打开**当前账户**的库（顺序 37）：没选账户就是原来那份本机数据。
   const name = activeDbName();
   let store: EntityStore;

@@ -777,7 +777,18 @@ git ls-files | ForEach-Object {
 | `packages/core/src/storage/persona-delete.test.ts` | **新增** | 墓碑无正文、旧对话保留身份快照 |
 | `docs/EVAL.md` / `docs/TASKS.md` / `docs/STATUS.md` | 改 | 第四十二节、任务 51 与接续状态 |
 
-## 三十二、几点注意
+## 三十二、2026-09-21 深夜：账户重构 A2/A9（硬删除与手机复查）
+
+| 文件 | 新增/修改 | 说明 |
+| --- | --- | --- |
+| `apps/web/src/lib/db.ts` | 改 | 账户删除队列、IndexedDB 硬删除、账户 Key 引用读取、删除标记防复活 |
+| `apps/web/src/lib/keystore.ts` | 改 | 按 keyRef 清理明文/口令库中的本机缓存 |
+| `apps/web/src/lib/sync.ts` | 改 | 同步密码缓存按 storageId 隔离，旧全局键迁移 |
+| `apps/web/src/components/AccountPanel.tsx` | 改 | 输入账户 ID 确认、硬删除流程、共享 Key 保护、删除结果说明 |
+| `apps/web/src/styles.css` | 改 | 删除确认块适配窄屏；inline 选择行按钮不再折行 |
+| `docs/EVAL.md` / `docs/SYNC.md` / `docs/TASKS.md` / `docs/STATUS.md` | 改 | 第四十三节、任务 52/53、账户级密码与硬删除边界 |
+
+## 三十三、几点注意
 
 ---
 

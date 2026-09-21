@@ -2174,3 +2174,12 @@ PASS  sourceMemoryIds 被反向记录继承
 PASS  反向记录带准确的 before/after
 PASS  没有页面级错误
 ```
+
+### 部署过程记录：远程命令不要经过 PowerShell 展开
+
+第一次替换命令用双引号包住远程脚本，本机 PowerShell 抢先解释了 `$(date)`，导致脚本边界失真：
+新包被移动成了线上目录里的 `/var/www/dramatis/dist-web-new`，旧站仍继续提供旧哈希。
+检查确认旧站没中断、嵌套包哈希正确后，先把嵌套包移回 `/tmp/dist-web-new`，再按
+「备份旧目录 → 换新包 → `chmod -R a+rX` → 重启 → 健康检查」完成部署。
+公网页面哈希切到 `assets/index-Ce3dI01j.js`，同步反代返回预期 404；本次没有数据丢失。
+以后 SSH 远程脚本一律用单引号包住，避免本机 shell 对远程变量做二次展开。

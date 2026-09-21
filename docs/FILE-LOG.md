@@ -552,7 +552,16 @@ git ls-files | ForEach-Object {
 | `apps/web/tools/world-seed-probe.ts` | 改 | 角色回复补上 `usage`——线上每条都有，回归数据也得有（菜单里的 Token 那行靠它） |
 | `docs/TASKS.md` / `docs/EVAL.md` / `docs/LAYOUT.md` / `docs/STATUS.md` | 改 | 总表加 39/40/41，验证记录第二十四、二十五节，界面取舍 28–31，接续点 |
 
-## 十三、几点注意
+## 十三、2026-09-21 夜续：次级按钮 / 消息操作 / 便捷指令（顺序 42–44）
+
+| 文件 | 新增/修改 | 说明 |
+| --- | --- | --- |
+| `apps/web/src/styles.css` | 改 | `button.ghost` 去边框改「悬停浅底」（触屏常驻浅底）、`.ghost.danger` 与 `.ghost.active` 跟着改；`.row-actions` 高度收紧、去掉 `.action-only`；`.mode-menu .quick-command` 的样式 |
+| `apps/web/src/components/MessageBody.tsx` | 改 | 操作按钮从「最后一段气泡里面」搬到「气泡的兄弟节点」 |
+| `apps/web/src/components/MainChat.tsx` | 改 | 「＋」菜单加便捷指令（`QUICK_COMMANDS` + `insertAtCursor`） |
+| `docs/EVAL.md` / `docs/TASKS.md` / `docs/LAYOUT.md` / `docs/STATUS.md` | 改 | 第二十六节（含 100 轮 token 账）、总表 42–44、界面取舍 32–34、接续点 |
+
+## 十四、几点注意
 
 ---
 

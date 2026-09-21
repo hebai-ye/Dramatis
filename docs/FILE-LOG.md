@@ -655,7 +655,16 @@ git ls-files | ForEach-Object {
 | `tools/fake-model/server.mjs` | 改 | 重要度给**分布**（0.3/0.45/0.7，原来恒定 0.45 测不到门槛两侧）；认得出合并提示词 |
 | `docs/MEMORY.md` / `docs/EVAL.md` / `docs/TASKS.md` / `docs/STATUS.md` | 改 | 27a 的落地与阈值调整、第三十一节、总表与接续点 |
 
-## 二十、几点注意
+## 二十、2026-09-21 深夜：27b 第一步（记忆附件的形状与生成）
+
+| 文件 | 新增/修改 | 说明 |
+| --- | --- | --- |
+| `packages/core/src/memory/attachment.ts` | **新增** | 三层附件（关系现状 / 时间线索引 / 记忆索引）、预算裁剪与 `stats.dropped`、关键词启发式、挂卡与取回 |
+| `packages/core/src/memory/attachment.test.ts` | **新增** | 7 个单测 |
+| `packages/core/src/index.ts` | 改 | 导出 attachment |
+| `docs/MEMORY.md` / `docs/TASKS.md` / `docs/STATUS.md` | 改 | 27b 第一步的落地、总表进度、接续点 |
+
+## 二十一、几点注意
 
 ---
 

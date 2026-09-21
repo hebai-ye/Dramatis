@@ -10,6 +10,7 @@ import type {
   EventId,
   InstanceId,
   MemoryEvent,
+  Persona,
   Presence,
   Scene,
   UsageSummary,
@@ -32,6 +33,9 @@ interface Props {
   /** 这个世界的对话：记忆面板的对话维度要用（T11）。 */
   conversations: Conversation[];
   activeConversationId: ConversationId | null;
+  personas: Persona[];
+  personaId: string | null;
+  playerName: string;
   /** 已滚成章节的前情（P1-5）。 */
   chapters: ChapterSummary[];
   attachedWorldBooks: WorldBook[];
@@ -57,6 +61,7 @@ interface Props {
   onSceneChange: (patch: Partial<Scene>) => void;
   onStartNewScene: (title: string) => void;
   onSetPresence: (id: InstanceId, presence: Presence) => void;
+  onSelectPersona: (persona: Persona) => void;
   onRenameInstance: (id: InstanceId, name: string) => void;
   onRemoveInstance: (id: InstanceId) => void;
   onAddInstance: (card: Card) => void;
@@ -105,6 +110,27 @@ export function RuntimePanel(props: Props) {
 
       {tab === 'scene' ? (
         <>
+          <section className="panel">
+            <h2>我的身份</h2>
+            <select
+              value={props.personaId ?? ''}
+              disabled={props.disabled}
+              aria-label="这条对话使用的身份"
+              onChange={(event) => {
+                const persona = props.personas.find((item) => item.id === event.target.value);
+                if (persona) props.onSelectPersona(persona);
+              }}
+            >
+              <option value="">{props.playerName || '未选择身份'}</option>
+              {props.personas.map((persona) => (
+                <option key={persona.id} value={persona.id}>
+                  {persona.name}
+                </option>
+              ))}
+            </select>
+            <p className="hint">只影响当前对话怎么称呼你；切换对话后可以选另一个身份。</p>
+          </section>
+
           {props.scene ? (
             <ScenePanel
               scene={props.scene}

@@ -62,6 +62,18 @@ export interface ConversationStateSnapshot {
   relationships: Relationship[];
 }
 
+/**
+ * 这条对话里玩家使用的身份快照。
+ *
+ * `personaId` 指向 Persona 库；名字与简介同时留一份，避免 Persona 被删除后
+ * 旧对话失去上下文。正常编辑 Persona 时，所有引用它的对话会同步刷新这份快照。
+ */
+export interface ConversationPersonaSnapshot {
+  personaId: string | null;
+  name: string;
+  description: string;
+}
+
 export interface Conversation {
   id: ConversationId;
   roomId: RoomId;
@@ -70,6 +82,12 @@ export interface Conversation {
   /** 每条对话有自己的场景线；世界（房间）上的卡与角色是共用的。 */
   activeSceneId: SceneId | null;
   modes: ConversationModes;
+  /** 当前对话选择的玩家身份；旧数据迁移时从 Room 复制。 */
+  personaId: string | null;
+  /** 身份名字的对话级快照。 */
+  playerName: string;
+  /** 身份设定的对话级快照。 */
+  playerPersona: string;
   /**
    * 非空表示这条对话已归档。
    *
@@ -91,10 +109,12 @@ export function createConversation(input: {
   kind?: ConversationKind;
   activeSceneId?: SceneId | null;
   instances?: readonly CharacterInstance[];
+  persona?: ConversationPersonaSnapshot | null;
   id?: ConversationId;
 }): Conversation {
   const now = nowIso();
   const title = input.title.trim();
+  const playerName = input.persona?.name.trim() === '' ? '玩家' : (input.persona?.name.trim() ?? '玩家');
 
   return {
     id: input.id ?? conversationId(newId()),
@@ -103,6 +123,9 @@ export function createConversation(input: {
     title: title === '' ? '新对话' : title,
     activeSceneId: input.activeSceneId ?? null,
     modes: defaultConversationModes(),
+    personaId: input.persona?.personaId ?? null,
+    playerName,
+    playerPersona: input.persona?.description ?? '',
     archivedAt: null,
     stateSnapshot: captureConversationState(input.instances ?? []),
     createdAt: now,

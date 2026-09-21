@@ -729,7 +729,21 @@ git ls-files | ForEach-Object {
 | `apps/web/src/components/SettingsDialog.tsx` / `apps/web/src/App.tsx` | 改 | 从账户设置移除 Persona，接到左栏 Pane |
 | `docs/EVAL.md` / `docs/TASKS.md` / `docs/STATUS.md` | 改 | 第三十八节、任务 47 与接续状态 |
 
-## 二十八、几点注意
+## 二十八、2026-09-21 深夜：账户重构 A4（对话级玩家身份）
+
+| 文件 | 新增/修改 | 说明 |
+| --- | --- | --- |
+| `packages/core/src/model/conversation.ts` | 改 | Conversation 增加 personaId / playerName / playerPersona 与创建参数 |
+| `packages/core/src/session/setup.ts` | 改 | 新世界、新对话继承默认 Persona |
+| `packages/core/src/prompt/assemble.ts` | 改 | 对话级玩家身份覆盖 Room 默认值 |
+| `packages/core/src/storage/repository.ts` | 改 | 迁移 v10；旧对话从 Room 复制身份 |
+| `packages/core/src/storage/archive.ts` | 改 | 导入封存时重建 Persona 引用与快照 |
+| `apps/web/src/lib/session.ts` | 改 | 切换当前对话身份、编辑/删除时同步引用与快照 |
+| `apps/web/src/components/RuntimePanel.tsx` / `App.tsx` | 改 | 面板“我的身份”选择器 |
+| `packages/core/src/storage/conversation.test.ts` / `repository.test.ts` / `prompt/assemble.test.ts` | 改 | 身份快照、继承、覆盖、v10 迁移回归 |
+| `docs/EVAL.md` / `docs/TASKS.md` / `docs/STATUS.md` | 改 | 第三十九节、任务 48 与接续状态 |
+
+## 二十九、几点注意
 
 ---
 

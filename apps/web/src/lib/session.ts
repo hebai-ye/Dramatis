@@ -257,10 +257,9 @@ export interface SessionApi {
   /** 撤回一条已采纳的草稿（顺序 26）：删掉刚进素材库的那份，草稿退回「待采纳」。 */
   revokeArtifact: (messageId: MessageId, artifactId: string) => Promise<void>;
   /**
-   * 切换这个世界使用的玩家身份（P0-3）。
+   * 切换**当前对话**使用的玩家身份，并把它同步为这个世界的默认值。
    *
-   * 刻意不叫 `usePersona`：以 `use` 开头的名字会被 lint 当成 React Hook，
-   * 于是每次在事件回调里调用都会报「Hook 不能在非顶层调用」。
+   * 其它已有对话不会被连带改写；它们各自保留自己的 `personaId` 与身份快照。
    */
   setPersona: (persona: Persona) => Promise<void>;
   savePersona: (persona: Persona) => Promise<void>;
@@ -634,6 +633,9 @@ export function useSession(db: DramatisDb | null): SessionApi {
       title: '世界管理',
       activeSceneId: null,
       modes: { playerFirst: false, silent: false },
+      personaId: null,
+      playerName: '玩家',
+      playerPersona: '',
       archivedAt: null,
       stateSnapshot: [],
       createdAt: now,
@@ -1009,6 +1011,16 @@ export function useSession(db: DramatisDb | null): SessionApi {
     async (persona: Persona) => {
       const current = snapshotRef.current;
       if (!db || !current) return;
+      const conversation = current.conversations.find((item) => item.id === current.room.activeConversationId);
+      if (!conversation) return;
+
+      const nextConversation: Conversation = {
+        ...conversation,
+        personaId: persona.id,
+        playerName: persona.name,
+        playerPersona: persona.description,
+        updatedAt: nowIso(),
+      };
       const room: Room = {
         ...current.room,
         personaId: persona.id,
@@ -1016,8 +1028,13 @@ export function useSession(db: DramatisDb | null): SessionApi {
         playerPersona: persona.description,
         updatedAt: nowIso(),
       };
+      await db.repository.saveConversation(nextConversation);
       await db.repository.saveRoom(room);
-      setSnapshot({ ...current, room });
+      setSnapshot({
+        ...current,
+        room,
+        conversations: current.conversations.map((item) => (item.id === nextConversation.id ? nextConversation : item)),
+      });
     },
     [db, setSnapshot],
   );
@@ -1038,13 +1055,28 @@ export function useSession(db: DramatisDb | null): SessionApi {
         ? current.personas.map((item) => (item.id === persona.id ? persona : item))
         : [...current.personas, persona];
 
-      // 改了当前 persona 的名字或设定，世界上的冗余副本也要跟着走
+      const conversations = current.conversations.map((conversation) =>
+        conversation.personaId === persona.id
+          ? {
+              ...conversation,
+              playerName: persona.name,
+              playerPersona: persona.description,
+              updatedAt: nowIso(),
+            }
+          : conversation,
+      );
+      for (const conversation of conversations) {
+        if (conversation.personaId !== persona.id) continue;
+        await db.repository.saveConversation(conversation);
+      }
+
+      // 世界上的副本继续当「新对话的默认身份」，但不代表所有旧对话都被改写。
       const room =
         current.room.personaId === persona.id
           ? { ...current.room, playerName: persona.name, playerPersona: persona.description }
           : current.room;
 
-      setSnapshot({ ...current, personas, room });
+      setSnapshot({ ...current, personas, room, conversations });
     },
     [db, setSnapshot],
   );
@@ -1065,8 +1097,20 @@ export function useSession(db: DramatisDb | null): SessionApi {
       if (!current) return;
 
       const personas = current.personas.filter((persona) => persona.id !== id);
+      const conversations = current.conversations.map((conversation) =>
+        conversation.personaId === id ? { ...conversation, personaId: null, updatedAt: nowIso() } : conversation,
+      );
+      for (const conversation of conversations) {
+        if (
+          conversation.personaId !== null ||
+          !current.conversations.some((item) => item.id === conversation.id && item.personaId === id)
+        ) {
+          continue;
+        }
+        await db.repository.saveConversation(conversation);
+      }
       const room = current.room.personaId === id ? { ...current.room, personaId: null } : current.room;
-      setSnapshot({ ...current, personas, room });
+      setSnapshot({ ...current, personas, room, conversations });
     },
     [db, setSnapshot],
   );

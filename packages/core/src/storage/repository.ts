@@ -37,7 +37,7 @@ import { USAGE_COLLECTION } from './usage.js';
  * 任何会改变已落盘数据结构的改动都要 +1，并补一条 `Migration`。
  * 这是「从第一天就留好升级路径」的具体做法（ROADMAP P0-1）。
  */
-export const SCHEMA_VERSION = 9;
+export const SCHEMA_VERSION = 10;
 
 export const COLLECTIONS = {
   meta: 'meta',
@@ -181,6 +181,9 @@ export const MIGRATIONS: readonly Migration[] = [
           title: '主线',
           activeSceneId: activeScene,
           modes: defaultConversationModes(),
+          personaId: typeof room.personaId === 'string' ? room.personaId : null,
+          playerName: typeof room.playerName === 'string' ? room.playerName : '玩家',
+          playerPersona: typeof room.playerPersona === 'string' ? room.playerPersona : '',
           archivedAt: null,
           // 旧数据没有「对话开始之前」的概念：整条线就是这个世界本身，
           // 所以快照留空，归档这样的对话不会回滚任何状态。
@@ -451,6 +454,32 @@ export const MIGRATIONS: readonly Migration[] = [
             relationships,
           });
         }
+      }
+    },
+  },
+  {
+    version: 10,
+    /* 账户重构 A4：玩家身份从世界级迁移到对话级。 */
+    describe: '对话补上 personaId / playerName / playerPersona，旧对话继承原世界身份',
+    run: async (store) => {
+      const rooms = await store.list<Room>(COLLECTIONS.rooms);
+      const roomsById = new Map(rooms.map((room) => [room.id, room]));
+      const conversations = await store.list<Conversation>(COLLECTIONS.conversations);
+      for (const conversation of conversations) {
+        if (
+          conversation.personaId !== undefined &&
+          conversation.playerName !== undefined &&
+          conversation.playerPersona !== undefined
+        ) {
+          continue;
+        }
+        const room = roomsById.get(conversation.roomId);
+        await store.put(COLLECTIONS.conversations, {
+          ...conversation,
+          personaId: conversation.personaId ?? room?.personaId ?? null,
+          playerName: conversation.playerName ?? room?.playerName ?? '玩家',
+          playerPersona: conversation.playerPersona ?? room?.playerPersona ?? '',
+        });
       }
     },
   },

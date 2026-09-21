@@ -358,6 +358,10 @@ export function App() {
           instance: options.speaker,
           room: world,
           scene,
+          player: {
+            name: conversation?.playerName ?? world.playerName,
+            description: conversation?.playerPersona ?? world.playerPersona,
+          },
           cast: instances,
           history: options.history,
           playerInput: options.playerInput,
@@ -1633,6 +1637,9 @@ export function App() {
                       memories={session.memories}
                       conversations={session.conversations}
                       activeConversationId={conversation?.id ?? null}
+                      personas={session.personas}
+                      personaId={conversation?.personaId ?? null}
+                      playerName={conversation?.playerName ?? world?.playerName ?? ''}
                       chapters={session.chapters}
                       attachedWorldBooks={session.worldBooks}
                       libraryCards={session.library.cards}
@@ -1650,6 +1657,7 @@ export function App() {
                       onSceneChange={(patch) => void session.updateScene(patch)}
                       onStartNewScene={(title) => void handleStartNewScene({ title, location: '', worldTime: '' })}
                       onSetPresence={(id, presence) => void session.setPresence(id, presence)}
+                      onSelectPersona={(persona) => void session.setPersona(persona)}
                       onRenameInstance={(id, name) => void session.updateInstance(id, { displayName: name })}
                       onRemoveInstance={(id) => void session.removeInstance(id)}
                       onAddInstance={(card) => void session.addInstance(card)}

@@ -266,6 +266,9 @@ export async function importWorldArchive(
       id: asConversationId(newId()),
       roomId,
       activeSceneId: null,
+      personaId: conversation.personaId === archive.persona?.id ? personaId : (conversation.personaId ?? personaId),
+      playerName: conversation.playerName ?? archive.persona?.name ?? '玩家',
+      playerPersona: conversation.playerPersona ?? archive.persona?.description ?? '',
       updatedAt: at,
     };
     conversationIds.set(conversation.id, created.id);

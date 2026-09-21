@@ -80,6 +80,43 @@ async function worldFixture() {
 }
 
 describe('世界 → 多对话', () => {
+  it('对话级身份快照独立于世界默认身份', () => {
+    const conversation = createConversation({
+      roomId: roomId('room-identity'),
+      title: '沈砚线',
+      persona: { personaId: 'persona-shen', name: '沈砚', description: '旧信的主人' },
+    });
+
+    expect(conversation.personaId).toBe('persona-shen');
+    expect(conversation.playerName).toBe('沈砚');
+    expect(conversation.playerPersona).toBe('旧信的主人');
+  });
+
+  it('新对话继承世界的默认身份，之后可以独立切换', () => {
+    const plan = planNewConversation({
+      room: {
+        id: roomId('room-persona-default'),
+        title: '默认身份世界',
+        personaId: 'persona-player',
+        playerName: '旅人',
+        playerPersona: '四处漂泊',
+        cardIds: [],
+        instanceIds: [],
+        worldBookIds: [],
+        activeConversationId: null,
+        createdAt: '2026-01-01T00:00:00.000Z',
+        updatedAt: '2026-01-01T00:00:00.000Z',
+        deletedAt: null,
+      },
+      existingInstances: [],
+      title: '新线',
+    });
+
+    expect(plan.conversation.personaId).toBe('persona-player');
+    expect(plan.conversation.playerName).toBe('旅人');
+    expect(plan.conversation.playerPersona).toBe('四处漂泊');
+  });
+
   it('新对话不会给同一位角色派生第二份实例', async () => {
     const { repository, room, alice, card } = await worldFixture();
 

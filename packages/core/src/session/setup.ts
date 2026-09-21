@@ -91,6 +91,7 @@ export function createWorldFromCard(card: Card, persona: Persona): World {
     roomId: roomIdValue,
     title: '主线',
     instances: [instance],
+    persona: { personaId: persona.id, name: persona.name, description: persona.description },
   });
   const scene = createSceneFor(roomIdValue, conversation.id, [instance.id], {
     title: '开场',
@@ -175,6 +176,11 @@ export function planNewConversation(input: {
     kind: input.kind,
     // 快照记的是「这条线开始之前」的状态，所以不含这条线新派生的实例
     instances: input.existingInstances,
+    persona: {
+      personaId: input.room.personaId,
+      name: input.room.playerName,
+      description: input.room.playerPersona,
+    },
   });
 
   const scene = createSceneFor(

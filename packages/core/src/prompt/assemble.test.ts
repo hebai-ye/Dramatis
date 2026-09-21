@@ -212,6 +212,23 @@ describe('assemblePrompt', () => {
     expect(system).toContain('信任 +0.40');
   });
 
+  it('对话级玩家身份覆盖世界上的旧默认身份', () => {
+    const { card, instance, room, scene } = fixtures();
+    const prompt = assemblePrompt({
+      card,
+      instance,
+      room,
+      scene,
+      history: [],
+      playerInput: '你好',
+      player: { name: '沈砚', description: '旧信的主人' },
+      budget: { maxTokens: 8000, reserveForReply: 1000 },
+    });
+
+    expect(prompt.messages[0]?.content).toContain('「沈砚」');
+    expect(prompt.messages.at(-1)).toEqual({ role: 'user', content: '你好' });
+  });
+
   it('锁场时把导演指令写进 prompt', () => {
     const { card, instance, room, scene } = fixtures('locked');
     const prompt = assemblePrompt({

@@ -67,6 +67,8 @@ export interface AssembleInput {
   intent?: string;
   /** 意图的模式；`hold_back` 时只写动作。 */
   intentMode?: 'reply' | 'cut_in' | 'hold_back' | 'initiate';
+  /** 当前对话选择的玩家身份；缺省时退回 Room 上的旧字段。 */
+  player?: { name: string; description: string };
   budget: {
     /** 模型的上下文窗口。 */
     maxTokens: number;
@@ -542,7 +544,8 @@ export function toChatMessages(blocks: PromptBlock[]): ChatMessage[] {
 export function assemblePrompt(input: AssembleInput): AssembledPrompt {
   const options = input.options ?? {};
   const counter = options.counter ?? heuristicTokenCounter;
-  const playerName = input.room.playerName.trim() === '' ? '玩家' : input.room.playerName.trim();
+  const rawPlayerName = input.player?.name ?? input.room.playerName;
+  const playerName = rawPlayerName.trim() === '' ? '玩家' : rawPlayerName.trim();
 
   const systemContent =
     options.systemPrompt ??

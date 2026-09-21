@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { Card } from '../model/card.js';
+import { createConversation } from '../model/conversation.js';
 import { cardId, eventId, instanceId, messageId, newId, nowIso, roomId, sceneId, worldBookId } from '../model/ids.js';
 import { type CharacterInstance, neutralTraits } from '../model/instance.js';
 import type { Room, Scene } from '../model/room.js';
@@ -195,6 +196,39 @@ describe('Repository / schema', () => {
     expect(migrated?.relationships[0]?.history[0]?.after).toBeCloseTo(0.3, 6);
     expect(migrated?.relationships[0]?.history[0]?.reversionOf).toBeNull();
   });
+
+  it('v10 把旧世界身份复制到每条对话', async () => {
+    const store = createMemoryEntityStore();
+    const { room } = fixtures();
+    const conversation = createConversation({ roomId: room.id, title: '旧对话' });
+    await store.put(COLLECTIONS.meta, {
+      id: META_KEYS.schemaVersion,
+      value: 9,
+      updatedAt: nowIso(),
+    });
+    await store.put(COLLECTIONS.rooms, {
+      ...room,
+      personaId: 'persona-old',
+      playerName: '沈砚',
+      playerPersona: '旧信的主人',
+    });
+    await store.put(COLLECTIONS.conversations, {
+      ...conversation,
+      personaId: undefined,
+      playerName: undefined,
+      playerPersona: undefined,
+    } as never);
+
+    const repo = new Repository(store);
+    const report = await repo.migrate();
+    const [migrated] = await repo.listConversations(room.id);
+
+    expect(report.applied.map((migration) => migration.version)).toEqual([10]);
+    expect(migrated?.personaId).toBe('persona-old');
+    expect(migrated?.playerName).toBe('沈砚');
+    expect(migrated?.playerPersona).toBe('旧信的主人');
+  });
+
   it('已是最新版本时重复迁移不做任何事', async () => {
     const repo = new Repository(createMemoryEntityStore());
     await repo.migrate();

@@ -11,6 +11,7 @@ import {
 } from '@dramatis/core';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { IconPlus, IconScene, IconSend, IconStop } from './Icons';
 import { Avatar, MessageBody } from './MessageBody';
 import { WebBridgePanel, type WebBridgeState } from './WebBridgePanel';
 
@@ -255,6 +256,20 @@ export function MainChat({
     };
   }, [menuFor]);
   const bottomRef = useRef<HTMLDivElement | null>(null);
+  const inputRef = useRef<HTMLTextAreaElement | null>(null);
+
+  /*
+   * 输入框跟着字数长高（最多 200px，再多就自己滚）。
+   * 长度交给浏览器量（scrollHeight），不自己算行数——换行、中英文混排、
+   * 手机上的软键盘都会影响实际高度，只有它自己知道。
+   */
+  // biome-ignore lint/correctness/useExhaustiveDependencies: 这里就是要跟着 input 重跑；它读的是 DOM 量出来的高度，代码里不出现 input 的值
+  useEffect(() => {
+    const node = inputRef.current;
+    if (node === null) return;
+    node.style.height = 'auto';
+    node.style.height = `${String(Math.min(node.scrollHeight, 200))}px`;
+  }, [input]);
 
   const contentLength = messages.reduce((total, message) => total + message.content.length, 0) + streamText.length;
 
@@ -630,87 +645,119 @@ export function MainChat({
         </p>
       ) : null}
 
+      {/*
+        输入区（用户 2026-09-21：照 Codex 的样子重做）。
+
+        结构上就一件事：**一个盒子**。输入框和下面那排控件都住在这个盒子里，
+        焦点态由盒子统一表示（`.composer-box:focus-within`），所以不用再画
+        「大输入框 + 外面一排带边框的小按钮」那种两层结构。
+      */}
       <div className="composer">
-        <textarea
-          value={input}
-          disabled={!ready || archived}
-          placeholder={
-            archived ? '已归档的对话不能再说话' : ready ? '说点什么……（Enter 发送，Shift+Enter 换行）' : '先导入角色卡'
-          }
-          onChange={(event) => setInput(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.key === 'Enter' && !event.shiftKey) {
-              event.preventDefault();
-              submit();
+        <div className="composer-box">
+          <textarea
+            ref={inputRef}
+            value={input}
+            disabled={!ready || archived}
+            placeholder={
+              archived
+                ? '已归档的对话不能再说话'
+                : ready
+                  ? '说点什么……（Enter 发送，Shift+Enter 换行）'
+                  : '先导入角色卡'
             }
-          }}
-        />
+            onChange={(event) => setInput(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter' && !event.shiftKey) {
+                event.preventDefault();
+                submit();
+              }
+            }}
+          />
 
-        <div className="composer-tools">
-          <div className="mode-anchor">
+          <div className="composer-tools">
+            <div className="mode-anchor">
+              <button
+                type="button"
+                className="composer-chip"
+                disabled={archived}
+                title="设置当前对话的模式"
+                aria-label="对话模式"
+                onClick={() => setModeMenuOpen((open) => !open)}
+              >
+                <IconPlus />
+              </button>
+              {modeMenuOpen ? (
+                <div className="mode-menu">
+                  <p className="hint">对话模式（只影响这条对话）</p>
+                  {MODE_LABELS.map((mode) => (
+                    <label key={mode.key} className="mode-option">
+                      <input
+                        type="checkbox"
+                        // 老数据里没有 intentFirst 这个字段，缺省视为开
+                        checked={
+                          mode.key === 'intentFirst'
+                            ? conversation.modes.intentFirst !== false
+                            : conversation.modes[mode.key] === true
+                        }
+                        disabled={archived}
+                        onChange={(event) => onToggleMode(mode.key, event.target.checked)}
+                      />
+                      <span>
+                        <strong>{mode.label}</strong>
+                        <span className="hint">{mode.note}</span>
+                      </span>
+                    </label>
+                  ))}
+                </div>
+              ) : null}
+            </div>
+
             <button
               type="button"
-              className="ghost"
+              className="composer-chip"
               disabled={archived}
-              title="设置当前对话的模式"
-              onClick={() => setModeMenuOpen((open) => !open)}
+              title="输入或切换当前场景"
+              onClick={onOpenScene}
             >
-              ＋
+              <IconScene />
+              <span className="composer-chip-label">场景{scene === null ? '' : `：${shorten(scene.title, 10)}`}</span>
             </button>
-            {modeMenuOpen ? (
-              <div className="mode-menu">
-                <p className="hint">对话模式（只影响这条对话）</p>
-                {MODE_LABELS.map((mode) => (
-                  <label key={mode.key} className="mode-option">
-                    <input
-                      type="checkbox"
-                      // 老数据里没有 intentFirst 这个字段，缺省视为开
-                      checked={
-                        mode.key === 'intentFirst'
-                          ? conversation.modes.intentFirst !== false
-                          : conversation.modes[mode.key] === true
-                      }
-                      disabled={archived}
-                      onChange={(event) => onToggleMode(mode.key, event.target.checked)}
-                    />
-                    <span>
-                      <strong>{mode.label}</strong>
-                      <span className="hint">{mode.note}</span>
-                    </span>
-                  </label>
-                ))}
-              </div>
-            ) : null}
+
+            <span className="composer-location">
+              {scene === null || scene.location.trim() === '' ? '地点未指定' : shorten(scene.location, 18)}
+            </span>
+
+            <div className="topbar-spacer" />
+
+            {busy ? (
+              <button
+                type="button"
+                className="composer-action stop"
+                title="停止这一轮"
+                aria-label="停止"
+                onClick={onStop}
+              >
+                <IconStop />
+              </button>
+            ) : (
+              <button
+                type="button"
+                /*
+                 * 桥接开着的时候不让再发一句：那会把「正等着贴回来」的这一步冲掉，
+                 * 而已经落盘的玩家消息又撤不回来。先把手上的这一轮转完。
+                 */
+                disabled={!ready || archived || input.trim() === '' || bridge !== null}
+                title={bridge === null ? undefined : '先把这一轮贴回来（或点「放弃这一轮」）再发下一句'}
+                /* 没配 Key 时这颗键不是「发送」而是「生成提示词」，得让读屏也听得出来 */
+                aria-label={manualMode && bridge === null ? '生成提示词' : '发送'}
+                className={manualMode && bridge === null ? 'composer-action labelled' : 'composer-action'}
+                onClick={submit}
+              >
+                <IconSend />
+                {manualMode && bridge === null ? <span>生成提示词</span> : null}
+              </button>
+            )}
           </div>
-
-          <button type="button" className="ghost" disabled={archived} title="输入或切换当前场景" onClick={onOpenScene}>
-            场景{scene === null ? '' : `：${shorten(scene.title, 10)}`}
-          </button>
-
-          <span className="hint">
-            {scene === null || scene.location.trim() === '' ? '地点未指定' : shorten(scene.location, 18)}
-          </span>
-
-          <div className="topbar-spacer" />
-
-          {busy ? (
-            <button type="button" onClick={onStop}>
-              停止
-            </button>
-          ) : (
-            <button
-              type="button"
-              /*
-               * 桥接开着的时候不让再发一句：那会把「正等着贴回来」的这一步冲掉，
-               * 而已经落盘的玩家消息又撤不回来。先把手上的这一轮转完。
-               */
-              disabled={!ready || archived || input.trim() === '' || bridge !== null}
-              title={bridge === null ? undefined : '先把这一轮贴回来（或点「放弃这一轮」）再发下一句'}
-              onClick={submit}
-            >
-              {manualMode && bridge === null ? '生成提示词' : '发送'}
-            </button>
-          )}
         </div>
       </div>
     </section>

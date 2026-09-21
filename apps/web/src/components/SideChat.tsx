@@ -1,5 +1,6 @@
 import type { AdminArtifact, Conversation, Message, MessageId } from '@dramatis/core';
 import { useEffect, useRef, useState } from 'react';
+import { IconSend, IconStop } from './Icons';
 import { WebBridgePanel } from './WebBridgePanel';
 
 interface Props {
@@ -92,12 +93,22 @@ export function SideChat({
 }: Props) {
   const [input, setInput] = useState('');
   const bottomRef = useRef<HTMLDivElement | null>(null);
+  const inputRef = useRef<HTMLTextAreaElement | null>(null);
   const contentLength = messages.reduce((total, message) => total + message.content.length, 0) + streamText.length;
 
   useEffect(() => {
     if (contentLength === 0) return;
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [contentLength]);
+
+  // 与主对话的输入框同一条规则：跟着字数长高，最多 200px
+  // biome-ignore lint/correctness/useExhaustiveDependencies: 同上——跟着 input 重跑，但读的是 DOM 的实际高度
+  useEffect(() => {
+    const node = inputRef.current;
+    if (node === null) return;
+    node.style.height = 'auto';
+    node.style.height = `${String(Math.min(node.scrollHeight, 200))}px`;
+  }, [input]);
 
   const submit = (): void => {
     if (!ready || busy || archived) return;
@@ -160,36 +171,49 @@ export function SideChat({
         />
       )}
 
+      {/* 与主对话同一个输入区形态（用户 2026-09-21 要求照 Codex 的样子） */}
       <div className="composer">
-        <textarea
-          value={input}
-          disabled={!ready || archived}
-          placeholder={archived ? '已归档的对话不能再说话' : '告诉管理员你想搭什么……（Enter 发送）'}
-          onChange={(event) => setInput(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.key === 'Enter' && !event.shiftKey) {
-              event.preventDefault();
-              submit();
-            }
-          }}
-        />
-        <div className="composer-tools">
-          <span className="hint">{conversation.title}</span>
-          <div className="topbar-spacer" />
-          {busy ? (
-            <button type="button" onClick={onStop}>
-              停止
-            </button>
-          ) : (
-            <button
-              type="button"
-              disabled={!ready || archived || input.trim() === '' || bridge !== null}
-              title={bridge === null ? undefined : '先把这一轮贴回来（或点「放弃这次起草」）再发下一句'}
-              onClick={submit}
-            >
-              {bridge === null && manualMode ? '生成提示词' : '发送'}
-            </button>
-          )}
+        <div className="composer-box">
+          <textarea
+            ref={inputRef}
+            value={input}
+            disabled={!ready || archived}
+            placeholder={archived ? '已归档的对话不能再说话' : '告诉管理员你想搭什么……（Enter 发送）'}
+            onChange={(event) => setInput(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter' && !event.shiftKey) {
+                event.preventDefault();
+                submit();
+              }
+            }}
+          />
+          <div className="composer-tools">
+            <span className="composer-location">{conversation.title}</span>
+            <div className="topbar-spacer" />
+            {busy ? (
+              <button
+                type="button"
+                className="composer-action stop"
+                title="停止这一轮"
+                aria-label="停止"
+                onClick={onStop}
+              >
+                <IconStop />
+              </button>
+            ) : (
+              <button
+                type="button"
+                disabled={!ready || archived || input.trim() === '' || bridge !== null}
+                title={bridge === null ? undefined : '先把这一轮贴回来（或点「放弃这次起草」）再发下一句'}
+                aria-label={bridge === null && manualMode ? '生成提示词' : '发送'}
+                className={bridge === null && manualMode ? 'composer-action labelled' : 'composer-action'}
+                onClick={submit}
+              >
+                <IconSend />
+                {bridge === null && manualMode ? <span>生成提示词</span> : null}
+              </button>
+            )}
+          </div>
         </div>
       </div>
     </section>

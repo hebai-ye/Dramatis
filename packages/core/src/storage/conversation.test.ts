@@ -190,7 +190,22 @@ describe('归档对话', () => {
         valence: 0.8,
         arousal: 0.7,
         updatedAt: now,
-        history: [{ at: now, turnId: 'turn-1', deltaValence: 0.8, deltaArousal: 0.7, reason: '被夸了' }],
+        history: [
+          {
+            id: 'change-1',
+            at: now,
+            turnId: 'turn-1',
+            beforeValence: 0,
+            afterValence: 0.8,
+            beforeArousal: 0,
+            afterArousal: 0.7,
+            deltaValence: 0.8,
+            deltaArousal: 0.7,
+            reason: '被夸了',
+            sourceMemoryIds: [],
+            reversionOf: null,
+          },
+        ],
       },
       relationships: [
         {
@@ -201,7 +216,20 @@ describe('归档对话', () => {
           respect: 0.2,
           tension: 0.1,
           updatedAt: now,
-          history: [{ at: now, turnId: 'turn-1', field: 'trust', delta: 0.6, reason: '被夸了' }],
+          history: [
+            {
+              id: 'relationship-change-1',
+              at: now,
+              turnId: 'turn-1',
+              field: 'trust',
+              before: 0,
+              after: 0.6,
+              delta: 0.6,
+              reason: '被夸了',
+              sourceMemoryIds: [],
+              reversionOf: null,
+            },
+          ],
         },
       ],
     };

@@ -15,7 +15,7 @@ import {
   type SceneId,
   type WorldBookId,
 } from '../model/ids.js';
-import type { CharacterInstance } from '../model/instance.js';
+import type { AffectChange, CharacterInstance, RelationshipChange } from '../model/instance.js';
 import { aliveOnly, isAlive } from '../model/lifecycle.js';
 import { type AdminArtifact, localSeqOf, type MemoryEvent, type Message } from '../model/message.js';
 import { createPersona, type Persona } from '../model/persona.js';
@@ -37,7 +37,7 @@ import { USAGE_COLLECTION } from './usage.js';
  * 任何会改变已落盘数据结构的改动都要 +1，并补一条 `Migration`。
  * 这是「从第一天就留好升级路径」的具体做法（ROADMAP P0-1）。
  */
-export const SCHEMA_VERSION = 8;
+export const SCHEMA_VERSION = 9;
 
 export const COLLECTIONS = {
   meta: 'meta',
@@ -351,6 +351,106 @@ export const MIGRATIONS: readonly Migration[] = [
           supersedes: memory.supersedes ?? [],
           consolidatedAt: memory.consolidatedAt ?? null,
         });
+      }
+    },
+  },
+  {
+    version: 9,
+    describe: '状态变化补 id / before / after / 来源记忆 / 撤销关联',
+    run: async (store) => {
+      const clamp = (value: number, min: number, max: number): number => Math.max(min, Math.min(max, value));
+      const legacyId = (scope: string, index: number, at: string, turnId: string): string =>
+        `legacy:${scope}:${String(index)}:${at}:${turnId}`;
+      const instances = await store.list<CharacterInstance>(COLLECTIONS.instances);
+      for (const instance of instances) {
+        let changed = false;
+
+        let valence = instance.affect.valence;
+        let arousal = instance.affect.arousal;
+        const affectHistory = [...instance.affect.history] as Array<Partial<AffectChange>>;
+        for (let index = affectHistory.length - 1; index >= 0; index -= 1) {
+          const change = affectHistory[index];
+          if (change === undefined) continue;
+          const afterValence = change.afterValence ?? valence;
+          const afterArousal = change.afterArousal ?? arousal;
+          const beforeValence = change.beforeValence ?? afterValence - (change.deltaValence ?? 0);
+          const beforeArousal = change.beforeArousal ?? afterArousal - (change.deltaArousal ?? 0);
+          const id = change.id ?? legacyId(instance.id, index, String(change.at ?? ''), String(change.turnId ?? ''));
+          const sourceMemoryIds = change.sourceMemoryIds ?? [];
+          const reversionOf = change.reversionOf ?? null;
+          if (
+            change.id === undefined ||
+            change.beforeValence === undefined ||
+            change.afterValence === undefined ||
+            change.beforeArousal === undefined ||
+            change.afterArousal === undefined ||
+            change.sourceMemoryIds === undefined ||
+            change.reversionOf === undefined
+          ) {
+            changed = true;
+            affectHistory[index] = {
+              ...(change as AffectChange),
+              id,
+              beforeValence,
+              afterValence,
+              beforeArousal,
+              afterArousal,
+              sourceMemoryIds,
+              reversionOf,
+            };
+          }
+          valence = beforeValence;
+          arousal = beforeArousal;
+        }
+
+        const relationships = instance.relationships.map((edge) => {
+          const values: Record<RelationshipChange['field'], number> = {
+            trust: edge.trust,
+            affinity: edge.affinity,
+            fear: edge.fear,
+            respect: edge.respect,
+            tension: edge.tension,
+          };
+          const history = [...edge.history] as Array<Partial<RelationshipChange>>;
+          for (let index = history.length - 1; index >= 0; index -= 1) {
+            const change = history[index];
+            if (change === undefined || change.field === undefined) continue;
+            const after = change.after ?? values[change.field];
+            const before = change.before ?? after - (change.delta ?? 0);
+            const id =
+              change.id ??
+              legacyId(`${instance.id}:${edge.target}`, index, String(change.at ?? ''), String(change.turnId ?? ''));
+            const sourceMemoryIds = change.sourceMemoryIds ?? [];
+            const reversionOf = change.reversionOf ?? null;
+            if (
+              change.id === undefined ||
+              change.before === undefined ||
+              change.after === undefined ||
+              change.sourceMemoryIds === undefined ||
+              change.reversionOf === undefined
+            ) {
+              changed = true;
+              history[index] = {
+                ...(change as RelationshipChange),
+                id,
+                before,
+                after,
+                sourceMemoryIds,
+                reversionOf,
+              };
+            }
+            values[change.field] = clamp(before, change.field === 'tension' || change.field === 'fear' ? 0 : -1, 1);
+          }
+          return changed ? { ...edge, history: history as RelationshipChange[] } : edge;
+        });
+
+        if (changed) {
+          await store.put(COLLECTIONS.instances, {
+            ...instance,
+            affect: { ...instance.affect, history: affectHistory as AffectChange[] },
+            relationships,
+          });
+        }
       }
     },
   },

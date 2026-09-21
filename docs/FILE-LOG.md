@@ -685,7 +685,21 @@ git ls-files | ForEach-Object {
 | `apps/web/src/lib/session.ts` | 改 | 暴露世界内 `allChapters` 供跨对话展开 |
 | `apps/web/src/App.tsx` | 改 | 传附件原文池；常规召回限定当前对话，避免旧正文漏回 |
 | `docs/EVAL.md` / `docs/MEMORY.md` / `docs/TASKS.md` / `docs/STATUS.md` | 改 | 第三十四节、27c 实测与接续点 |
-## 二十三、几点注意
+## 二十三、2026-09-21 深夜：27d（影响可审计、可按条目撤销）
+
+| 文件 | 新增/修改 | 说明 |
+| --- | --- | --- |
+| `packages/core/src/model/instance.ts` | 改 | `AffectChange` / `RelationshipChange` 加 id、before/after、sourceMemoryIds、reversionOf |
+| `packages/core/src/memory/affect.ts` | 改 | 应用时记录完整变化；`revertAffectChange()` 只追加反向记录；回合回滚复用同路径 |
+| `packages/core/src/memory/apply-analysis.ts` | 改 | 状态变化关联本轮写入的角色视角记忆 id |
+| `packages/core/src/storage/repository.ts` | 改 | 迁移 v9：旧历史反向回放补 before/after、确定性 id 与来源字段 |
+| `packages/core/src/memory/affect.test.ts` / `apply-analysis.test.ts` / `storage/conversation.test.ts` / `storage/repository.test.ts` | 改 | append-only、来源 id、逐条撤销与迁移回归 |
+| `apps/web/src/lib/session.ts` | 改 | `revertAffectChange()` 落库 |
+| `apps/web/src/components/CastDetail.tsx` / `styles.css` | 改 | 状态历史显示 before/after 与来源，提供「撤销这条影响」 |
+| `apps/web/src/App.tsx` | 改 | 把撤销动作接到角色详情 |
+| `docs/EVAL.md` / `docs/MEMORY.md` / `docs/TASKS.md` / `docs/STATUS.md` | 改 | 第三十五节、27d 实测与接续点 |
+
+## 二十四、几点注意
 
 ---
 

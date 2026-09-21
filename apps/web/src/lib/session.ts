@@ -28,6 +28,7 @@ import {
   type RoomId,
   type RoomSnapshot,
   type RoomSummary,
+  revertAffectChange as revertAffectChangeForInstance,
   revertAffectForTurn,
   type Scene,
   syncPresenceForScene,
@@ -196,6 +197,8 @@ export interface SessionApi {
   addInstance: (card: Card) => Promise<CharacterInstance | null>;
   removeInstance: (id: InstanceId) => Promise<void>;
   updateInstance: (id: InstanceId, patch: Partial<CharacterInstance>) => Promise<void>;
+  /** 按一条状态历史 id 撤销影响；原记录保留，只追加反向量。 */
+  revertAffectChange: (id: InstanceId, changeId: string) => Promise<void>;
   setPresence: (id: InstanceId, presence: Presence) => Promise<void>;
 
   /** 结束当前场景并开一个新的；返回新场景，便于接着写换场旁白。 */
@@ -927,6 +930,23 @@ export function useSession(db: DramatisDb | null): SessionApi {
     [db, setSnapshot],
   );
 
+  const revertAffectChange = useCallback(
+    async (id: InstanceId, changeId: string) => {
+      const current = snapshotRef.current;
+      if (!db || !current) return;
+      const instance = current.instances.find((item) => item.id === id);
+      if (!instance) return;
+
+      const next = revertAffectChangeForInstance(instance, changeId);
+      if (next === instance) return;
+      await db.repository.saveInstance(next);
+      setSnapshot({
+        ...current,
+        instances: current.instances.map((item) => (item.id === id ? next : item)),
+      });
+    },
+    [db, setSnapshot],
+  );
   const setPresence = useCallback(
     async (id: InstanceId, presence: Presence) => {
       const current = snapshotRef.current;
@@ -1344,6 +1364,7 @@ export function useSession(db: DramatisDb | null): SessionApi {
     addInstance,
     removeInstance,
     updateInstance,
+    revertAffectChange,
     setPresence,
     startNewScene,
     updateScene,

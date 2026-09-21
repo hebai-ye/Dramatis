@@ -66,6 +66,7 @@ describe('applyTurnAnalysis', () => {
 
     const [instance] = await repository.listInstances(world.room.id);
     expect(instance?.affect.history.some((change) => change.turnId === 'turn-1')).toBe(true);
+    expect(instance?.affect.history[0]?.sourceMemoryIds).toEqual([views[0]?.id]);
   });
 
   it('粘回来一段脏文本也能收下（解析层本来就宽容）', async () => {

@@ -1,4 +1,4 @@
-import type { ConversationId, RoomId, SceneId } from '../model/ids.js';
+import type { ConversationId, EventId, InstanceId, RoomId, SceneId } from '../model/ids.js';
 import type { CharacterInstance } from '../model/instance.js';
 import type { Repository } from '../storage/repository.js';
 import { applyAffectUpdates } from './affect.js';
@@ -79,7 +79,20 @@ export async function applyTurnAnalysis(input: ApplyTurnAnalysisInput): Promise<
   );
   let applied = 0;
   if (!already) {
-    const result = applyAffectUpdates(participants, updates, { at, turnId: input.turnId });
+    // 顺序 27d：状态变化要和刚刚写入的「这个角色眼中的记忆」绑定。
+    const sourceMemoryIdsByObserver = new Map<InstanceId, EventId[]>();
+    for (const event of events) {
+      if (event.observerId === null) continue;
+      const current = sourceMemoryIdsByObserver.get(event.observerId) ?? [];
+      current.push(event.id);
+      sourceMemoryIdsByObserver.set(event.observerId, current);
+    }
+
+    const result = applyAffectUpdates(participants, updates, {
+      at,
+      turnId: input.turnId,
+      sourceMemoryIdsByObserver,
+    });
     for (const item of result.applied) {
       await repository.saveInstance(item.next);
       applied += 1;

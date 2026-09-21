@@ -10,6 +10,8 @@ interface Props {
   onRename: (id: InstanceId, name: string) => void;
   onSetPresence: (id: InstanceId, presence: Presence) => void;
   onRemove: (id: InstanceId) => void;
+  /** 按一条状态历史撤销影响（顺序 27d）。 */
+  onRevertChange: (id: InstanceId, changeId: string) => void;
 }
 
 const PRESENCE_OPTIONS: Array<{ value: Presence; label: string; note: string }> = [
@@ -29,9 +31,47 @@ function signed(value: number): string {
  * 显示的是这个角色**在这个世界里**的状态：角色卡是模板，实例才是他此刻
  * 的样子——情绪、关系、记忆都属于实例，换一张卡也不会把它们清掉。
  */
-export function CastDetail({ instance, card, memories, disabled, onClose, onRename, onSetPresence, onRemove }: Props) {
+export function CastDetail({
+  instance,
+  card,
+  memories,
+  disabled,
+  onClose,
+  onRename,
+  onSetPresence,
+  onRemove,
+  onRevertChange,
+}: Props) {
   const own = memories.filter((memory) => memory.observerId === instance.id);
   const towardPlayer = instance.relationships.find((edge) => edge.target === 'player');
+  const relationshipLabels = {
+    trust: '信任',
+    affinity: '好感',
+    fear: '畏惧',
+    respect: '敬重',
+    tension: '紧张',
+  } as const;
+  const stateChanges = [
+    ...instance.affect.history.map((change) => ({
+      id: change.id,
+      at: change.at,
+      reason: change.reason,
+      detail: `情绪 ${change.beforeValence.toFixed(2)} → ${change.afterValence.toFixed(2)}；激动 ${change.beforeArousal.toFixed(2)} → ${change.afterArousal.toFixed(2)}`,
+      sourceMemoryIds: change.sourceMemoryIds,
+      reversionOf: change.reversionOf,
+    })),
+    ...instance.relationships.flatMap((edge) =>
+      edge.history.map((change) => ({
+        id: change.id,
+        at: change.at,
+        reason: change.reason,
+        detail: `对${edge.target === 'player' ? '玩家' : '他人'}的${relationshipLabels[change.field]} ${change.before.toFixed(2)} → ${change.after.toFixed(2)}`,
+        sourceMemoryIds: change.sourceMemoryIds,
+        reversionOf: change.reversionOf,
+      })),
+    ),
+  ].sort((left, right) => right.at.localeCompare(left.at));
+  const revertedIds = new Set(stateChanges.map((change) => change.reversionOf).filter((id) => id !== null));
 
   return (
     <div className="modal-backdrop">
@@ -82,19 +122,35 @@ export function CastDetail({ instance, card, memories, disabled, onClose, onRena
             ) : (
               <p className="hint">还没有对玩家的关系记录。</p>
             )}
-            {instance.affect.history.length > 0 ? (
+            {stateChanges.length > 0 ? (
               <details>
-                <summary>最近的状态变化</summary>
-                <ul className="hint">
-                  {instance.affect.history
-                    .slice(-3)
-                    .reverse()
-                    .map((change, index) => (
-                      <li key={`${change.turnId}-${String(index)}`}>
-                        {change.reason || '未记录原因'}（情绪 {signed(change.deltaValence)} /{' '}
-                        {signed(change.deltaArousal)}）
-                      </li>
-                    ))}
+                <summary>状态变化的可撤销记录（最近 {Math.min(stateChanges.length, 8)} 条）</summary>
+                <ul className="state-history">
+                  {stateChanges.slice(0, 8).map((change) => (
+                    <li key={change.id}>
+                      <div>
+                        <strong>{change.reason || '未记录原因'}</strong>
+                        <p className="hint">{change.detail}</p>
+                        <p className="hint">
+                          来源记忆 {change.sourceMemoryIds.length} 条
+                          {change.reversionOf === null ? '' : ' · 这是一条撤销记录'}
+                        </p>
+                      </div>
+                      {change.reversionOf !== null ? null : revertedIds.has(change.id) ? (
+                        <span className="tag">已撤销</span>
+                      ) : (
+                        <button
+                          type="button"
+                          className="ghost"
+                          disabled={disabled}
+                          title="追加一条反向记录，不改原记录"
+                          onClick={() => onRevertChange(instance.id, change.id)}
+                        >
+                          撤销这条影响
+                        </button>
+                      )}
+                    </li>
+                  ))}
                 </ul>
               </details>
             ) : null}

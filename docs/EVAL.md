@@ -2144,3 +2144,33 @@ PASS  没有页面级错误
 
 修法：常规召回只看**当前对话**的记忆；跨对话旧记忆只经附件索引按需展开。
 这条修正是 27c「日常不增长」成立的必要条件，已落到 `apps/web/src/App.tsx` 的召回调用处。
+
+## 三十五、27d：状态影响可审计、可按条目撤销（2026-09-21 深夜）
+
+`AffectChange` 与 `RelationshipChange` 从「只有 delta 和 reason」升级为：
+
+- 唯一的 `id`；
+- 实际 `before` / `after`（情绪同时记 valence 与 arousal 两端）；
+- `sourceMemoryIds`：是哪条视角记忆推动了这次变化；
+- `reversionOf`：如果这条本身是撤销记录，指向被撤销的原影响。
+
+**append-only**：撤销原影响时，原记录一个字段都不改，只追加一条反向记录，
+再做值域夹紧。回合级 `revertAffectForTurn` 也改走同一路径，不再删除历史。
+
+老库用迁移 **v9** 从当前值反向回放旧 delta，补出近似但连续的 before/after；
+历史 id 用确定性字符串，避免两台设备迁移后产生不同的 id。新增 3 个单测覆盖字段、
+逐条撤销与迁移，**总测试 549 个全绿**。
+
+无头 Chrome 真机演练（角色详情里真实点两次「撤销这条影响」）**9/9**：
+
+```text
+PASS  两条可撤销记录都显示
+PASS  第一次撤销追加情绪反向记录
+PASS  原情绪记录逐字段未变
+PASS  情绪回到 before
+PASS  两次撤销都追加记录
+PASS  关系回到 before
+PASS  sourceMemoryIds 被反向记录继承
+PASS  反向记录带准确的 before/after
+PASS  没有页面级错误
+```

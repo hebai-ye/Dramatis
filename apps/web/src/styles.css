@@ -704,6 +704,35 @@ button.ghost:focus-visible {
   border-top: 1px dashed var(--line);
 }
 
+.state-history {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+}
+
+.state-history li {
+  align-items: flex-start;
+  border-top: 1px dashed var(--line);
+  display: flex;
+  gap: 8px;
+  justify-content: space-between;
+  padding-top: 8px;
+}
+
+.state-history li > div {
+  min-width: 0;
+}
+
+.state-history p {
+  margin: 3px 0 0;
+}
+
+.state-history .ghost {
+  flex: 0 0 auto;
+}
 /* ---------- 记忆面板的对话维度与对照视图（T11） ---------- */
 
 .memory-filters {

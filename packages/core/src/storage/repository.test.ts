@@ -160,6 +160,41 @@ describe('Repository / schema', () => {
     expect(conversations[0]?.id).toBe(room?.activeConversationId);
   });
 
+  it('v9 给旧状态历史补 id、before/after 与来源记忆字段', async () => {
+    const store = createMemoryEntityStore();
+    const { instance } = fixtures();
+    const legacy = {
+      ...instance,
+      affect: {
+        ...instance.affect,
+        valence: 0.2,
+        arousal: 0.1,
+        history: [
+          { at: instance.updatedAt, turnId: 'turn-old', deltaValence: 0.2, deltaArousal: 0.1, reason: '旧记录' },
+        ],
+      },
+      relationships: [
+        {
+          ...instance.relationships[0],
+          trust: 0.3,
+          history: [{ at: instance.updatedAt, turnId: 'turn-old', field: 'trust', delta: 0.3, reason: '旧记录' }],
+        },
+      ],
+    };
+    await store.put(COLLECTIONS.instances, legacy as never);
+
+    const repo = new Repository(store);
+    await repo.migrate();
+    const [migrated] = await repo.listInstances(instance.roomId);
+
+    expect(migrated?.affect.history[0]?.id).toContain('legacy:');
+    expect(migrated?.affect.history[0]?.beforeValence).toBeCloseTo(0, 6);
+    expect(migrated?.affect.history[0]?.afterValence).toBeCloseTo(0.2, 6);
+    expect(migrated?.affect.history[0]?.sourceMemoryIds).toEqual([]);
+    expect(migrated?.relationships[0]?.history[0]?.before).toBeCloseTo(0, 6);
+    expect(migrated?.relationships[0]?.history[0]?.after).toBeCloseTo(0.3, 6);
+    expect(migrated?.relationships[0]?.history[0]?.reversionOf).toBeNull();
+  });
   it('已是最新版本时重复迁移不做任何事', async () => {
     const repo = new Repository(createMemoryEntityStore());
     await repo.migrate();

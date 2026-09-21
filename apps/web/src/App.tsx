@@ -1722,6 +1722,7 @@ export function App() {
             setDetailId(null);
             void session.removeInstance(id);
           }}
+          onRevertChange={(id, changeId) => void session.revertAffectChange(id, changeId)}
         />
       )}
 

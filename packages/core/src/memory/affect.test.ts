@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { cardId, instanceId, newId, nowIso, PLAYER, roomId } from '../model/ids.js';
+import { cardId, eventId, instanceId, newId, nowIso, PLAYER, roomId } from '../model/ids.js';
 import { type CharacterInstance, neutralTraits } from '../model/instance.js';
 import {
   AFFECT_DECAY_PER_TURN,
@@ -9,6 +9,7 @@ import {
   decayAffect,
   MAX_DELTA_PER_TURN,
   parseAffectUpdates,
+  revertAffectChange,
   revertAffectForTurn,
 } from './affect.js';
 
@@ -117,6 +118,8 @@ describe('applyAffectUpdate', () => {
     expect(next.affect.valence).toBeCloseTo(0.2, 6);
     expect(next.affect.history).toHaveLength(1);
     expect(next.affect.history[0]?.reason).toBe('对方说了句好话');
+    expect(next.affect.history[0]?.beforeValence).toBeCloseTo(0, 6);
+    expect(next.affect.history[0]?.afterValence).toBeCloseTo(0.2, 6);
   });
 
   it('关系维度按方向夹紧', () => {
@@ -194,6 +197,59 @@ describe('applyAffectUpdates', () => {
   });
 });
 
+describe('状态影响的 append-only 记录与逐条撤销（顺序 27d）', () => {
+  it('记录 before/after 与来源记忆 id', () => {
+    const alice = actor('Alice');
+    const source = eventId(newId());
+    const next = applyAffectUpdate(
+      alice,
+      update({ deltaValence: 0.2, relationship: [{ field: 'affinity', delta: 0.15 }] }),
+      { ...meta, sourceMemoryIds: [source] },
+    );
+
+    const affectChange = next.affect.history[0];
+    expect(affectChange?.beforeValence).toBe(0);
+    expect(affectChange?.afterValence).toBeCloseTo(0.2, 6);
+    expect(affectChange?.sourceMemoryIds).toEqual([source]);
+    const relationshipChange = next.relationships[0]?.history[0];
+    expect(relationshipChange?.before).toBe(0);
+    expect(relationshipChange?.after).toBeCloseTo(0.15, 6);
+    expect(relationshipChange?.sourceMemoryIds).toEqual([source]);
+  });
+
+  it('按条目撤销只追加反向记录，原记录一个字段都不改', () => {
+    const alice = actor('Alice');
+    const source = eventId(newId());
+    const changed = applyAffectUpdate(
+      alice,
+      update({ deltaValence: 0.2, relationship: [{ field: 'affinity', delta: 0.15 }] }),
+      { ...meta, sourceMemoryIds: [source] },
+    );
+    const affectOriginal = changed.affect.history[0];
+    const relationshipOriginal = changed.relationships[0]?.history[0];
+    expect(affectOriginal).toBeDefined();
+    expect(relationshipOriginal).toBeDefined();
+
+    const revertedAffect = revertAffectChange(changed, affectOriginal?.id ?? '', {
+      at: '2026-01-02T00:00:00.000Z',
+      turnId: 'undo-affect',
+    });
+    const reverted = revertAffectChange(revertedAffect, relationshipOriginal?.id ?? '', {
+      at: '2026-01-02T00:00:00.000Z',
+      turnId: 'undo-relationship',
+    });
+
+    expect(reverted.affect.valence).toBeCloseTo(0, 6);
+    expect(reverted.relationships[0]?.affinity).toBeCloseTo(0, 6);
+    expect(reverted.affect.history).toHaveLength(2);
+    expect(reverted.relationships[0]?.history).toHaveLength(2);
+    expect(reverted.affect.history[0]).toEqual(affectOriginal);
+    expect(reverted.relationships[0]?.history[0]).toEqual(relationshipOriginal);
+    expect(reverted.affect.history[1]?.reversionOf).toBe(affectOriginal?.id);
+    expect(reverted.relationships[0]?.history[1]?.reversionOf).toBe(relationshipOriginal?.id);
+    expect(revertAffectChange(reverted, affectOriginal?.id ?? '')).toBe(reverted);
+  });
+});
 describe('revertAffectForTurn', () => {
   it('撤销该回合的情绪与关系变化', () => {
     const alice = actor('Alice');
@@ -207,8 +263,10 @@ describe('revertAffectForTurn', () => {
 
     expect(reverted.affect.valence).toBeCloseTo(0, 6);
     expect(reverted.relationships[0]?.affinity).toBeCloseTo(0, 6);
-    expect(reverted.affect.history).toHaveLength(0);
-    expect(reverted.relationships[0]?.history).toHaveLength(0);
+    expect(reverted.affect.history).toHaveLength(2);
+    expect(reverted.affect.history[1]?.reversionOf).toBe(reverted.affect.history[0]?.id);
+    expect(reverted.relationships[0]?.history).toHaveLength(2);
+    expect(reverted.relationships[0]?.history[1]?.reversionOf).toBe(reverted.relationships[0]?.history[0]?.id);
   });
 
   it('只撤掉指定回合，其它回合的变化保留', () => {
@@ -218,8 +276,12 @@ describe('revertAffectForTurn', () => {
 
     const reverted = revertAffectForTurn(second, 'turn-2');
 
-    expect(reverted.affect.history).toHaveLength(1);
+    expect(reverted.affect.history).toHaveLength(5);
     expect(reverted.affect.history[0]?.turnId).toBe('turn-1');
+    expect(reverted.affect.history.slice(-2).map((change) => change.reversionOf)).toEqual([
+      reverted.affect.history[1]?.id,
+      reverted.affect.history[2]?.id,
+    ]);
     expect(reverted.affect.valence).toBeCloseTo(first.affect.valence, 6);
   });
 

@@ -1,4 +1,4 @@
-import { type InstanceId, PLAYER } from '../model/ids.js';
+import { type EventId, type InstanceId, newId, PLAYER } from '../model/ids.js';
 import type { CharacterInstance, Relationship } from '../model/instance.js';
 import type { Message } from '../model/message.js';
 import type { ChatMessage } from '../prompt/types.js';
@@ -173,11 +173,18 @@ export function decayAffect(instance: CharacterInstance, meta: { at: string; tur
         ? [
             ...instance.affect.history,
             {
+              id: newId(),
               at: meta.at,
               turnId: meta.turnId,
+              beforeValence: instance.affect.valence,
+              afterValence: instance.affect.valence + deltaValence,
+              beforeArousal: instance.affect.arousal,
+              afterArousal: instance.affect.arousal + deltaArousal,
               deltaValence,
               deltaArousal,
               reason: '情绪随时间自然褪色',
+              sourceMemoryIds: [],
+              reversionOf: null,
             },
           ]
         : instance.affect.history,
@@ -206,6 +213,10 @@ export interface ApplyMeta {
   turnId: string;
   /** 关系变化默认算在玩家头上。 */
   target?: Relationship['target'];
+  /** 直接指定这次影响的来源记忆（单角色调用时用）。 */
+  sourceMemoryIds?: readonly EventId[];
+  /** 多角色共用一次分析时，按实例分别关联各自的视角记忆。 */
+  sourceMemoryIdsByObserver?: ReadonlyMap<InstanceId, readonly EventId[]>;
 }
 
 /**
@@ -221,6 +232,9 @@ export function applyAffectUpdate(
 ): CharacterInstance {
   const target = meta.target ?? PLAYER;
   const decayed = decayAffect(instance, meta);
+  const sourceMemoryIds = [
+    ...new Set([...(meta.sourceMemoryIds ?? []), ...(meta.sourceMemoryIdsByObserver?.get(instance.id) ?? [])]),
+  ];
 
   const nextAffect = {
     valence: clamp(decayed.affect.valence + update.deltaValence, -1, 1),
@@ -231,11 +245,18 @@ export function applyAffectUpdate(
         ? [
             ...decayed.affect.history,
             {
+              id: newId(),
               at: meta.at,
               turnId: meta.turnId,
+              beforeValence: decayed.affect.valence,
+              afterValence: clamp(decayed.affect.valence + update.deltaValence, -1, 1),
+              beforeArousal: decayed.affect.arousal,
+              afterArousal: clamp(decayed.affect.arousal + update.deltaArousal, 0, 1),
               deltaValence: update.deltaValence,
               deltaArousal: update.deltaArousal,
               reason: update.reason,
+              sourceMemoryIds,
+              reversionOf: null,
             },
           ]
         : decayed.affect.history,
@@ -247,13 +268,19 @@ export function applyAffectUpdate(
   for (const delta of update.relationship) {
     const current = updated[delta.field];
     const bounded = delta.field === 'tension' || delta.field === 'fear' ? [0, 1] : [-1, 1];
-    updated[delta.field] = clamp(current + delta.delta, bounded[0] ?? 0, bounded[1] ?? 1);
+    const after = clamp(current + delta.delta, bounded[0] ?? 0, bounded[1] ?? 1);
+    updated[delta.field] = after;
     updated.history.push({
+      id: newId(),
       at: meta.at,
       turnId: meta.turnId,
       field: delta.field,
-      delta: delta.delta,
+      before: current,
+      after,
+      delta: after - current,
       reason: update.reason,
+      sourceMemoryIds,
+      reversionOf: null,
     });
   }
   updated.updatedAt = meta.at;
@@ -276,47 +303,132 @@ export interface AffectTarget {
   next: CharacterInstance;
 }
 
+export interface RevertChangeMeta {
+  at?: string;
+  /** 撤销记录自己的 turnId；默认用 `undo:<原记录 id>`，不会被回合回滚再捡回来。 */
+  turnId?: string;
+}
+
+/**
+ * 按条目撤销一次情绪或关系影响（顺序 27d）。
+ *
+ * **append-only**：原始记录一个字段都不改，只在同一个历史数组末尾追加一条
+ * `reversionOf = 原 id` 的反向记录。这样用户能看到「什么影响过、什么时候撤了」，
+ * 也不会因为撤销而抹掉审计线索。
+ *
+ * 反向量用原记录的实际 delta（夹紧后的 before → after），因此撤销只抵消
+ * 这次影响本身；之后发生的其它变化会原样保留。
+ */
+export function revertAffectChange(
+  instance: CharacterInstance,
+  changeId: string,
+  meta: RevertChangeMeta = {},
+): CharacterInstance {
+  const at = meta.at ?? new Date().toISOString();
+  const turnId = meta.turnId ?? `undo:${changeId}`;
+
+  const affectChange = instance.affect.history.find((change) => change.id === changeId);
+  if (affectChange !== undefined) {
+    if (
+      affectChange.reversionOf !== null ||
+      instance.affect.history.some((change) => change.reversionOf === changeId)
+    ) {
+      return instance;
+    }
+
+    const beforeValence = instance.affect.valence;
+    const beforeArousal = instance.affect.arousal;
+    const afterValence = clamp(beforeValence - affectChange.deltaValence, -1, 1);
+    const afterArousal = clamp(beforeArousal - affectChange.deltaArousal, 0, 1);
+    const reversal = {
+      id: newId(),
+      at,
+      turnId,
+      beforeValence,
+      afterValence,
+      beforeArousal,
+      afterArousal,
+      deltaValence: afterValence - beforeValence,
+      deltaArousal: afterArousal - beforeArousal,
+      reason: `撤销影响：${affectChange.reason || '未记录原因'}`,
+      sourceMemoryIds: [...affectChange.sourceMemoryIds],
+      reversionOf: affectChange.id,
+    };
+
+    return {
+      ...instance,
+      affect: {
+        ...instance.affect,
+        valence: afterValence,
+        arousal: afterArousal,
+        updatedAt: at,
+        history: [...instance.affect.history, reversal],
+      },
+      updatedAt: at,
+    };
+  }
+
+  for (const edge of instance.relationships) {
+    const change = edge.history.find((item) => item.id === changeId);
+    if (change === undefined) continue;
+    if (change.reversionOf !== null || edge.history.some((item) => item.reversionOf === changeId)) {
+      return instance;
+    }
+
+    const before = edge[change.field];
+    const bounded = change.field === 'tension' || change.field === 'fear' ? [0, 1] : [-1, 1];
+    const after = clamp(before - change.delta, bounded[0] ?? 0, bounded[1] ?? 1);
+    const updatedEdge: Relationship = {
+      ...edge,
+      [change.field]: after,
+      updatedAt: at,
+      history: [
+        ...edge.history,
+        {
+          id: newId(),
+          at,
+          turnId,
+          field: change.field,
+          before,
+          after,
+          delta: after - before,
+          reason: `撤销影响：${change.reason || '未记录原因'}`,
+          sourceMemoryIds: [...change.sourceMemoryIds],
+          reversionOf: change.id,
+        },
+      ],
+    };
+
+    return {
+      ...instance,
+      relationships: instance.relationships.map((item) => (item.target === edge.target ? updatedEdge : item)),
+      updatedAt: at,
+    };
+  }
+
+  return instance;
+}
+
 /**
  * 撤销某个回合对情绪与关系造成的影响（P0-7 的回滚）。
  *
- * 按记录的历史反向减去当时的 delta，连同褪色一起还原——因为褪色本身
- * 也被记进了历史。唯一无法完全还原的是**夹紧**：长期顶到边界的维度，
- * 还原后会有轻微偏差，但反复重抽不会造成单向漂移。
+ * 27d 起也走 append-only：逐个按条目追加反向记录，不再把原历史删掉。
+ * 夹紧导致的反向值可能有轻微偏差，但反复重抽不会继续单向漂移。
  */
 export function revertAffectForTurn(instance: CharacterInstance, turnId: string): CharacterInstance {
-  const affectChanges = instance.affect.history.filter((change) => change.turnId === turnId);
-  const relationshipChanges = instance.relationships.flatMap((edge) =>
-    edge.history.filter((change) => change.turnId === turnId),
-  );
+  const historyIds = [
+    ...instance.affect.history.filter((change) => change.turnId === turnId).map((change) => change.id),
+    ...instance.relationships.flatMap((edge) =>
+      edge.history.filter((change) => change.turnId === turnId).map((change) => change.id),
+    ),
+  ];
+  if (historyIds.length === 0) return instance;
 
-  if (affectChanges.length === 0 && relationshipChanges.length === 0) return instance;
-
-  const valenceDelta = affectChanges.reduce((total, change) => total + change.deltaValence, 0);
-  const arousalDelta = affectChanges.reduce((total, change) => total + change.deltaArousal, 0);
-
-  const relationships = instance.relationships.map((edge) => {
-    const changes = edge.history.filter((change) => change.turnId === turnId);
-    if (changes.length === 0) return edge;
-
-    const next: Relationship = { ...edge, history: edge.history.filter((change) => change.turnId !== turnId) };
-    for (const change of changes) {
-      const current = next[change.field];
-      const bounded = change.field === 'tension' || change.field === 'fear' ? [0, 1] : [-1, 1];
-      next[change.field] = clamp(current - change.delta, bounded[0] ?? 0, bounded[1] ?? 1);
-    }
-    return next;
-  });
-
-  return {
-    ...instance,
-    affect: {
-      valence: clamp(instance.affect.valence - valenceDelta, -1, 1),
-      arousal: clamp(instance.affect.arousal - arousalDelta, 0, 1),
-      updatedAt: instance.affect.updatedAt,
-      history: instance.affect.history.filter((change) => change.turnId !== turnId),
-    },
-    relationships,
-  };
+  let next = instance;
+  for (const changeId of [...new Set(historyIds)]) {
+    next = revertAffectChange(next, changeId, { turnId: `undo:${turnId}` });
+  }
+  return next;
 }
 
 /** 批量应用推演结果，返回需要落盘的实例。 */

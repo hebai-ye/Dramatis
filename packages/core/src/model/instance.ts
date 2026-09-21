@@ -1,4 +1,4 @@
-import type { CardId, InstanceId, RelationshipTarget, RoomId } from './ids.js';
+import type { CardId, EventId, InstanceId, RelationshipTarget, RoomId } from './ids.js';
 
 /**
  * 角色的存在模式（设计文档 §2.3）。
@@ -37,11 +37,22 @@ export interface Affect {
 }
 
 export interface AffectChange {
+  /** 这条变化自己的 id；撤销是按它定位，不靠数组下标。 */
+  id: string;
   at: string;
   turnId: string;
+  /** 这次影响前后的实际值（夹紧、褪色之后仍能精确回放）。 */
+  beforeValence: number;
+  afterValence: number;
+  beforeArousal: number;
+  afterArousal: number;
   deltaValence: number;
   deltaArousal: number;
   reason: string;
+  /** 触发这次变化的记忆条目（顺序 27d）。 */
+  sourceMemoryIds: EventId[];
+  /** 这是一条撤销记录时，指向被撤销的原影响 id；原影响本身不改。 */
+  reversionOf: string | null;
 }
 
 /** 关系边：本角色 → 某个目标。数值 -1 ~ 1。 */
@@ -58,11 +69,16 @@ export interface Relationship {
 }
 
 export interface RelationshipChange {
+  id: string;
   at: string;
   turnId: string;
   field: 'trust' | 'affinity' | 'fear' | 'respect' | 'tension';
+  before: number;
+  after: number;
   delta: number;
   reason: string;
+  sourceMemoryIds: EventId[];
+  reversionOf: string | null;
 }
 
 /** 角色实例 —— 某个世界线中的具体存在（设计文档 §2.1）。 */

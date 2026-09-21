@@ -53,7 +53,7 @@ describe('每空间配额与限流（顺序 16）', () => {
     expect(store.debugRows(created.spaceHandle).size).toBe(0);
   });
 
-  it('空间条数到顶 → 413；删掉东西之后又能写', async () => {
+  it('空间条数到顶 → 413（按「这批写完之后」判，不是等写进去再拦）', async () => {
     const { created, server } = await spaceWithServer({ maxRecordsPerSpace: 2 });
     const first = await Promise.all([0, 1].map((index) => wire(created.encKey, created.spaceHandle, index)));
     await server.push({
@@ -68,7 +68,7 @@ describe('每空间配额与限流（顺序 16）', () => {
       server.push({ spaceHandle: created.spaceHandle, credential: created.credential, baseHead: 0, records: extra }),
     ).rejects.toMatchObject({ status: 413 });
 
-    // 覆盖同一条不算「新占地方」：这条路被护栏挡住是**已知的粗糙**，见下面那条测试
+    // 覆盖同一条也被挡住：这是刻意的保守（护栏要挡的是「不许再写」，不是精确记账）
     await expect(
       server.push({
         spaceHandle: created.spaceHandle,

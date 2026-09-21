@@ -1,6 +1,7 @@
 import type { SyncDeviceSummary } from '@dramatis/core';
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import type { KeyStorageMode } from '../lib/keystore';
+import { parseSnapshot, type ServerSnapshot, SNAPSHOT_REMIND_MS } from '../lib/snapshot';
 import { describeReport, type SyncApi } from '../lib/sync';
 
 interface Props {
@@ -58,6 +59,25 @@ export function SyncPanel({ api, disabled }: Props) {
   /** 顺序 14：点一下才去问服务端要设备列表（不想每次打开设置都打一次请求）。 */
   const [devices, setDevices] = useState<{ devices: SyncDeviceSummary[]; localDeviceId: string } | null>(null);
   const [newPassword, setNewPassword] = useState('');
+  /** 顺序 17：服务端快照的状态（文件选择走隐藏的 input，与「导入素材」同一套做法）。 */
+  const [snapshotBusy, setSnapshotBusy] = useState(false);
+  const [snapshotNotice, setSnapshotNotice] = useState<string | null>(null);
+  const snapshotInput = useRef<HTMLInputElement | null>(null);
+
+  /** 上次存快照过去多久了（没存过就是「还没存过」）。 */
+  const snapshotAge = ((): string => {
+    const at = api.config?.lastSnapshotAt;
+    if (at === null || at === undefined) return '还没存过';
+    const age = Date.now() - new Date(at).getTime();
+    if (Number.isNaN(age)) return '还没存过';
+    if (age < 60 * 60 * 1000) return '刚刚';
+    if (age < SNAPSHOT_REMIND_MS) return `${String(Math.round(age / 3_600_000))} 小时前`;
+    return `${String(Math.floor(age / 86_400_000))} 天前`;
+  })();
+  const snapshotStale =
+    api.config?.lastSnapshotAt === null ||
+    api.config?.lastSnapshotAt === undefined ||
+    Date.now() - new Date(api.config.lastSnapshotAt).getTime() > SNAPSHOT_REMIND_MS;
 
   const loadDevices = async (): Promise<void> => {
     try {
@@ -308,7 +328,92 @@ export function SyncPanel({ api, disabled }: Props) {
       ) : api.error !== null ? (
         <div className="notice error">{api.error}</div>
       ) : null}
+
+      {/*
+        顺序 17 演练发现的洞：撞满之后接下来几次同步往往是「成功的」（没新东西要推），
+        于是错误提示被清掉、画面看起来一切正常，而数据其实推不上去了。
+        所以这一条**不跟着 error 走**：它只在真的推进去东西之后才消失。
+      */}
+      {api.spaceFull ? (
+        <div className="notice warn">
+          <strong>服务端上的这个空间已经存满</strong>
+          <p>
+            数据推不上去了，但<strong>本机一切都还在</strong>。服务端上的记录只增不减（删掉的会留成墓碑），
+            所以「清理本机」不会让它变小。可行的两条路：① 先把本机数据导出一份封存留底 （「数据」那一档）；② 换一个用户
+            id 重新开一个空间，本机这份会推过去。
+          </p>
+        </div>
+      ) : null}
       {notice !== null ? <div className={notice.ok ? 'notice' : 'notice error'}>{notice.message}</div> : null}
+
+      {/* ---------- 顺序 17：服务端快照（存一份 / 灌回去）---------- */}
+      {connected ? (
+        <div className="panel-inner">
+          <h3>服务端快照</h3>
+          <p className="hint">
+            把服务端那份<strong>原文</strong>（密文 + 坐标）存成一个文件拿在手里。它解不开内容
+            ——要读还得有同步密码或恢复码——但服务端被清空、换机器时，它能原样灌回去。
+            本机数据没了可以让服务端补，服务端没了可以让本机补，只有**两边同时出事**才用得上它。
+          </p>
+          <p className={snapshotStale ? 'hint warn' : 'hint'}>
+            上次存快照：{snapshotAge}
+            {snapshotStale ? '（超过一天了，建议再存一份：它很便宜，几秒钟）' : ''}
+          </p>
+          <div className="save-bar">
+            <button
+              type="button"
+              disabled={api.busy || snapshotBusy}
+              title="从服务端把所有记录（密文）拉下来存成一个文件"
+              onClick={() => {
+                setSnapshotNotice(null);
+                setSnapshotBusy(true);
+                void api
+                  .exportSnapshot()
+                  .then((result) => {
+                    if (result === null) return;
+                    setSnapshotNotice(
+                      `存好了：${String(result.records)} 条记录，${(result.bytes / 1024).toFixed(0)} KB`,
+                    );
+                  })
+                  .catch((error: unknown) => setSnapshotNotice(error instanceof Error ? error.message : String(error)))
+                  .finally(() => setSnapshotBusy(false));
+              }}
+            >
+              {snapshotBusy ? '正在拉…' : '存一份服务端快照'}
+            </button>
+            <button
+              type="button"
+              className="ghost"
+              disabled={api.busy || snapshotBusy}
+              title="选一个快照文件，把它的记录原样推回服务端（服务端被清空后用）"
+              onClick={() => snapshotInput.current?.click()}
+            >
+              从快照灌回服务端
+            </button>
+          </div>
+          <input
+            ref={snapshotInput}
+            type="file"
+            accept="application/json,.json"
+            className="hidden-file"
+            onChange={(event) => {
+              const file = event.target.files?.[0];
+              event.target.value = '';
+              if (file === undefined) return;
+              setSnapshotNotice(null);
+              setSnapshotBusy(true);
+              void file
+                .text()
+                .then((text) => parseSnapshot(text))
+                .then((snapshot: ServerSnapshot) => api.restoreSnapshot(snapshot))
+                .then((result) => setSnapshotNotice(`灌回去了：${String(result.pushed)} 条记录`))
+                .catch((error: unknown) => setSnapshotNotice(error instanceof Error ? error.message : String(error)))
+                .finally(() => setSnapshotBusy(false));
+            }}
+          />
+          {snapshotNotice === null ? null : <p className="hint">{snapshotNotice}</p>}
+        </div>
+      ) : null}
 
       {connected ? (
         <div className="save-bar">

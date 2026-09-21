@@ -11,11 +11,14 @@ import {
   rotatePassword as rotateSpacePassword,
   runSync,
   type SyncDeviceSummary,
+  type SyncPulledRecord,
   type SyncReport,
 } from '@dramatis/core';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { DramatisDb } from './db';
+import { createBrowserFileIO } from './fileio';
 import { createBrowserKeyStore, type KeyStorageMode } from './keystore';
+import { buildSnapshot, parseSnapshot, type ServerSnapshot, snapshotFileName } from './snapshot';
 
 /**
  * 多设备同步的会话层（P2-6 第四步·界面）。
@@ -59,6 +62,8 @@ export interface SyncConfig {
   createdAt: string;
   lastSyncAt: string | null;
   lastReport: SyncReport | null;
+  /** 上次把「服务端那份」存成本机文件的时间（顺序 17 的每日提醒用）。 */
+  lastSnapshotAt?: string | null;
 }
 
 /** 运行时才有的东西：凭证与主密钥（都不落盘）。 */
@@ -116,6 +121,18 @@ export interface SyncApi {
    * 但下一次在新设备上要用新密码。
    */
   rotatePassword: (newPassword: string) => Promise<void>;
+  /** 服务端上的这个空间已经存满（撞过 413）。界面据此**一直**提示，直到真的推进去东西。 */
+  spaceFull: boolean;
+  /**
+   * 把服务端上那份**原文**（密文 + 坐标）拉全并存成一个文件（顺序 17）。
+   *
+   * 为什么不是「拉回来写进本地库」：那正是同步在做的事。这里要的是一份
+   * **能拿在手里的副本**——服务端被清空时它可以灌回去（`restoreSnapshot`）。
+   * 用户取消保存时返回 null。
+   */
+  exportSnapshot: () => Promise<{ records: number; bytes: number; name: string } | null>;
+  /** 把一份快照灌回**当前**服务端（服务端被清空后的恢复路）。 */
+  restoreSnapshot: (snapshot: ServerSnapshot) => Promise<{ pushed: number; head: number }>;
 }
 
 function normalizeEndpoint(raw: string): string {
@@ -169,6 +186,15 @@ export function useSync(db: DramatisDb | null, options: { onChanged?: () => void
   const [error, setError] = useState<string | null>(null);
   const [recoveryCode, setRecoveryCode] = useState<string | null>(null);
   const [autoSyncPending, setAutoSyncPending] = useState(false);
+  /**
+   * 这个空间在服务端上已经存满（顺序 17 演练发现的洞）。
+   *
+   * 为什么单独记一个状态、而不是复用 `error`：护栏撞满之后，**接下来几次同步很可能
+   * 是「成功的」**（没有新东西要推，服务端也不检查），于是 `setError(null)` 会把那条
+   * 提示清掉——用户看到的画面就变成「一切正常」，而实际上数据再也推不上去了。
+   * 所以它只在「真的推进去东西」之后才清除。
+   */
+  const [spaceFull, setSpaceFull] = useState(false);
 
   const sessionRef = useRef<SyncSession | null>(null);
   const configRef = useRef<SyncConfig | null>(null);
@@ -199,7 +225,14 @@ export function useSync(db: DramatisDb | null, options: { onChanged?: () => void
         spaceHandle: current.spaceHandle,
         credential: session.credential,
         encKey: session.encKey,
+      }).catch((error: unknown) => {
+        // 撞上服务端护栏：记下来，界面会一直提示到真的恢复为止
+        const message = error instanceof Error ? error.message : String(error);
+        if (message.includes('存满')) setSpaceFull(true);
+        throw error;
       });
+
+      if (report.pushed > 0) setSpaceFull(false);
 
       const updated: SyncConfig = {
         ...current,
@@ -436,6 +469,92 @@ export function useSync(db: DramatisDb | null, options: { onChanged?: () => void
   );
 
   /**
+   * 把服务端那份拉全（分页拉到追平）并存成一个文件（顺序 17）。
+   *
+   * 这里刻意**不复用 `runSync`**：那条路会顺手把记录写进本地库、还会推进游标，
+   * 而我们要的只是「服务端此刻的原文」——拿去做副本，不碰本地状态。
+   */
+  const exportSnapshot = useCallback(async () => {
+    const current = configRef.current;
+    const session = sessionRef.current;
+    if (db === null || current === null || session === null) throw new Error('先连上同步，才能存服务端快照。');
+
+    const transport = createHttpSyncTransport({ endpoint: current.endpoint });
+    const records: SyncPulledRecord[] = [];
+    let cursor = 0;
+    let serverHead = 0;
+    for (let round = 0; round < 200; round += 1) {
+      const page = await transport.pull({
+        spaceHandle: current.spaceHandle,
+        credential: session.credential,
+        since: cursor,
+        limit: 500,
+      });
+      records.push(...page.records);
+      serverHead = Math.max(serverHead, page.serverHead ?? page.head);
+      const last = page.records[page.records.length - 1];
+      cursor = last === undefined ? page.head : last.serverRev;
+      if (page.records.length === 0) break;
+      if ((page.hasMore ?? cursor < serverHead) !== true) break;
+    }
+
+    const snapshot = buildSnapshot({
+      spaceHandle: current.spaceHandle,
+      deviceId: await db.repository.deviceId(),
+      head: serverHead,
+      records,
+    });
+    const saved = await createBrowserFileIO().save(
+      snapshotFileName(snapshot),
+      new TextEncoder().encode(JSON.stringify(snapshot, null, 2)),
+      { mime: 'application/json' },
+    );
+    if (!saved.saved) return null;
+
+    await remember({ ...current, lastSnapshotAt: snapshot.takenAt }, null);
+    return { records: records.length, bytes: saved.bytes, name: saved.name };
+  }, [db, remember]);
+
+  /**
+   * 把一份快照灌回当前服务端（顺序 17 的恢复路）。
+   *
+   * 三条约束：① 只灌**属于这个空间**的记录（快照里带着句柄，对不上就拒）；
+   * ② 分批推（一次 200 条，与服务端的上限对齐）；③ 不做任何解密——
+   * 密文原样搬回去，所以哪怕密码已经忘了、只要有恢复码照样能再读出来。
+   */
+  const restoreSnapshot = useCallback(async (snapshot: ServerSnapshot): Promise<{ pushed: number; head: number }> => {
+    const current = configRef.current;
+    const session = sessionRef.current;
+    if (current === null || session === null) throw new Error('先连上同步，才能把快照灌回去。');
+    if (snapshot.spaceHandle !== current.spaceHandle) {
+      throw new Error('这份快照是别的空间的（句柄对不上），不能灌到这里。');
+    }
+
+    const transport = createHttpSyncTransport({ endpoint: current.endpoint });
+    let pushed = 0;
+    let head = 0;
+    for (let offset = 0; offset < snapshot.records.length; offset += 200) {
+      const batch = snapshot.records.slice(offset, offset + 200).map((record) => ({
+        collection: record.collection,
+        id: record.id,
+        updatedAt: record.updatedAt,
+        deletedAt: record.deletedAt,
+        sealed: record.sealed,
+        ...(record.deviceId === undefined ? {} : { deviceId: record.deviceId }),
+      }));
+      const result = await transport.push({
+        spaceHandle: current.spaceHandle,
+        credential: session.credential,
+        baseHead: head,
+        records: batch,
+      });
+      pushed += batch.length;
+      head = result.head;
+    }
+    return { pushed, head };
+  }, []);
+
+  /**
    * 自动同步（每轮结束）。
    *
    * 与手动同步共用同一条推送路径（`doSync`），区别只有两点：不给界面加
@@ -512,6 +631,9 @@ export function useSync(db: DramatisDb | null, options: { onChanged?: () => void
     setKeyMode,
     listDevices,
     rotatePassword,
+    spaceFull,
+    exportSnapshot,
+    restoreSnapshot,
   };
 }
 

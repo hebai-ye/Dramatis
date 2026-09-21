@@ -255,18 +255,32 @@ export function createSyncServer(store: SyncServerStore, options: CreateSyncServ
 
       const usage = await store.spaceUsage?.(input.spaceHandle);
       if (usage !== undefined) {
-        if (usage.records >= limits.maxRecordsPerSpace) {
+        /*
+         * 判据是「**这一批写完之后**会不会超」，不是「现在满没满」——
+         * 这一条是演练里改过来的：原来只拦「已经满了」的情况，于是一批 10 条
+         * 可以把 20 条的上限直接顶到 27 条（顺序 17 的配额演练实测）。
+         *
+         * 代价是**保守**：覆盖同一条也算一条新的，所以在快满时连更新都会被挡。
+         * 这是有意的——护栏的目标是「不许再往里写」，不是精确记账；
+         * 真要贴着上限用，就把上限调大（`--max-records`）。
+         */
+        if (usage.records + input.records.length > limits.maxRecordsPerSpace) {
           throw new SyncServerError(
             413,
             'space-full',
-            `这个空间已经存满（${String(limits.maxRecordsPerSpace)} 条）。先删掉一些，或者按「设置 → 数据」导出一份封存再清理。`,
+            /*
+             * 指引必须**准确**：服务端上的记录只增不减——本地删掉的实体会变成墓碑
+             * （`deletedAt` 非空），而墓碑同样占一行。所以「删掉一些」在这里没用，
+             * 写上去只会让用户白折腾一轮（顺序 17 的演练里就是这么发现的）。
+             */
+            `这个空间已经存满（上限 ${String(limits.maxRecordsPerSpace)} 条）。这是给自建服务器的护栏，正常用很难碰到；碰到了最实际的办法是换一个用户 id 重新开一个空间（本机这份数据会推过去），并把本机数据先导出一份封存留底（设置 → 数据）。`,
           );
         }
         if (usage.bytes >= limits.maxBytesPerSpace) {
           throw new SyncServerError(
             413,
             'space-full',
-            `这个空间已经写满（约 ${String(Math.round(limits.maxBytesPerSpace / 1024 / 1024))} MB）。先导出一份封存再清理。`,
+            `这个空间已经写满（上限约 ${String(Math.round(limits.maxBytesPerSpace / 1024 / 1024))} MB）。先按「设置 → 数据」导出一份封存留底，再考虑换个用户 id 开一个新空间。`,
           );
         }
       }

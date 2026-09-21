@@ -1501,6 +1501,11 @@ export function App() {
                   onStop={admin.stop}
                   onAdopt={(messageId, artifact) => void session.adoptArtifact(messageId, artifact.id)}
                   onDiscard={(messageId, artifact) => void session.discardArtifact(messageId, artifact.id)}
+                  onRevoke={(messageId, artifact) => void session.revokeArtifact(messageId, artifact.id)}
+                  existingIds={[
+                    ...session.library.cards.map((card) => card.id),
+                    ...session.library.worldBooks.map((book) => book.id),
+                  ]}
                 />
               ) : (
                 <MainChat

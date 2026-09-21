@@ -1195,6 +1195,19 @@ button.ghost:focus-visible {
   color: var(--accent);
 }
 
+/*
+ * 草稿预览（顺序 26）：开场白那一行。
+ * 用等宽一点点的引文样式把它和上面的 summary 分开——它是**作品本身**的一句，
+ * 不是对作品的描述。
+ */
+.artifact-preview {
+  border-left: 2px solid var(--accent-soft);
+  font-size: 12px;
+  line-height: 1.6;
+  margin: 4px 0 0;
+  padding-left: 8px;
+}
+
 /* 恢复码：等宽大字 + 可选中，手机上要一眼看清、能长按选中 */
 .recovery-code {
   background: var(--surface-2, rgba(0, 0, 0, 0.2));

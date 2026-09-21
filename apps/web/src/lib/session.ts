@@ -232,6 +232,8 @@ export interface SessionApi {
   /** 采纳 / 丢弃管理员起草的素材（副对话）。 */
   adoptArtifact: (messageId: MessageId, artifactId: string) => Promise<void>;
   discardArtifact: (messageId: MessageId, artifactId: string) => Promise<void>;
+  /** 撤回一条已采纳的草稿（顺序 26）：删掉刚进素材库的那份，草稿退回「待采纳」。 */
+  revokeArtifact: (messageId: MessageId, artifactId: string) => Promise<void>;
   /**
    * 切换这个世界使用的玩家身份（P0-3）。
    *
@@ -1179,6 +1181,22 @@ export function useSession(db: DramatisDb | null): SessionApi {
     [db, setSnapshot],
   );
 
+  const revokeArtifact = useCallback(
+    async (messageId: MessageId, artifactId: string) => {
+      const current = snapshotRef.current;
+      if (!db || !current) return;
+      const result = await db.repository.revokeAdminArtifact(messageId, artifactId);
+      if (!result) return;
+      setSnapshot({
+        ...current,
+        messages: current.messages.map((message) => (message.id === messageId ? result.message : message)),
+      });
+      // 素材库跟着变（刚删掉的那份要消失）
+      await refreshLibrary();
+    },
+    [db, refreshLibrary, setSnapshot],
+  );
+
   const conversation =
     snapshot === null
       ? null
@@ -1289,6 +1307,7 @@ export function useSession(db: DramatisDb | null): SessionApi {
     deleteWorldBook,
     adoptArtifact,
     discardArtifact,
+    revokeArtifact,
     setPersona,
     savePersona,
     deletePersona,

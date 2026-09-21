@@ -14,6 +14,9 @@ interface Props {
   onStop: () => void;
   onAdopt: (messageId: MessageId, artifact: AdminArtifact) => void;
   onDiscard: (messageId: MessageId, artifact: AdminArtifact) => void;
+  onRevoke?: (messageId: MessageId, artifact: AdminArtifact) => void;
+  /** 素材库里现在有哪些 id（判「整本替换」用：草稿的 payload.id 已经在那儿了）。 */
+  existingIds?: readonly string[];
   /** 没有 API Key 时，起草这一步走网页版桥接。 */
   bridge?: { prompt: string } | null;
   /** 没配 API Key：发送按钮改成「生成提示词」，别让人以为点了会直接有回复。 */
@@ -32,14 +35,30 @@ const STATUS_LABEL: Record<AdminArtifact['status'], string> = {
 function ArtifactCard({
   artifact,
   disabled,
+  exists,
   onAdopt,
   onDiscard,
+  onRevoke,
 }: {
   artifact: AdminArtifact;
   disabled: boolean;
+  /** 这个草稿要落成的东西**现在**在不在素材库里（在 = 这是「整本替换」）。 */
+  exists: boolean;
   onAdopt: () => void;
   onDiscard: () => void;
+  onRevoke?: () => void;
 }) {
+  /*
+   * 草稿预览（顺序 26）：卡片在采纳之前要能看出「它到底长什么样」。
+   * 角色卡给开场白（`firstMes`）——那是最能判断「这个角色合不合世界」的一句；
+   * 世界书给前几条词条，让人看得到粒度。
+   */
+  // 字段名跟着 `Card` 走：开场白叫 `firstMessage`（不是 firstMes），别自己造一个
+  const payload = artifact.payload as { firstMessage?: unknown; description?: unknown; entries?: unknown } | null;
+  const firstMes = typeof payload?.firstMessage === 'string' ? payload.firstMessage.trim() : '';
+  const description = typeof payload?.description === 'string' ? payload.description.trim() : '';
+  const entryCount = Array.isArray(payload?.entries) ? payload.entries.length : 0;
+
   return (
     <div className={`artifact ${artifact.status}`}>
       <div className="artifact-head">
@@ -51,6 +70,29 @@ function ArtifactCard({
       </div>
       <p className="hint">{artifact.summary}</p>
 
+      {firstMes === '' ? null : (
+        <p className="artifact-preview">
+          <span className="hint">开场白：</span>
+          {firstMes.length > 64 ? `${firstMes.slice(0, 64)}…` : firstMes}
+        </p>
+      )}
+      {description === '' ? null : (
+        <p className="hint artifact-preview">
+          设定：{description.length > 56 ? `${description.slice(0, 56)}…` : description}
+        </p>
+      )}
+      {entryCount === 0 ? null : <p className="hint">共 {String(entryCount)} 条词条</p>}
+
+      {/*
+        顺序 26：「整本替换」必须说清楚。
+        世界书的采纳是**整份覆盖**（id 相同就替换），而用户很容易以为它是「追加几条」。
+      */}
+      {artifact.kind === 'world-book' && exists ? (
+        <p className="hint warn">
+          采纳会<strong>整本替换</strong>素材库里同名那一份（不是追加）。
+        </p>
+      ) : null}
+
       {artifact.status === 'pending' ? (
         <div className="inline">
           <button type="button" disabled={disabled} onClick={onAdopt}>
@@ -58,6 +100,21 @@ function ArtifactCard({
           </button>
           <button type="button" className="ghost danger" disabled={disabled} onClick={onDiscard}>
             丢弃
+          </button>
+        </div>
+      ) : null}
+
+      {artifact.status === 'adopted' && onRevoke !== undefined ? (
+        <div className="inline">
+          <span className="hint">已进素材库</span>
+          <button
+            type="button"
+            className="ghost"
+            disabled={disabled}
+            title="删掉刚进素材库的那一份，草稿退回「待采纳」——当作这次采纳没发生过"
+            onClick={onRevoke}
+          >
+            撤回这次采纳
           </button>
         </div>
       ) : null}
@@ -86,6 +143,8 @@ export function SideChat({
   onStop,
   onAdopt,
   onDiscard,
+  onRevoke,
+  existingIds = [],
   bridge = null,
   manualMode = false,
   onBridgeCommit,
@@ -142,8 +201,14 @@ export function SideChat({
                 key={artifact.id}
                 artifact={artifact}
                 disabled={busy || archived}
+                exists={
+                  artifact.kind !== 'scene' &&
+                  typeof (artifact.payload as { id?: unknown } | null)?.id === 'string' &&
+                  (existingIds ?? []).includes((artifact.payload as { id: string }).id)
+                }
                 onAdopt={() => onAdopt(message.id, artifact)}
                 onDiscard={() => onDiscard(message.id, artifact)}
+                {...(onRevoke === undefined ? {} : { onRevoke: () => onRevoke(message.id, artifact) })}
               />
             ))}
           </article>

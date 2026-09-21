@@ -1,0 +1,24 @@
+# nginx 模板：80 端口只做一件事——把 http 跳到 https:8443（顺序 18）
+#
+# 什么时候用得上：**备案下来之后**。现在（未备案）80 端口对外根本到不了这台机器：
+# 腾讯云的网关会先把请求接走（实测外网 http://域名 回 502，不是我们 nginx 的页面），
+# 所以这个文件现在放上去也只是「自己人直连服务器 IP 时能看到跳转」，
+# 对公网没有影响。等备案通过、换成 443 时再按 deploy/README 第 2 条走 Caddy/443 那条路，
+# 这个文件可以直接删掉。
+#
+# 实测证据（2026-09-21）：
+#   本机 `curl 127.0.0.1:80` → 000（nginx 没监听 80，早就把 default 站点移出去了）
+#   外网 `http://dramatissync.com` → 502（云厂商网关回的）
+#   `ss -ltnp` 上对外只有 8443（以及 Tailscale 自己的 443，那个在 100.x 内网地址上）
+#
+# 用法：sudo cp nginx-80-redirect.conf.example /etc/nginx/conf.d/dramatis-80.conf
+#       sudo nginx -t && sudo systemctl reload nginx
+
+server {
+    listen 80;
+    listen [::]:80;
+    server_name dramatissync.com www.dramatissync.com;
+
+    # 只跳转，不提供任何内容：这样「顺手输 http://」的人也能到
+    return 301 https://dramatissync.com:8443$request_uri;
+}

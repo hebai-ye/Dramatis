@@ -601,7 +601,23 @@ git ls-files | ForEach-Object {
 | `docs/SYNC.md` | 改 | 新增 §4.10（设备号为什么可选/明文、两个新接口、换密码=断开的语义） |
 | `docs/EVAL.md` / `docs/TASKS.md` / `docs/LAYOUT.md` / `docs/STATUS.md` | 改 | 第二十八节、总表五项标记、界面取舍 37–39、接续点 |
 
-## 十六、几点注意
+## 十六、2026-09-21 深夜再续：顺序 17 / 18 / 26
+
+| 文件 | 新增/修改 | 说明 |
+| --- | --- | --- |
+| `apps/web/src/lib/snapshot.ts` | **新增** | 服务端快照的形状、解析、文件名；`SNAPSHOT_REMIND_MS`（一天） |
+| `apps/web/src/lib/sync.ts` | 改 | `exportSnapshot()`（分页拉全、**不复用 runSync** 以免动本地状态）、`restoreSnapshot()`、`spaceFull` 状态、`lastSnapshotAt` |
+| `apps/web/src/components/SyncPanel.tsx` | 改 | 「服务端快照」一块（存 / 灌 + 上次时间提醒）、撞满时的常驻警告 |
+| `packages/core/src/sync/server.ts` | 改 | 配额判据改成「这一批写完之后会不会超」；撞满时的指引改成准确的两条路 |
+| `packages/core/src/storage/repository.ts` | 改 | `revokeAdminArtifact()`：撤回一次采纳（删素材库那份、草稿退回待采纳、幂等） |
+| `packages/core/src/storage/artifact-revoke.test.ts` | **新增** | 3 个单测（撤回 / 幂等 / 撤回来还能再采纳） |
+| `apps/web/src/lib/session.ts` | 改 | `revokeArtifact()` |
+| `apps/web/src/components/SideChat.tsx` | 改 | 草稿预览（开场白 / 设定 / 词条数）、「撤回这次采纳」、整本替换提示 |
+| `apps/web/src/App.tsx` | 改 | 把 `onRevoke` 与 `existingIds` 传给副对话 |
+| `deploy/nginx-80-redirect.conf.example` | **新增** | 备案后 80 → 8443 的跳转模板（现在装上也没意义，公网到不了） |
+| `docs/EVAL.md` / `docs/TASKS.md` / `docs/LAYOUT.md` / `docs/STATUS.md` | 改 | 第二十九节、总表 17/18/26、界面取舍 40–41、接续点 |
+
+## 十七、几点注意
 
 ---
 

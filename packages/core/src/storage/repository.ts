@@ -992,6 +992,48 @@ export class Repository {
     return updated;
   }
 
+  /**
+   * 撤回一条已经采纳的草稿（顺序 26）。
+   *
+   * 「采纳之后就只能认了」是一种很危险的错觉：管理员起草的卡/世界书有好有坏，
+   * 采纳之后才发现「这条跟世界不合」是常事。所以给一条退路：**删掉刚进素材库的那份**，
+   * 把草稿退回「待采纳」——不是把草稿本身删掉（那才是真的丢东西）。
+   *
+   * 三条约束：
+   * 1. 只认 `adopted`；`applied`（场景类草稿已经落到对话上）不走这条路——
+   *    场景切换有剧情后果，这一项不假装能撤。
+   * 2. 删的就是这次采纳创建的那个 `targetId`。「撤回这次采纳」在语义上等于
+   *    「当它没发生过」，所以用户之后改过的同一份也一并删掉。
+   * 3. 幂等：已经撤回过的、或者压根没落过库的，不报错，点两次结果一样。
+   */
+  async revokeAdminArtifact(
+    messageId: MessageId,
+    artifactId: string,
+  ): Promise<{ message: Message; artifact: AdminArtifact | null } | null> {
+    const message = await this.getMessage(messageId);
+    if (!message || message.artifacts === undefined) return null;
+
+    const target = message.artifacts.find((item) => item.id === artifactId);
+    if (target === undefined) return { message, artifact: null };
+    if (target.status !== 'adopted') return { message, artifact: target };
+
+    if (target.kind === 'character-card' && target.targetId !== null) {
+      await this.deleteCard(target.targetId as CardId);
+    } else if (target.kind === 'world-book' && target.targetId !== null) {
+      await this.deleteWorldBook(target.targetId as WorldBookId);
+    }
+
+    const reverted: AdminArtifact = { ...target, status: 'pending', targetId: null };
+    const updated: Message = {
+      ...message,
+      artifacts: message.artifacts.map((item) => (item.id === artifactId ? reverted : item)),
+      updatedAt: await this.stampUpdatedAt(COLLECTIONS.messages, messageId),
+      deletedAt: null,
+    };
+    await this.store.put(COLLECTIONS.messages, updated);
+    return { message: updated, artifact: reverted };
+  }
+
   /** 删除某个回合产生的全部消息，用于重抽（P0-7）。返回删除数量。 */
   async removeMessagesByTurn(roomId: RoomId, turnId: string): Promise<number> {
     const messages = await this.listAlive<Message>(COLLECTIONS.messages, {

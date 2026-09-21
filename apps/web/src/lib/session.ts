@@ -3,6 +3,7 @@ import {
   conversationId as asConversationId,
   roomId as asRoomId,
   type BudgetLimits,
+  buildCardMemoryAttachment,
   type Card,
   type CardId,
   type ChapterSummary,
@@ -110,6 +111,22 @@ export interface StartConversationInput {
   worldTime?: string;
 }
 
+/** 界面如实说明新对话从原对话带了什么、丢了什么（顺序 27b 第二步）。 */
+export interface ConversationAttachmentReport {
+  cardId: CardId;
+  cardName: string;
+  sourceConversationId: ConversationId;
+  sourceConversationTitle: string;
+  impressions: number;
+  chapters: number;
+  dropped: { impressions: number; chapters: number };
+}
+
+export interface StartConversationResult {
+  conversation: Conversation;
+  attachments: ConversationAttachmentReport[];
+}
+
 export interface SessionApi {
   ready: boolean;
   error: string | null;
@@ -167,7 +184,7 @@ export interface SessionApi {
    * 「这条线当时到底聊了什么」，所以这里按 conversationId 取一份只读的打包。
    */
   bundleOf: (id: ConversationId) => ConversationBundle | null;
-  startConversation: (input: StartConversationInput) => Promise<Conversation | null>;
+  startConversation: (input: StartConversationInput) => Promise<StartConversationResult | null>;
   /** 打开（或新建）这个世界的副对话。 */
   openSideConversation: () => Promise<Conversation | null>;
   updateConversation: (patch: Partial<Conversation>) => Promise<void>;
@@ -496,11 +513,45 @@ export function useSession(db: DramatisDb | null): SessionApi {
   );
 
   const startConversation = useCallback(
-    async (input: StartConversationInput): Promise<Conversation | null> => {
+    async (input: StartConversationInput): Promise<StartConversationResult | null> => {
       const current = snapshotRef.current;
       if (!db || !current) return null;
 
-      const cards = input.cards;
+      const sourceConversation =
+        current.conversations.find((item) => item.id === current.room.activeConversationId) ?? null;
+      const extraKeywords = [
+        ...new Set([current.room.playerName, ...current.instances.map((instance) => instance.displayName)]),
+      ].filter((word) => word.trim() !== '');
+      const attachments: ConversationAttachmentReport[] = [];
+      const cards = input.cards.map((card) => {
+        if (sourceConversation === null) return card;
+
+        const instance = current.instances.find((item) => item.cardId === card.id) ?? null;
+        const built = buildCardMemoryAttachment({
+          card,
+          sourceConversation: { id: sourceConversation.id, title: sourceConversation.title },
+          instance,
+          chapters: current.chapters,
+          memories: current.memories,
+          extraKeywords,
+        });
+        if (built === null) return card;
+
+        attachments.push({
+          cardId: card.id,
+          cardName: card.name,
+          sourceConversationId: sourceConversation.id,
+          sourceConversationTitle: sourceConversation.title,
+          impressions: built.attachment.stats.impressions,
+          chapters: built.attachment.stats.chapters,
+          dropped: {
+            impressions: built.attachment.stats.dropped.memories,
+            chapters: built.attachment.stats.dropped.timeline,
+          },
+        });
+        return built.card;
+      });
+
       const plan = planNewConversation({
         room: current.room,
         existingInstances: current.instances,
@@ -543,7 +594,7 @@ export function useSession(db: DramatisDb | null): SessionApi {
       setSnapshot(loaded);
       await refreshWorlds();
       await refreshLibrary();
-      return plan.conversation;
+      return { conversation: plan.conversation, attachments };
     },
     [buildGreetings, db, refreshLibrary, refreshWorlds, setSnapshot],
   );

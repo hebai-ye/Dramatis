@@ -32,7 +32,10 @@
 
 import type { Card } from '../model/card.js';
 import type { ConversationId, EventId } from '../model/ids.js';
-import type { Relationship } from '../model/instance.js';
+import { PLAYER } from '../model/ids.js';
+import type { CharacterInstance, Relationship } from '../model/instance.js';
+import type { MemoryEvent } from '../model/message.js';
+import type { ChapterSummary } from './summary.js';
 
 /** 挂在 `Card.extensions` 上的键（角色卡是本机/同步的实体，附件跟着它走）。 */
 export const ATTACHMENT_EXTENSION_KEY = 'dramatis.memoryAttachment';
@@ -97,6 +100,92 @@ export interface BuildAttachmentInput {
   extraKeywords?: readonly string[];
 }
 
+/** 给某张角色卡挑原始材料时的输入（顺序 27b 第二步）。 */
+export interface BuildCardMemoryAttachmentInput {
+  card: Card;
+  sourceConversation: { id: ConversationId; title: string };
+  /** 这张卡在**原对话所在世界**里的实例；没有实例就没有视角可继承。 */
+  instance: CharacterInstance | null;
+  chapters: readonly ChapterSummary[];
+  /** 世界内所有仍存活的记忆；函数只挑这个实例自己的视角。 */
+  memories: readonly MemoryEvent[];
+  /** 排除视角条目之外还要收进索引的词（玩家名、地点、世界书专名等）。 */
+  extraKeywords?: readonly string[];
+  builtAt?: string;
+}
+
+export interface CardMemoryAttachmentResult {
+  card: Card;
+  attachment: MemoryAttachment;
+  /** 裁剪前的材料数，便于界面解释「带了 N、丢了 X」。 */
+  source: { impressions: number; chapters: number };
+}
+
+function isImpression(memory: MemoryEvent): boolean {
+  return (memory.supersedes?.length ?? 0) > 0;
+}
+
+/**
+ * 用原对话的材料给一张卡生成附件（顺序 27b 第二步）。
+ *
+ * 原始材料的优先级：
+ * 1. 这个实例的**合并印象**（`supersedes` 非空）；
+ * 2. 还没有印象时，退回到尚未被取代、重要度最高的仍存活条目，避免新功能在
+ *    刚聊过几轮、尚未触发 27a 的对话上完全不起作用。
+ *
+ * 章节只取原对话自己的，绝不把同一世界里另一条线的章节串进来。没有任何可带的
+ * 章节或印象时返回 `null`，不写一个只剩「还没怎么打过交道」的空附件。
+ */
+export function buildCardMemoryAttachment(input: BuildCardMemoryAttachmentInput): CardMemoryAttachmentResult | null {
+  const instance = input.instance;
+  if (instance === null || instance.cardId !== input.card.id) return null;
+
+  const own = input.memories.filter((memory) => memory.observerId === instance.id);
+  const impressions = own.filter(isImpression);
+  const candidates = (
+    impressions.length > 0
+      ? impressions
+      : own
+          .filter((memory) => memory.supersededBy === null || memory.supersededBy === undefined)
+          .sort((left, right) => right.importance - left.importance || right.createdAt.localeCompare(left.createdAt))
+          .slice(0, 24)
+  ).map((memory) => ({
+    id: memory.id,
+    summary: memory.summary,
+    importance: memory.importance,
+    participants: memory.participants,
+    location: memory.location,
+  }));
+
+  const chapters = input.chapters
+    .filter((chapter) => chapter.conversationId === input.sourceConversation.id)
+    .sort((left, right) => left.createdAt.localeCompare(right.createdAt));
+
+  if (candidates.length === 0 && chapters.length === 0) return null;
+
+  const relationship = instance.relationships.find((edge) => edge.target === PLAYER) ?? null;
+  const attachment = buildMemoryAttachment({
+    fromConversationId: input.sourceConversation.id,
+    fromConversationTitle: input.sourceConversation.title,
+    ...(input.builtAt === undefined ? {} : { builtAt: input.builtAt }),
+    relationship,
+    chapters: chapters.map((chapter) => ({
+      id: chapter.id,
+      title: chapter.title,
+      summary: chapter.summary,
+      at: chapter.createdAt,
+      keywords: chapter.keyFacts,
+    })),
+    impressions: candidates,
+    ...(input.extraKeywords === undefined ? {} : { extraKeywords: input.extraKeywords }),
+  });
+
+  return {
+    card: withAttachment(input.card, attachment),
+    attachment,
+    source: { impressions: candidates.length, chapters: chapters.length },
+  };
+}
 const DEFAULT_BUDGET = { relation: 60, timeline: 600, memories: 1000 } as const;
 
 /**

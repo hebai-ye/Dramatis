@@ -1113,7 +1113,7 @@ export function App() {
         return;
       }
 
-      await session.startConversation({
+      const started = await session.startConversation({
         title: input.title,
         cards,
         worldBookIds: input.worldBookIds as never,
@@ -1121,6 +1121,20 @@ export function App() {
         location: input.location,
         worldTime: input.worldTime,
       });
+      if (started !== null && started.attachments.length > 0) {
+        const message = started.attachments
+          .map((report) => {
+            const dropped = report.dropped.impressions + report.dropped.chapters;
+            return `已从《${report.sourceConversationTitle}》给「${report.cardName}」带去 ${String(
+              report.impressions,
+            )} 条印象 / ${String(report.chapters)} 章${dropped === 0 ? '' : `，预算所限丢了 ${String(dropped)} 条`}`;
+          })
+          .join('；');
+        setWarnings((previous) => [
+          ...previous.filter((item) => item.code !== 'conversation.memory-attachment'),
+          { code: 'conversation.memory-attachment', message: `${message}。` },
+        ]);
+      }
     },
     [activePersona, session],
   );

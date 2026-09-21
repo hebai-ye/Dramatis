@@ -664,7 +664,16 @@ git ls-files | ForEach-Object {
 | `packages/core/src/index.ts` | 改 | 导出 attachment |
 | `docs/MEMORY.md` / `docs/TASKS.md` / `docs/STATUS.md` | 改 | 27b 第一步的落地、总表进度、接续点 |
 
-## 二十一、几点注意
+## 二十一、2026-09-21 深夜：27b 第二步（开新对话自动带附件）
+
+| 文件 | 新增/修改 | 说明 |
+| --- | --- | --- |
+| `packages/core/src/memory/attachment.ts` | 改 | `buildCardMemoryAttachment()`：按卡/实例挑原对话印象与章节，无印象时回退高重要度条目 |
+| `packages/core/src/memory/attachment.test.ts` | 改 | 增加到 10 个单测（视角隔离、章节隔离、回退、无材料不造空附件） |
+| `apps/web/src/lib/session.ts` | 改 | `startConversation` 生成并写回附件，返回逐卡「带了/丢了什么」的报告 |
+| `apps/web/src/App.tsx` | 改 | 开新对话后显示真实附件摘要 |
+| `docs/EVAL.md` / `docs/MEMORY.md` / `docs/TASKS.md` / `docs/STATUS.md` | 改 | 第三十三节、27b 已落、总表续接点 |
+## 二十二、几点注意
 
 ---
 

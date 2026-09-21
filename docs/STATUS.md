@@ -34,12 +34,11 @@
 | 默认窗口按 800 条输入 | ✅ | `model/provider.ts` 65536 / 4096；`prompt/assemble.ts` 历史上限 40 → 3000；迁移 v7（只升级还是老默认值的配置） |
 | 27a 记忆合并 | ✅ | `memory/consolidate.ts`（纯函数 + `applyConsolidation`）；阈值 **≤0.5 / 同视角 20 条**；接进后台队列（`lib/worker.ts` 的 `memory.consolidate`）；真机演练 5/5 |
 | 27a 顺带修的竞态 | ✅ | `Repository.markMemoriesRecalled(ids, at)`：原来 `markRecalled` 用旧拷贝整条写回，把合并刚盖的章抹掉（20→9）；回归测试 `storage/recall-stamp.test.ts` |
-| 27b 第一步 | ✅ | `memory/attachment.ts`：三层附件（关系现状 ≤60 字 / 时间线索引 ≤600 字 / 记忆索引 ≤1,000 字）、超预算从最不重要的丢并记 `stats.dropped`、关键词启发式、挂在 `Card.extensions['dramatis.memoryAttachment']`；7 个单测 |
+| 27b 完成 | ✅ | `memory/attachment.ts` 的三层附件 + `buildCardMemoryAttachment`；开新对话自动把原对话章节/印象写回角色卡，界面显示「带了 N 条印象 / M 章，丢了 X 条」；单测 10 个，真机 7/7 |
 
-**下一步第一件事（27b 第二步）**：
-开新对话时，用**原对话的章（`ChapterSummary`）与印象（`supersededBy`/`supersedes` 那批）**
-调 `buildMemoryAttachment`，把结果 `withAttachment` 挂到角色卡上，并在界面上如实说
-「从《主线》带过来 N 条印象、M 章（丢了 X 条）」。
+**下一步第一件事（27c）**：
+装配提示词时先只注入 `renderAttachment()` 的索引；用户这句话命中索引关键词，
+或明显在问过去（「还记得吗 / 上次 / 以前」）时，才把命中的 2–3 条正文展开注入。
 
 **再往后（27c → 27e）**：
 ④ **27c 关键词按需检索**：装配提示词时**先只注入 `renderAttachment()` 的索引**；

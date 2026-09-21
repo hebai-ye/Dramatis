@@ -7,9 +7,12 @@
 
 import { describe, expect, it } from 'vitest';
 import { createBlankCard } from '../model/card.js';
-import { conversationId, eventId, newId } from '../model/ids.js';
+import { conversationId, eventId, instanceId, newId, PLAYER, roomId, sceneId } from '../model/ids.js';
+import type { CharacterInstance } from '../model/instance.js';
+import type { MemoryEvent } from '../model/message.js';
 import {
   ATTACHMENT_EXTENSION_KEY,
+  buildCardMemoryAttachment,
   buildMemoryAttachment,
   describeRelation,
   extractKeywords,
@@ -17,6 +20,7 @@ import {
   renderAttachment,
   withAttachment,
 } from './attachment.js';
+import type { ChapterSummary } from './summary.js';
 
 function impression(text: string, importance: number, at = '2026-09-20T10:00:00.000Z') {
   return {
@@ -29,6 +33,87 @@ function impression(text: string, importance: number, at = '2026-09-20T10:00:00.
   };
 }
 
+function memory(
+  observer: CharacterInstance,
+  text: string,
+  options: { importance?: number; supersedes?: boolean; superseded?: boolean; conversationIdValue?: string } = {},
+): MemoryEvent {
+  const now = '2026-09-20T10:00:00.000Z';
+  return {
+    id: eventId(newId()),
+    roomId: observer.roomId,
+    conversationId: conversationId(options.conversationIdValue ?? 'conv-source'),
+    sceneId: sceneId(newId()),
+    timeline: { worldTime: '第九日', sequence: 1 },
+    location: '货栈',
+    participants: [observer.id],
+    summary: text,
+    observerId: observer.id,
+    perception: '这句话我记着。',
+    importance: options.importance ?? 0.4,
+    pinned: false,
+    importanceLocked: false,
+    affects: [],
+    sourceTurnIds: ['turn-1'],
+    createdAt: now,
+    updatedAt: now,
+    lastRecalledAt: null,
+    recallCount: 0,
+    deletedAt: null,
+    supersededBy: options.superseded === true ? eventId(newId()) : null,
+    supersedes: options.supersedes === true ? [eventId(newId())] : [],
+    consolidatedAt: options.supersedes === true ? now : null,
+  };
+}
+
+function cardActor(): { card: ReturnType<typeof createBlankCard>; instance: CharacterInstance } {
+  const card = createBlankCard({ name: '秦娘' });
+  const now = '2026-09-20T10:00:00.000Z';
+  return {
+    card,
+    instance: {
+      id: instanceId(newId()),
+      roomId: roomId(newId()),
+      cardId: card.id,
+      displayName: '秦娘',
+      presence: 'onstage',
+      traits: { extroversion: 0, aggression: 0, empathy: 0, playfulness: 0, caution: 0 },
+      affect: { valence: 0, arousal: 0, updatedAt: now, history: [] },
+      relationships: [
+        {
+          target: PLAYER,
+          trust: 0.6,
+          affinity: 0.5,
+          fear: 0,
+          respect: 0.4,
+          tension: 0.1,
+          updatedAt: now,
+          history: [],
+        },
+      ],
+      traitsLocked: false,
+      createdAt: now,
+      updatedAt: now,
+      deletedAt: null,
+    },
+  };
+}
+
+function sourceChapter(conversationIdValue: string, title: string): ChapterSummary {
+  const now = '2026-09-20T10:00:00.000Z';
+  return {
+    id: `chapter-${title}`,
+    roomId: roomId(newId()),
+    conversationId: conversationId(conversationIdValue),
+    title,
+    sceneIds: [],
+    summary: `${title}发生的事。`,
+    keyFacts: ['账房'],
+    createdAt: now,
+    updatedAt: now,
+    deletedAt: null,
+  };
+}
 describe('记忆附件：关键词（顺序 27b）', () => {
   it('抓得到引号里的专名与调用方给的词，最多 6 个', () => {
     const keywords = extractKeywords('我们在「胡记院」门口等过账房的陈九。账房的门锁着。', ['陈九', '码头']);
@@ -131,5 +216,62 @@ describe('记忆附件：三层与预算（顺序 27b）', () => {
     expect(back?.memories).toHaveLength(1);
     // 原来的卡没被改
     expect(card.extensions[ATTACHMENT_EXTENSION_KEY]).toBeUndefined();
+  });
+});
+
+describe('记忆附件：从原对话生成到卡上（顺序 27b 第二步）', () => {
+  it('只带原对话的章节与本实例的印象，并挂到卡上', () => {
+    const { card, instance } = cardActor();
+    const other = { ...instance, id: instanceId(newId()), cardId: card.id };
+    const result = buildCardMemoryAttachment({
+      card,
+      sourceConversation: { id: conversationId('conv-source'), title: '主线' },
+      instance,
+      chapters: [sourceChapter('conv-source', '雨夜'), sourceChapter('conv-other', '另一条线')],
+      memories: [
+        memory(instance, '我把账房的事替你瞒下来了。', { importance: 0.5, supersedes: true }),
+        memory(instance, '这是一条还没合并的日常。', { importance: 0.9 }),
+        memory(other, '另一个实例的印象，不该串进来。', { importance: 1, supersedes: true }),
+      ],
+      extraKeywords: ['陈九'],
+    });
+
+    expect(result).not.toBeNull();
+    expect(readAttachment(result?.card ?? card)?.memories).toHaveLength(1);
+    expect(readAttachment(result?.card ?? card)?.timeline.map((item) => item.label)).toEqual(['雨夜']);
+    expect(result?.source).toEqual({ impressions: 1, chapters: 1 });
+    expect(readAttachment(card)).toBeNull();
+  });
+
+  it('还没有合并印象时，退回高重要度且未被取代的条目', () => {
+    const { card, instance } = cardActor();
+    const result = buildCardMemoryAttachment({
+      card,
+      sourceConversation: { id: conversationId('conv-source'), title: '主线' },
+      instance,
+      chapters: [],
+      memories: [
+        memory(instance, '低重要度。', { importance: 0.2 }),
+        memory(instance, '高重要度。', { importance: 0.8 }),
+        memory(instance, '已经被合并掉。', { importance: 1, superseded: true }),
+      ],
+    });
+
+    expect(result?.attachment.memories).toHaveLength(2);
+    expect(result?.attachment.memories[0]?.line).toContain('高重要度');
+    expect(result?.attachment.memories.some((item) => item.line.includes('已经被合并掉'))).toBe(false);
+  });
+
+  it('没有章节也没有可带记忆时不造空附件', () => {
+    const { card, instance } = cardActor();
+    expect(
+      buildCardMemoryAttachment({
+        card,
+        sourceConversation: { id: conversationId('conv-source'), title: '主线' },
+        instance,
+        chapters: [],
+        memories: [],
+      }),
+    ).toBeNull();
   });
 });

@@ -204,6 +204,7 @@ PASS  没有页面级错误
 附带 `readAttachment` / `withAttachment`：附件挂在 `Card.extensions['dramatis.memoryAttachment']`，
 **跟着角色卡走**（本机与同步都跟着）。
 
+**27b 第二步（已落）**：`buildCardMemoryAttachment` 把「卡在原世界的实例、原对话章节、该实例的印象」接起来；开新对话时由 `startConversation` 自动写回 `Card.extensions`，界面提示「从《原对话》带去 N 条印象 / M 章，丢了 X 条」。没有合并印象时，退回尚未被取代的高重要度条目；没有材料时不造空附件。无头真机 7/7，单测总数 540。
 **下一步（27b 第二步 + 27c）**：开新对话时把原对话的章与印象喂给 `buildMemoryAttachment`，
 把结果挂到卡上；装配提示词时先只注入**索引**，等对话里出现关键词再展开命中的两三条正文。
 

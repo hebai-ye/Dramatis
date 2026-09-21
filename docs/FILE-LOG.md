@@ -627,7 +627,21 @@ git ls-files | ForEach-Object {
 这一批**没有改代码**：用户把「记忆与长对话」定为当前最重要的问题，而它属于
 「先量再决定」那一项，所以先跑测量、再定方案，避免在没有数字的情况下写合并算法。
 
-## 十八、几点注意
+## 十八、2026-09-21 深夜：默认窗口按 800 条输入 + 记忆合并第一步
+
+| 文件 | 新增/修改 | 说明 |
+| --- | --- | --- |
+| `packages/core/src/model/provider.ts` | 改 | 默认 `maxTokens` 65536、`reserveForReply` 4096（按 800 条用户输入算出来的，注释里带算式） |
+| `packages/core/src/prompt/assemble.ts` | 改 | 历史上限 `?? 40` → `?? 3000`：让**窗口**当约束，超了从最旧的历史开始丢 |
+| `packages/core/src/storage/repository.ts` | 改 | 迁移 v7（老默认值的窗口升级）、v8（记忆补 `supersededBy`/`supersedes`/`consolidatedAt`）；`SCHEMA_VERSION = 8` |
+| `packages/core/src/model/message.ts` | 改 | `MemoryEvent` 加合并相关的三个字段 |
+| `packages/core/src/memory/consolidate.ts` | **新增** | 决定「合并哪些」的纯函数 + 提示词构造（按视角分组、从最旧的切、时间隔远分批） |
+| `packages/core/src/memory/consolidate.test.ts` | **新增** | 7 个单测 |
+| `packages/core/src/storage/provider-defaults.test.ts` | **新增** | 新默认值 + 迁移只升级老默认值的单测 |
+| `docs/MEMORY.md` | 改 | 新增第八节：默认值改动、代价（800 轮约 100 元）、27a 第一步 |
+| `docs/EVAL.md` / `docs/TASKS.md` / `docs/STATUS.md` | 改 | 第三十节、总表 27 的进度、接续点 |
+
+## 十九、几点注意
 
 ---
 

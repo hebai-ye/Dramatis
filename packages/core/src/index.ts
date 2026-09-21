@@ -8,6 +8,7 @@ export * from './director/intent-plan.js';
 export * from './director/scheduler.js';
 export * from './memory/affect.js';
 export * from './memory/apply-analysis.js';
+export * from './memory/consolidate.js';
 export * from './memory/extract.js';
 export * from './memory/ingest.js';
 export * from './memory/panel-view.js';

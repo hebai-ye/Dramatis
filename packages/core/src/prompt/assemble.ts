@@ -537,7 +537,19 @@ export function assemblePrompt(input: AssembleInput): AssembledPrompt {
 
   // 按视角裁剪：角色看不到自己不在场时发生的事（P0-5）
   const visibleHistory = selectHistoryFor(input.history, input.instance.id);
-  blocks.push(...buildHistoryBlocks(visibleHistory, options.historyLimit ?? 40, prefixSpeaker));
+  /*
+   * 历史上限（2026-09-21 改过）。
+   *
+   * 原来是 `?? 40`——**它才是真正的约束**：窗口调到多大都只带最近 40 条消息，
+   * 于是长对话里「40 条以前的事」只能靠记忆。用户要求「800 条用户输入」之后，
+   * 这里必须放开，让**窗口**去当那个约束：
+   *
+   * - 默认给 3000 条消息（≈1500 轮）的上限，实际上够不着；
+   * - 真正的裁剪交给 `applyBudget`：超窗口时**从最旧的历史开始丢**，
+   *   丢到装得下为止（见 budget.ts 第 1 级）；
+   * - 想手动收窄的人仍然可以传 `historyLimit`（测试里就是这么用的）。
+   */
+  blocks.push(...buildHistoryBlocks(visibleHistory, options.historyLimit ?? 3000, prefixSpeaker));
 
   // 让发言者知道场上还有谁，否则多角色场景里模型会替别人说话
   const otherSpeakers = cast

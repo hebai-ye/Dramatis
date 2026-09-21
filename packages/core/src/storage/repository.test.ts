@@ -138,7 +138,13 @@ describe('Repository / schema', () => {
     const repo = new Repository(store);
     const report = await repo.migrate();
 
-    expect(report.applied.map((migration) => migration.version)).toEqual([2, 3, 4, 5, 6]);
+    /*
+     * 这个列表跟着 SCHEMA_VERSION 长：写成「2 到当前版本」的推导，
+     * 免得每加一条迁移都要回来改一次数字（改数字的时候最容易顺手漏掉别的断言）。
+     */
+    expect(report.applied.map((migration) => migration.version)).toEqual(
+      Array.from({ length: SCHEMA_VERSION - 1 }, (_, index) => index + 2),
+    );
 
     const personas = await repo.listPersonas();
     expect(personas).toHaveLength(1);

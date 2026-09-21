@@ -166,4 +166,16 @@ export interface MemoryEvent {
   recallCount: number;
   /** 软删除墓碑（P2-6）：撤销与删除都是盖章，同步时要把它推给别的设备。 */
   deletedAt: string | null;
+  /**
+   * 这条记忆被哪条「印象」取代了（顺序 27a 的记忆合并）。
+   *
+   * **原文永远不删**：合并只是给它盖一个章，说明「这段经过已经并进那条印象里了」。
+   * 面板仍然搜得到它、同步仍然带得走它，而任何一条印象都能顺着 `supersedes`
+   * 找回它的来源——这是这条链路可回滚的唯一依据。
+   */
+  supersededBy?: EventId | null;
+  /** 反过来：这条印象是由哪些原文合并来的（印象自己持有）。 */
+  supersedes?: EventId[];
+  /** 合并发生的时间；有它就说明「这条已经进过印象，别再参与合并了」。 */
+  consolidatedAt?: string | null;
 }

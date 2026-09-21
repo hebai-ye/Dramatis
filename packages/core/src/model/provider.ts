@@ -69,8 +69,23 @@ export function createProviderProfile(input: CreateProviderProfileInput): Provid
     model: input.model,
     keyRef: input.keyRef ?? `provider:${id}`,
     temperature: input.temperature ?? 0.9,
-    maxTokens: input.maxTokens ?? 16384,
-    reserveForReply: input.reserveForReply ?? 1024,
+    /*
+     * 默认窗口与回复预留（2026-09-21 用户要求：按「800 条用户输入」设）。
+     *
+     * 算给你看：一轮 = 玩家一句（约 25 字）+ 角色一段（约 120 字）≈ 145 字 ≈ 74 token。
+     * 800 轮 ≈ 59k token；再加上系统提示、角色卡、场景、记忆索引（实测约 3k token），
+     * 总量约 62k。所以：
+     *
+     * - **65536**：这是 DeepSeek-chat 自己的真实窗口，取它作默认值既够 800 轮，
+     *   又不会把用户推到一个「模型根本不接受」的窗口上（128k 的模型可以自己改大）。
+     * - **4096** 的回复预留：一句一千字的回复也就 ~500 token，4k 是宽裕的余量；
+     *   原来那 1k 在长回复时会被顶到边。
+     *
+     * 超出窗口时不会失败：装配层的预算守卫会**从最旧的历史开始丢**（budget.ts 第一级），
+     * 所以「800 条」是「装得下就装」，不是「装不下就报错」。
+     */
+    maxTokens: input.maxTokens ?? 65536,
+    reserveForReply: input.reserveForReply ?? 4096,
     role: input.role ?? 'both',
     price: input.price ?? null,
     createdAt: now,

@@ -37,7 +37,7 @@ import { USAGE_COLLECTION } from './usage.js';
  * 任何会改变已落盘数据结构的改动都要 +1，并补一条 `Migration`。
  * 这是「从第一天就留好升级路径」的具体做法（ROADMAP P0-1）。
  */
-export const SCHEMA_VERSION = 6;
+export const SCHEMA_VERSION = 8;
 
 export const COLLECTIONS = {
   meta: 'meta',
@@ -301,6 +301,56 @@ export const MIGRATIONS: readonly Migration[] = [
           updatedAt: nowIso(),
         });
         await store.remove(COLLECTIONS.meta, legacyKey);
+      }
+    },
+  },
+  {
+    version: 7,
+    /*
+     * 模型配置的窗口与回复预留（2026-09-21：按「800 条用户输入」定新默认值）。
+     *
+     * 只动**还是老默认值**（16384 / 1024）的那份配置：用户自己调过的数字不动——
+     * 迁移改用户的显式选择是最讨人厌的那种「帮你优化」。
+     */
+    describe: '模型配置里还是老默认值的窗口/回复预留，提到 65536 / 4096（够 800 条用户输入）',
+    run: async (store) => {
+      const profiles = await store.list<ProviderProfile>(COLLECTIONS.providerProfiles);
+      for (const profile of profiles) {
+        if (profile.maxTokens !== 16384 || profile.reserveForReply !== 1024) continue;
+        await store.put(COLLECTIONS.providerProfiles, {
+          ...profile,
+          maxTokens: 65536,
+          reserveForReply: 4096,
+          updatedAt: nowIso(),
+        });
+      }
+    },
+  },
+  {
+    version: 8,
+    /*
+     * 记忆合并的三个字段（顺序 27a）：`supersededBy` / `supersedes` / `consolidatedAt`。
+     *
+     * 老记录补 null（`supersedes` 补空数组），这样合并的判定不必到处写 undefined 分支。
+     * 语义上是「谁都还没被合并过」，与事实一致。
+     */
+    describe: '记忆补上合并相关的三个字段（supersededBy / supersedes / consolidatedAt）',
+    run: async (store) => {
+      const memories = await store.list<MemoryEvent>(COLLECTIONS.memories);
+      for (const memory of memories) {
+        if (
+          memory.supersededBy !== undefined &&
+          memory.supersedes !== undefined &&
+          memory.consolidatedAt !== undefined
+        ) {
+          continue;
+        }
+        await store.put(COLLECTIONS.memories, {
+          ...memory,
+          supersededBy: memory.supersededBy ?? null,
+          supersedes: memory.supersedes ?? [],
+          consolidatedAt: memory.consolidatedAt ?? null,
+        });
       }
     },
   },

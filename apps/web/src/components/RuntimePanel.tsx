@@ -35,7 +35,10 @@ interface Props {
   /** 已滚成章节的前情（P1-5）。 */
   chapters: ChapterSummary[];
   attachedWorldBooks: WorldBook[];
+  /** 全素材库，场景面板用它加入新角色。 */
   libraryCards: Card[];
+  /** 当前世界的角色卡，记忆面板用它显示附件。 */
+  worldCards: Card[];
   prompt: AssembledPrompt | null;
   pending: number;
   /** 生成之外的调用次数（意图判断 + 后台分析），来自落盘的账单。 */
@@ -175,6 +178,7 @@ export function RuntimePanel(props: Props) {
         <MemoryPanel
           memories={props.memories}
           chapters={props.chapters}
+          cards={props.worldCards}
           instances={props.instances}
           conversations={props.conversations}
           activeConversationId={props.activeConversationId}

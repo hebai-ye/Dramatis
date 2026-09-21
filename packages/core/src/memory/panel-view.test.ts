@@ -1,7 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import { conversationId, eventId, instanceId, newId, roomId } from '../model/ids.js';
 import type { MemoryEvent } from '../model/message.js';
-import { ALL, countByConversation, filterMemories, groupMemoriesByTurn, OBJECTIVE } from './panel-view.js';
+import {
+  ALL,
+  countByConversation,
+  filterMemories,
+  groupMemoriesByTurn,
+  isImpressionMemory,
+  OBJECTIVE,
+  resolveMemorySources,
+} from './panel-view.js';
 
 const QIN = instanceId('qin');
 const MAN = instanceId('man');
@@ -140,5 +148,28 @@ describe('groupMemoriesByTurn', () => {
     const group = groups[0];
     expect(group?.objective?.id).toBe('obj-new');
     expect(group?.observations.map((item) => item.id)).toEqual(['obj-old']);
+  });
+});
+
+describe('印象 → 来源原文（顺序 27e）', () => {
+  it('按 supersedes 顺序解析来源，并把找不到的 id 如实留下', () => {
+    const originalA = memory({ id: eventId('a'), supersededBy: eventId('impression') });
+    const originalB = memory({ id: eventId('b'), supersededBy: eventId('impression') });
+    const impression = memory({
+      id: eventId('impression'),
+      supersedes: [originalA.id, eventId('missing'), originalB.id],
+    });
+
+    const chain = resolveMemorySources(impression, [originalA, originalB, impression]);
+
+    expect(isImpressionMemory(impression)).toBe(true);
+    expect(chain.sources.map((item) => item.id)).toEqual(['a', 'b']);
+    expect(chain.missingIds).toEqual(['missing']);
+  });
+
+  it('普通条目没有来源链', () => {
+    const ordinary = memory();
+    expect(isImpressionMemory(ordinary)).toBe(false);
+    expect(resolveMemorySources(ordinary, [ordinary])).toEqual({ sources: [], missingIds: [] });
   });
 });

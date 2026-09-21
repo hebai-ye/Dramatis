@@ -1,4 +1,5 @@
 import type {
+  Card,
   ChapterSummary,
   CharacterInstance,
   Conversation,
@@ -6,7 +7,17 @@ import type {
   EventId,
   MemoryEvent,
 } from '@dramatis/core';
-import { ALL, countByConversation, filterMemories, groupMemoriesByTurn, OBJECTIVE } from '@dramatis/core';
+import {
+  ALL,
+  countByConversation,
+  filterMemories,
+  groupMemoriesByTurn,
+  isImpressionMemory,
+  OBJECTIVE,
+  readAttachment,
+  renderAttachment,
+  resolveMemorySources,
+} from '@dramatis/core';
 import { useEffect, useMemo, useState } from 'react';
 
 interface Props {
@@ -32,6 +43,8 @@ interface Props {
    * 已经滚成章节的前情（P1-5）。
    */
   chapters: ChapterSummary[];
+  /** 当前世界里的角色卡；附件预览从它们的 extensions 读取。 */
+  cards: Card[];
   workerError: string | null;
   disabled: boolean;
   onUpdate: (id: EventId, patch: Partial<MemoryEvent>) => void;
@@ -62,6 +75,7 @@ export function MemoryPanel({
   pending,
   extraCalls,
   chapters,
+  cards,
   workerError,
   disabled,
   onUpdate,
@@ -114,6 +128,51 @@ export function MemoryPanel({
   );
 
   const groups = useMemo(() => (view === 'contrast' ? groupMemoriesByTurn(filtered) : []), [filtered, view]);
+  const attachments = useMemo(
+    () =>
+      cards.flatMap((card) => {
+        const attachment = readAttachment(card);
+        return attachment === null ? [] : [{ card, attachment }];
+      }),
+    [cards],
+  );
+
+  const renderSourceChain = (memory: MemoryEvent) => {
+    if (!isImpressionMemory(memory)) return null;
+    const chain = resolveMemorySources(memory, memories);
+    return (
+      <details className="memory-source-chain">
+        <summary>
+          来源原文：解析到 {chain.sources.length} / {memory.supersedes?.length ?? 0} 条
+          {chain.missingIds.length === 0 ? '' : `（${chain.missingIds.length} 条当前不可见）`}
+        </summary>
+        {chain.sources.length === 0 ? (
+          <p className="hint">来源原文当前不可见；可能已经随原对话归档，但印象本身仍在。</p>
+        ) : (
+          <ul>
+            {chain.sources.map((source) => (
+              <li key={source.id}>
+                <p className="memory-summary">{source.summary}</p>
+                {source.perception.trim() === '' ? null : (
+                  <p className="memory-perception">当时的感受：{source.perception}</p>
+                )}
+                {onLocate === undefined || source.sourceTurnIds[0] === undefined ? null : (
+                  <button
+                    type="button"
+                    className="ghost"
+                    disabled={disabled}
+                    onClick={() => onLocate(source.sourceTurnIds[0] as string)}
+                  >
+                    跳到原句
+                  </button>
+                )}
+              </li>
+            ))}
+          </ul>
+        )}
+      </details>
+    );
+  };
 
   /** 这条记忆属于哪条线——「全部对话」时才显示，只看一条线时它是废话。 */
   const conversationTag = (memory: MemoryEvent): string | null => {
@@ -141,6 +200,29 @@ export function MemoryPanel({
         </div>
       ) : null}
 
+      {attachments.length > 0 ? (
+        <section className="attachment-block">
+          <h3>记忆附件</h3>
+          <p className="hint">挂在角色卡上的跨对话索引。正文只在对话命中关键词或问起过去时按需展开。</p>
+          {attachments.map(({ card, attachment }) => {
+            const dropped = attachment.stats.dropped.timeline + attachment.stats.dropped.memories;
+            return (
+              <details key={card.id} className="attachment-preview">
+                <summary>
+                  {card.name} · 来自《{attachment.fromConversationTitle}》· {attachment.stats.impressions} 条印象 /{' '}
+                  {attachment.stats.chapters} 章{dropped === 0 ? '' : ` · 已丢 ${dropped} 条`}
+                </summary>
+                <div className="attachment-preview-body">
+                  <p className="hint">
+                    构建于 {formatTime(attachment.builtAt)} · 索引 {attachment.stats.chars} 字
+                  </p>
+                  <pre>{renderAttachment(attachment)}</pre>
+                </div>
+              </details>
+            );
+          })}
+        </section>
+      ) : null}
       {/*
         两个筛选维度（T11）：**哪条对话** × **谁的视角**。分开的两个下拉比
         「一个长得像 `主线 × 秦娘` 的复合选项」更好用——用户想换的是其中一维。
@@ -349,6 +431,8 @@ export function MemoryPanel({
                 <span className="hint">重要度 {memory.importance.toFixed(2)}</span>
                 {memory.recallCount > 0 ? <span className="hint">回想 {memory.recallCount} 次</span> : null}
               </div>
+
+              {renderSourceChain(memory)}
 
               {expandedId === memory.id ? (
                 <div className="memory-editor">

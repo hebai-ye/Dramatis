@@ -699,7 +699,18 @@ git ls-files | ForEach-Object {
 | `apps/web/src/App.tsx` | 改 | 把撤销动作接到角色详情 |
 | `docs/EVAL.md` / `docs/MEMORY.md` / `docs/TASKS.md` / `docs/STATUS.md` | 改 | 第三十五节、27d 实测与接续点 |
 
-## 二十四、几点注意
+## 二十五、2026-09-21 深夜：27e（来源链与附件预览）
+
+| 文件 | 新增/修改 | 说明 |
+| --- | --- | --- |
+| `packages/core/src/memory/panel-view.ts` | 改 | `isImpressionMemory()` / `resolveMemorySources()`：解析印象来源并登记缺失 id |
+| `packages/core/src/memory/panel-view.test.ts` | 改 | 来源顺序、缺失 id、普通条目无链 |
+| `apps/web/src/components/MemoryPanel.tsx` | 改 | 附件预览、来源原文展开、逐条跳回原句 |
+| `apps/web/src/components/RuntimePanel.tsx` / `apps/web/src/App.tsx` | 改 | 把当前世界卡片传给记忆面板 |
+| `apps/web/src/styles.css` | 改 | 附件预览与来源链样式 |
+| `docs/EVAL.md` / `docs/MEMORY.md` / `docs/TASKS.md` / `docs/STATUS.md` | 改 | 第三十六节、27e 完成与全链路 6/6 |
+
+## 二十六、几点注意
 
 ---
 

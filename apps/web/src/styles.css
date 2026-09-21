@@ -733,6 +733,63 @@ button.ghost:focus-visible {
 .state-history .ghost {
   flex: 0 0 auto;
 }
+.attachment-block {
+  border-bottom: 1px dashed var(--line);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-bottom: 10px;
+}
+
+.attachment-block h3 {
+  margin: 0;
+}
+
+.attachment-preview {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 8px 10px;
+}
+
+.attachment-preview summary {
+  cursor: pointer;
+}
+
+.attachment-preview-body {
+  margin-top: 8px;
+}
+
+.attachment-preview pre {
+  background: var(--panel-soft);
+  border-radius: 6px;
+  font: inherit;
+  margin: 6px 0 0;
+  max-height: 260px;
+  overflow: auto;
+  padding: 8px;
+  white-space: pre-wrap;
+}
+
+.memory-source-chain {
+  border-top: 1px dashed var(--line);
+  margin-top: 4px;
+  padding-top: 6px;
+}
+
+.memory-source-chain > ul {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+}
+
+.memory-source-chain > ul > li {
+  background: var(--panel-soft);
+  border-radius: 6px;
+  padding: 8px;
+}
 /* ---------- 记忆面板的对话维度与对照视图（T11） ---------- */
 
 .memory-filters {

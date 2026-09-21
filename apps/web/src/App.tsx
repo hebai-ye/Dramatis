@@ -1624,6 +1624,7 @@ export function App() {
                       chapters={session.chapters}
                       attachedWorldBooks={session.worldBooks}
                       libraryCards={session.library.cards}
+                      worldCards={session.cards}
                       prompt={lastPrompt}
                       pending={worker.pending}
                       extraCalls={extraCalls(usage.world)}

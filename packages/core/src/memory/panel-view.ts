@@ -1,4 +1,4 @@
-import type { ConversationId } from '../model/ids.js';
+import type { ConversationId, EventId } from '../model/ids.js';
 import type { MemoryEvent } from '../model/message.js';
 
 /**
@@ -45,6 +45,33 @@ export function filterMemories(memories: readonly MemoryEvent[], filter: MemoryP
  * `conversationId` 在老数据上可能是 null（P2-6 之前的记忆没有对话维度），
  * 这种情况单独归一类，界面上说「未归属」而不是硬塞进第一条线。
  */
+/** 这条条目是不是 27a 合并出来的粗粒度印象。 */
+export function isImpressionMemory(memory: Pick<MemoryEvent, 'supersedes'>): boolean {
+  return (memory.supersedes?.length ?? 0) > 0;
+}
+
+export interface MemorySourceChain {
+  /** 按印象里记录的来源顺序解析出来的原文；已软删或找不到的不会伪造。 */
+  sources: MemoryEvent[];
+  /** 来源 id 存在，但当前可见记忆里找不到（例如原对话已归档）。 */
+  missingIds: EventId[];
+}
+
+/** 印象 → 来源原文的面板链路解析。 */
+export function resolveMemorySources(
+  memory: Pick<MemoryEvent, 'supersedes'>,
+  allMemories: readonly MemoryEvent[],
+): MemorySourceChain {
+  const byId = new Map(allMemories.map((item) => [item.id, item]));
+  const sources: MemoryEvent[] = [];
+  const missingIds: EventId[] = [];
+  for (const id of memory.supersedes ?? []) {
+    const source = byId.get(id);
+    if (source === undefined) missingIds.push(id);
+    else sources.push(source);
+  }
+  return { sources, missingIds };
+}
 export function conversationKeyOf(memory: MemoryEvent): string {
   return memory.conversationId ?? '';
 }

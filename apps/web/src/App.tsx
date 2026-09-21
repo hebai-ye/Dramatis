@@ -364,6 +364,7 @@ export function App() {
           memories: options.memories === undefined ? [] : [...options.memories],
           // 前情提要（P1-5）：早就不在窗口里的那几场戏，压成几行带过来
           chapters: session.chapters,
+          attachmentSources: { memories: session.memories, chapters: session.allChapters },
           modes: conversation?.modes,
           ...(options.intent === undefined || options.intent === null
             ? {}
@@ -394,7 +395,17 @@ export function App() {
       }
       return { text: accumulated, usage, reasoning, prompt: assembled };
     },
-    [conversation, instances, providers, scene, session.chapters, session.worldBooks, world],
+    [
+      conversation,
+      instances,
+      providers,
+      scene,
+      session.allChapters,
+      session.chapters,
+      session.memories,
+      session.worldBooks,
+      world,
+    ],
   );
 
   const makeCharacterLine = useCallback(
@@ -684,12 +695,18 @@ export function App() {
 
           // 只召回这个人自己的视角条目
           const now = new Date().toISOString();
+          /*
+           * 顺序 27c：跨对话旧记忆不能再走普通召回，否则附件索引已经省下的正文
+           * 会从另一条路原样漏回来。常规召回只看当前对话；旧对话由记忆附件
+           * 在关键词/过去意图命中时按需展开。
+           */
+          const recallPool = session.memories.filter((memory) => memory.conversationId === conversation?.id);
           const recalled = selectWithinBudget(
             // 兜底上限（T22）：有命中的那一轮最多再带两条「顺带想起」的记忆。
             // 实测 800 token 里原本平均有 5 条是这类无关条目，把预算让出去之后，
             // 命中条目从 4.0 涨到 5.1 条（EVAL 第五节）。
             limitFallbackItems(
-              recallMemories(session.memories, {
+              recallMemories(recallPool, {
                 observerId: speaker.id,
                 text: [text, ...history.slice(-6).map((message) => message.content)].join('\n'),
                 participantIds: scene.cast,

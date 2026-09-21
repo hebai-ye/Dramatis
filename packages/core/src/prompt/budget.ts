@@ -72,9 +72,13 @@ export function applyBudget(blocks: PromptBlock[], options: BudgetOptions): Budg
   // 比零散条目更值钱，所以排在记忆之后（丢到第 3 级才开始动它）。
   if (used() > maxTokens) {
     const memories = current
-      .filter((block) => (block.kind === 'memory' || block.kind === 'chapter') && block.droppable)
+      .filter(
+        (block) =>
+          (block.kind === 'memory' || block.kind === 'attachment' || block.kind === 'chapter') && block.droppable,
+      )
       .sort((a, b) => {
-        const rank = (block: PromptBlock): number => (block.kind === 'chapter' ? 1 : 0);
+        const rank = (block: PromptBlock): number =>
+          block.kind === 'chapter' ? 2 : block.kind === 'attachment' ? 1 : 0;
         return rank(a) - rank(b) || (a.score ?? 0) - (b.score ?? 0);
       });
     for (const block of memories) {

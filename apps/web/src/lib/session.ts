@@ -147,8 +147,10 @@ export interface SessionApi {
   cards: Card[];
   worldBooks: WorldBook[];
   memories: MemoryEvent[];
-  /** 已滚成章节的前情（P1-5），按时间正序。 */
+  /** 已滚成章节的前情（P1-5），按时间正序；界面只展示当前对话。 */
   chapters: ChapterSummary[];
+  /** 世界内全部章节；跨对话记忆附件展开正文时要用。 */
+  allChapters: ChapterSummary[];
   personas: Persona[];
   library: { cards: Card[]; worldBooks: WorldBook[] };
 
@@ -1323,6 +1325,7 @@ export function useSession(db: DramatisDb | null): SessionApi {
       snapshot === null || conversation === null
         ? []
         : snapshot.chapters.filter((chapter) => chapter.conversationId === conversation.id),
+    allChapters: snapshot?.chapters ?? [],
     personas: snapshot?.personas ?? [],
     library,
     openWorld,

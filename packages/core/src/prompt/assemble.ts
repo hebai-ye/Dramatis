@@ -1,4 +1,11 @@
 import type { WorldBookMatch } from '../compat/sillytavern/worldbook.js';
+import {
+  type AttachmentSourceLookup,
+  expandAttachment,
+  readAttachment,
+  renderAttachment,
+  renderAttachmentExpansion,
+} from '../memory/attachment.js';
 import type { ChapterSummary } from '../memory/summary.js';
 import type { Card } from '../model/card.js';
 import type { ConversationModes } from '../model/conversation.js';
@@ -47,6 +54,8 @@ export interface AssembleInput {
   chapters?: readonly ChapterSummary[];
   /** 场景内的角色，用于让模型知道还有谁在场（P0-6）。 */
   cast?: readonly CharacterInstance[];
+  /** 附件索引里那些 id 对应的原文；没有时只注入索引，不展开正文。 */
+  attachmentSources?: AttachmentSourceLookup;
   /** 会话级对话模式：静默、是否必须等主角先开口（LAYOUT「输入区 · 加号」）。 */
   modes?: ConversationModes;
   /**
@@ -383,6 +392,42 @@ function buildMemoryBlocks(memories: PromptMemory[]): PromptBlock[] {
   });
 }
 
+/**
+ * 记忆附件块（顺序 27c）。
+ *
+ * 常驻的**永远只有索引**；只有玩家这句话命中索引关键词，或明显在问过去，
+ * 才把命中的最多三条正文展开。这样日常闲聊不为「文件夹里的正文」付 token。
+ */
+function buildAttachmentBlocks(input: AssembleInput): PromptBlock[] {
+  const attachment = readAttachment(input.card);
+  if (attachment === null) return [];
+
+  const blocks: PromptBlock[] = [
+    {
+      id: 'memory-attachment-index',
+      kind: 'attachment',
+      label: '跨对话记忆索引',
+      content: renderAttachment(attachment),
+      priority: PRIORITY.history + 5,
+      droppable: true,
+      score: 0.8,
+    },
+  ];
+
+  const expansion = expandAttachment(attachment, input.playerInput, input.attachmentSources ?? {});
+  if (expansion.reason === null || (expansion.memories.length === 0 && expansion.chapters.length === 0)) return blocks;
+
+  blocks.push({
+    id: 'memory-attachment-expanded',
+    kind: 'attachment',
+    label: '想起的具体的事',
+    content: renderAttachmentExpansion(expansion),
+    priority: PRIORITY.history + 180,
+    droppable: true,
+    score: 1.2,
+  });
+  return blocks;
+}
 /** 一次最多带几章；更早的只报条数，不占预算。 */
 const CHAPTER_BLOCK_LIMIT = 3;
 
@@ -522,6 +567,7 @@ export function assemblePrompt(input: AssembleInput): AssembledPrompt {
   const relationshipBlock = buildRelationshipBlock(input.instance);
   if (relationshipBlock) blocks.push(relationshipBlock);
 
+  blocks.push(...buildAttachmentBlocks(input));
   blocks.push(...buildMemoryBlocks(input.memories ?? []));
 
   const chapterBlock = buildChapterBlock(input.chapters ?? []);

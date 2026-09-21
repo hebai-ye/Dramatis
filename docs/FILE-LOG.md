@@ -673,7 +673,19 @@ git ls-files | ForEach-Object {
 | `apps/web/src/lib/session.ts` | 改 | `startConversation` 生成并写回附件，返回逐卡「带了/丢了什么」的报告 |
 | `apps/web/src/App.tsx` | 改 | 开新对话后显示真实附件摘要 |
 | `docs/EVAL.md` / `docs/MEMORY.md` / `docs/TASKS.md` / `docs/STATUS.md` | 改 | 第三十三节、27b 已落、总表续接点 |
-## 二十二、几点注意
+## 二十二、2026-09-21 深夜：27c（索引常驻，命中后展开）
+
+| 文件 | 新增/修改 | 说明 |
+| --- | --- | --- |
+| `packages/core/src/memory/attachment.ts` | 改 | `expandAttachment()` / `asksAboutPast()` / `renderAttachmentExpansion()`：关键词或过去意图才取正文，最多 3 条 |
+| `packages/core/src/memory/attachment.test.ts` | 改 | 增加到 13 个单测（日常不展开、关键词、过去意图、上限） |
+| `packages/core/src/prompt/assemble.ts` | 改 | 有附件时常驻索引块；触发时追加展开块，原文缺失不注入空块 |
+| `packages/core/src/prompt/assemble.test.ts` | 改 | 3 个端到端装配单测 |
+| `packages/core/src/prompt/types.ts` / `budget.ts` | 改 | 新增 `attachment` 块类型，预算降级时与记忆/章节同组处理 |
+| `apps/web/src/lib/session.ts` | 改 | 暴露世界内 `allChapters` 供跨对话展开 |
+| `apps/web/src/App.tsx` | 改 | 传附件原文池；常规召回限定当前对话，避免旧正文漏回 |
+| `docs/EVAL.md` / `docs/MEMORY.md` / `docs/TASKS.md` / `docs/STATUS.md` | 改 | 第三十四节、27c 实测与接续点 |
+## 二十三、几点注意
 
 ---
 

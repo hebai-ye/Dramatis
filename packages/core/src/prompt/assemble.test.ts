@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
+import { buildMemoryAttachment, withAttachment } from '../memory/attachment.js';
 import type { Card } from '../model/card.js';
-import { cardId, type InstanceId, instanceId, newId, nowIso, PLAYER, roomId, sceneId } from '../model/ids.js';
+import { cardId, eventId, type InstanceId, instanceId, newId, nowIso, PLAYER, roomId, sceneId } from '../model/ids.js';
 import { type CharacterInstance, neutralTraits } from '../model/instance.js';
+import type { MemoryEvent } from '../model/message.js';
 import type { Room, Scene } from '../model/room.js';
 import { createCharacterMessage, createPlayerMessage } from '../session/turn.js';
 import { assemblePrompt } from './assemble.js';
@@ -144,6 +146,34 @@ function line(room: Room, scene: Scene, speaker: CharacterInstance, content: str
   });
 }
 
+function attachmentMemory(instance: CharacterInstance, summary: string): MemoryEvent {
+  const now = nowIso();
+  return {
+    id: eventId(newId()),
+    roomId: instance.roomId,
+    conversationId: null,
+    sceneId: null,
+    timeline: { worldTime: '第九日', sequence: 1 },
+    location: '货栈',
+    participants: [instance.id],
+    summary,
+    observerId: instance.id,
+    perception: '这件事不能让别人知道。',
+    importance: 0.7,
+    pinned: false,
+    importanceLocked: false,
+    affects: [],
+    sourceTurnIds: ['turn-1'],
+    createdAt: now,
+    updatedAt: now,
+    lastRecalledAt: null,
+    recallCount: 0,
+    deletedAt: null,
+    supersededBy: null,
+    supersedes: [],
+    consolidatedAt: null,
+  };
+}
 const baseBudget = { maxTokens: 8000, reserveForReply: 1000 };
 
 describe('assemblePrompt', () => {
@@ -247,6 +277,86 @@ describe('assemblePrompt', () => {
   });
 });
 
+describe('assemblePrompt / 跨对话记忆附件（顺序 27c）', () => {
+  it('日常输入只注入索引，不展开正文', () => {
+    const { card, instance, room, scene } = fixtures();
+    const memory = attachmentMemory(
+      instance,
+      '账房的门锁着，里面还有没对完的账，钥匙在柜子第三层，最后一页写着日期和一枚鹿印，门槛下还有一张旧收条。',
+    );
+    const attachment = buildMemoryAttachment({
+      fromConversationId: 'conv-old' as never,
+      fromConversationTitle: '主线',
+      chapters: [],
+      impressions: [{ id: memory.id, summary: memory.summary, importance: memory.importance }],
+      extraKeywords: ['账房'],
+    });
+    const prompt = assemblePrompt({
+      card: withAttachment(card, attachment),
+      instance,
+      room,
+      scene,
+      history: [],
+      playerInput: '今晚喝点什么？',
+      attachmentSources: { memories: [memory] },
+      budget: baseBudget,
+    });
+    const system = prompt.messages[0]?.content ?? '';
+    expect(system).toContain('跨对话记忆索引');
+    expect(system).not.toContain('想起的具体的事');
+    expect(system).not.toContain('最后一页写着日期和一枚鹿印');
+  });
+
+  it('命中关键词时才展开正文', () => {
+    const { card, instance, room, scene } = fixtures();
+    const memory = attachmentMemory(
+      instance,
+      '账房的门锁着，里面还有没对完的账，钥匙在柜子第三层，最后一页写着日期和一枚鹿印，门槛下还有一张旧收条。',
+    );
+    const attachment = buildMemoryAttachment({
+      fromConversationId: 'conv-old' as never,
+      fromConversationTitle: '主线',
+      chapters: [],
+      impressions: [{ id: memory.id, summary: memory.summary, importance: memory.importance }],
+      extraKeywords: ['账房'],
+    });
+    const prompt = assemblePrompt({
+      card: withAttachment(card, attachment),
+      instance,
+      room,
+      scene,
+      history: [],
+      playerInput: '账房那件事后来怎么了？',
+      attachmentSources: { memories: [memory] },
+      budget: baseBudget,
+    });
+    const system = prompt.messages[0]?.content ?? '';
+    expect(system).toContain('想起的具体的事');
+    expect(system).toContain('没对完的账');
+  });
+
+  it('问「还记得吗」时也会展开最重要的正文', () => {
+    const { card, instance, room, scene } = fixtures();
+    const memory = attachmentMemory(instance, '那一夜在货栈把账对上了。');
+    const attachment = buildMemoryAttachment({
+      fromConversationId: 'conv-old' as never,
+      fromConversationTitle: '主线',
+      chapters: [],
+      impressions: [{ id: memory.id, summary: memory.summary, importance: memory.importance }],
+    });
+    const prompt = assemblePrompt({
+      card: withAttachment(card, attachment),
+      instance,
+      room,
+      scene,
+      history: [],
+      playerInput: '你还记得吗？',
+      attachmentSources: { memories: [memory] },
+      budget: baseBudget,
+    });
+    expect(prompt.messages[0]?.content).toContain('那一夜在货栈把账对上了');
+  });
+});
 describe('assemblePrompt / 多角色场景', () => {
   it('场景块带上自动整理的本场场记（P1-5 的场景层）', () => {
     const { card, instance, room, scene } = fixtures();

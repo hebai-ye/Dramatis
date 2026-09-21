@@ -360,6 +360,113 @@ export function renderAttachment(attachment: MemoryAttachment): string {
   return lines.join('\n');
 }
 
+export interface AttachmentSourceLookup {
+  memories?: readonly MemoryEvent[];
+  /** 跨对话章节也放在这里；附件记的是 chapterId，不依赖当前对话。 */
+  chapters?: readonly ChapterSummary[];
+}
+
+export interface AttachmentExpansion {
+  /** 为什么展开：命中索引词，或用户在明确问过去。 */
+  reason: 'keyword' | 'past-question' | null;
+  matchedKeywords: string[];
+  memories: MemoryEvent[];
+  chapters: ChapterSummary[];
+}
+
+const PAST_QUESTION_PATTERN =
+  /(还记(?:得)?(?:吗|么)?|记得(?:吗|么)?|上次|上回|以前|之前|当初|那时|那一次|那天|你说过|我们说过|旧事|往事)/;
+
+/** 这句话是否明显在问过去。纯启发式，宁可少展开，不做额外模型调用。 */
+export function asksAboutPast(text: string): boolean {
+  return PAST_QUESTION_PATTERN.test(text);
+}
+
+function includesKeyword(text: string, keyword: string): boolean {
+  const word = keyword.trim().toLowerCase();
+  return word.length >= 2 && text.toLowerCase().includes(word);
+}
+
+/**
+ * 从附件索引挑出要展开正文的 2–3 条（顺序 27c）。
+ *
+ * **只有两种触发**：玩家这句话命中索引关键词，或明显在问过去。日常闲聊返回空，
+ * 因而不会把正文常驻塞进 prompt。命中多条时按「命中词数 → 重要度/新旧」排序。
+ */
+export function expandAttachment(
+  attachment: MemoryAttachment,
+  query: string,
+  sources: AttachmentSourceLookup = {},
+  limit = 3,
+): AttachmentExpansion {
+  const text = query.trim();
+  const keywordHit =
+    text !== '' &&
+    [...attachment.timeline, ...attachment.memories].some((item) =>
+      item.keywords.some((keyword) => includesKeyword(text, keyword)),
+    );
+  const past = asksAboutPast(text);
+  if (!keywordHit && !past) {
+    return { reason: null, matchedKeywords: [], memories: [], chapters: [] };
+  }
+
+  const rawMemories = new Map((sources.memories ?? []).map((memory) => [memory.id, memory]));
+  const rawChapters = new Map((sources.chapters ?? []).map((chapter) => [chapter.id, chapter]));
+
+  const candidates: Array<
+    | { kind: 'memory'; score: number; order: number; keywords: string[]; value: MemoryEvent }
+    | { kind: 'chapter'; score: number; order: number; keywords: string[]; value: ChapterSummary }
+  > = [];
+
+  attachment.memories.forEach((line, index) => {
+    const memory = rawMemories.get(line.memoryId);
+    if (memory === undefined) return;
+    const hits = line.keywords.filter((keyword) => includesKeyword(text, keyword));
+    candidates.push({
+      kind: 'memory',
+      score: hits.length * 100 + line.importance * 10,
+      order: index,
+      keywords: hits,
+      value: memory,
+    });
+  });
+
+  attachment.timeline.forEach((line, index) => {
+    const chapter = rawChapters.get(line.chapterId);
+    if (chapter === undefined) return;
+    const hits = line.keywords.filter((keyword) => includesKeyword(text, keyword));
+    const age = Number.isFinite(Date.parse(line.at)) ? Date.parse(line.at) : 0;
+    candidates.push({ kind: 'chapter', score: hits.length * 100, order: age || index, keywords: hits, value: chapter });
+  });
+
+  const matched = candidates.filter((candidate) => candidate.keywords.length > 0);
+  const pool = matched.length > 0 ? matched : past ? candidates : [];
+  const picked = pool
+    .sort((left, right) => right.score - left.score || right.order - left.order)
+    .slice(0, Math.max(0, limit));
+  const matchedKeywords = [...new Set(picked.flatMap((candidate) => candidate.keywords))];
+
+  return {
+    reason: matchedKeywords.length > 0 ? 'keyword' : 'past-question',
+    matchedKeywords,
+    memories: picked.filter((item) => item.kind === 'memory').map((item) => item.value),
+    chapters: picked.filter((item) => item.kind === 'chapter').map((item) => item.value),
+  };
+}
+
+/** 展开的正文块；索引仍在上面，这一块只在触发时出现。 */
+export function renderAttachmentExpansion(expansion: AttachmentExpansion): string {
+  const lines: string[] = ['【你想起了具体的事】'];
+  for (const memory of expansion.memories) {
+    const feeling = memory.perception.trim() === '' ? '' : `（你当时觉得：${memory.perception.trim()}）`;
+    lines.push(`- ${memory.summary.trim()}${feeling}`);
+  }
+  for (const chapter of expansion.chapters) {
+    const facts = chapter.keyFacts.length === 0 ? '' : `（要点：${chapter.keyFacts.join('；')}）`;
+    lines.push(`- ${chapter.title}：${chapter.summary.trim()}${facts}`);
+  }
+  return lines.join('\n');
+}
 /** 从角色卡里读附件（没有就是 null）。 */
 export function readAttachment(card: Pick<Card, 'extensions'>): MemoryAttachment | null {
   const raw = card.extensions[ATTACHMENT_EXTENSION_KEY];

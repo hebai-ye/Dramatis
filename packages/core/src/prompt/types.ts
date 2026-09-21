@@ -36,6 +36,8 @@ export type PromptBlockKind =
   | 'persona'
   | 'relationship'
   | 'memory'
+  /** 跨对话记忆附件：常驻索引，命中关键词时才追加正文。 */
+  | 'attachment'
   /** 分层摘要滚出来的前情（P1-5）：自成一节，不与召回记忆合并。 */
   | 'chapter'
   | 'scene'

@@ -15,6 +15,7 @@ import {
   buildCardMemoryAttachment,
   buildMemoryAttachment,
   describeRelation,
+  expandAttachment,
   extractKeywords,
   readAttachment,
   renderAttachment,
@@ -273,5 +274,58 @@ describe('记忆附件：从原对话生成到卡上（顺序 27b 第二步）',
         memories: [],
       }),
     ).toBeNull();
+  });
+});
+
+describe('记忆附件：按需展开正文（顺序 27c）', () => {
+  it('日常闲聊不展开，索引之外没有正文', () => {
+    const { instance } = cardActor();
+    const memoryEvent = memory(instance, '账房的门锁着。', { importance: 0.6 });
+    const attachment = buildMemoryAttachment({
+      fromConversationId: conversationId('conv-source'),
+      fromConversationTitle: '主线',
+      chapters: [],
+      impressions: [{ id: memoryEvent.id, summary: memoryEvent.summary, importance: 0.6 }],
+    });
+
+    expect(expandAttachment(attachment, '今天天气不错', { memories: [memoryEvent] }).reason).toBeNull();
+  });
+
+  it('命中索引关键词时展开正文，并且最多三条', () => {
+    const { instance } = cardActor();
+    const memories = Array.from({ length: 4 }, (_, index) =>
+      memory(instance, `账房第 ${String(index)} 次对账的细节。`, { importance: index / 10 }),
+    );
+    const attachment = buildMemoryAttachment({
+      fromConversationId: conversationId('conv-source'),
+      fromConversationTitle: '主线',
+      chapters: [],
+      impressions: memories.map((item) => ({ id: item.id, summary: item.summary, importance: item.importance })),
+      extraKeywords: ['账房'],
+    });
+
+    const expanded = expandAttachment(attachment, '账房那件事怎么办？', { memories }, 3);
+    expect(expanded.reason).toBe('keyword');
+    expect(expanded.matchedKeywords).toContain('账房');
+    expect(expanded.memories).toHaveLength(3);
+  });
+
+  it('明显问过去但没有关键词时，带回最重要的两三条', () => {
+    const { instance } = cardActor();
+    const memories = [
+      memory(instance, '低重要度的旧事。', { importance: 0.2 }),
+      memory(instance, '最重要的一件旧事。', { importance: 0.9 }),
+    ];
+    const attachment = buildMemoryAttachment({
+      fromConversationId: conversationId('conv-source'),
+      fromConversationTitle: '主线',
+      chapters: [],
+      impressions: memories.map((item) => ({ id: item.id, summary: item.summary, importance: item.importance })),
+    });
+
+    const expanded = expandAttachment(attachment, '还记得吗？', { memories });
+    expect(expanded.reason).toBe('past-question');
+    expect(expanded.memories).toHaveLength(2);
+    expect(expanded.memories[0]?.summary).toContain('最重要');
   });
 });

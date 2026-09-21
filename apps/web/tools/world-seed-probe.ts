@@ -328,6 +328,8 @@ function messageOf(input: {
   audience: InstanceId[];
   content: string;
   at: number;
+  /** 角色回复带上用量：线上跑出来的每条回复都有，回归数据也得有（菜单里的 Token 那行要看它） */
+  usage?: Message['usage'];
 }): Message {
   const iso = new Date(input.at).toISOString();
   return {
@@ -346,6 +348,7 @@ function messageOf(input: {
     createdAt: iso,
     updatedAt: iso,
     deletedAt: null,
+    ...(input.usage === undefined ? {} : { usage: input.usage }),
   };
 }
 
@@ -459,6 +462,7 @@ async function main(): Promise<void> {
           audience,
           content: turn.reply,
           at: clock + 1000,
+          usage: { promptTokens: 1180 + sequence * 37, completionTokens: 96 + sequence * 11 },
         }),
       ]);
       messages += 2;

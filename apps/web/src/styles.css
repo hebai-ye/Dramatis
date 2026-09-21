@@ -412,6 +412,102 @@ button.ghost {
   padding: 2px 8px;
 }
 
+/* ---------- 消息上的操作：悬停 / 右键 / 长按（用户 2026-09-21） ---------- */
+
+/*
+ * 一条消息能做的事，平时**什么都不显示**：
+ *   桌面 —— 鼠标移到这条消息上才露出「重抽 / 编辑 / 删除」；右键出菜单，
+ *           菜单里除了这三样还带 Token 用量。
+ *   手机 —— 长按出同一个菜单。
+ * 改之前这三颗按钮和用量那行是常驻的：既碍眼（用户原话「过于碍眼」），
+ * 在窄屏上还会顶出气泡外面。
+ */
+.row-actions {
+  align-items: center;
+  display: flex;
+  gap: 4px;
+  justify-content: flex-end;
+  margin-top: 6px;
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+
+.row-actions button {
+  font-size: 11px;
+  padding: 1px 8px;
+}
+
+/*
+ * 触发面是**整行**而不是气泡：鼠标从气泡滑向按钮的路上要经过几像素的间隙，
+ * 用气泡做基准会在这段路上闪一下。
+ */
+.message-row:hover .row-actions,
+.message-row.menu-open .row-actions,
+.row-actions:focus-within {
+  opacity: 1;
+}
+
+/* 只对桌面说「右键看更多」：手机上这句话永远没机会被看到 */
+.row-menu-more {
+  color: var(--muted-text);
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+/*
+ * 右键 / 长按弹出来的那块菜单。
+ *
+ * 它是挂在 `body` 上的（组件里用 portal）：住在对话滚动容器里的话，
+ * 最下面那条消息的菜单会被容器的 `overflow` 裁掉——坐标量得再准，人也看不见。
+ * 位置由点击 / 长按的地方给（`left` / `top` 走内联样式），这里只保证它不出屏。
+ */
+.row-menu {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  box-shadow: 0 10px 26px rgb(0 0 0 / 40%);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: calc(100vh - 16px);
+  max-width: calc(100vw - 16px);
+  min-width: 150px;
+  overflow-y: auto;
+  padding: 8px;
+  position: fixed;
+  z-index: 60;
+}
+
+.row-menu button {
+  font-size: 12px;
+  justify-content: flex-start;
+  padding: 5px 8px;
+  text-align: left;
+}
+
+.row-menu .hint {
+  font-size: 10px;
+  opacity: 0.85;
+}
+
+/*
+ * 触屏（`hover: none`）上没有悬停这回事：常驻按钮整块收起来，
+ * 这一条就是「移动端按钮顶出消息框」的修复。
+ * 只按 `hover` 判断而不是按宽度：带鼠标的窄窗口仍然走悬停那套。
+ */
+@media (hover: none) {
+  .row-actions {
+    display: none;
+  }
+
+  /* 手指要按得准：菜单里每一项都撑到 44px 高（顺序 9 的触控目标要求） */
+  .row-menu button {
+    font-size: 13px;
+    min-height: 44px;
+    padding: 10px;
+  }
+}
+
 .memory-header {
   align-items: baseline;
   display: flex;
@@ -1449,14 +1545,8 @@ details summary {
   text-align: center;
 }
 
-.bubble-actions.action-only {
+.row-actions.action-only {
   margin-top: 0;
-}
-
-.usage-hint {
-  align-self: center;
-  font-size: 10px;
-  white-space: nowrap;
 }
 
 /* 归属可疑提示（T18）：只在真的可疑时出现，点按钮才改数据 */

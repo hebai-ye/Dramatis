@@ -9,7 +9,8 @@ import {
   renderMessageContent,
   type Scene,
 } from '@dramatis/core';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { Avatar, MessageBody } from './MessageBody';
 import { WebBridgePanel, type WebBridgeState } from './WebBridgePanel';
 
@@ -106,6 +107,14 @@ function formatUsage(usage: Message['usage']): string {
 }
 
 /**
+ * 手机上按住多久算「长按」（毫秒）。
+ *
+ * 450 是折中：再短会和「想滚动却按到了」打架，再长用户会以为没反应。
+ * 桌面的右键不需要这个值——`contextmenu` 是浏览器直接给的。
+ */
+const LONG_PRESS_MS = 450;
+
+/**
  * 主对话（LAYOUT「主对话状态」）。
  *
  * 形态是**群聊**：圆形头像、名字、聊天气泡，动作另起一段且不进气泡。
@@ -146,6 +155,105 @@ export function MainChat({
   const [modeMenuOpen, setModeMenuOpen] = useState(false);
   const [dragOver, setDragOver] = useState(false);
   const [highlightId, setHighlightId] = useState<MessageId | null>(null);
+  /**
+   * 右键 / 长按打开的那张小菜单（用户 2026-09-21 的要求）。
+   *
+   * 桌面：右键任意一条消息 → 菜单；鼠标悬停也会露出几个常用操作。
+   * 手机：长按（iOS 走触摸计时，安卓的右键事件就是长按）。
+   * 菜单里除了编辑/删除/重抽，还带 Token 用量——那行字以前常驻在气泡下面，太抢眼。
+   */
+  const [menuFor, setMenuFor] = useState<MessageId | null>(null);
+  const [menuAt, setMenuAt] = useState<{ x: number; y: number } | null>(null);
+  const menuRef = useRef<HTMLDivElement | null>(null);
+  const pressTimer = useRef<number | null>(null);
+  /** 长按那一刻手指在哪：菜单就开在那儿，闭着眼睛也知道自己按的是哪条。 */
+  const pressPoint = useRef({ x: 0, y: 0 });
+
+  /**
+   * 长按之后浏览器还会补一次 click；不吞掉它，刚打开的菜单会被
+   * 上面那个「点任意处关闭」立刻收走，用户看到的就是「长按没反应」。
+   */
+  const swallowNextClick = useRef(false);
+
+  const openMenu = (id: MessageId, x: number, y: number): void => {
+    setMenuFor(id);
+    setMenuAt({ x, y });
+  };
+  const closeMenu = (): void => {
+    setMenuFor(null);
+    setMenuAt(null);
+  };
+
+  /*
+   * 菜单挂在 body 上（聊天气泡住在滚动容器里，绝对定位会被那块 `overflow` 裁掉——
+   * 实测最下面那条消息的菜单整个看不见，量出来的坐标是对的，人在屏幕上找不到它）。
+   * 既然挂出来了，就得自己保证它不出屏：量一次实际尺寸，推回可视区。
+   */
+  useLayoutEffect(() => {
+    const node = menuRef.current;
+    if (menuFor === null || menuAt === null || node === null) return;
+
+    const rect = node.getBoundingClientRect();
+    const margin = 8;
+    let dx = 0;
+    let dy = 0;
+    if (rect.right > window.innerWidth - margin) dx = window.innerWidth - margin - rect.right;
+    if (rect.left + dx < margin) dx = margin - (rect.left + dx);
+    if (rect.bottom > window.innerHeight - margin) dy = window.innerHeight - margin - rect.bottom;
+    if (rect.top + dy < margin) dy = margin - (rect.top + dy);
+    if (dx === 0 && dy === 0) return;
+
+    setMenuAt({ x: menuAt.x + dx, y: menuAt.y + dy });
+  }, [menuFor, menuAt]);
+
+  /** 长按开始计时。安卓上长按也会派发 contextmenu，两条路都开同一个菜单，重复无副作用。 */
+  const startPress = (id: MessageId, x: number, y: number): void => {
+    cancelPress();
+    pressPoint.current = { x, y };
+    pressTimer.current = window.setTimeout(() => {
+      pressTimer.current = null;
+      swallowNextClick.current = true;
+      openMenu(id, pressPoint.current.x, pressPoint.current.y);
+    }, LONG_PRESS_MS);
+  };
+
+  /** 手指一移开或一滑动就取消：那是在滚动，不是长按。 */
+  const cancelPress = (): void => {
+    if (pressTimer.current === null) return;
+    window.clearTimeout(pressTimer.current);
+    pressTimer.current = null;
+  };
+
+  // 组件卸载（切对话 / 切账户）时别把计时器留着，否则它会在后台开一个已经没人看的菜单
+  useEffect(
+    () => () => {
+      if (pressTimer.current !== null) window.clearTimeout(pressTimer.current);
+    },
+    [],
+  );
+
+  useEffect(() => {
+    if (menuFor === null) return;
+    /*
+     * 点菜单里面不算「点外面」：菜单里有个下拉（改归属），选它的时候
+     * 不能让菜单先自己关掉。以前靠菜单上的 stopPropagation，那会在
+     * 一个纯容器 div 上挂 onClick——a11y 规则会报，也没必要。
+     */
+    const onAnyClick = (event: MouseEvent): void => {
+      const target = event.target;
+      if (target instanceof Element && target.closest('.row-menu') !== null) return;
+      setMenuFor(null);
+    };
+    const onKey = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape') setMenuFor(null);
+    };
+    window.addEventListener('click', onAnyClick);
+    window.addEventListener('keydown', onKey);
+    return () => {
+      window.removeEventListener('click', onAnyClick);
+      window.removeEventListener('keydown', onKey);
+    };
+  }, [menuFor]);
   const bottomRef = useRef<HTMLDivElement | null>(null);
 
   const contentLength = messages.reduce((total, message) => total + message.content.length, 0) + streamText.length;
@@ -243,7 +351,26 @@ export function MainChat({
           <article
             key={message.id}
             data-message-id={message.id}
-            className={`message-row ${message.role}${highlightId === message.id ? ' highlighted' : ''}`}
+            className={`message-row ${message.role}${highlightId === message.id ? ' highlighted' : ''}${
+              menuFor === message.id ? ' menu-open' : ''
+            }`}
+            onContextMenu={(event) => {
+              event.preventDefault();
+              openMenu(message.id, event.clientX, event.clientY);
+            }}
+            onTouchStart={(event) => {
+              const point = event.touches[0];
+              startPress(message.id, point?.clientX ?? 0, point?.clientY ?? 0);
+            }}
+            onTouchEnd={cancelPress}
+            onTouchMove={cancelPress}
+            onTouchCancel={cancelPress}
+            onClickCapture={(event) => {
+              if (!swallowNextClick.current) return;
+              swallowNextClick.current = false;
+              event.preventDefault();
+              event.stopPropagation();
+            }}
           >
             {message.role === 'character' ? <Avatar name={nameOf(message)} /> : null}
 
@@ -319,11 +446,6 @@ export function MainChat({
                     <button
                       type="button"
                       className="ghost"
-                      /*
-                       * 网页版模式下不提供重抽：重抽会先删掉这条回复再让模型重写，
-                       * 而这里没有模型可用——点下去只会「删掉回复、什么都不写」。
-                       * 想重写就删掉这条再发一次（那会重新走一遍桥接）。
-                       */
                       disabled={busy || archived || manualMode}
                       title={
                         manualMode
@@ -334,25 +456,6 @@ export function MainChat({
                     >
                       重抽
                     </button>
-                  ) : null}
-                  {formatUsage(message.usage) === '' ? null : (
-                    <span className="hint usage-hint">{formatUsage(message.usage)}</span>
-                  )}
-                  {cast.length > 1 && message.role === 'character' ? (
-                    <label className="attr-pick">
-                      改归属
-                      <select
-                        value={message.speakerInstanceId ?? ''}
-                        disabled={busy || archived}
-                        onChange={(event) => onReassign(message.id, event.target.value as InstanceId)}
-                      >
-                        {cast.map((member) => (
-                          <option key={member.id} value={member.id}>
-                            {member.displayName}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
                   ) : null}
                   <button
                     type="button"
@@ -375,8 +478,79 @@ export function MainChat({
                   >
                     删除
                   </button>
+                  <span className="row-menu-more">右键看更多</span>
                 </MessageBody>
               )}
+
+              {menuFor === message.id
+                ? createPortal(
+                    <div
+                      className="row-menu"
+                      ref={menuRef}
+                      style={menuAt === null ? undefined : { left: menuAt.x, top: menuAt.y }}
+                    >
+                      {message.id === lastCharacterId ? (
+                        <button
+                          type="button"
+                          className="ghost"
+                          disabled={busy || archived || manualMode}
+                          onClick={() => {
+                            closeMenu();
+                            onRegenerate(message.id);
+                          }}
+                        >
+                          重抽
+                        </button>
+                      ) : null}
+                      <button
+                        type="button"
+                        className="ghost"
+                        disabled={busy || archived}
+                        onClick={() => {
+                          closeMenu();
+                          setEditingId(message.id);
+                          setEditingText(message.content);
+                        }}
+                      >
+                        编辑
+                      </button>
+                      <button
+                        type="button"
+                        className="ghost danger"
+                        disabled={busy || archived}
+                        onClick={() => {
+                          closeMenu();
+                          if (window.confirm('删除这条消息？')) onDelete(message.id);
+                        }}
+                      >
+                        删除
+                      </button>
+                      {cast.length > 1 && message.role === 'character' ? (
+                        <label className="attr-pick">
+                          改归属
+                          <select
+                            value={message.speakerInstanceId ?? ''}
+                            disabled={busy || archived}
+                            onChange={(event) => {
+                              closeMenu();
+                              onReassign(message.id, event.target.value as InstanceId);
+                            }}
+                          >
+                            {cast.map((member) => (
+                              <option key={member.id} value={member.id}>
+                                {member.displayName}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                      ) : null}
+                      {formatUsage(message.usage) === '' ? null : (
+                        <span className="hint">{formatUsage(message.usage)}</span>
+                      )}
+                    </div>,
+                    document.body,
+                  )
+                : null}
             </div>
           </article>
         ))}

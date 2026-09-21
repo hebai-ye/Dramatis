@@ -7,7 +7,14 @@ interface Props {
   speakerName: string;
   /** 只有多角色同场时需要每段都标名字，单独说话时标一次就够。 */
   showSpeaker: boolean;
-  /** 挂在最后一段上的操作按钮（重抽 / 编辑 / 删除）。 */
+  /**
+   * 挂在最后一段上的操作按钮（重抽 / 编辑 / 删除）。
+   *
+   * 它们平时是**看不见的**：桌面靠悬停露出来、手机靠长按出菜单
+   * （用户 2026-09-21 的要求——常驻在气泡下面既碍眼，在窄屏上还会顶出气泡）。
+   * 所以这里包的是 `row-actions` 而不是以前那个 `bubble-actions`：
+   * 可见性由样式统一控制，编辑态的「保存 / 取消」不走这条路，永远可见。
+   */
   children?: ReactNode;
 }
 
@@ -63,16 +70,14 @@ export function MessageBody({ message, speakerName, showSpeaker, children }: Pro
           <div className={`bubble ${message.role}`} key={`speech-${String(index)}`}>
             {showSpeaker && index === 0 ? <span className="speaker">{message.speakerName}</span> : null}
             <p>{segment.text}</p>
-            {children !== undefined && index === lastSpeechIndex ? (
-              <div className="bubble-actions">{children}</div>
-            ) : null}
+            {children !== undefined && index === lastSpeechIndex ? <div className="row-actions">{children}</div> : null}
           </div>
         ),
       )}
 
       {/* 整条消息只有动作时，操作按钮仍然要有地方可放 */}
       {lastSpeechIndex === -1 && children !== undefined ? (
-        <div className="bubble-actions action-only">{children}</div>
+        <div className="row-actions action-only">{children}</div>
       ) : null}
     </>
   );

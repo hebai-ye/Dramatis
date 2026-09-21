@@ -278,6 +278,7 @@ export function useSession(db: DramatisDb | null): SessionApi {
     cards: [],
     worldBooks: [],
   });
+  const [personas, setPersonas] = useState<Persona[]>([]);
   const [snapshot, setSnapshotState] = useState<RoomSnapshot | null>(null);
 
   // 用一个 ref 跟随快照，避免每个回调都依赖 snapshot 而频繁重建
@@ -296,6 +297,11 @@ export function useSession(db: DramatisDb | null): SessionApi {
     if (!db) return;
     const [cards, worldBooks] = await Promise.all([db.repository.listCards(), db.repository.listWorldBooks()]);
     setLibrary({ cards, worldBooks });
+  }, [db]);
+
+  const refreshPersonas = useCallback(async () => {
+    if (!db) return;
+    setPersonas(await db.repository.listPersonas());
   }, [db]);
 
   /**
@@ -337,8 +343,9 @@ export function useSession(db: DramatisDb | null): SessionApi {
     if (!db) return;
     await refreshWorlds();
     await refreshLibrary();
+    await refreshPersonas();
     await reloadWorld();
-  }, [db, refreshLibrary, refreshWorlds, reloadWorld]);
+  }, [db, refreshLibrary, refreshPersonas, refreshWorlds, reloadWorld]);
 
   useEffect(() => {
     if (!db) return;
@@ -353,6 +360,7 @@ export function useSession(db: DramatisDb | null): SessionApi {
         }
         await refreshWorlds();
         await refreshLibrary();
+        await refreshPersonas();
       } catch (sessionError) {
         if (!cancelled) {
           setError(sessionError instanceof Error ? sessionError.message : String(sessionError));
@@ -365,15 +373,19 @@ export function useSession(db: DramatisDb | null): SessionApi {
     return () => {
       cancelled = true;
     };
-  }, [db, refreshLibrary, refreshWorlds, setSnapshot]);
+  }, [db, refreshLibrary, refreshPersonas, refreshWorlds, setSnapshot]);
 
   // 没有身份就先造一个，否则新世界无从创建
   useEffect(() => {
     if (!db || !ready) return;
     void (async () => {
       const list = await db.repository.listPersonas();
-      if (list.length > 0) return;
+      if (list.length > 0) {
+        setPersonas(list);
+        return;
+      }
       await db.repository.savePersona(createPersona({ name: '玩家' }));
+      setPersonas(await db.repository.listPersonas());
       await reloadWorld();
     })();
   }, [db, ready, reloadWorld]);
@@ -1015,6 +1027,11 @@ export function useSession(db: DramatisDb | null): SessionApi {
       const current = snapshotRef.current;
       if (!db) return;
       await db.repository.savePersona(persona);
+      setPersonas((previous) =>
+        previous.some((item) => item.id === persona.id)
+          ? previous.map((item) => (item.id === persona.id ? persona : item))
+          : [...previous, persona],
+      );
       if (!current) return;
 
       const personas = current.personas.some((item) => item.id === persona.id)
@@ -1033,7 +1050,10 @@ export function useSession(db: DramatisDb | null): SessionApi {
   );
 
   const listPersonas = useCallback(async (): Promise<Persona[]> => {
-    return db ? db.repository.listPersonas() : [];
+    if (!db) return [];
+    const list = await db.repository.listPersonas();
+    setPersonas(list);
+    return list;
   }, [db]);
 
   const deletePersona = useCallback(
@@ -1041,6 +1061,7 @@ export function useSession(db: DramatisDb | null): SessionApi {
       const current = snapshotRef.current;
       if (!db) return;
       await db.repository.deletePersona(id);
+      setPersonas((previous) => previous.filter((persona) => persona.id !== id));
       if (!current) return;
 
       const personas = current.personas.filter((persona) => persona.id !== id);
@@ -1346,7 +1367,7 @@ export function useSession(db: DramatisDb | null): SessionApi {
         ? []
         : snapshot.chapters.filter((chapter) => chapter.conversationId === conversation.id),
     allChapters: snapshot?.chapters ?? [],
-    personas: snapshot?.personas ?? [],
+    personas,
     library,
     openWorld,
     createWorld,

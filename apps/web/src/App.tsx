@@ -50,6 +50,7 @@ import { LeftRail, type RailPane } from './components/LeftRail';
 import { type FocusRequest, MainChat } from './components/MainChat';
 import { MainHeader } from './components/MainHeader';
 import { NewConversationDialog } from './components/NewConversationDialog';
+import { PersonaLibrary } from './components/PersonaLibrary';
 import { RuntimePanel } from './components/RuntimePanel';
 import { SceneDialog } from './components/SceneDialog';
 import { type SettingsCategory, SettingsDialog } from './components/SettingsDialog';
@@ -1478,6 +1479,17 @@ export function App() {
             }
             panel={
               <>
+                {pane === 'personas' ? (
+                  <section className="panel">
+                    <PersonaLibrary
+                      personas={session.personas}
+                      disabled={disabled}
+                      onSave={(persona) => void session.savePersona(persona)}
+                      onDelete={(id) => void session.deletePersona(id)}
+                    />
+                  </section>
+                ) : null}
+
                 {pane === 'cards' ? (
                   <section className="panel">
                     <CardDesigner
@@ -1727,7 +1739,7 @@ export function App() {
         />
       )}
 
-      {/* 设置弹窗：分六个大类（模型配置 / 个性化 / 身份 / 同步 / 数据 / 已归档） */}
+      {/* 设置弹窗：模型、外观、账户、数据与归档；玩家身份已移到左栏。 */}
       {settingsCategory === null ? null : (
         <SettingsDialog
           category={settingsCategory}
@@ -1735,14 +1747,9 @@ export function App() {
           onClose={() => setSettingsCategory(null)}
           providers={providers}
           appearance={appearance}
-          personas={personas}
-          activePersonaId={activePersona?.id ?? null}
           archivedConversations={session.archivedConversations}
           activeConversationId={conversation?.id ?? null}
           disabled={disabled}
-          onSelectPersona={(persona) => void session.setPersona(persona)}
-          onSavePersona={(persona) => void session.savePersona(persona)}
-          onDeletePersona={(id) => void session.deletePersona(id)}
           onOpenArchived={(id) => {
             void session.openConversation(id);
             setSettingsCategory(null);

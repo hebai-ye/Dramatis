@@ -6,7 +6,7 @@ import { type ReactNode, useRef } from 'react';
  * `settings` 不在其中：设置改成**弹窗**（用户要求），从底部那个按钮直接开，
  * 不再占用左栏的一块地方——否则「看设置」与「看世界列表」得来回切。
  */
-export type RailPane = 'list' | 'worldbooks' | 'cards';
+export type RailPane = 'list' | 'personas' | 'worldbooks' | 'cards';
 
 interface Props {
   pane: RailPane;
@@ -28,6 +28,7 @@ interface Props {
 }
 
 const PANES: Array<{ id: RailPane; label: string; hint: string }> = [
+  { id: 'personas', label: '我的身份', hint: '创建、编辑、删除玩家在对话中扮演的身份' },
   { id: 'worldbooks', label: '世界书', hint: '导入、删除、微调世界设定' },
   { id: 'cards', label: '角色卡', hint: '导入、删除、微调角色模板' },
 ];
@@ -75,6 +76,14 @@ export function LeftRail({
       <div className="rail-actions">
         <button type="button" disabled={disabled} onClick={onNewConversation}>
           新对话
+        </button>
+        <button
+          type="button"
+          className={pane === 'personas' ? 'ghost active' : 'ghost'}
+          disabled={disabled}
+          onClick={() => onPaneChange(pane === 'personas' ? 'list' : 'personas')}
+        >
+          我的身份
         </button>
         <button
           type="button"

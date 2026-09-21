@@ -719,7 +719,17 @@ git ls-files | ForEach-Object {
 | `apps/web/src/styles.css` | 改 | 账户列表与创建区样式 |
 | `docs/EVAL.md` / `docs/TASKS.md` / `docs/STATUS.md` | 改 | 第三十七节、任务 46 与接续状态 |
 
-## 二十七、几点注意
+## 二十七、2026-09-21 深夜：账户重构 A3（Persona 移到左栏）
+
+| 文件 | 新增/修改 | 说明 |
+| --- | --- | --- |
+| `apps/web/src/components/LeftRail.tsx` | 改 | 新增 `personas` Pane 与“我的身份”顶级按钮 |
+| `apps/web/src/components/PersonaLibrary.tsx` | 改 | 独立编辑状态、无世界 CRUD、连续输入竞态修复 |
+| `apps/web/src/lib/session.ts` | 改 | Persona 列独立于 RoomSnapshot 维护 |
+| `apps/web/src/components/SettingsDialog.tsx` / `apps/web/src/App.tsx` | 改 | 从账户设置移除 Persona，接到左栏 Pane |
+| `docs/EVAL.md` / `docs/TASKS.md` / `docs/STATUS.md` | 改 | 第三十八节、任务 47 与接续状态 |
+
+## 二十八、几点注意
 
 ---
 

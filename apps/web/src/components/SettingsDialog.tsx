@@ -1,4 +1,4 @@
-import type { Conversation, ConversationId, Persona } from '@dramatis/core';
+import type { Conversation, ConversationId } from '@dramatis/core';
 import { useState } from 'react';
 import type { AppearanceApi } from '../lib/appearance';
 import type { ProvidersApi } from '../lib/providers';
@@ -7,7 +7,6 @@ import { formatBytes } from '../lib/storage';
 import type { SyncApi } from '../lib/sync';
 import { AccountPanel } from './AccountPanel';
 import { AppearancePanel } from './AppearancePanel';
-import { PersonaLibrary } from './PersonaLibrary';
 import { ProviderPanel } from './ProviderPanel';
 import { SyncPanel } from './SyncPanel';
 
@@ -27,7 +26,7 @@ export type SettingsCategory = 'model' | 'appearance' | 'account' | 'data' | 'ar
 const CATEGORIES: { id: SettingsCategory; label: string; hint: string }[] = [
   { id: 'model', label: '模型配置', hint: '接口地址、模型名、Key' },
   { id: 'appearance', label: '个性化', hint: '色调、对话区背景、显示' },
-  { id: 'account', label: '账户', hint: '我是谁、多设备同步' },
+  { id: 'account', label: '账户', hint: '数据容器与多设备同步' },
   { id: 'data', label: '数据', hint: '封存导出 / 本机存储' },
   { id: 'archive', label: '已归档', hint: '归档过的对话' },
 ];
@@ -46,14 +45,9 @@ interface Props {
   onClose: () => void;
   providers: ProvidersApi;
   appearance: AppearanceApi;
-  personas: Persona[];
-  activePersonaId: string | null;
   archivedConversations: Conversation[];
   activeConversationId: ConversationId | null;
   disabled: boolean;
-  onSelectPersona: (persona: Persona) => void;
-  onSavePersona: (persona: Persona) => void;
-  onDeletePersona: (id: string) => void;
   onOpenArchived: (id: ConversationId) => void;
   onDeleteArchived: (conversation: Conversation) => void;
   onExportArchive: () => Promise<{ ok: boolean; message: string } | null>;
@@ -143,24 +137,12 @@ export function SettingsDialog(props: Props) {
             {category === 'appearance' ? <AppearancePanel api={props.appearance} disabled={props.disabled} /> : null}
 
             {/*
-              「账户」= 我是谁 + 多设备同步。左栏底部那个「个人账户」按钮直接开这一档：
-              用户要找的是「我的账号」，而账号在这套设计里就是同步空间（id + 密码 + 恢复码）。
+              「账户」= 数据容器 + 多设备同步。扮演身份已经移到左栏「我的身份」，
+              这里不再混入 Persona 的创建与选择。
             */}
             {category === 'account' ? (
               <>
                 <AccountPanel disabled={props.disabled} />
-                <section className="panel">
-                  <h2>我是谁</h2>
-                  <PersonaLibrary
-                    personas={props.personas}
-                    activeId={props.activePersonaId}
-                    disabled={props.disabled}
-                    onSelect={props.onSelectPersona}
-                    onSave={props.onSavePersona}
-                    onDelete={props.onDeletePersona}
-                  />
-                </section>
-
                 <section className="panel">
                   <h2>多设备同步</h2>
                   <p className="hint">

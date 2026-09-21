@@ -755,7 +755,29 @@ git ls-files | ForEach-Object {
 | `packages/core/src/admin/tools.test.ts` / `storage/artifact-revoke.test.ts` | 改 | Persona 工具与草稿采纳回归 |
 | `docs/EVAL.md` / `docs/TASKS.md` / `docs/STATUS.md` | 改 | 第四十节、任务 49 与接续状态 |
 
-## 三十、几点注意
+## 三十、2026-09-21 深夜：账户重构 A6/A7（模型配置与 Key 同步）
+
+| 文件 | 新增/修改 | 说明 |
+| --- | --- | --- |
+| `packages/core/src/model/provider.ts` | 改 | `ProviderCredential`：账户内加密凭据 |
+| `packages/core/src/sync/types.ts` | 改 | 同步白名单加入 `providerProfiles` / `providerCredentials` |
+| `packages/core/src/storage/repository.ts` | 改 | 模型配置与凭据的软删除、列表、保存 |
+| `packages/core/src/sync/sync.test.ts` | 改 | 两设备同步后解回 Key、密文无明文的回归 |
+| `apps/web/src/lib/sync.ts` | 改 | `sealSecret` / `openSecret`（账户主密钥加解密） |
+| `apps/web/src/lib/providers.ts` | 改 | 本机 KeyStore 与账户凭据双向对齐；清理空白默认模型 |
+| `apps/web/src/App.tsx` | 改 | Sync 先于 Providers 初始化 |
+| `docs/EVAL.md` / `docs/TASKS.md` / `docs/STATUS.md` | 改 | 第四十一节、任务 50 与接续状态 |
+
+## 三十一、2026-09-21 深夜：账户重构 A8（Persona 彻底删除）
+
+| 文件 | 新增/修改 | 说明 |
+| --- | --- | --- |
+| `packages/core/src/storage/repository.ts` | 改 | Persona 正文清空、删除墓碑、房间/对话解引用 |
+| `apps/web/src/lib/session.ts` | 改 | 删除后重新加载世界快照 |
+| `packages/core/src/storage/persona-delete.test.ts` | **新增** | 墓碑无正文、旧对话保留身份快照 |
+| `docs/EVAL.md` / `docs/TASKS.md` / `docs/STATUS.md` | 改 | 第四十二节、任务 51 与接续状态 |
+
+## 三十二、几点注意
 
 ---
 

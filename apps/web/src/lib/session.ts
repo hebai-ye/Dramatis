@@ -1095,22 +1095,8 @@ export function useSession(db: DramatisDb | null): SessionApi {
       await db.repository.deletePersona(id);
       setPersonas((previous) => previous.filter((persona) => persona.id !== id));
       if (!current) return;
-
-      const personas = current.personas.filter((persona) => persona.id !== id);
-      const conversations = current.conversations.map((conversation) =>
-        conversation.personaId === id ? { ...conversation, personaId: null, updatedAt: nowIso() } : conversation,
-      );
-      for (const conversation of conversations) {
-        if (
-          conversation.personaId !== null ||
-          !current.conversations.some((item) => item.id === conversation.id && item.personaId === id)
-        ) {
-          continue;
-        }
-        await db.repository.saveConversation(conversation);
-      }
-      const room = current.room.personaId === id ? { ...current.room, personaId: null } : current.room;
-      setSnapshot({ ...current, personas, room, conversations });
+      const loaded = await db.repository.loadRoom(current.room.id);
+      if (loaded !== null) setSnapshot(loaded);
     },
     [db, setSnapshot],
   );

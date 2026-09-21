@@ -1434,18 +1434,28 @@ export class Repository {
   }
 
   /**
-   * 删除 persona，并把引用它的房间退回内联字段。
+   * 彻底删除 Persona（账户重构 A8）。
    *
-   * 不做级联删除房间：房间里的对话与角色状态比一份身份描述贵重得多。
-   * 返回受影响的房间数，便于 UI 提示。
+   * 用户可见的数据全部清掉：房间与对话只解除 personaId 引用，保留各自已经
+   * 写好的 name/description 快照，旧历史不会失去“玩家是谁”。同步层仍会
+   * 保留一条只含 id / updatedAt / deletedAt 的墓碑，防止别的设备把内容推回来。
    */
   async deletePersona(id: string): Promise<number> {
-    await this.softDelete(COLLECTIONS.personas, id);
+    const persona = await this.getAlive<Persona>(COLLECTIONS.personas, id);
+    if (persona === null) return 0;
+
     const rooms = await this.listAlive<Room>(COLLECTIONS.rooms, { where: { personaId: id } });
     for (const room of rooms) {
-      await this.store.put(COLLECTIONS.rooms, { ...room, personaId: null });
+      await this.saveRoom({ ...room, personaId: null });
     }
-    return rooms.length;
+    const conversations = await this.listAlive<Conversation>(COLLECTIONS.conversations, { where: { personaId: id } });
+    for (const conversation of conversations) {
+      await this.saveConversation({ ...conversation, personaId: null });
+    }
+
+    const updatedAt = await this.stampUpdatedAt(COLLECTIONS.personas, id);
+    await this.store.put(COLLECTIONS.personas, { id, updatedAt, deletedAt: updatedAt });
+    return 1;
   }
 
   async saveSnapshot(snapshot: {

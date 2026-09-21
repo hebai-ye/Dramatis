@@ -20,6 +20,7 @@ export * from './platform/background-runner.js';
 export * from './platform/entity-store.js';
 export * from './platform/file-io.js';
 export * from './platform/key-store.js';
+export * from './platform/key-vault.js';
 export * from './platform/memory-store.js';
 export * from './prompt/assemble.js';
 export * from './prompt/budget.js';

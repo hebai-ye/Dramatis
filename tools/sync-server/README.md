@@ -44,6 +44,37 @@ scp -r tools/sync-server user@你的服务器:/opt/
   systemd/dramatis-sync.service
 ```
 
+### 更新一个已经在跑的服务器（**顺序错了会把服务打没**）
+
+顺序 16 那天就是这么把服务端弄停四分钟的：`cp 旧 → 备份 && rm -rf dist && mv 新的 dist`
+——第三步的「新的」还没传上去（`scp` 刚被 SSH 拒过），于是 `rm` 之后什么都没了，
+服务反复重启报「还没有编译产物」。安全的顺序是**先确认新的真的在本地**，再动旧的：
+
+```bash
+# 1) 上传到一个独立名字，别直接覆盖在跑的目录
+scp -r tools/sync-server/dist 服务器:/tmp/sync-server-dist
+
+# 2) 在服务器上：先确认它真的到了、而且结构与 start.mjs 期待的一致
+ls /tmp/sync-server-dist/tools/sync-server/src/main.js
+
+# 3) 换目录（旧的一律保留成带时间戳的备份，不做删除）
+sudo mv /opt/dramatis-sync/dist      /opt/dramatis-sync/dist.bak-$(date +%Y%m%d-%H%M%S)
+sudo mv /tmp/sync-server-dist        /opt/dramatis-sync/dist
+
+# 4) 权限：从 Windows scp 过来的目录是 700，服务用户（dramatis）读不到——
+#    少了这一步就是「文件在、服务说找不到」
+sudo chown -R root:root /opt/dramatis-sync/dist
+sudo chmod -R a+rX      /opt/dramatis-sync/dist
+
+# 5) 重启并当场确认（三个都要看）
+sudo systemctl restart dramatis-sync
+systemctl is-active dramatis-sync                                   # active
+curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8787/health    # 200
+curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8787/spaces/foo # 404（说明业务路由活着）
+```
+
+回滚就是把 `dist` 和某个 `dist.bak-*` 换个名字再重启（备份一直都在，别删）。
+
 ## 3. 先手工试跑一次
 
 ```bash

@@ -147,6 +147,14 @@ export interface SyncState {
 
 export const EMPTY_SYNC_STATE: SyncState = { spaceHandle: null, pulledHead: 0, pushedAt: null };
 
+/** 解不开、被隔离掉的一条（顺序 13）。 */
+export interface SyncQuarantinedRecord {
+  collection: string;
+  id: string;
+  /** 给人看的一句话：为什么解不开。 */
+  reason: string;
+}
+
 /** 一次同步做了什么（界面与诊断都读它）。 */
 export interface SyncReport {
   spaceHandle: string;
@@ -156,5 +164,14 @@ export interface SyncReport {
   applied: number;
   /** 本地的更新更晚（或时间戳相同且本地不是墓碑），原样保留的条数。 */
   skipped: number;
+  /**
+   * 解不开、已经隔离跳过的记录（顺序 13）。
+   *
+   * 明细**最多 20 条**（`QUARANTINE_DETAIL_LIMIT`）：这是给人看的诊断，
+   * 不是日志，没必要把几千条都塞进内存与界面。总数看 `quarantinedCount`。
+   */
+  quarantined: readonly SyncQuarantinedRecord[];
+  /** 一共跳过多少条（可能大于明细条数）。 */
+  quarantinedCount: number;
   head: number;
 }

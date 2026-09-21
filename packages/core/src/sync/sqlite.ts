@@ -215,6 +215,23 @@ export function createSqliteSyncStore(db: SqliteDatabase): SyncServerStore & { s
       return rows.map(asPulledRecord);
     },
 
+    /**
+     * 给配额用的用量（顺序 16）。
+     *
+     * `bytes` 用 `length(sealed)` 而不是解出 base64 再量：这条查询要跑在
+     * 每次写入之前，答案只需要**随记录增长而增长**、量级对得上就行；
+     * 为了精确到字节去把每行 JSON 解析一遍，代价反而是每次写入都要全表读。
+     */
+    async spaceUsage(spaceHandle) {
+      const row = db
+        .prepare(
+          `SELECT COUNT(*) AS records, COALESCE(SUM(LENGTH(sealed)), 0) AS bytes
+           FROM records WHERE space_handle = ?1`,
+        )
+        .get(spaceHandle) as { records: number; bytes: number } | undefined;
+      return { records: row?.records ?? 0, bytes: row?.bytes ?? 0 };
+    },
+
     stats() {
       const spaces = db.prepare('SELECT COUNT(*) AS count FROM spaces').get() as { count: number };
       const records = db.prepare('SELECT COUNT(*) AS count FROM records').get() as { count: number };

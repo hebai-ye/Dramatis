@@ -1,12 +1,20 @@
 import {
   type CreateProviderProfileInput,
   createProviderProfile,
+  createVault,
   type KeyStore,
   type ProviderProfile,
 } from '@dramatis/core';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { DramatisDb } from './db';
-import { createBrowserKeyStore, type KeyStorageMode } from './keystore';
+import {
+  browserVaultStorage,
+  createBrowserKeyStore,
+  hasBrowserVault,
+  type KeyStorageMode,
+  openBrowserVault,
+  type VaultSession,
+} from './keystore';
 import type { BackgroundProviderConfig } from './worker';
 
 const META_ACTIVE_PROFILE = 'provider.activeId';
@@ -26,6 +34,12 @@ export interface ProvidersApi {
   apiKey: string;
   keyMode: KeyStorageMode;
   keyKind: KeyStore['kind'];
+  /** 本机已经有一个口令库（界面用它决定显示「解锁」还是「设口令」）。 */
+  vaultExists: boolean;
+  /** 选了口令加密、但这次会话还没解开：现在拿不到 Key。 */
+  vaultLocked: boolean;
+  /** 用口令解开本机的口令库；口令不对时抛错（信息是给人看的）。 */
+  unlockVault: (passphrase: string) => Promise<void>;
   /**
    * 后台任务（记忆抽取等）使用的配置。
    *
@@ -50,6 +64,8 @@ export interface ProvidersApi {
     profile: Partial<ProviderProfile>;
     apiKey: string;
     keyMode: KeyStorageMode;
+    /** `keyMode === 'encrypted'` 时带上：新建口令库用它，已有库用它解锁。 */
+    vaultPassphrase?: string;
   }) => Promise<void>;
 }
 
@@ -73,6 +89,8 @@ export function useProviders(db: DramatisDb | null): ProvidersApi {
   const [apiKey, setApiKeyState] = useState('');
   const [backgroundKey, setBackgroundKey] = useState('');
   const [keyKind, setKeyKind] = useState<KeyStore['kind']>('memory');
+  const [vault, setVault] = useState<VaultSession | null>(null);
+  const [vaultExists, setVaultExists] = useState(false);
 
   const keyStoreRef = useRef<KeyStore>(createBrowserKeyStore('session'));
 
@@ -102,18 +120,27 @@ export function useProviders(db: DramatisDb | null): ProvidersApi {
 
       if (cancelled) return;
       setProfiles(list);
-      setKeyModeState(storedMode === 'session' ? 'session' : 'device');
+      setKeyModeState(storedMode === 'session' ? 'session' : storedMode === 'encrypted' ? 'encrypted' : 'device');
       setActiveId(storedActive ?? list[0]?.id ?? null);
     })();
+
+    // 本机有没有口令库：不需要口令就能问，界面靠它决定显示「解锁」还是「设口令」
+    void hasBrowserVault()
+      .then((exists) => {
+        if (!cancelled) setVaultExists(exists);
+      })
+      .catch(() => {
+        // 文件坏了：不在这里处置（ProviderPanel 打开时会如实报错）
+      });
 
     return () => {
       cancelled = true;
     };
   }, [db]);
 
-  // 存储档位或当前配置变化时，重建 KeyStore 并把已有密钥读回来
+  // 存储档位 / 口令库 / 当前配置变化时，重建 KeyStore 并把已有密钥读回来
   useEffect(() => {
-    const store = createBrowserKeyStore(keyMode);
+    const store = createBrowserKeyStore(keyMode, vault);
     keyStoreRef.current = store;
     setKeyKind(store.kind);
 
@@ -131,7 +158,19 @@ export function useProviders(db: DramatisDb | null): ProvidersApi {
       return;
     }
     void store.get(backgroundProfile.keyRef).then((secret) => setBackgroundKey(secret ?? ''));
-  }, [keyMode, activeId, profiles]);
+  }, [keyMode, vault, activeId, profiles]);
+
+  /**
+   * 解开本机的口令库（顺序 10）。
+   *
+   * 解开之后把 KeyStore 换成库里的那份，界面上的「已连接」状态跟着变——
+   * 这一条与「存进去」是两件事：库在盘上，钥匙在口令里。
+   */
+  const unlockVault = useCallback(async (passphrase: string) => {
+    const opened = await openBrowserVault(passphrase);
+    setVault(opened);
+    setVaultExists(true);
+  }, []);
 
   const selectProfile = useCallback(
     async (id: string) => {
@@ -202,27 +241,57 @@ export function useProviders(db: DramatisDb | null): ProvidersApi {
   );
 
   const commitConfig = useCallback(
-    async (input: { profile: Partial<ProviderProfile>; apiKey: string; keyMode: KeyStorageMode }) => {
+    async (input: {
+      profile: Partial<ProviderProfile>;
+      apiKey: string;
+      keyMode: KeyStorageMode;
+      vaultPassphrase?: string;
+    }) => {
       if (!db) return;
       const profile = profiles.find((item) => item.id === activeId);
       if (!profile) return;
 
+      /*
+       * 口令加密那一档（顺序 10）：先把库备好，再往里写。
+       *
+       * 「新建库」与「解锁已有库」在用户眼里是同一件事（都在这一句口令上），
+       * 所以这里自动分流：本机还没有库就用这句口令建一个，已经有了就用它解锁。
+       * 口令不对就抛出去——宁可让用户再打一遍，也不能把 Key 写进一个解不开的库。
+       */
+      let target: KeyStore | null = null;
+      if (input.keyMode === 'encrypted') {
+        const passphrase = input.vaultPassphrase ?? '';
+        if (passphrase.trim() === '') {
+          throw new Error('选了「口令加密」就要给一句口令：它用来加密这台机器上的 Key。');
+        }
+        const opened = await openBrowserVault(passphrase).catch(async (error: unknown) => {
+          if (await hasBrowserVault()) throw error;
+          await createVault(browserVaultStorage(), passphrase);
+          return openBrowserVault(passphrase);
+        });
+        setVault(opened);
+        setVaultExists(true);
+        target = opened.store;
+      }
+
       // 先按目标档位把密钥写好，再切换档位：KeyStore 的重建发生在下次渲染之后，
       // 直接调用 setApiKey 会写进旧的存储实例
-      const target = createBrowserKeyStore(input.keyMode);
-      if (input.apiKey.trim() === '') await target.remove(profile.keyRef);
-      else await target.set(profile.keyRef, input.apiKey);
+      const store = target ?? createBrowserKeyStore(input.keyMode);
+      if (input.apiKey.trim() === '') await store.remove(profile.keyRef);
+      else await store.set(profile.keyRef, input.apiKey);
 
       if (input.keyMode !== keyMode) {
-        // 从「保存在本机浏览器」切回「仅本次会话」时，顺手清掉明文那份，
-        // 否则用户以为已经收回了，磁盘上其实还留着
+        /*
+         * 离开「明文存在本机」这一档时，顺手把明文那份删掉：
+         * 否则用户以为已经收回了（换成密文 / 只留内存），磁盘上其实还留着。
+         */
         if (keyMode === 'device') await createBrowserKeyStore('device').remove(profile.keyRef);
         setKeyModeState(input.keyMode);
         await db.repository.setMeta(META_KEY_MODE, input.keyMode);
       }
 
-      keyStoreRef.current = target;
-      setKeyKind(target.kind);
+      keyStoreRef.current = store;
+      setKeyKind(store.kind);
       setApiKeyState(input.apiKey);
       await updateProfile(profile.id, input.profile);
     },
@@ -236,6 +305,9 @@ export function useProviders(db: DramatisDb | null): ProvidersApi {
     apiKey,
     keyMode,
     keyKind,
+    vaultExists,
+    vaultLocked: keyMode === 'encrypted' && vault === null,
+    unlockVault,
     background: buildBackground(),
     selectProfile,
     addProfile,

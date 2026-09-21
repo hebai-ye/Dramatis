@@ -15,7 +15,7 @@
 
 import { CryptoError } from '../crypto/errors.js';
 import { verifyCredential } from '../crypto/keys.js';
-import type { EncryptedRecord } from '../crypto/records.js';
+import { type EncryptedRecord, recordSize } from '../crypto/records.js';
 import type {
   SyncAcceptedRecord,
   SyncCredentials,
@@ -71,6 +71,11 @@ export interface SyncServerStore {
   /** 写入（同一坐标覆盖）并返回各自分配到的号，号必须单调递增。 */
   append(spaceHandle: string, records: readonly SyncWireRecord[]): Promise<SyncAcceptedRecord[]>;
   list(spaceHandle: string, options: { since: number; limit: number }): Promise<SyncPulledRecord[]>;
+  /**
+   * 可选：给配额用的用量统计（顺序 16）。没实现的存储（老后端 / 参考实现）
+   * 就跳过配额检查——**不能因为加了个护栏就让旧服务端起不来**。
+   */
+  spaceUsage?(spaceHandle: string): Promise<{ records: number; bytes: number }>;
 }
 
 /** 服务端错误：带上 HTTP 状态码，HTTP 层直接照搬（内核层也能读 code）。 */
@@ -78,7 +83,7 @@ export class SyncServerError extends Error {
   override readonly name = 'SyncServerError';
   constructor(
     readonly status: number,
-    readonly code: 'space-not-found' | 'space-exists' | 'unauthorized' | 'bad-request',
+    readonly code: 'space-not-found' | 'space-exists' | 'unauthorized' | 'bad-request' | 'space-full' | 'rate-limited',
     message: string,
   ) {
     super(message);
@@ -88,6 +93,32 @@ export class SyncServerError extends Error {
 /** 一次拉取的默认与最大条数：移动网络下别一次拉爆。 */
 export const DEFAULT_PULL_LIMIT = 200;
 export const MAX_PULL_LIMIT = 500;
+
+/**
+ * 服务端护栏（顺序 16）。
+ *
+ * 这些数字不是「技术上能存多少」，而是**邀请朋友之前必须先有的那条线**：
+ * 没有它，一个写错的客户端（或一个故意的人）可以用一次请求把服务端的
+ * 磁盘与内存吃干净。三档都很宽松——正常用户一辈子碰不到，
+ * 但它们保证「出事时是有界的」。
+ */
+export interface SyncServerLimits {
+  /** 一个空间最多存多少条记录（含墓碑）。 */
+  maxRecordsPerSpace: number;
+  /** 一个空间最多占多少字节（`recordSize` 的口径：IV + 密文）。 */
+  maxBytesPerSpace: number;
+  /** 一个空间每分钟最多几次写入请求。 */
+  pushesPerMinute: number;
+  /** 一次请求最多带多少条记录（正常客户端按 200 分块，见 loop.ts）。 */
+  maxRecordsPerPush: number;
+}
+
+export const DEFAULT_SYNC_LIMITS: SyncServerLimits = {
+  maxRecordsPerSpace: 50_000,
+  maxBytesPerSpace: 256 * 1024 * 1024,
+  pushesPerMinute: 120,
+  maxRecordsPerPush: 500,
+};
 
 export interface CreateSyncSpaceInput {
   spaceHandle: string;
@@ -123,8 +154,40 @@ async function authorize(store: SyncServerStore, credentials: SyncCredentials): 
   }
 }
 
+export interface CreateSyncServerOptions {
+  limits?: Partial<SyncServerLimits>;
+  /** 注入时钟：限流窗口要用时间，测试里不该等真实的一分钟。 */
+  now?: () => number;
+}
+
 /** 把这份逻辑装到某个存储上。三个宿主（内存 / 开发后端 / Worker）都走它。 */
-export function createSyncServer(store: SyncServerStore): SyncServer {
+export function createSyncServer(store: SyncServerStore, options: CreateSyncServerOptions = {}): SyncServer {
+  const limits: SyncServerLimits = { ...DEFAULT_SYNC_LIMITS, ...options.limits };
+  const now = options.now ?? (() => Date.now());
+
+  /*
+   * 限流状态放在**进程内存**里（每个空间一个最近写入请求的时间窗）。
+   * 为什么不做成存到库里：护栏要防的是「一次请求打爆」，不是精确计费；
+   * 进程重启后计数归零完全可以接受，而多写一张表会让三个宿主都要动。
+   * 单进程部署（用户自己的服务器就是）下它就够了。
+   */
+  const pushWindow = new Map<string, number[]>();
+
+  function checkPushRate(spaceHandle: string): void {
+    const at = now();
+    const windowStart = at - 60_000;
+    const recent = (pushWindow.get(spaceHandle) ?? []).filter((stamp) => stamp > windowStart);
+    if (recent.length >= limits.pushesPerMinute) {
+      throw new SyncServerError(
+        429,
+        'rate-limited',
+        `这个空间一分钟内写入请求太多了（上限 ${String(limits.pushesPerMinute)} 次）。等一下再同步。`,
+      );
+    }
+    recent.push(at);
+    pushWindow.set(spaceHandle, recent);
+  }
+
   return {
     async createSpace(input: CreateSyncSpaceInput) {
       if (input.spaceHandle === '') {
@@ -158,6 +221,35 @@ export function createSyncServer(store: SyncServerStore): SyncServer {
       if (input.records.length === 0) {
         return { head: await store.head(input.spaceHandle), accepted: [] };
       }
+
+      // ---- 护栏（顺序 16）：先看一次请求带多少，再看这个空间还剩多少 ----
+      checkPushRate(input.spaceHandle);
+      if (input.records.length > limits.maxRecordsPerPush) {
+        throw new SyncServerError(
+          413,
+          'space-full',
+          `一次最多写 ${String(limits.maxRecordsPerPush)} 条，收到 ${String(input.records.length)} 条。`,
+        );
+      }
+
+      const usage = await store.spaceUsage?.(input.spaceHandle);
+      if (usage !== undefined) {
+        if (usage.records >= limits.maxRecordsPerSpace) {
+          throw new SyncServerError(
+            413,
+            'space-full',
+            `这个空间已经存满（${String(limits.maxRecordsPerSpace)} 条）。先删掉一些，或者按「设置 → 数据」导出一份封存再清理。`,
+          );
+        }
+        if (usage.bytes >= limits.maxBytesPerSpace) {
+          throw new SyncServerError(
+            413,
+            'space-full',
+            `这个空间已经写满（约 ${String(Math.round(limits.maxBytesPerSpace / 1024 / 1024))} MB）。先导出一份封存再清理。`,
+          );
+        }
+      }
+
       const accepted = await store.append(input.spaceHandle, input.records);
       return { head: await store.head(input.spaceHandle), accepted };
     },
@@ -258,6 +350,14 @@ export function createMemorySyncStore(): MemorySyncStore {
           sealed: row.sealed,
           serverRev: row.serverRev,
         }));
+    },
+
+    async spaceUsage(spaceHandle) {
+      const table = rows.get(spaceHandle);
+      if (table === undefined) return { records: 0, bytes: 0 };
+      let bytes = 0;
+      for (const row of table.values()) bytes += recordSize(row.sealed);
+      return { records: table.size, bytes };
     },
 
     debugRows(spaceHandle) {

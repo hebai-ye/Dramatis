@@ -1,18 +1,41 @@
-import { createMemoryKeyStore, type KeyStore } from '@dramatis/core';
+import { createMemoryKeyStore, hasVault, type KeyStore, openVault, type VaultStorage } from '@dramatis/core';
 
 /**
  * 密钥存储模式（ROADMAP P2-8）。
  *
- * P0 阶段提供两档：
+ * 三档（第三档是顺序 10）：
  * - `session`：只存在内存里，关掉页面就要重填，最安全
  * - `device`：明文存在浏览器本地，最方便也最弱
+ * - `encrypted`：用用户自己定的一句口令加密后落在本地（P2-8）
  *
- * 「口令加密后落盘」是 P2-8 的内容。在那之前，UI 必须把当前档位
- * 明确展示给用户，不能让人以为自己填的 Key 受到了保护。
+ * UI 必须把当前档位明确展示给用户，不能让人以为自己填的 Key 受到了保护。
  */
-export type KeyStorageMode = 'session' | 'device';
+export type KeyStorageMode = 'session' | 'device' | 'encrypted';
 
 const STORAGE_KEY = 'dramatis.keys.v1';
+/** 口令库（密文）放这儿：与明文那档**不同的键**，两者不会互相覆盖。 */
+const VAULT_KEY = 'dramatis.vault.v1';
+
+/** 浏览器里的口令库文件。 */
+const vaultStorage: VaultStorage = {
+  async read() {
+    try {
+      return localStorage.getItem(VAULT_KEY);
+    } catch {
+      return null;
+    }
+  },
+  async write(value) {
+    localStorage.setItem(VAULT_KEY, value);
+  },
+  async remove() {
+    localStorage.removeItem(VAULT_KEY);
+  },
+};
+
+export function browserVaultStorage(): VaultStorage {
+  return vaultStorage;
+}
 
 function readAll(): Record<string, string> {
   try {
@@ -58,8 +81,50 @@ function createDeviceKeyStore(): KeyStore {
   };
 }
 
-export function createBrowserKeyStore(mode: KeyStorageMode): KeyStore {
-  return mode === 'session' ? createMemoryKeyStore() : createDeviceKeyStore();
+/** 解开的那个口令库（一次解锁、本次会话内复用；Providers 里持有它）。 */
+export interface VaultSession {
+  store: KeyStore;
+  /** 解锁用的口令：切档位/写新条时要再写一遍文件，得留着。 */
+  passphrase: string;
+}
+
+export function createBrowserKeyStore(mode: KeyStorageMode, vault: VaultSession | null = null): KeyStore {
+  if (mode === 'session') return createMemoryKeyStore();
+  if (mode === 'device') return createDeviceKeyStore();
+  if (vault !== null) return vault.store;
+
+  /*
+   * 选了口令加密、但这次会话还没解锁。
+   *
+   * 不抛错、也不假装能用：给一个「空的、写不进去」的 KeyStore——
+   * 读出来是空（界面会显示成「还没填」，并且旁边摆着解锁入口），
+   * 写入被拒并且说清原因。这样不会把用户的 Key 悄悄写进明文那档去。
+   */
+  return {
+    kind: 'encrypted',
+    async get() {
+      return null;
+    },
+    async set() {
+      throw new Error('口令库还没解锁：先在上面输入口令并解锁，再保存。');
+    },
+    async remove() {},
+    async list() {
+      return [];
+    },
+    async clear() {},
+  };
+}
+
+/** 本机有没有口令库（不需要口令）。 */
+export function hasBrowserVault(): Promise<boolean> {
+  return hasVault(vaultStorage);
+}
+
+/** 用口令打开本机的口令库。口令不对时抛错（错误信息是给人看的）。 */
+export async function openBrowserVault(passphrase: string): Promise<VaultSession> {
+  const store = await openVault(vaultStorage, passphrase);
+  return { store, passphrase };
 }
 
 export function describeKeyStore(kind: KeyStore['kind']): string {
@@ -69,7 +134,7 @@ export function describeKeyStore(kind: KeyStore['kind']): string {
     case 'plain':
       return '明文保存在本机浏览器，不参与同步，换设备需重填';
     case 'encrypted':
-      return '口令加密后保存在本机';
+      return '口令加密后保存在本机：盘上是密文，每次打开应用要用口令解锁（忘记就只能重填 Key）';
     case 'os':
       return '保存在系统凭据管理器';
     default:

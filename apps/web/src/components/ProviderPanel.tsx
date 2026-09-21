@@ -1,4 +1,4 @@
-import type { ProviderPrice, ProviderRole } from '@dramatis/core';
+import type { KeyStore, ProviderPrice, ProviderRole } from '@dramatis/core';
 import { useEffect, useState } from 'react';
 import type { KeyStorageMode } from '../lib/keystore';
 import { describeKeyStore } from '../lib/keystore';
@@ -33,6 +33,8 @@ interface Draft {
   reserveForReply: number;
   apiKey: string;
   keyMode: KeyStorageMode;
+  /** 口令加密那一档用：新建库或解锁已有库。空字符串表示「还没填」。 */
+  vaultPassphrase: string;
   /** 单价按字符串收：空字符串表示「没填」，比 0 更诚实。 */
   priceInput: string;
   priceOutput: string;
@@ -41,6 +43,16 @@ interface Draft {
 
 function priceField(value: number | undefined): string {
   return value === undefined ? '' : String(value);
+}
+
+/** 下拉框的字符串 → 档位。认不出来的按「仅本次会话」（最保守那档）。 */
+function keyModeOf(value: string): KeyStorageMode {
+  return value === 'device' ? 'device' : value === 'encrypted' ? 'encrypted' : 'session';
+}
+
+/** 档位 → 描述用哪个 kind（描述文案住在 keystore.ts，只有一份）。 */
+function keyKindOf(mode: KeyStorageMode): KeyStore['kind'] {
+  return mode === 'encrypted' ? 'encrypted' : mode === 'device' ? 'plain' : 'memory';
 }
 
 function draftOf(api: ProvidersApi): Draft | null {
@@ -57,6 +69,7 @@ function draftOf(api: ProvidersApi): Draft | null {
     reserveForReply: active.reserveForReply,
     apiKey: api.apiKey,
     keyMode: api.keyMode,
+    vaultPassphrase: '',
     priceInput: price === null ? '' : priceField(price.inputPerMillion),
     priceOutput: price === null ? '' : priceField(price.outputPerMillion),
     priceCurrency: price === null ? '¥' : price.currency,
@@ -90,6 +103,7 @@ function isSameDraft(left: Draft | null, right: Draft | null): boolean {
     left.reserveForReply === right.reserveForReply &&
     left.apiKey === right.apiKey &&
     left.keyMode === right.keyMode &&
+    left.vaultPassphrase === right.vaultPassphrase &&
     left.priceInput === right.priceInput &&
     left.priceOutput === right.priceOutput &&
     left.priceCurrency === right.priceCurrency
@@ -107,6 +121,8 @@ export function ProviderPanel({ api, disabled }: Props) {
   const [showKey, setShowKey] = useState(false);
   const [draft, setDraft] = useState<Draft | null>(null);
   const [savedAt, setSavedAt] = useState<string | null>(null);
+  /** 口令库的报错（口令不对 / 文件坏了）：就地显示，不弹窗。 */
+  const [vaultError, setVaultError] = useState<string | null>(null);
   const active = api.active;
   const { activeId, keyMode } = api;
 
@@ -133,20 +149,30 @@ export function ProviderPanel({ api, disabled }: Props) {
 
   const save = async (): Promise<void> => {
     if (draft === null || active === null) return;
-    await api.commitConfig({
-      profile: {
-        name: draft.name,
-        model: draft.model,
-        baseUrl: draft.baseUrl,
-        role: draft.role,
-        temperature: draft.temperature,
-        maxTokens: draft.maxTokens,
-        reserveForReply: draft.reserveForReply,
-        price: priceOf(draft),
-      },
-      apiKey: draft.apiKey,
-      keyMode: draft.keyMode,
-    });
+    setVaultError(null);
+    try {
+      await api.commitConfig({
+        profile: {
+          name: draft.name,
+          model: draft.model,
+          baseUrl: draft.baseUrl,
+          role: draft.role,
+          temperature: draft.temperature,
+          maxTokens: draft.maxTokens,
+          reserveForReply: draft.reserveForReply,
+          price: priceOf(draft),
+        },
+        apiKey: draft.apiKey,
+        keyMode: draft.keyMode,
+        vaultPassphrase: draft.vaultPassphrase,
+      });
+    } catch (error) {
+      // 口令不对 / 库坏了：**不要**当成「保存成功」，也不要清掉用户填的 Key
+      setVaultError(error instanceof Error ? error.message : String(error));
+      return;
+    }
+    // 口令用完了就从草稿里擦掉：它只在这一刻需要，留在界面上没有好处
+    setDraft((previous) => (previous === null ? previous : { ...previous, vaultPassphrase: '' }));
     setSavedAt(new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }));
   };
 
@@ -255,16 +281,68 @@ export function ProviderPanel({ api, disabled }: Props) {
             <select
               value={draft.keyMode}
               disabled={disabled}
-              onChange={(event) => patch({ keyMode: event.target.value === 'device' ? 'device' : 'session' })}
+              onChange={(event) => patch({ keyMode: keyModeOf(event.target.value) })}
             >
               <option value="session">仅本次会话（最安全）</option>
               <option value="device">保存在本机浏览器（最方便）</option>
+              <option value="encrypted">用一句口令加密后保存在本机（顺序 10）</option>
             </select>
           </label>
           <p className="hint warn">
-            {describeKeyStore(draft.keyMode === 'device' ? 'plain' : 'memory')}
+            {describeKeyStore(keyKindOf(draft.keyMode))}
             {draft.keyMode === api.keyMode ? '' : '（保存后生效）'}
           </p>
+
+          {/*
+            口令加密那一档（顺序 10）。
+
+            两件事在界面上是同一条口令：**新建库**（本机还没有）与**解锁**（已经有）。
+            所以只给一个输入框 + 一个按钮，按钮上的字跟着状态变——
+            不给用户出「先选是新建还是解锁」这种我们自己才知道的选择题。
+          */}
+          {draft.keyMode === 'encrypted' ? (
+            <label>
+              {api.vaultExists ? '口令（解锁本机的口令库）' : '口令（用来加密这台机器上的 Key）'}
+              <span className="inline">
+                <input
+                  type="password"
+                  value={draft.vaultPassphrase}
+                  disabled={disabled}
+                  placeholder={api.vaultExists ? '这台机器上已有口令库' : '设一句只有你知道的（忘记就只能重填 Key）'}
+                  autoComplete="off"
+                  onChange={(event) => patch({ vaultPassphrase: event.target.value })}
+                />
+                <button
+                  type="button"
+                  className="ghost"
+                  disabled={disabled || draft.vaultPassphrase.trim() === ''}
+                  title="用这句口令打开本机的口令库（解不开就说明口令不对）"
+                  onClick={() => {
+                    setVaultError(null);
+                    void api
+                      .unlockVault(draft.vaultPassphrase)
+                      .then(() => patch({ vaultPassphrase: '' }))
+                      .catch((error: unknown) => setVaultError(error instanceof Error ? error.message : String(error)));
+                  }}
+                >
+                  解锁
+                </button>
+              </span>
+            </label>
+          ) : null}
+
+          {api.vaultLocked ? (
+            <p className="hint warn">
+              这台机器上的 Key 是用口令加密存的，现在还没解锁——这一轮会走网页版桥接。
+              在上面填口令点「解锁」，或者点「保存」把这次填的 Key 存进库里。
+            </p>
+          ) : null}
+
+          {vaultError === null ? null : (
+            <div className="notice error">
+              <p>{vaultError}</p>
+            </div>
+          )}
 
           {/*
             用户一定会问「我填进去的 Key 到底被谁看见」。答案要写在**填的地方**，

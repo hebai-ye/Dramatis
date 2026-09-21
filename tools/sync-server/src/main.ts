@@ -4,7 +4,12 @@ import { createServer as createHttpsServer } from 'node:https';
 import { dirname, resolve } from 'node:path';
 import process from 'node:process';
 import { DatabaseSync } from 'node:sqlite';
-import { createSqliteSyncStore, createSyncServer, handleSyncRequest } from '../../../packages/core/src/index.js';
+import {
+  createSqliteSyncStore,
+  createSyncServer,
+  handleSyncRequest,
+  type SyncServerLimits,
+} from '../../../packages/core/src/index.js';
 
 /**
  * 独立同步服务端（P2-6 第四步·部署）。
@@ -30,6 +35,11 @@ export interface ServerConfig {
   /** 配了就用 HTTPS 直接对外（适合自签证书或已有证书的场景）。 */
   tls: { cert: string; key: string } | null;
   quiet: boolean;
+  /**
+   * 护栏（顺序 16）。默认值写在核心里（`DEFAULT_SYNC_LIMITS`），
+   * 这里留几个口子让运维可以按自己的机器调，不用改代码。
+   */
+  limits: Partial<SyncServerLimits>;
 }
 
 const DEFAULT_DATA = './data/sync.db';
@@ -66,6 +76,22 @@ export function readConfig(argv: readonly string[], env: Record<string, string |
   const certPath = pick('tls-cert', 'DRAMATIS_SYNC_TLS_CERT');
   const keyPath = pick('tls-key', 'DRAMATIS_SYNC_TLS_KEY');
 
+  /** 只在「给了且是个正整数」时才覆盖默认护栏：写错一个字符不该把服务端变成没有护栏。 */
+  const positive = (flag: string, variable: string): number | undefined => {
+    const raw = pick(flag, variable);
+    if (raw === undefined) return undefined;
+    const value = Number(raw);
+    return Number.isInteger(value) && value > 0 ? value : undefined;
+  };
+  const maxRecords = positive('max-records', 'DRAMATIS_SYNC_MAX_RECORDS');
+  const maxMb = positive('max-mb', 'DRAMATIS_SYNC_MAX_MB');
+  const pushesPerMinute = positive('pushes-per-minute', 'DRAMATIS_SYNC_PUSHES_PER_MINUTE');
+  const limits: Partial<SyncServerLimits> = {
+    ...(maxRecords === undefined ? {} : { maxRecordsPerSpace: maxRecords }),
+    ...(maxMb === undefined ? {} : { maxBytesPerSpace: maxMb * 1024 * 1024 }),
+    ...(pushesPerMinute === undefined ? {} : { pushesPerMinute }),
+  };
+
   return {
     dataPath: resolve(pick('data', 'DRAMATIS_SYNC_DATA') ?? DEFAULT_DATA),
     host: pick('host', 'DRAMATIS_SYNC_HOST') ?? DEFAULT_HOST,
@@ -75,6 +101,7 @@ export function readConfig(argv: readonly string[], env: Record<string, string |
       certPath !== undefined && keyPath !== undefined
         ? { cert: readFileSync(certPath, 'utf8'), key: readFileSync(keyPath, 'utf8') }
         : null,
+    limits,
     quiet: flags.has('quiet') || env.DRAMATIS_SYNC_QUIET === '1',
   };
 }
@@ -115,7 +142,7 @@ export function startServer(config: ServerConfig): RunningServer {
   mkdirSync(dirname(config.dataPath), { recursive: true });
   const db = new DatabaseSync(config.dataPath);
   const store = createSqliteSyncStore(db);
-  const server = createSyncServer(store);
+  const server = createSyncServer(store, { limits: config.limits });
   const startedAt = Date.now();
 
   const log = (line: string): void => {

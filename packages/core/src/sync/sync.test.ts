@@ -380,6 +380,30 @@ describe('同步循环', () => {
     ).rejects.toThrowError(/凭证/);
   });
 
+  it('记录多起来之后按块推，不是一口气塞一个请求（顺序 13）', async () => {
+    const peer = await twoDevices();
+    const world = await seedWorld(peer.a.repository, '大世界');
+    // 250 条消息 + 世界本身的十几条记录 ⇒ 至少两块（一块 200）
+    for (let index = 0; index < 250; index += 1) {
+      await say(peer.a.repository, world.room.id, world.scene.id, `第 ${String(index)} 句`);
+    }
+
+    const batches: number[] = [];
+    const counting: SyncTransport = {
+      head: (input) => peer.server.transport.head(input),
+      pull: (input) => peer.server.transport.pull(input),
+      push: (input) => {
+        batches.push(input.records.length);
+        return peer.server.transport.push(input);
+      },
+    };
+
+    const report = await sync(peer, peer.a, counting);
+    expect(batches.length).toBeGreaterThan(1);
+    expect(Math.max(...batches)).toBeLessThanOrEqual(200);
+    expect(batches.reduce((sum, size) => sum + size, 0)).toBe(report.pushed);
+  });
+
   it('服务端手里只有密文（明文一个字都不上去）', async () => {
     const peer = await twoDevices();
     const world = await seedWorld(peer.a.repository, '老世界');
@@ -393,17 +417,35 @@ describe('同步循环', () => {
     expect(raw).toContain('messages');
   });
 
-  it('服务端动了记录的内容或坐标 → 解密失败，整轮报错而不是静默跳过', async () => {
+  /*
+   * 顺序 13：这条**改过**。原来是「有一条解不开就整轮报错」——听起来更安全，
+   * 实际后果是服务端上一条坏记录会让这台设备的同步永远停在它前面。
+   * 现在改成「跳过它、记下来、游标照常往前」，其余数据照常同步。
+   */
+  it('服务端动了记录 → 那一条被隔离跳过，其余照常同步、游标照常推进', async () => {
     const peer = await twoDevices();
     const world = await seedWorld(peer.a.repository, '老世界');
     const messageId = await say(peer.a.repository, world.room.id, world.scene.id, '别动我');
+    await say(peer.a.repository, world.room.id, world.scene.id, '我没事');
     await sync(peer, peer.a);
 
     peer.server.tamper('messages', messageId, { updatedAt: '2099-01-01T00:00:00.000Z' });
 
-    await expect(sync(peer, peer.b)).rejects.toThrowError(/解不开/);
-    // 游标没被推进：修好之后原样重来
-    expect((await peer.b.repository.readSyncState()).pulledHead).toBe(0);
+    const report = await sync(peer, peer.b);
+    expect(report.quarantinedCount).toBe(1);
+    expect(report.quarantined[0]?.id).toBe(messageId);
+    expect(report.quarantined[0]?.reason).toMatch(/解不开|解密失败/);
+
+    // 没被那条坏记录挡住：其余消息到了 B，游标也推到了服务端头号
+    const messages = await peer.b.repository.listMessages(world.room.id);
+    expect(messages.some((message) => message.content === '我没事')).toBe(true);
+    expect(messages.some((message) => message.content === '别动我')).toBe(false);
+    const state = await peer.b.repository.readSyncState();
+    expect(state.pulledHead).toBeGreaterThan(0);
+
+    // 再同步一次：坏记录不会每次都重新报一遍（游标已经过它了）
+    const again = await sync(peer, peer.b);
+    expect(again.quarantinedCount).toBe(0);
   });
 });
 

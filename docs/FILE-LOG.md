@@ -788,7 +788,14 @@ git ls-files | ForEach-Object {
 | `apps/web/src/styles.css` | 改 | 删除确认块适配窄屏；inline 选择行按钮不再折行 |
 | `docs/EVAL.md` / `docs/SYNC.md` / `docs/TASKS.md` / `docs/STATUS.md` | 改 | 第四十三节、任务 52/53、账户级密码与硬删除边界 |
 
-## 三十三、几点注意
+## 三十三、2026-09-21 深夜：顺序 54（身份输入法/手写组合修复）
+
+| 文件 | 新增/修改 | 说明 |
+| --- | --- | --- |
+| `apps/web/src/components/PersonaLibrary.tsx` | 改 | 本地草稿、composition 起止保护、停止 300ms/失焦保存 |
+| `docs/EVAL.md` / `docs/TASKS.md` / `docs/STATUS.md` | 改 | 第四十四节、任务 54 与验证结果 |
+
+## 三十四、几点注意
 
 ---
 

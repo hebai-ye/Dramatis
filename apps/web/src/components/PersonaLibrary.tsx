@@ -1,5 +1,5 @@
 import { createPersona, type Persona } from '@dramatis/core';
-import { useEffect, useRef, useState } from 'react';
+import { type ChangeEvent, useEffect, useRef, useState } from 'react';
 
 interface Props {
   personas: Persona[];
@@ -17,7 +17,12 @@ interface Props {
 export function PersonaLibrary({ personas, disabled, onSave, onDelete }: Props) {
   const [editingId, setEditingId] = useState<string | null>(personas[0]?.id ?? null);
   const active = personas.find((persona) => persona.id === editingId) ?? personas[0] ?? null;
-  const activeRef = useRef<Persona | null>(active);
+  const [draft, setDraft] = useState<Persona | null>(active);
+  const draftRef = useRef<Persona | null>(active);
+  const savedRef = useRef<Persona | null>(active);
+  const focusedRef = useRef(false);
+  const composingRef = useRef(false);
+  const saveTimerRef = useRef<number | null>(null);
 
   useEffect(() => {
     if (editingId !== null && personas.some((persona) => persona.id === editingId)) return;
@@ -25,15 +30,82 @@ export function PersonaLibrary({ personas, disabled, onSave, onDelete }: Props) 
   }, [editingId, personas]);
 
   useEffect(() => {
-    activeRef.current = active;
+    /*
+     * 输入法/手写输入会把一个词拆成多个 composition 事件。
+     * 焦点还在输入框、或正在组合时，绝不把父组件刚回写的旧对象盖回草稿，
+     * 否则每落一个笔画都会重新挂值，组合马上断掉。
+     */
+    if (active !== null && draftRef.current?.id === active.id && (focusedRef.current || composingRef.current)) {
+      return;
+    }
+    draftRef.current = active;
+    savedRef.current = active;
+    setDraft(active);
   }, [active]);
 
-  const patchActive = (patch: Partial<Persona>): void => {
-    const current = activeRef.current;
+  useEffect(
+    () => () => {
+      if (saveTimerRef.current !== null) window.clearTimeout(saveTimerRef.current);
+    },
+    [],
+  );
+
+  const clearSaveTimer = (): void => {
+    if (saveTimerRef.current === null) return;
+    window.clearTimeout(saveTimerRef.current);
+    saveTimerRef.current = null;
+  };
+
+  const commitDraft = (): void => {
+    clearSaveTimer();
+    const current = draftRef.current;
+    if (current === null || composingRef.current) return;
+    const saved = savedRef.current;
+    if (saved !== null && saved.name === current.name && saved.description === current.description) return;
+    savedRef.current = current;
+    onSave(current);
+  };
+
+  const queueSave = (): void => {
+    clearSaveTimer();
+    if (composingRef.current) return;
+    saveTimerRef.current = window.setTimeout(() => {
+      saveTimerRef.current = null;
+      if (composingRef.current) return;
+      const current = draftRef.current;
+      if (current === null) return;
+      savedRef.current = current;
+      onSave(current);
+    }, 300);
+  };
+
+  const patchActive = (patch: Partial<Persona>, event?: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>): void => {
+    const current = draftRef.current;
     if (current === null) return;
     const next = { ...current, ...patch };
-    activeRef.current = next;
-    onSave(next);
+    draftRef.current = next;
+    setDraft(next);
+    const nativeComposing = event !== undefined && (event.nativeEvent as InputEvent).isComposing === true;
+    if (!composingRef.current && !nativeComposing) queueSave();
+  };
+
+  const beginComposition = (): void => {
+    composingRef.current = true;
+    clearSaveTimer();
+  };
+
+  const endComposition = (): void => {
+    composingRef.current = false;
+    queueSave();
+  };
+
+  const focusEditor = (): void => {
+    focusedRef.current = true;
+  };
+
+  const blurEditor = (): void => {
+    focusedRef.current = false;
+    commitDraft();
   };
 
   return (
@@ -43,7 +115,11 @@ export function PersonaLibrary({ personas, disabled, onSave, onDelete }: Props) 
           value={active?.id ?? ''}
           disabled={disabled}
           aria-label="正在编辑的身份"
-          onChange={(event) => setEditingId(event.target.value)}
+          onChange={(event) => {
+            commitDraft();
+            focusedRef.current = false;
+            setEditingId(event.target.value);
+          }}
         >
           <option value="">选择要编辑的身份…</option>
           {personas.map((persona) => (
@@ -57,6 +133,7 @@ export function PersonaLibrary({ personas, disabled, onSave, onDelete }: Props) 
           className="ghost"
           disabled={disabled}
           onClick={() => {
+            commitDraft();
             const persona = createPersona({ name: '新身份' });
             onSave(persona);
             setEditingId(persona.id);
@@ -74,19 +151,27 @@ export function PersonaLibrary({ personas, disabled, onSave, onDelete }: Props) 
             名字
             <input
               type="text"
-              value={active.name}
+              value={draft?.name ?? active.name}
               disabled={disabled}
-              onChange={(event) => patchActive({ name: event.target.value })}
+              onFocus={focusEditor}
+              onBlur={blurEditor}
+              onCompositionStart={beginComposition}
+              onCompositionEnd={endComposition}
+              onChange={(event) => patchActive({ name: event.target.value }, event)}
             />
           </label>
           <label>
             设定
             <textarea
               rows={5}
-              value={active.description}
+              value={draft?.description ?? active.description}
               disabled={disabled}
               placeholder="你是谁、长什么样、什么来头"
-              onChange={(event) => patchActive({ description: event.target.value })}
+              onFocus={focusEditor}
+              onBlur={blurEditor}
+              onCompositionStart={beginComposition}
+              onCompositionEnd={endComposition}
+              onChange={(event) => patchActive({ description: event.target.value }, event)}
             />
           </label>
           <button
@@ -95,7 +180,8 @@ export function PersonaLibrary({ personas, disabled, onSave, onDelete }: Props) 
             disabled={disabled}
             title="删除后，引用它的世界会退回没有身份的状态，但对话与记忆都保留"
             onClick={() => {
-              if (window.confirm(`删除身份「${active.name}」？`)) onDelete(active.id);
+              const persona = draftRef.current ?? active;
+              if (window.confirm(`删除身份「${persona.name}」？`)) onDelete(persona.id);
             }}
           >
             删除这个身份

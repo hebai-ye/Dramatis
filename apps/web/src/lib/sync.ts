@@ -8,7 +8,9 @@ import {
   normalizeRecoveryCode,
   openSpace,
   type RemoteSpaceMeta,
+  rotatePassword as rotateSpacePassword,
   runSync,
+  type SyncDeviceSummary,
   type SyncReport,
 } from '@dramatis/core';
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -104,6 +106,16 @@ export interface SyncApi {
   disconnect: () => Promise<void>;
   /** 切换「保存方式」（把密码在内存版与本地版之间搬一次）。 */
   setKeyMode: (mode: KeyStorageMode) => Promise<void>;
+  /** 这个空间最近有哪些设备在写（顺序 14）。本机那台的号也一并给出来，界面好标「这台」。 */
+  listDevices: () => Promise<{ devices: SyncDeviceSummary[]; localDeviceId: string }>;
+  /**
+   * 换同步密码（顺序 15）。
+   *
+   * 语义要说清楚：换完之后**只知道旧密码的设备再也同步不了**——
+   * 这就是「断开一台设备」的真实做法。本机不用重连（凭证与主密钥都还在手上），
+   * 但下一次在新设备上要用新密码。
+   */
+  rotatePassword: (newPassword: string) => Promise<void>;
 }
 
 function normalizeEndpoint(raw: string): string {
@@ -363,6 +375,67 @@ export function useSync(db: DramatisDb | null, options: { onChanged?: () => void
   );
 
   /**
+   * 这个空间最近有哪些设备在写（顺序 14）。
+   *
+   * 顺带把**本机**的 deviceId 一起给出来：界面要标「这台」（不然一串 uuid
+   * 用户根本认不出自己）。
+   */
+  const listDevices = useCallback(async () => {
+    const current = configRef.current;
+    const session = sessionRef.current;
+    if (db === null || current === null || session === null) throw new Error('先连上同步，才能看设备列表。');
+
+    const transport = createHttpSyncTransport({ endpoint: current.endpoint });
+    if (transport.devices === undefined) throw new Error('这个客户端版本不支持设备列表。');
+    const { devices } = await transport.devices({
+      spaceHandle: current.spaceHandle,
+      credential: session.credential,
+    });
+    return { devices, localDeviceId: await db.repository.deviceId() };
+  }, [db]);
+
+  /**
+   * 换同步密码（顺序 15）。
+   *
+   * 三件事按顺序做，顺序不能反：
+   * 1. 用**服务端上那份封装**把主密钥解出来（本机可能已经拿着，但重新解一次最稳）；
+   * 2. 用新密码重新包装、算出新凭证与哈希；
+   * 3. 先让服务端换掉（此刻旧密码失效），再更新本机存的那份密码。
+   *
+   * 第 3 步里「先服务端后本机」是刻意的：服务端换成功、本机存密码失败时，
+   * 用户手里还有新密码可以重填；反过来就会出现「本机以为换了、服务端还是旧的」。
+   */
+  const rotatePassword = useCallback(
+    async (newPassword: string): Promise<void> => {
+      const current = configRef.current;
+      const session = sessionRef.current;
+      if (db === null || current === null || session === null) throw new Error('先连上同步，才能换密码。');
+      if (newPassword.trim().length < 6) throw new Error('新密码太短了，至少 6 位（它要挡住猜密码的人）。');
+
+      const rotated = await rotateSpacePassword({
+        spaceHandle: current.spaceHandle,
+        encKey: session.encKey,
+        newPassword,
+      });
+
+      const transport = createHttpSyncTransport({ endpoint: current.endpoint });
+      if (transport.rotate === undefined) throw new Error('这台服务端的版本还不支持换密码，请先更新服务端。');
+      await transport.rotate({
+        spaceHandle: current.spaceHandle,
+        credential: session.credential,
+        credentialHash: rotated.credentialHash,
+        passwordWrap: rotated.passwordWrap,
+      });
+
+      // 服务端换完了：本机的凭证与密码都要跟着换，否则下一次同步自己就 401 了
+      sessionRef.current = { credential: rotated.credential, encKey: session.encKey };
+      await remember({ ...current, lastReport: current.lastReport }, newPassword);
+      await createBrowserKeyStore(current.keyMode).set(KEY_REF_PASSWORD, newPassword);
+    },
+    [db, remember],
+  );
+
+  /**
    * 自动同步（每轮结束）。
    *
    * 与手动同步共用同一条推送路径（`doSync`），区别只有两点：不给界面加
@@ -437,6 +510,8 @@ export function useSync(db: DramatisDb | null, options: { onChanged?: () => void
     autoSyncPending,
     disconnect,
     setKeyMode,
+    listDevices,
+    rotatePassword,
   };
 }
 

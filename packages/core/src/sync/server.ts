@@ -19,6 +19,7 @@ import { type EncryptedRecord, recordSize } from '../crypto/records.js';
 import type {
   SyncAcceptedRecord,
   SyncCredentials,
+  SyncDeviceSummary,
   SyncHeadInput,
   SyncHeadResult,
   SyncPulledRecord,
@@ -54,7 +55,16 @@ export interface SyncRecordRow {
   updatedAt: string;
   deletedAt: string | null;
   sealed: EncryptedRecord;
+  /** 写这条记录的那台设备（顺序 14）；老记录可能是 null。 */
+  deviceId: string | null;
 }
+
+/**
+ * 一台设备在这个空间里的足迹（顺序 14）。
+ *
+ * 形状定义在 `types.ts`（传输层也要用它），这里只是转出去，免得两处各写一份。
+ */
+export type { SyncDeviceSummary } from './types.js';
 
 /**
  * 服务端的存储接口。
@@ -76,6 +86,13 @@ export interface SyncServerStore {
    * 就跳过配额检查——**不能因为加了个护栏就让旧服务端起不来**。
    */
   spaceUsage?(spaceHandle: string): Promise<{ records: number; bytes: number }>;
+  /**
+   * 可选：按设备聚合（顺序 14）。没实现就返回空列表——
+   * 「看得见设备」是增强，不该让旧后端连同步都做不了。
+   */
+  deviceUsage?(spaceHandle: string): Promise<SyncDeviceSummary[]>;
+  /** 换同步密码：只替换密码那一份凭证与封装，恢复码那份不动。 */
+  rotatePassword?(spaceHandle: string, patch: { credentialHash: string; passwordWrap: unknown }): Promise<boolean>;
 }
 
 /** 服务端错误：带上 HTTP 状态码，HTTP 层直接照搬（内核层也能读 code）。 */
@@ -137,6 +154,10 @@ export interface SyncServer {
   head(input: SyncHeadInput): Promise<SyncHeadResult>;
   push(input: SyncPushInput): Promise<SyncPushResult>;
   pull(input: SyncPullInput): Promise<SyncPullResult>;
+  /** 这个空间最近有哪些设备在写（顺序 14）。 */
+  devices(input: SyncHeadInput): Promise<{ devices: SyncDeviceSummary[] }>;
+  /** 换同步密码（顺序 15）：旧密码从此过不了鉴权，等于把只知道旧密码的设备断开。 */
+  rotatePassword(input: SyncHeadInput & { credentialHash: string; passwordWrap: unknown }): Promise<void>;
 }
 
 /** 鉴权：凭证哈希对得上密码那份或恢复码那份都算过（两者等价，SYNC §3.3）。 */
@@ -276,6 +297,29 @@ export function createSyncServer(store: SyncServerStore, options: CreateSyncServ
       const head = last === undefined ? input.since : last.serverRev;
       return { head, serverHead, hasMore: head < serverHead, records };
     },
+
+    async devices(input: SyncHeadInput) {
+      await authorize(store, input);
+      return { devices: (await store.deviceUsage?.(input.spaceHandle)) ?? [] };
+    },
+
+    async rotatePassword(input: SyncHeadInput & { credentialHash: string; passwordWrap: unknown }) {
+      await authorize(store, input);
+      if (input.credentialHash === '') {
+        throw new SyncServerError(400, 'bad-request', '新凭证哈希不能为空。');
+      }
+      const done = await store.rotatePassword?.(input.spaceHandle, {
+        credentialHash: input.credentialHash,
+        passwordWrap: input.passwordWrap,
+      });
+      /*
+       * 存储没实现这一条时**明确告诉用户做不到**，不能回一句成功——
+       * 「以为换了密码、其实旧密码还能用」是这一项里最危险的谎。
+       */
+      if (done === undefined || done === false) {
+        throw new SyncServerError(501, 'bad-request', '这台服务端的版本还不支持换密码，请先更新服务端。');
+      }
+    },
   };
 }
 
@@ -328,6 +372,7 @@ export function createMemorySyncStore(): MemorySyncStore {
           updatedAt: record.updatedAt,
           deletedAt: record.deletedAt,
           sealed: record.sealed,
+          deviceId: record.deviceId ?? null,
         });
         accepted.push({ collection: record.collection, id: record.id, serverRev: head });
       }
@@ -349,6 +394,7 @@ export function createMemorySyncStore(): MemorySyncStore {
           deletedAt: row.deletedAt,
           sealed: row.sealed,
           serverRev: row.serverRev,
+          ...(row.deviceId === null ? {} : { deviceId: row.deviceId }),
         }));
     },
 
@@ -358,6 +404,34 @@ export function createMemorySyncStore(): MemorySyncStore {
       let bytes = 0;
       for (const row of table.values()) bytes += recordSize(row.sealed);
       return { records: table.size, bytes };
+    },
+
+    async deviceUsage(spaceHandle) {
+      const table = rows.get(spaceHandle);
+      if (table === undefined) return [];
+      const byDevice = new Map<string, SyncDeviceSummary>();
+      for (const row of table.values()) {
+        if (row.deviceId === null) continue;
+        const existing = byDevice.get(row.deviceId);
+        if (existing === undefined) {
+          byDevice.set(row.deviceId, { deviceId: row.deviceId, lastWriteAt: row.updatedAt, records: 1 });
+          continue;
+        }
+        existing.records += 1;
+        if (row.updatedAt > existing.lastWriteAt) existing.lastWriteAt = row.updatedAt;
+      }
+      return [...byDevice.values()].sort((left, right) => right.lastWriteAt.localeCompare(left.lastWriteAt));
+    },
+
+    async rotatePassword(spaceHandle, patch) {
+      const space = spaces.get(spaceHandle);
+      if (space === undefined) return false;
+      spaces.set(spaceHandle, {
+        ...space,
+        credentialHash: patch.credentialHash,
+        keyWraps: { ...space.keyWraps, password: patch.passwordWrap },
+      });
+      return true;
     },
 
     debugRows(spaceHandle) {

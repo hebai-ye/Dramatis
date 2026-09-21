@@ -9,7 +9,7 @@
  * 底层的 `TypeError: Failed to fetch` 对用户毫无意义，而「凭证不对：检查一下
  * 同步密码」正是他要看的。
  */
-import type { SyncHeadResult, SyncPullResult, SyncPushResult, SyncTransport } from './types.js';
+import type { SyncDeviceSummary, SyncHeadResult, SyncPullResult, SyncPushResult, SyncTransport } from './types.js';
 
 /**
  * HTTP 传输层（P2-6 第四步）。
@@ -126,6 +126,28 @@ export function createHttpSyncTransport(options: HttpSyncTransportOptions): Sync
         { headers: auth(input.credential) },
       );
       return (await expectOk(response)) as SyncPullResult;
+    },
+
+    /* 顺序 14 / 15：设备列表与换密码。老服务端没这两个路由时会回 404，
+       客户端把服务端那句人话原样抛出来——界面据此说「这台服务端还不支持」。 */
+    async devices(input) {
+      const response = await doFetch(
+        `${base(options.endpoint)}/spaces/${encodeURIComponent(input.spaceHandle)}/devices`,
+        { headers: auth(input.credential) },
+      );
+      return (await expectOk(response)) as { devices: SyncDeviceSummary[] };
+    },
+
+    async rotate(input) {
+      const response = await doFetch(
+        `${base(options.endpoint)}/spaces/${encodeURIComponent(input.spaceHandle)}/rotate`,
+        {
+          method: 'POST',
+          headers: auth(input.credential),
+          body: JSON.stringify({ credentialHash: input.credentialHash, passwordWrap: input.passwordWrap }),
+        },
+      );
+      await expectOk(response);
     },
   };
 }

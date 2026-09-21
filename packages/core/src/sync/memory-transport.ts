@@ -50,6 +50,8 @@ export function createMemorySyncTransport(options: MemorySyncTransportOptions): 
       head: (input) => server.head(input),
       push: (input) => server.push(input),
       pull: (input) => server.pull(input),
+      devices: (input) => server.devices(input),
+      rotate: (input) => server.rotatePassword(input),
     },
     stats: () => {
       const rows = [...store.debugRows(options.spaceHandle).values()];

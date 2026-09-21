@@ -1168,6 +1168,33 @@ button.ghost:focus-visible {
   padding: 0 4px;
 }
 
+/*
+ * 「还没有 Key？三步就好」（顺序 7）。
+ *
+ * 它是一块**引导**，不是警告：所以用强调色的浅底把它和上面的表单分开，
+ * 但不做成 red/warn 那种「出事了」的样子——用户没做错什么，他只是刚来。
+ */
+.key-guide {
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 22%, transparent);
+  border-radius: var(--radius);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+}
+
+.key-guide ol {
+  font-size: 12px;
+  line-height: 1.7;
+  margin: 0;
+  padding-left: 20px;
+}
+
+.key-guide a {
+  color: var(--accent);
+}
+
 /* 恢复码：等宽大字 + 可选中，手机上要一眼看清、能长按选中 */
 .recovery-code {
   background: var(--surface-2, rgba(0, 0, 0, 0.2));

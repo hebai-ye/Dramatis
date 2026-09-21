@@ -47,6 +47,8 @@ export interface LocalSyncRecord {
   deletedAt: string | null;
   /** 实体本身（明文，加密前）。 */
   value: unknown;
+  /** 拉回来的记录才有：写它的设备。本地记录不填（本机写的当然就是本机）。 */
+  deviceId?: string;
 }
 
 /** 上传/下载时线上那条记录：坐标是明文，内容是密文。 */
@@ -57,6 +59,15 @@ export interface SyncWireRecord {
   updatedAt: string;
   deletedAt: string | null;
   sealed: EncryptedRecord;
+  /**
+   * 写这条记录的那台设备（顺序 14/19）。
+   *
+   * 为什么它是**可选**的、而且明文：老客户端（顺序 13 之前那几版）不带这个字段，
+   * 服务端得照收；而「哪台设备在写」本来就是服务端必须知道的信息（同步面板要显示
+   * 「最近写过的设备」、断开时要能指着具体一台）。它不是隐私——设备号是本机生成的
+   * 随机 uuid，不含任何用户信息。
+   */
+  deviceId?: string;
 }
 
 /** 拉回来的记录多一个服务端游标号。 */
@@ -130,6 +141,22 @@ export interface SyncTransport {
   head(input: SyncHeadInput): Promise<SyncHeadResult>;
   push(input: SyncPushInput): Promise<SyncPushResult>;
   pull(input: SyncPullInput): Promise<SyncPullResult>;
+  /**
+   * 这个空间最近有哪些设备在写（顺序 14）。
+   *
+   * 可选：老的传输实现（以及任何只实现三个必需接口的第三方后端）没有它，
+   * 界面照常同步，只是不显示设备列表。
+   */
+  devices?(input: SyncHeadInput): Promise<{ devices: SyncDeviceSummary[] }>;
+  /** 换同步密码（顺序 15）。同样是可选的：没实现就是「这台服务端还不支持」。 */
+  rotate?(input: SyncHeadInput & { credentialHash: string; passwordWrap: unknown }): Promise<void>;
+}
+
+/** 一台设备在某个空间里的足迹（顺序 14）。 */
+export interface SyncDeviceSummary {
+  deviceId: string;
+  lastWriteAt: string;
+  records: number;
 }
 
 /**
@@ -173,5 +200,22 @@ export interface SyncReport {
   quarantined: readonly SyncQuarantinedRecord[];
   /** 一共跳过多少条（可能大于明细条数）。 */
   quarantinedCount: number;
+  /**
+   * 本机较新、把远端那条挡回去了的记录（顺序 19 的「覆盖可见性」）。
+   *
+   * 只记**来自别的设备**的那些：自己两台设备之间撞车才是用户要看的，
+   * 本机自己改两遍不算覆盖。明细同 quarantine 一样最多 20 条。
+   */
+  overridden: readonly SyncOverriddenRecord[];
+  /** 一共挡回去多少条（来自其它设备的）。 */
+  overriddenCount: number;
   head: number;
+}
+
+/** 一条「远端比本机旧、所以本机这条留着」的记录（顺序 19）。 */
+export interface SyncOverriddenRecord {
+  collection: string;
+  id: string;
+  /** 那条被挡回去的记录是哪台设备写的；老记录可能没有。 */
+  deviceId: string;
 }

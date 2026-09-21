@@ -127,6 +127,8 @@ function createJsonFileStore(file: string, fs: NodeFs, path: NodePath): SyncServ
           updatedAt: record.updatedAt,
           deletedAt: record.deletedAt,
           sealed: record.sealed,
+          // 顺序 14：设备号也存下来，开发后端才看得见设备列表
+          deviceId: record.deviceId ?? null,
         };
         accepted.push({ collection: record.collection, id: record.id, serverRev: head });
       }
@@ -144,6 +146,47 @@ function createJsonFileStore(file: string, fs: NodeFs, path: NodePath): SyncServ
         .filter((row) => row.serverRev > options.since)
         .sort((left, right) => left.serverRev - right.serverRev)
         .slice(0, options.limit) as never;
+    },
+
+    /**
+     * 顺序 14 / 15 这两个口子也要给开发后端接上。
+     *
+     * 少了它们，`pnpm dev` 里那台「服务端」会表现得像一台老服务器：
+     * 设备列表空、换密码报「不支持」。本机联调时最容易踩的就是这种
+     * 「代码是新的、跑起来的是旧的」，所以开发后端必须跟内核一起长。
+     */
+    async deviceUsage(spaceHandle) {
+      await load();
+      const rows = Object.values(data.rows[spaceHandle] ?? {}) as {
+        deviceId?: string | null;
+        updatedAt: string;
+      }[];
+      const byDevice = new Map<string, { deviceId: string; lastWriteAt: string; records: number }>();
+      for (const row of rows) {
+        const id = row.deviceId ?? '';
+        if (id === '') continue;
+        const existing = byDevice.get(id);
+        if (existing === undefined) {
+          byDevice.set(id, { deviceId: id, lastWriteAt: row.updatedAt, records: 1 });
+          continue;
+        }
+        existing.records += 1;
+        if (row.updatedAt > existing.lastWriteAt) existing.lastWriteAt = row.updatedAt;
+      }
+      return [...byDevice.values()].sort((left, right) => right.lastWriteAt.localeCompare(left.lastWriteAt));
+    },
+
+    async rotatePassword(spaceHandle, patch) {
+      await load();
+      const space = data.spaces[spaceHandle];
+      if (space === undefined) return false;
+      data.spaces[spaceHandle] = {
+        ...space,
+        credentialHash: patch.credentialHash,
+        keyWraps: { ...space.keyWraps, password: patch.passwordWrap },
+      };
+      await save();
+      return true;
     },
   };
 }

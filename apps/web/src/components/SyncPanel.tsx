@@ -1,3 +1,4 @@
+import type { SyncDeviceSummary } from '@dramatis/core';
 import { useState } from 'react';
 import type { KeyStorageMode } from '../lib/keystore';
 import { describeReport, type SyncApi } from '../lib/sync';
@@ -12,6 +13,21 @@ function formatTime(iso: string | null): string {
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) return '';
   return date.toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+}
+
+/**
+ * 「挡住旧版本」那行里补一句「是谁写的」。
+ *
+ * 顺序 19 的细节里带的是设备号，这里只取前 8 位——面板上不需要完整 uuid，
+ * 要的是「和别的设备撞过车」这件事本身。
+ */
+function describeDevices(overridden: readonly { deviceId: string }[]): string {
+  const ids = [...new Set(overridden.map((item) => item.deviceId))].filter((id) => id !== '');
+  if (ids.length === 0) return '';
+  return `（来自 ${ids
+    .slice(0, 2)
+    .map((id) => `设备 ${id.slice(0, 8)}…`)
+    .join('、')}${ids.length > 2 ? ` 等 ${String(ids.length)} 台` : ''}）`;
 }
 
 /** 复制恢复码：非 https / 没授权时如实说，别假装成功。 */
@@ -39,6 +55,17 @@ export function SyncPanel({ api, disabled }: Props) {
   const [userId, setUserId] = useState(api.config?.userId ?? '');
   const [secret, setSecret] = useState('');
   const [keyMode, setKeyMode] = useState<KeyStorageMode>(api.config?.keyMode ?? 'session');
+  /** 顺序 14：点一下才去问服务端要设备列表（不想每次打开设置都打一次请求）。 */
+  const [devices, setDevices] = useState<{ devices: SyncDeviceSummary[]; localDeviceId: string } | null>(null);
+  const [newPassword, setNewPassword] = useState('');
+
+  const loadDevices = async (): Promise<void> => {
+    try {
+      setDevices(await api.listDevices());
+    } catch (error) {
+      setNotice({ ok: false, message: error instanceof Error ? error.message : String(error) });
+    }
+  };
   const [notice, setNotice] = useState<{ ok: boolean; message: string } | null>(null);
   const [recoveryCopied, setRecoveryCopied] = useState(false);
 
@@ -192,6 +219,29 @@ export function SyncPanel({ api, disabled }: Props) {
                   )} 条`}
             </span>
           </li>
+          {/*
+            覆盖可见性（顺序 19）：LWW 静默覆盖是这个设计里最容易让人不放心的地方，
+            所以要能说出「有多少条是别的设备写得更旧、被我这边留住了」。
+            只算**来自别的设备**的：自己本机改两遍不叫覆盖。
+          */}
+          {(api.config?.lastReport?.overriddenCount ?? 0) > 0 ? (
+            <li>
+              <span className="usage-name">挡住旧版本</span>
+              <span className="usage-figure">
+                别的设备写得更旧、本机留住的 {String(api.config?.lastReport?.overriddenCount ?? 0)} 条
+                {describeDevices(api.config?.lastReport?.overridden ?? [])}
+              </span>
+            </li>
+          ) : null}
+          {(api.config?.lastReport?.quarantinedCount ?? 0) > 0 ? (
+            <li>
+              <span className="usage-name">跳过</span>
+              <span className="usage-figure">
+                解不开、已跳过 {String(api.config?.lastReport?.quarantinedCount ?? 0)} 条（
+                {api.config?.lastReport?.quarantined[0]?.reason.slice(0, 24) ?? ''}…）
+              </span>
+            </li>
+          ) : null}
           <li>
             <span className="usage-name">自动同步</span>
             <span className="usage-figure">
@@ -274,6 +324,75 @@ export function SyncPanel({ api, disabled }: Props) {
           <button type="button" className="ghost danger" disabled={api.busy} onClick={() => void run(api.disconnect)}>
             断开同步（不影响本机数据，也不会删除服务端的数据）
           </button>
+        </div>
+      ) : null}
+
+      {/* ---------- 顺序 14 / 15：设备可见性 + 断开一台设备 ---------- */}
+      {connected ? (
+        <div className="panel-inner">
+          <h3>设备</h3>
+          <p className="hint">
+            这个空间最近有哪些设备在写。想断掉一台（比如旧手机丢了），做法是**换同步密码**：
+            换完之后只知道旧密码的设备再也同步不了，你手上的其它设备用新密码重连即可。 恢复码不受影响。
+          </p>
+          <div className="save-bar">
+            <button type="button" className="ghost" disabled={api.busy} onClick={() => void loadDevices()}>
+              {devices === null ? '看有哪些设备' : '刷新设备列表'}
+            </button>
+          </div>
+          {devices === null ? null : devices.devices.length === 0 ? (
+            <p className="hint">服务端还没记下任何设备（可能是这台服务端还没更新到带设备列表的版本）。</p>
+          ) : (
+            <ul className="usage-list">
+              {devices.devices.map((device) => (
+                <li key={device.deviceId}>
+                  <span className="usage-name">
+                    {device.deviceId === devices.localDeviceId ? '这台设备' : `设备 ${device.deviceId.slice(0, 8)}…`}
+                  </span>
+                  <span className="usage-figure">
+                    {String(device.records)} 条 · 最后写入 {formatTime(device.lastWriteAt)}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
+
+          <div className="field">
+            <label htmlFor="sync-new-password">换同步密码（= 让旧密码失效）</label>
+            <input
+              id="sync-new-password"
+              type="password"
+              value={newPassword}
+              disabled={api.busy}
+              autoComplete="off"
+              placeholder="新密码（至少 6 位）"
+              onChange={(event) => setNewPassword(event.target.value)}
+            />
+          </div>
+          <div className="save-bar">
+            <button
+              type="button"
+              disabled={api.busy || newPassword.trim().length < 6}
+              title="换完之后只知道旧密码的设备会同步不了；恢复码仍然有效"
+              onClick={() => {
+                if (
+                  !window.confirm(
+                    '换同步密码？换完之后，只知道旧密码的设备会同步不了（这就是「断开」）。恢复码仍然有效。',
+                  )
+                ) {
+                  return;
+                }
+                void run(async () => {
+                  await api.rotatePassword(newPassword);
+                  setNewPassword('');
+                  setNotice({ ok: true, message: '换好了。其它设备请用新密码重新连接。' });
+                });
+              }}
+            >
+              换密码
+            </button>
+            <span className="hint">本机不用重连（凭证已经就地换掉了）</span>
+          </div>
         </div>
       ) : null}
     </div>

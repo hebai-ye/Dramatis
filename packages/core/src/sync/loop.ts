@@ -30,6 +30,7 @@ import type { Repository } from '../storage/repository.js';
 import { mergeRemoteRecords } from './merge.js';
 import type {
   LocalSyncRecord,
+  SyncOverriddenRecord,
   SyncQuarantinedRecord,
   SyncReport,
   SyncState,
@@ -87,6 +88,8 @@ export async function runSync(input: RunSyncInput): Promise<SyncReport> {
 
   // ---- 1. 推 ----
   const outbound = await repository.listSyncRecords({ since: state.pushedAt });
+  // 这台设备的号：跟着每条记录上线上，服务端与别的设备才知道「是谁写的」（顺序 14/19）
+  const deviceId = await repository.deviceId();
   let pushedAt = state.pushedAt;
   let pushed = 0;
   let head = state.pulledHead;
@@ -112,6 +115,7 @@ export async function runSync(input: RunSyncInput): Promise<SyncReport> {
             },
             record.value,
           ),
+          deviceId,
         });
       }
 
@@ -141,6 +145,8 @@ export async function runSync(input: RunSyncInput): Promise<SyncReport> {
   let truncated = false;
   const quarantined: SyncQuarantinedRecord[] = [];
   let quarantinedCount = 0;
+  const overridden: SyncOverriddenRecord[] = [];
+  let overriddenCount = 0;
 
   for (let round = 0; ; round += 1) {
     const page = await input.transport.pull({
@@ -195,6 +201,7 @@ export async function runSync(input: RunSyncInput): Promise<SyncReport> {
         updatedAt: record.updatedAt,
         deletedAt: record.deletedAt,
         value,
+        ...(record.deviceId === undefined ? {} : { deviceId: record.deviceId }),
       });
     }
 
@@ -205,6 +212,19 @@ export async function runSync(input: RunSyncInput): Promise<SyncReport> {
     });
     applied += merged.applied;
     skipped += merged.skipped;
+    /*
+     * 覆盖可见性（顺序 19）：只统计**来自别的设备**的那些。
+     * 本机自己的旧版本被自己挡回去不算覆盖，「两台设备撞车」才是用户想看的。
+     */
+    for (const record of decoded) {
+      if (record.deviceId === undefined || record.deviceId === deviceId) continue;
+      if (merged.overriddenIds.has(`${record.collection}/${record.id}`)) {
+        overriddenCount += 1;
+        if (overridden.length < QUARANTINE_DETAIL_LIMIT) {
+          overridden.push({ collection: record.collection, id: record.id, deviceId: record.deviceId });
+        }
+      }
+    }
     pulledCount += decoded.length;
 
     // 拉回来的东西本来就在服务端上，不用再推回去。不更新推送点的话，一台空设备
@@ -244,6 +264,8 @@ export async function runSync(input: RunSyncInput): Promise<SyncReport> {
     skipped,
     quarantined,
     quarantinedCount,
+    overridden,
+    overriddenCount,
     head,
   };
 }

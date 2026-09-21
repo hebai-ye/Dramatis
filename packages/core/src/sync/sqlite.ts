@@ -50,6 +50,7 @@ CREATE TABLE IF NOT EXISTS records (
   server_rev INTEGER NOT NULL,
   updated_at TEXT NOT NULL,
   deleted_at TEXT,
+  device_id TEXT,
   sealed TEXT NOT NULL,
   PRIMARY KEY (space_handle, collection, id)
 );
@@ -63,6 +64,18 @@ CREATE TABLE IF NOT EXISTS heads (
 /** 跑一遍建表（幂等，启动时调一次）。 */
 export function ensureSyncSchema(db: SqliteDatabase): void {
   db.exec(SYNC_SCHEMA_SQL);
+  /*
+   * 顺序 14 加的列：老库（建表语句那时还没有 `device_id`）里没有它，
+   * 而 `CREATE TABLE IF NOT EXISTS` 不会给已存在的表补列。
+   *
+   * 为什么用 PRAGMA 探一下再 ALTER，而不是 `ALTER TABLE ... ADD COLUMN IF NOT EXISTS`：
+   * SQLite 到 3.4x 都还不支持那个 `IF NOT EXISTS`（Postgres 才有）。探一次是幂等的，
+   * 重复启动不会报错。
+   */
+  const columns = db.prepare('PRAGMA table_info(records)').all() as { name?: string }[];
+  if (!columns.some((column) => column.name === 'device_id')) {
+    db.exec('ALTER TABLE records ADD COLUMN device_id TEXT');
+  }
 }
 
 interface SpaceRow {
@@ -80,6 +93,7 @@ interface RecordRow {
   updated_at: string;
   deleted_at: string | null;
   sealed: string;
+  device_id: string | null;
 }
 
 function asSpace(row: unknown): SyncSpaceRecord | null {
@@ -103,6 +117,7 @@ function asPulledRecord(row: unknown): SyncPulledRecord {
     deletedAt: value.deleted_at,
     sealed: JSON.parse(value.sealed) as SyncPulledRecord['sealed'],
     serverRev: value.server_rev,
+    ...(value.device_id === null || value.device_id === undefined ? {} : { deviceId: value.device_id }),
   };
 }
 
@@ -171,11 +186,12 @@ export function createSqliteSyncStore(db: SqliteDatabase): SyncServerStore & { s
       db.exec('BEGIN');
       try {
         const upsert = db.prepare(
-          `INSERT INTO records (space_handle, collection, id, server_rev, updated_at, deleted_at, sealed)
-           VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+          `INSERT INTO records (space_handle, collection, id, server_rev, updated_at, deleted_at, sealed, device_id)
+           VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
            ON CONFLICT(space_handle, collection, id)
            DO UPDATE SET server_rev = excluded.server_rev, updated_at = excluded.updated_at,
-                         deleted_at = excluded.deleted_at, sealed = excluded.sealed`,
+                         deleted_at = excluded.deleted_at, sealed = excluded.sealed,
+                         device_id = excluded.device_id`,
         );
 
         for (const record of records) {
@@ -188,6 +204,7 @@ export function createSqliteSyncStore(db: SqliteDatabase): SyncServerStore & { s
             record.updatedAt,
             record.deletedAt,
             JSON.stringify(record.sealed),
+            record.deviceId ?? null,
           );
           accepted.push({ collection: record.collection, id: record.id, serverRev: head });
         }
@@ -207,7 +224,7 @@ export function createSqliteSyncStore(db: SqliteDatabase): SyncServerStore & { s
     async list(spaceHandle, options) {
       const rows = db
         .prepare(
-          `SELECT collection, id, server_rev, updated_at, deleted_at, sealed
+          `SELECT collection, id, server_rev, updated_at, deleted_at, sealed, device_id
            FROM records WHERE space_handle = ?1 AND server_rev > ?2
            ORDER BY server_rev ASC LIMIT ?3`,
         )
@@ -230,6 +247,45 @@ export function createSqliteSyncStore(db: SqliteDatabase): SyncServerStore & { s
         )
         .get(spaceHandle) as { records: number; bytes: number } | undefined;
       return { records: row?.records ?? 0, bytes: row?.bytes ?? 0 };
+    },
+
+    /** 按设备聚合（顺序 14）：每条记录只有一行，直接 GROUP BY。 */
+    async deviceUsage(spaceHandle) {
+      const rows = db
+        .prepare(
+          `SELECT device_id, COUNT(*) AS records, MAX(updated_at) AS last_write_at
+           FROM records
+           WHERE space_handle = ?1 AND device_id IS NOT NULL
+           GROUP BY device_id
+           ORDER BY last_write_at DESC`,
+        )
+        .all(spaceHandle) as { device_id: string; records: number; last_write_at: string }[];
+      return rows.map((row) => ({
+        deviceId: row.device_id,
+        records: row.records,
+        lastWriteAt: row.last_write_at,
+      }));
+    },
+
+    /**
+     * 换密码（顺序 15）：只换密码那份哈希与封装。
+     *
+     * 恢复码那份（`recovery_credential_hash` / `key_wraps.recovery`）**刻意不动**——
+     * 它是「忘了密码」的等价凭证，换密码不该顺手废掉它。
+     */
+    async rotatePassword(spaceHandle, patch) {
+      const row = db.prepare('SELECT key_wraps FROM spaces WHERE space_handle = ?1').get(spaceHandle) as
+        | { key_wraps: string }
+        | undefined;
+      if (row === undefined) return false;
+      const wraps = JSON.parse(row.key_wraps) as Record<string, unknown>;
+      wraps.password = patch.passwordWrap;
+      db.prepare('UPDATE spaces SET credential_hash = ?2, key_wraps = ?3 WHERE space_handle = ?1').run(
+        spaceHandle,
+        patch.credentialHash,
+        JSON.stringify(wraps),
+      );
+      return true;
     },
 
     stats() {

@@ -276,6 +276,56 @@ export function ProviderPanel({ api, disabled }: Props) {
             </span>
           </label>
 
+          {/*
+            顺序 7：「官方 Key 极简引导」。
+
+            只在**还没填 Key** 时出现——已经填好的人不需要再看一遍说明。
+            三步里有一步是「去注册、去充值」，那是用户以为最麻烦的部分，
+            所以把入口直连到 API keys 页，并给一个「粘贴并保存」：
+            从那边复制完回到这里，一下点完，不用手打那串 sk-。
+          */}
+          {draft.apiKey.trim() === '' ? (
+            <div className="key-guide">
+              <strong>还没有 Key？三步就好（大约两分钟）</strong>
+              <ol>
+                <li>
+                  打开{' '}
+                  <a href="https://platform.deepseek.com/api_keys" target="_blank" rel="noreferrer">
+                    DeepSeek 开放平台
+                  </a>
+                  （注册 / 登录；充值在同一个控制台的「充值」页，最低几块钱就能聊很久）。
+                </li>
+                <li>在「API keys」里创建一个，名字随便起；它只显示这一次，当场复制。</li>
+                <li>回到这里，点下面那颗「粘贴并保存」——Key 会填进上面的输入框并直接存好。</li>
+              </ol>
+              <div className="save-bar">
+                <button
+                  type="button"
+                  disabled={disabled}
+                  title="从剪贴板读一个 sk- 开头的 Key，填进去并保存"
+                  onClick={() => {
+                    void (async () => {
+                      setVaultError(null);
+                      try {
+                        const text = (await navigator.clipboard.readText()).trim();
+                        if (text === '') throw new Error('剪贴板是空的：先在开放平台复制那个 Key。');
+                        if (!text.startsWith('sk-')) {
+                          throw new Error('剪贴板里的东西不像 API Key（一般是 sk- 开头）。先在开放平台复制。');
+                        }
+                        setDraft((previous) => (previous === null ? previous : { ...previous, apiKey: text }));
+                      } catch (error) {
+                        setVaultError(error instanceof Error ? error.message : String(error));
+                      }
+                    })();
+                  }}
+                >
+                  粘贴并保存
+                </button>
+                <span className="hint">读剪贴板要浏览器许可；不让读就手动粘贴，效果一样</span>
+              </div>
+            </div>
+          ) : null}
+
           <label>
             密钥保存方式
             <select

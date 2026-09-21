@@ -33,6 +33,13 @@ export function decideMerge(
 export interface MergeResult {
   applied: number;
   skipped: number;
+  /**
+   * 被挡回去的那些（远端较旧、本机留着）的坐标，`collection/id` 形式。
+   *
+   * 为什么给坐标而不是只给个数：调用方要拿它去对照「这条远端记录是哪台设备写的」
+   * （顺序 19 的覆盖可见性）。合并本身不关心设备，就不替它下结论。
+   */
+  overriddenIds: Set<string>;
 }
 
 /** 合并一批远端记录（写入由调用方提供的 `put` 完成，便于单测与内核复用同一套规则）。 */
@@ -45,6 +52,7 @@ export async function mergeRemoteRecords(
 ): Promise<MergeResult> {
   let applied = 0;
   let skipped = 0;
+  const overriddenIds = new Set<string>();
 
   for (const record of records) {
     const local = await io.get(record);
@@ -53,8 +61,9 @@ export async function mergeRemoteRecords(
       applied += 1;
     } else {
       skipped += 1;
+      overriddenIds.add(`${record.collection}/${record.id}`);
     }
   }
 
-  return { applied, skipped };
+  return { applied, skipped, overriddenIds };
 }

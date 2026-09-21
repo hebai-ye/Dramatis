@@ -246,6 +246,9 @@ async function route(request: Request, deps: SyncHttpDeps): Promise<Response> {
     for (const item of record.records) {
       const wire = readWireRecord(item);
       if (wire === null) return fail(400, 'bad-request', '有一条记录的形状不对（集合名 / id / 密文）。');
+      if (typeof item === 'object' && item !== null && typeof (item as { deviceId?: unknown }).deviceId === 'string') {
+        wire.deviceId = (item as { deviceId: string }).deviceId;
+      }
       records.push(wire);
     }
 
@@ -270,6 +273,44 @@ async function route(request: Request, deps: SyncHttpDeps): Promise<Response> {
 
     try {
       return json(await deps.server.pull({ ...credentials, since, ...(limit === undefined ? {} : { limit }) }));
+    } catch (error) {
+      return toErrorResponse(error);
+    }
+  }
+
+  // GET /spaces/{handle}/devices —— 这个空间最近有哪些设备在写（顺序 14）
+  if (rest === 'devices') {
+    if (request.method !== 'GET') return fail(405, 'method-not-allowed', 'devices 用 GET。');
+    try {
+      return json(await deps.server.devices(credentials));
+    } catch (error) {
+      return toErrorResponse(error);
+    }
+  }
+
+  // POST /spaces/{handle}/rotate —— 换同步密码（顺序 15）
+  if (rest === 'rotate') {
+    if (request.method !== 'POST') return fail(405, 'method-not-allowed', 'rotate 用 POST。');
+
+    let body: unknown;
+    try {
+      body = await request.json();
+    } catch {
+      return fail(400, 'bad-request', '请求体不是合法 JSON。');
+    }
+    const record = asRecord(body);
+    const credentialHash = typeof record?.credentialHash === 'string' ? record.credentialHash : '';
+    if (credentialHash === '' || record?.passwordWrap === undefined) {
+      return fail(400, 'bad-request', 'rotate 需要 credentialHash 与 passwordWrap 两个字段。');
+    }
+
+    try {
+      await deps.server.rotatePassword({
+        ...credentials,
+        credentialHash,
+        passwordWrap: record.passwordWrap,
+      });
+      return json({ status: 'rotated' });
     } catch (error) {
       return toErrorResponse(error);
     }

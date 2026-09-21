@@ -580,7 +580,28 @@ git ls-files | ForEach-Object {
 | `docs/SYNC.md` | 改 | 新增 §4.8（坏记录隔离与分块）与 §4.9（配额与限流）——协议用法变了就要写进协议文档 |
 | `docs/EVAL.md` / `docs/TASKS.md` / `docs/LAYOUT.md` / `docs/STATUS.md` | 改 | 第二十七节、总表五项标记、界面取舍 35–36、接续点 |
 
-## 十五、几点注意
+## 十五、2026-09-21 深夜续：38 / 7 / 14 / 15 / 19
+
+| 文件 | 新增/修改 | 说明 |
+| --- | --- | --- |
+| `tools/local-bridge/server.mjs` | **新增** | 本地助手：零依赖 Node，`/health` + `/ask`，用 CDP 驱动用户自己登录的模型网页标签页（`--pattern` 可换站点） |
+| `apps/web/src/lib/local-bridge.ts` | **新增** | 网页侧的探活与请求（`probeLocalBridge` / `askLocalBridge`），失败即「没有助手」 |
+| `apps/web/src/components/WebBridgePanel.tsx` | 改 | 助手在跑时多一个「一键用本地助手」；走与手动粘贴同一条收下路径；风险提示写在按钮旁 |
+| `apps/web/src/components/ProviderPanel.tsx` | 改 | 顺序 7 的三步引导（只在没填 Key 时出现）+「粘贴并保存」 |
+| `packages/core/src/crypto/keys.ts` | 改 | `rotatePassword()`：只换锁不换主密钥（新凭证 + 新封装，恢复码那份不动） |
+| `packages/core/src/sync/types.ts` | 改 | `SyncWireRecord.deviceId?`、`SyncDeviceSummary`、`SyncReport.overridden`、传输层可选的 `devices` / `rotate` |
+| `packages/core/src/sync/loop.ts` | 改 | 推的时候带上本机 deviceId；拉的时候统计「被别的设备挡回去」的条数 |
+| `packages/core/src/sync/merge.ts` | 改 | 返回 `overriddenIds`（被本机挡回去的那些坐标），供上报使用 |
+| `packages/core/src/sync/server.ts` | 改 | `devices()` / `rotatePassword()` 两个服务端动作 + 内存存储实现 |
+| `packages/core/src/sync/sqlite.ts` | 改 | `device_id` 列 + 幂等 `ALTER TABLE` 迁移、`deviceUsage`、`rotatePassword` |
+| `packages/core/src/sync/http.ts` / `http-client.ts` | 改 | `GET /devices` 与 `POST /rotate` 两条路由与客户端对应实现 |
+| `apps/web/src/lib/sync.ts` | 改 | `listDevices()` 与 `rotatePassword()`（先服务端后本机，顺序刻意） |
+| `apps/web/src/components/SyncPanel.tsx` | 改 | 设备列表、换密码、覆盖可见性一行 |
+| `apps/web/tools/sync-dev-backend.ts` | 改 | 开发后端补上 `deviceUsage` / `rotatePassword`（不然本机联调会像老服务端） |
+| `docs/SYNC.md` | 改 | 新增 §4.10（设备号为什么可选/明文、两个新接口、换密码=断开的语义） |
+| `docs/EVAL.md` / `docs/TASKS.md` / `docs/LAYOUT.md` / `docs/STATUS.md` | 改 | 第二十八节、总表五项标记、界面取舍 37–39、接续点 |
+
+## 十六、几点注意
 
 ---
 

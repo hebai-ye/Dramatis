@@ -325,6 +325,51 @@ export interface CreateSpaceInput {
   keyIterations?: number;
 }
 
+/** 换同步密码时算出来的那一套（主密钥不变，只换「锁住它的那把锁」）。 */
+export interface RotatedPassword {
+  credential: string;
+  credentialHash: string;
+  passwordWrap: WrappedKey;
+}
+
+export interface RotatePasswordInput {
+  /** 建空间时折出来的句柄（换密码不换句柄——换了句柄等于换空间）。 */
+  spaceHandle: string;
+  /** 手上那把主密钥（`openSpace` 的输出）。**不会**因此重新生成。 */
+  encKey: CryptoKey;
+  newPassword: string;
+  keyIterations?: number;
+}
+
+/**
+ * 换同步密码（顺序 15）。
+ *
+ * 关键决定：**不重新生成主密钥**，只用新密码重新包一次。
+ *
+ * 换主密钥意味着所有记录都要重新加密一遍再上传——本地几千条记录要全量重写，
+ * 中途断网就是「一半新一半旧」的烂摊子。而主密钥本身没有泄露：它一直只活在
+ * 各设备的会话内存里，服务端拿到的只是封装。所以换密码真正要变的是两件事：
+ * 服务端存的**凭证哈希**（旧密码从此过不了鉴权）和**封装**（旧密码再也解不开主密钥）。
+ *
+ * 恢复码那份封装**不动**：它是「忘了密码」的等价凭证，换密码不该顺手废掉它。
+ */
+export async function rotatePassword(input: RotatePasswordInput): Promise<RotatedPassword> {
+  const keys = await deriveSecretKeys({
+    secret: input.newPassword,
+    spaceHandle: input.spaceHandle,
+    purpose: 'password',
+    iterations: input.keyIterations,
+  });
+  const credential = await deriveCredential(keys.authKey, input.spaceHandle);
+  const passwordWrap = await wrapSpaceKey(input.encKey, {
+    secret: input.newPassword,
+    spaceHandle: input.spaceHandle,
+    purpose: 'password',
+    iterations: input.keyIterations,
+  });
+  return { credential, credentialHash: await hashCredential(credential), passwordWrap };
+}
+
 /**
  * 建空间：用户 id + 密码 → 句柄、两份钥匙封装、两份凭证、主密钥、恢复码。
  *

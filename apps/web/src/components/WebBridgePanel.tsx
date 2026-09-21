@@ -1,5 +1,6 @@
 import { WEB_BRIDGE_TARGET } from '@dramatis/core';
 import { useEffect, useState } from 'react';
+import { askLocalBridge, type LocalBridgeStatus, probeLocalBridge } from '../lib/local-bridge';
 
 /**
  * 网页版桥接面板（没有 API Key 时的第一条路）。
@@ -53,6 +54,25 @@ async function copyText(text: string): Promise<boolean> {
 export function WebBridgePanel({ bridge, busy, disabled, onReply, onAnalysis, onAdmin, onSkip }: Props) {
   const [paste, setPaste] = useState('');
   const [copied, setCopied] = useState(false);
+  /** 本地助手（顺序 38）：没起进程就是 null，起了就是它的状态。 */
+  const [helper, setHelper] = useState<LocalBridgeStatus | null>(null);
+  const [helperBusy, setHelperBusy] = useState(false);
+  const [helperError, setHelperError] = useState<string | null>(null);
+
+  /*
+   * 打开面板时问一次本机有没有助手在跑（一次请求，不轮询）。
+   * 没起进程、或者浏览器不让访问本机地址时都是「没有」——那就照旧手动复制粘贴，
+   * 这条路永远是兜底。
+   */
+  useEffect(() => {
+    let cancelled = false;
+    void probeLocalBridge().then((status) => {
+      if (!cancelled) setHelper(status);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   /*
    * 换阶段就清空粘贴框，免得把上一段的回复错手交给下一步。
@@ -111,6 +131,29 @@ export function WebBridgePanel({ bridge, busy, disabled, onReply, onAnalysis, on
     else onAnalysis(paste);
   };
 
+  /**
+   * 本地助手那条路（顺序 38）：把同一段提示词交给本机那个助手，
+   * 它替你打进模型网页、等回复、把文字交回来——然后走**与手动粘贴完全同一条**
+   * 收下路径（`submit` 用的那几个 handler），所以解析、落盘、校验一份都不少。
+   */
+  const askHelper = async (): Promise<void> => {
+    if (helperBusy || busy || disabled) return;
+    setHelperError(null);
+    setHelperBusy(true);
+    try {
+      const text = await askLocalBridge(bridge.prompt);
+      setPaste(text);
+      if (text.trim() === '') throw new Error('助手回来了，但没读到回复内容（页面结构可能变了）。');
+      if (isReply) onReply(text);
+      else if (isAdmin) onAdmin?.(text);
+      else onAnalysis(text);
+    } catch (error) {
+      setHelperError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setHelperBusy(false);
+    }
+  };
+
   return (
     <section className="web-bridge">
       <header className="bridge-head">
@@ -131,6 +174,21 @@ export function WebBridgePanel({ bridge, busy, disabled, onReply, onAnalysis, on
       </header>
 
       <div className="bridge-steps">
+        {/*
+          本地助手（顺序 38）：只有本机真的跑着那个进程、并且已经连上模型网页时才出现。
+          没起进程 = 这块整段不渲染，用户看到的还是「复制 → 打开 → 贴回来」那三步。
+        */}
+        {helper?.attached === true ? (
+          <button
+            type="button"
+            className="ghost bridge-helper"
+            disabled={disabled || busy || helperBusy}
+            title="让本机的助手替你打开的那一页发送、等回复、再交回来（它驱动的是网页本身，不是官方接口）"
+            onClick={() => void askHelper()}
+          >
+            {helperBusy ? '本地助手正在等它写完…' : '一键用本地助手（免复制粘贴）'}
+          </button>
+        ) : null}
         <button
           type="button"
           className="ghost"
@@ -151,6 +209,25 @@ export function WebBridgePanel({ bridge, busy, disabled, onReply, onAnalysis, on
         <summary>看一眼这段提示词（{bridge.prompt.length} 字）</summary>
         <pre>{bridge.prompt}</pre>
       </details>
+
+      {/* 助手那条路的解释与报错都摆在这儿：它做的事越自动，越要说清它是什么 */}
+      {helper?.attached === true ? (
+        <p className="hint">
+          本地助手在跑：它会驱动你**已经登录**的那个 {WEB_BRIDGE_TARGET.name} 标签页。
+          它不是官方接口——自动化操作网页可能违反对方的服务条款，用不用你自己判断；
+          助手只在本机跑，提示词不经过第三方。想关掉就直接结束那个进程。
+        </p>
+      ) : helper?.reachable === true ? (
+        <p className="hint">
+          本机的助手进程起来了，但没找到 {WEB_BRIDGE_TARGET.name} 的标签页： 用它启动 Chrome（带
+          --remote-debugging-port=9222）并打开那一页登录，再刷新这里。
+        </p>
+      ) : null}
+      {helperError === null ? null : (
+        <div className="notice error">
+          <p>{helperError}</p>
+        </div>
+      )}
 
       <label>
         3. 把网页版的回复整段贴回这里

@@ -1162,6 +1162,35 @@ export class Repository {
     await this.store.bulkPut(COLLECTIONS.memories, stamped);
   }
 
+  /**
+   * 只更新「这条记忆被回想过了」的两个字段（顺序 27a 演练里补的）。
+   *
+   * 为什么不能沿用 `saveMemories`：调用方（回想之后记账那一步）手里拿的是
+   * **装配提示词时读到的那份拷贝**，而中间隔了一次模型调用——这期间可能有别的写
+   * 动过同一条记忆（记忆合并给它盖了「已被取代」的章、用户改了重要度）。
+   * 把整条旧拷贝写回去会**静默抹掉那些改动**：演练里 20 条盖章只剩 9 条，
+   * 就是被这一步覆盖的。
+   *
+   * 所以这里先**读最新的**、再只改那两个字段。代价是每条多一次读——
+   * 回想记账一轮只有几条，值。
+   */
+  async markMemoriesRecalled(ids: readonly EventId[], at: string): Promise<MemoryEvent[]> {
+    const updated: MemoryEvent[] = [];
+    for (const id of ids) {
+      const existing = await this.getAlive<MemoryEvent>(COLLECTIONS.memories, id);
+      if (existing === null) continue;
+      const next: MemoryEvent = {
+        ...existing,
+        lastRecalledAt: at,
+        recallCount: existing.recallCount + 1,
+        updatedAt: await this.stampUpdatedAt(COLLECTIONS.memories, id),
+      };
+      await this.store.put(COLLECTIONS.memories, next);
+      updated.push(next);
+    }
+    return updated;
+  }
+
   // ---- 分层摘要（P1-5） ----
 
   /**

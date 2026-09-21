@@ -1032,12 +1032,15 @@ export function useSession(db: DramatisDb | null): SessionApi {
       const current = snapshotRef.current;
       if (!db || !current || events.length === 0) return;
 
-      const touched = events.map((event) => ({
-        ...event,
-        lastRecalledAt: now,
-        recallCount: event.recallCount + 1,
-      }));
-      await db.repository.saveMemories(touched);
+      /*
+       * 只按 id 去改那两个字段，**不写整条**：`events` 是装配提示词时读到的旧拷贝，
+       * 中间隔着一次模型调用——这期间记忆合并可能给它们盖了章。
+       * （顺序 27a 的演练里实测过：写整条会把 20 条盖章抹成 9 条。）
+       */
+      const touched = await db.repository.markMemoriesRecalled(
+        events.map((event) => event.id),
+        now,
+      );
       setSnapshot({
         ...current,
         memories: current.memories.map((memory) => touched.find((item) => item.id === memory.id) ?? memory),

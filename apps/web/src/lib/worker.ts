@@ -1,8 +1,10 @@
 import {
   applyAffectUpdates,
+  applyConsolidation,
   applyTurnAnalysis,
   buildAffectMessages,
   buildChapterSummaryMessages,
+  buildConsolidationPrompt,
   buildExtractionMessages,
   buildMemoryEvents,
   buildSceneSummaryMessages,
@@ -21,6 +23,7 @@ import {
   parseSummary,
   parseTurnAnalysis,
   pendingSummary,
+  planConsolidation,
   type RoomId,
   type SceneId,
   shouldSummarizeScene,
@@ -41,6 +44,13 @@ export const TURN_ANALYSIS_TASK_KIND = 'turn.analyze';
 export const SCENE_SUMMARY_TASK_KIND = 'scene.summarize';
 /** 章节回顾（P1-5 的章节层）：几场戏滚成一条线索。 */
 export const CHAPTER_SUMMARY_TASK_KIND = 'chapter.summarize';
+/**
+ * 记忆合并（顺序 27a 第二步）：把一个视角下一堆「日常经过」压成一条**印象**。
+ *
+ * 触发点在每轮结算之后（见 App.tsx），但真正「该不该合并」由这个 runner 拿到
+ * 最新数据之后再判断——与场记那条路同一个套路：界面只负责「来看一眼」。
+ */
+export const MEMORY_CONSOLIDATE_TASK_KIND = 'memory.consolidate';
 /** 旧任务类型：老库的队列里可能还排着它们，worker 仍然认得。 */
 export const MEMORY_TASK_KIND = 'memory.extract';
 export const AFFECT_TASK_KIND = 'affect.update';
@@ -94,6 +104,7 @@ const CATEGORY_BY_TASK: Record<string, UsageCategory> = {
   [SCENE_SUMMARY_TASK_KIND]: 'summary',
   [CHAPTER_SUMMARY_TASK_KIND]: 'summary',
   [MEMORY_TASK_KIND]: 'memory',
+  [MEMORY_CONSOLIDATE_TASK_KIND]: 'memory',
   [AFFECT_TASK_KIND]: 'affect',
 };
 
@@ -297,6 +308,43 @@ export function useBackgroundWorker(options: {
    * 只压游标之后的消息，所以重跑不会把同一段压两遍；攒不够就**连调用都不发**
    * （`called: false`，不进账单）。摘要写回场景的 `recap`，原文一个字都不动。
    */
+  /**
+   * 记忆合并（顺序 27a 第二步）。
+   *
+   * 拿到的是**最新**的记忆列表，再决定要不要合并——界面那边只负责「这一轮结算完了，
+   * 来看一眼」。计划函数是纯的（`planConsolidation`），所以这里只做三件事：
+   * 看计划 → 调一次模型 → 把印象与「已盖章的原文」一起落库。
+   *
+   * 一次只处理**一组**：一组 40 条压成 1 条已经省下 39 条的位置，
+   * 而每一次调用都在花用户的钱。积压的话下一轮任务会接着处理。
+   */
+  const runMemoryConsolidation = useCallback(
+    async (payload: TurnTaskPayload, config: BackgroundProviderConfig): Promise<TaskOutcome> => {
+      if (!db) return { called: false, usage: null };
+
+      const memories = await db.repository.listMemories(payload.roomId);
+      const group = planConsolidation(memories)[0];
+      if (group === undefined) return { called: false, usage: null };
+
+      const completion = await collectCompletionWithTools(
+        makeProvider(config),
+        [{ role: 'user', content: buildConsolidationPrompt(group, memories) }],
+        { temperature: 0.2 },
+      );
+
+      const result = applyConsolidation({ group, memories, reply: completion.text });
+      /*
+       * 原文与印象**一起写**：印象先落库、原文盖章失败的话，下一轮会把同一批再压一次，
+       * 于是同一个印象会有两份（内容一样但 id 不同）。一次写完就没有这个窗口。
+       */
+      const toSave = [...result.originals, ...(result.impression === null ? [] : [result.impression])];
+      if (toSave.length > 0) await db.repository.saveMemories(toSave);
+
+      return { called: true, usage: completion.usage };
+    },
+    [db],
+  );
+
   const runSceneSummary = useCallback(
     async (payload: SummaryTaskPayload, config: BackgroundProviderConfig): Promise<TaskOutcome> => {
       if (!db || payload.sceneId === undefined) return { called: false, usage: null };
@@ -499,6 +547,8 @@ export function useBackgroundWorker(options: {
             outcome = await runSceneSummary(task.payload as SummaryTaskPayload, config);
           } else if (task.kind === CHAPTER_SUMMARY_TASK_KIND) {
             outcome = await runChapterSummary(task.payload as SummaryTaskPayload, config);
+          } else if (task.kind === MEMORY_CONSOLIDATE_TASK_KIND) {
+            outcome = await runMemoryConsolidation(payload, config);
           }
 
           // 落一笔账。服务商没返回 usage 时 token 记 0，但**这一笔照样记**——
@@ -544,6 +594,7 @@ export function useBackgroundWorker(options: {
     runAffectUpdate,
     runChapterSummary,
     runMemoryExtraction,
+    runMemoryConsolidation,
     runSceneSummary,
     runTurnAnalysis,
   ]);

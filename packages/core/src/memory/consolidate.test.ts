@@ -8,7 +8,7 @@
 import { describe, expect, it } from 'vitest';
 import { eventId, instanceId, newId, roomId } from '../model/ids.js';
 import type { MemoryEvent } from '../model/message.js';
-import { buildConsolidationPrompt, isConsolidatable, planConsolidation } from './consolidate.js';
+import { applyConsolidation, buildConsolidationPrompt, isConsolidatable, planConsolidation } from './consolidate.js';
 
 const AT = '2026-09-21T10:00:00.000Z';
 
@@ -55,8 +55,9 @@ function series(count: number, overrides: Partial<MemoryEvent> = {}): MemoryEven
 
 describe('记忆合并：决定合并哪些（顺序 27a）', () => {
   it('攒不够就不合并（低于阈值时一条都不动）', () => {
-    expect(planConsolidation(series(39), { threshold: 40 })).toEqual([]);
-    expect(planConsolidation(series(40), { threshold: 40 }).length).toBe(1);
+    // 显式给 batchSize，免得这条断言跟着默认值（现在是 20）一起变
+    expect(planConsolidation(series(39), { threshold: 40, batchSize: 40 })).toEqual([]);
+    expect(planConsolidation(series(40), { threshold: 40, batchSize: 40 }).length).toBe(1);
   });
 
   it('按视角分开：两个角色各攒一批，永远不混成一组', () => {
@@ -145,11 +146,88 @@ describe('记忆合并：决定合并哪些（顺序 27a）', () => {
   });
 
   it('isConsolidatable：判断本身是公开的、可解释的', () => {
-    expect(isConsolidatable(memory(), 0.4)).toBe(true);
-    expect(isConsolidatable(memory({ importance: 0.5 }), 0.4)).toBe(false);
-    expect(isConsolidatable(memory({ pinned: true }), 0.4)).toBe(false);
-    expect(isConsolidatable(memory({ importanceLocked: true }), 0.4)).toBe(false);
-    expect(isConsolidatable(memory({ deletedAt: AT }), 0.4)).toBe(false);
-    expect(isConsolidatable(memory({ consolidatedAt: AT }), 0.4)).toBe(false);
+    expect(isConsolidatable(memory(), 0.5)).toBe(true);
+    expect(isConsolidatable(memory({ importance: 0.6 }), 0.5)).toBe(false);
+    expect(isConsolidatable(memory({ pinned: true }), 0.5)).toBe(false);
+    expect(isConsolidatable(memory({ importanceLocked: true }), 0.5)).toBe(false);
+    expect(isConsolidatable(memory({ deletedAt: AT }), 0.5)).toBe(false);
+    expect(isConsolidatable(memory({ consolidatedAt: AT }), 0.5)).toBe(false);
+  });
+});
+
+describe('记忆合并：把结果落成印象（顺序 27a 第二步）', () => {
+  function planFor(batch: MemoryEvent[]) {
+    const group = planConsolidation(batch, { threshold: 40, batchSize: 40 })[0];
+    if (group === undefined) throw new Error('这一批应当能合并');
+    return group;
+  }
+
+  it('写出一条印象：带来源、视角跟着原组、重要度封顶 0.6', () => {
+    const observer = instanceId(newId());
+    const batch = series(40, { observerId: observer, importance: 0.3 });
+    const group = planFor(batch);
+    const id = eventId(newId());
+    const result = applyConsolidation({
+      group,
+      memories: batch,
+      reply: '这半个月我一直在替秦娘瞒着账房的事。',
+      impressionId: id,
+      now: '2026-09-22T00:00:00.000Z',
+    });
+
+    expect(result.impression?.id).toBe(id);
+    expect(result.impression?.summary).toBe('这半个月我一直在替秦娘瞒着账房的事。');
+    expect(result.impression?.observerId).toBe(observer);
+    expect(result.impression?.supersedes).toHaveLength(40);
+    expect(result.impression?.importance).toBeLessThanOrEqual(0.6);
+    expect(result.impression?.importance).toBeGreaterThan(0.3);
+  });
+
+  it('原文一条都不删，只盖两个章（supersededBy / consolidatedAt）', () => {
+    const batch = series(40);
+    const group = planFor(batch);
+    const id = eventId(newId());
+    const result = applyConsolidation({ group, memories: batch, reply: '一句话印象。', impressionId: id });
+
+    expect(result.originals).toHaveLength(40);
+    for (const original of result.originals) {
+      expect(original.supersededBy).toBe(id);
+      expect(original.consolidatedAt).not.toBeNull();
+      // 正文、重要度这些都不动
+      expect(original.summary).not.toBe('');
+      expect(original.deletedAt).toBeNull();
+    }
+  });
+
+  it('模型说「没什么值得记」时不造印象，但原文档照样盖章（不然每轮都会再问一遍）', () => {
+    const batch = series(40);
+    const group = planFor(batch);
+    const result = applyConsolidation({
+      group,
+      memories: batch,
+      reply: '这段时间没有值得单独记住的事。',
+    });
+    expect(result.impression).toBeNull();
+    expect(result.originals.every((item) => item.consolidatedAt !== null)).toBe(true);
+    expect(result.originals.every((item) => item.supersededBy === null)).toBe(true);
+    expect(result.note).toContain('没有值得单独记住');
+  });
+
+  it('代码围栏与超长输出会被清理（一条印象不该是两千字）', () => {
+    const batch = series(40);
+    const group = planFor(batch);
+    const long = `\`\`\`text\n${'很长的一句话。'.repeat(200)}\n\`\`\`\n\n后面还有一段解释，不该进印象。`;
+    const result = applyConsolidation({ group, memories: batch, reply: long });
+    expect(result.impression?.summary.length).toBeLessThanOrEqual(400);
+    expect(result.impression?.summary).not.toContain('```');
+    expect(result.impression?.summary).not.toContain('后面还有一段解释');
+  });
+
+  it('这一组的原文不在库里时什么都不做（不造空印象）', () => {
+    const batch = series(40);
+    const group = planFor(batch);
+    const result = applyConsolidation({ group, memories: [], reply: '一句话印象。' });
+    expect(result.impression).toBeNull();
+    expect(result.originals).toEqual([]);
   });
 });

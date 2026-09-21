@@ -20,7 +20,7 @@
  *    宁可留在池子里占地方——它们本来就是「值得单独被想起来」的那几条。
  */
 
-import type { EventId, InstanceId } from '../model/ids.js';
+import { type EventId, eventId, type InstanceId, newId } from '../model/ids.js';
 import type { MemoryEvent } from '../model/message.js';
 
 export interface ConsolidationOptions {
@@ -51,9 +51,26 @@ export interface ConsolidationGroup {
 }
 
 const DEFAULTS = {
-  minImportance: 0.4,
-  threshold: 40,
-  batchSize: 40,
+  /*
+   * 重要度的门槛（2026-09-21 演练里调的）。
+   *
+   * 原来是 0.4，结果整轮演练一条都合并不了——因为抽取出来的「日常经过」普遍落在
+   * 0.45 上下（假模型给的就是 0.45；那个数字恰好是「有点意思但不算大事」）。
+   * 改成 **0.5**：把「日常经过」收进来，同时把明显重要的事（≥0.6 那几档）留在池子里。
+   *
+   * 另一个理由：合并出来的印象按设计是 `min(0.6, max+0.2)`，所以**印象自己会在 0.5 以上**，
+   * 天然不会在下一轮被再次合并（否则会「滚雪球」）。
+   */
+  minImportance: 0.5,
+  /*
+   * 一个视角攒多少条才动手（2026-09-21 演练里从 40 调到 20）。
+   *
+   * 40 太钝：门槛只算**低重要度**的那些，单角色对话里一个视角大约每轮产出一条，
+   * 于是要 ~120 轮才第一次触发合并（实测 50 轮时两个视角各 ~33 条，一组都没出）。
+   * 20 条压成一条印象已经足够有用，也让「池子不再线性涨」这件事更早发生。
+   */
+  threshold: 20,
+  batchSize: 20,
   gapMs: 6 * 60 * 60 * 1000,
   maxGroups: 2,
 } as const;
@@ -165,4 +182,114 @@ export function buildConsolidationPrompt(group: ConsolidationGroup, memories: re
     '',
     '只输出那 1–3 句，不要解释、不要标题、不要 JSON。',
   ].join('\n');
+}
+
+/** 模型说「这几条之间没有共同线索」时它通常会这么说——认出来，别硬压。 */
+const NOTHING_WORTH_KEEPING = /没有值得(单独)?记住|不值得记住|没有共同线索|没有相关/;
+
+export interface ApplyConsolidationInput {
+  group: ConsolidationGroup;
+  /** 这个空间里**当前**的记忆（要按 id 找出这一组） */
+  memories: readonly MemoryEvent[];
+  /** 模型回来的文字（调用方去调，核心不碰网络） */
+  reply: string;
+  /** 印象的 id；不传就现造一个（测试里传固定值好断言） */
+  impressionId?: EventId;
+  now?: string;
+}
+
+export interface ConsolidationResult {
+  /** 合并出来的印象；模型说「没什么值得记」时是 null */
+  impression: MemoryEvent | null;
+  /** 已经盖上「已被取代」章的原文（调用方负责落库） */
+  originals: MemoryEvent[];
+  /** 给人看的一句话（写进任务日志/面板） */
+  note: string;
+}
+
+/** 清掉代码围栏与多余空行；一条印象不该是两千字。 */
+function cleanImpression(raw: string): string {
+  const withoutFence = raw
+    .replace(/```[a-zA-Z]*\n?/g, '')
+    .replace(/```/g, '')
+    .trim();
+  const firstParagraph = withoutFence.split(/\n{2,}/)[0] ?? '';
+  return (firstParagraph === '' ? withoutFence : firstParagraph).slice(0, 400).trim();
+}
+
+/**
+ * 把模型的结果落成一条印象，并给原文盖章（顺序 27a 第二步的核心）。
+ *
+ * **纯函数**：只算不写。三条性质都能在单测里钉死：
+ *
+ * 1. **原文永不删**：只加 `supersededBy` 与 `consolidatedAt` 两个章；
+ * 2. **印象带来源**：`supersedes` 指回这一组的每一条原文，面板因此能展开「这条印象是怎么来的」；
+ * 3. **模型说没什么可记时也要盖章**：否则下一轮还会把同一批再送去问一遍，白花钱。
+ */
+export function applyConsolidation(input: ApplyConsolidationInput): ConsolidationResult {
+  const now = input.now ?? new Date().toISOString();
+  const inGroup = input.memories.filter((memory) => input.group.memoryIds.includes(memory.id));
+  if (inGroup.length === 0)
+    return { impression: null, originals: [], note: '这一组的原文已经不在库里了（可能被删或已被合并）' };
+
+  const text = cleanImpression(input.reply);
+  const originals = inGroup.map((memory) => ({
+    ...memory,
+    // 章先盖上（印象 id 那一刻才知道，见下）；这里用「待定」占位再由下面统一填
+    consolidatedAt: now,
+    updatedAt: now,
+  }));
+
+  if (text === '' || NOTHING_WORTH_KEEPING.test(text)) {
+    return {
+      impression: null,
+      originals,
+      note: text === '' ? '模型没给出可用的印象（返回空）' : '模型说这段时间没有值得单独记住的事',
+    };
+  }
+
+  // reduce 的初始值是这一组的第一条；`inGroup` 已在上面判过非空
+  const [firstMemory, ...restMemories] = inGroup;
+  if (firstMemory === undefined) return { impression: null, originals: [], note: '这一组里没有原文' };
+  const last = restMemories.reduce(
+    (latest, memory) => (memory.createdAt > latest.createdAt ? memory : latest),
+    firstMemory,
+  );
+  const impression: MemoryEvent = {
+    id: input.impressionId ?? eventId(newId()),
+    roomId: last.roomId,
+    conversationId: last.conversationId,
+    sceneId: last.sceneId,
+    // 印象继承这一组最后一条的时间线位置（它是「到那时候为止」的印象）
+    timeline: { ...last.timeline },
+    location: last.location,
+    participants: [...new Set(inGroup.flatMap((memory) => memory.participants))],
+    summary: text,
+    // 印象本身就是「他记得的那件事」，所以视角跟着这一组走（客观组仍然客观）
+    observerId: input.group.observerId,
+    perception: '',
+    /*
+     * 重要度：比这一组里最高的再高一点（印象比零散经过更值得被想起来），但封顶 0.6——
+     * 超过 0.6 就进了「高重要度」那一档，会被保护起来不再参与任何合并。
+     */
+    importance: Math.min(0.6, input.group.maxImportance + 0.2),
+    pinned: false,
+    importanceLocked: false,
+    affects: [...new Set(inGroup.flatMap((memory) => memory.affects))],
+    sourceTurnIds: [...new Set(inGroup.flatMap((memory) => memory.sourceTurnIds))],
+    createdAt: now,
+    updatedAt: now,
+    lastRecalledAt: null,
+    recallCount: 0,
+    deletedAt: null,
+    supersededBy: null,
+    supersedes: [...input.group.memoryIds],
+    consolidatedAt: now,
+  };
+
+  return {
+    impression,
+    originals: originals.map((memory) => ({ ...memory, supersededBy: impression.id })),
+    note: `压成一条印象（${String(inGroup.length)} 条原文已盖章）`,
+  };
 }

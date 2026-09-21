@@ -641,7 +641,21 @@ git ls-files | ForEach-Object {
 | `docs/MEMORY.md` | 改 | 新增第八节：默认值改动、代价（800 轮约 100 元）、27a 第一步 |
 | `docs/EVAL.md` / `docs/TASKS.md` / `docs/STATUS.md` | 改 | 第三十节、总表 27 的进度、接续点 |
 
-## 十九、几点注意
+## 十九、2026-09-21 深夜：27a 完成（记忆合并接进后台队列）
+
+| 文件 | 新增/修改 | 说明 |
+| --- | --- | --- |
+| `packages/core/src/memory/consolidate.ts` | 改 | `applyConsolidation()`（印象 + 原文盖章，纯函数）、阈值 ≤0.5 / 20 条、`planConsolidation` 与提示词 |
+| `packages/core/src/memory/consolidate.test.ts` | 改 | 增加到 12 个单测（含印象落成、没什么可记、围栏清理、原文不在库里） |
+| `packages/core/src/storage/repository.ts` | 改 | `markMemoriesRecalled(ids, at)`：先读最新再只改两个字段（修「整条旧拷贝覆盖别人的改动」） |
+| `packages/core/src/storage/recall-stamp.test.ts` | **新增** | 那条 bug 的回归线（盖章之后记账，章还在） |
+| `apps/web/src/lib/worker.ts` | 改 | 新任务 `memory.consolidate`：拿到最新记忆 → 计划 → 一次模型调用 → 印象与原文一起落库 |
+| `apps/web/src/lib/session.ts` | 改 | `markRecalled` 改用 `markMemoriesRecalled`（不再写整条） |
+| `apps/web/src/App.tsx` | 改 | 每轮结算后排一次合并（幂等键带「每 20 条」的桶号） |
+| `tools/fake-model/server.mjs` | 改 | 重要度给**分布**（0.3/0.45/0.7，原来恒定 0.45 测不到门槛两侧）；认得出合并提示词 |
+| `docs/MEMORY.md` / `docs/EVAL.md` / `docs/TASKS.md` / `docs/STATUS.md` | 改 | 27a 的落地与阈值调整、第三十一节、总表与接续点 |
+
+## 二十、几点注意
 
 ---
 

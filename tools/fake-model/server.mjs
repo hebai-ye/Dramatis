@@ -38,7 +38,18 @@ function classify(text) {
   if (text.includes('"speakers"') || text.includes('mode 取四种之一')) return 'intent';
   if (text.includes('"observations"') && text.includes('updates')) return 'analysis';
   if (text.includes('keyFacts')) return 'summary';
+  // 记忆合并的那段提示词（顺序 27a）：它既不是意图也不是分析，单独认出来
+  if (text.includes('压成 1–3 句')) return 'consolidate';
   return 'generate';
+}
+
+/** 稳定的小哈希：用来让「重要度」按请求内容轮流取不同的值。 */
+function hashOf(text) {
+  let hash = 7;
+  for (let index = 0; index < text.length; index += 1) {
+    hash = (hash * 31 + text.charCodeAt(index)) % 1_000_003;
+  }
+  return hash;
 }
 
 /** 从提示词里抠出「在场角色：A、B、C」里的名字。 */
@@ -81,10 +92,24 @@ function replyFor(kind, text) {
     });
   }
 
+  if (kind === 'consolidate') {
+    // 合并的回复：1–3 句「印象」。假模型只求形态对（真模型才会写得像人话）。
+    return `${place === '' ? '这段时间' : `在${place}的这段时间`}我一直在留意账房那边的动静，也答应过${speaker}先不声张。`;
+  }
+
   if (kind === 'analysis') {
+    /*
+     * 重要度**给一个分布**，不要固定一个数。
+     *
+     * 原来是恒定的 0.45——于是本机演练永远测不到「低重要度那一档」：
+     * 记忆合并（顺序 27a）只在 ≤0.5 的记忆上动手，恒定 0.45 时门槛两侧
+     * 其实都碰不到真实形态。现在按请求内容轮流给 0.3 / 0.45 / 0.7，
+     * 让「该合并的」和「该留着的」同时存在。
+     */
+    const importance = [0.3, 0.45, 0.7][Math.abs(hashOf(text)) % 3];
     return JSON.stringify({
       summary: place === '' ? '玩家又追问了一句，角色答了话。' : `玩家在${place}追问了一句，角色答了话。`,
-      importance: 0.45,
+      importance,
       location: '',
       observations: cast.map((name, index) => ({
         speaker: name,

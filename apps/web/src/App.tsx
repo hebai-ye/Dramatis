@@ -70,6 +70,7 @@ import { extraCalls, useUsage } from './lib/usage';
 import { NARROW_SCREEN_QUERY, useFullscreen, useNarrowScreen } from './lib/viewport';
 import {
   MEMORY_BUDGET_TOKENS,
+  MEMORY_CONSOLIDATE_TASK_KIND,
   SCENE_SUMMARY_TASK_KIND,
   TURN_ANALYSIS_TASK_KIND,
   useBackgroundWorker,
@@ -505,6 +506,27 @@ export function App() {
     [burned, conversation, db, worker, world],
   );
 
+  /**
+   * 每回合结算之后，让后台看一眼「记忆该不该合并」（顺序 27a）。
+   *
+   * 与场记那条路同一个套路：这里**不做阈值判断**（判断在 worker 里拿着最新数据做），
+   * 只负责按「每 40 条记忆」排一次队——幂等键里带桶号，所以同一批记忆只会排一次，
+   * 攒不够时那一趟是空跑（不发调用、不记账）。
+   */
+  const enqueueMemoryConsolidation = useCallback(async () => {
+    if (!db || !world || !conversation || burned) return;
+    const memories = await db.repository.listMemories(world.id);
+    const bucket = Math.floor(memories.length / 40);
+    await db.queue.enqueue({
+      kind: MEMORY_CONSOLIDATE_TASK_KIND,
+      idempotencyKey: `${MEMORY_CONSOLIDATE_TASK_KIND}:${conversation.id}:${String(bucket)}`,
+      roomId: world.id,
+      turnId: null,
+      payload: { roomId: world.id, conversationId: conversation.id },
+    });
+    worker.kick();
+  }, [burned, conversation, db, worker, world]);
+
   const handleImport = useCallback(
     async (file: File) => {
       setError(null);
@@ -766,6 +788,8 @@ export function App() {
         if (manual) return;
         // 让后台看一眼这一场要不要压场记（够不够由后台判断，不够不会发调用）
         await enqueueSceneSummary(scene, turnId);
+        // 再看一眼这一条对话的记忆该不该合并（顺序 27a；同样由后台判断阈值）
+        await enqueueMemoryConsolidation();
         // 熔断时不再排后台任务：这一轮照常生成，但不写记忆、不推演状态
         if (burned) {
           setWarnings([
@@ -809,6 +833,7 @@ export function App() {
       conversation,
       db,
       enqueueSceneSummary,
+      enqueueMemoryConsolidation,
       instances,
       makeCharacterLine,
       messages,

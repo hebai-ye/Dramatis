@@ -16,6 +16,65 @@
 | 每个文件是什么时候加的 | [FILE-LOG.md](./FILE-LOG.md) |
 | 项目对外介绍与快速开始 | [../README.md](../README.md) |
 
+## 新会话从这里接（2026-09-21 深夜）
+
+> 这一节是给**下一轮新对话**准备的：读它 + [MEMORY.md](./MEMORY.md) + [TASKS.md](./TASKS.md) 第〇节，
+> 就能接着干。当前测试 **537 个全绿**，类型检查 / lint / 构建全绿。
+
+**这一轮的主线**：用户把「对话的记忆与对话长度」定为当前最重要的问题，原话三件事——
+① 一轮新对话要能输入 **500–800 条消息**而不出明显错误；
+② 开新对话时把原对话的重要记忆作为**特殊附件存进角色卡**，带到新对话里用；
+③ 记忆对**性格与情感**的影响要优化，并且**留好可回滚的通路**（不能不可逆）。
+他的设想：附件**像文件夹**——平时不占 token，对话**提及关键词**时才去里面检索相关记忆。
+
+**已经做完的（按提交顺序）**：
+
+| 顺序 | 状态 | 关键文件 / 证据 |
+| --- | --- | --- |
+| 默认窗口按 800 条输入 | ✅ | `model/provider.ts` 65536 / 4096；`prompt/assemble.ts` 历史上限 40 → 3000；迁移 v7（只升级还是老默认值的配置） |
+| 27a 记忆合并 | ✅ | `memory/consolidate.ts`（纯函数 + `applyConsolidation`）；阈值 **≤0.5 / 同视角 20 条**；接进后台队列（`lib/worker.ts` 的 `memory.consolidate`）；真机演练 5/5 |
+| 27a 顺带修的竞态 | ✅ | `Repository.markMemoriesRecalled(ids, at)`：原来 `markRecalled` 用旧拷贝整条写回，把合并刚盖的章抹掉（20→9）；回归测试 `storage/recall-stamp.test.ts` |
+| 27b 第一步 | ✅ | `memory/attachment.ts`：三层附件（关系现状 ≤60 字 / 时间线索引 ≤600 字 / 记忆索引 ≤1,000 字）、超预算从最不重要的丢并记 `stats.dropped`、关键词启发式、挂在 `Card.extensions['dramatis.memoryAttachment']`；7 个单测 |
+
+**下一步第一件事（27b 第二步）**：
+开新对话时，用**原对话的章（`ChapterSummary`）与印象（`supersededBy`/`supersedes` 那批）**
+调 `buildMemoryAttachment`，把结果 `withAttachment` 挂到角色卡上，并在界面上如实说
+「从《主线》带过来 N 条印象、M 章（丢了 X 条）」。
+
+**再往后（27c → 27e）**：
+④ **27c 关键词按需检索**：装配提示词时**先只注入 `renderAttachment()` 的索引**；
+用户这句话命中索引关键词（或问「还记得吗/上次」）时才把命中的 2–3 条正文展开注入。
+**这一步是把满足 800 条之后涨上去的 token 压回来的关键**（800 轮从 ~0.12 元/轮 回到几厘）。
+⑤ **27d 影响可回滚**：记忆影响性格/情感时落一条 append-only 的
+`AffectChange/RelationshipChange`（现在 `Affect.history` 已记 `reason` 但没记 before/after），
+支持「按条目撤销这条影响」；合并只标「已被取代」不删原文这条已经做了。
+⑥ **27e 面板**：记忆面板里显示「印象 → 它的来源原文」这条链子，以及附件预览。
+
+**环境与验证（新会话直接用）**：
+
+```bash
+# 本机：开发服务器 + 假模型（零成本、可重复；假模型 stderr 会打每次调用的提示/输出字数）
+cd apps/web && node node_modules/vite/bin/vite.js --host 127.0.0.1 --port 5273 --strictPort
+node tools/fake-model/server.mjs --port 5280          # 可加 --reasoning --chunk-ms 300
+
+# 测试与构建（每次提交前都跑）
+pnpm typecheck && pnpm lint && pnpm test && pnpm build && pnpm build:sync-server
+```
+
+- **无头验证**：Playwright 从 `C:\Users\35350\.cache\codex-runtimes\codex-primary-runtime\dependencies\node\node_modules`
+  用 `createRequire` 加载，`executablePath: 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe'`；
+  **读合并结果的窍门**：`page.evaluate` 里直接开 IndexedDB（库名 `dramatis`、store `entities`、
+  索引 `byCollection`）按集合名读原始记录——比从界面绕一圈可靠。
+- **长对话脚本**：`measure-long.mjs N`（导入卡 → 配假模型 → 连发 N 句 → 采样记忆条数与提示词长度）。
+  300 轮实测：提示词第 60 轮封顶（老设置）→ 记忆 2 条/轮 → 300 轮 590 条。
+- **线上**：`https://dramatissync.com:8443/`（nginx 托管 `apps/web/dist`，`/sync` 反代本机 8787）。
+  部署顺序**必须**是「先确认包到了 → 旧的改名成备份 → 换 → `chmod -R a+rX` → 重启 → 核健康」；
+  同步服务端同理（`/opt/dramatis-sync/dist`），**权限那步不能省**（scp 过来是 700）。
+- **不要提交**：`deploy/LOCAL-NOTES.md`（已 gitignore，里面有服务器与域名信息）。
+
+**提交习惯**：每小步都能构建 / 测试 / 提交；提交信息带顺序号（如「顺序 27b 第二步」）；
+实现与计划的偏差、以及验证里抓到的问题，写进 `docs/EVAL.md` 与相关设计文档。
+
 ## 一句话
 
 Dramatis 是一个多角色扮演酒馆，兼容 SillyTavern 资产格式。**P0（9 项）全部完成，P1 全部收口（11/11，P1-11 以评测结论收口：证据不支持上向量）；P2 已完成响应式 / PWA / 存储持久化 / 封存导出；界面改版三批（A/B/C）全部完成；P1-10 七轮真模型验证 + 六次评测回归跑完**，441 个测试通过；**P2-6 已上线**：数据层 / 加密 / 同步循环 / 服务端 / 界面全部交付，并已部署在用户自己的腾讯云 Ubuntu 24.04 上（systemd + SQLite + 每 6 小时备份，冒烟测试通过）。**域名线已上线（2026-09-20）：`dramatissync.com` + Let's Encrypt（8443 同源托管网页与 /sync）+ 公网两台设备端到端验证通过；下一步备案 + 切 443**（细节见 deploy/LOCAL-NOTES.md，不进仓库）。

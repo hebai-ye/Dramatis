@@ -8,12 +8,16 @@ interface Props {
   /** 只有多角色同场时需要每段都标名字，单独说话时标一次就够。 */
   showSpeaker: boolean;
   /**
-   * 挂在最后一段上的操作按钮（重抽 / 编辑 / 删除）。
+   * 挂在气泡**下面**（不是里面）的操作按钮（重抽 / 编辑 / 删除）。
    *
    * 它们平时是**看不见的**：桌面靠悬停露出来、手机靠长按出菜单
    * （用户 2026-09-21 的要求——常驻在气泡下面既碍眼，在窄屏上还会顶出气泡）。
    * 所以这里包的是 `row-actions` 而不是以前那个 `bubble-actions`：
    * 可见性由样式统一控制，编辑态的「保存 / 取消」不走这条路，永远可见。
+   *
+   * 位置后来改过一次：以前它们住在最后一段气泡**里面**，于是每个气泡底部都
+   * 拖着一块看不见的空白（用户原话「消息框下方空位较大」）。现在挂在气泡外面，
+   * 气泡只包住自己的字，那块空位留在气泡与下一条消息之间。
    */
   children?: ReactNode;
 }
@@ -57,8 +61,6 @@ export function MessageBody({ message, speakerName, showSpeaker, children }: Pro
     speakerName,
     thirdPersonActions: message.role === 'character',
   });
-  const lastSpeechIndex = segments.reduce((last, segment, index) => (segment.kind === 'speech' ? index : last), -1);
-
   return (
     <>
       {segments.map((segment, index) =>
@@ -70,15 +72,13 @@ export function MessageBody({ message, speakerName, showSpeaker, children }: Pro
           <div className={`bubble ${message.role}`} key={`speech-${String(index)}`}>
             {showSpeaker && index === 0 ? <span className="speaker">{message.speakerName}</span> : null}
             <p>{segment.text}</p>
-            {children !== undefined && index === lastSpeechIndex ? <div className="row-actions">{children}</div> : null}
           </div>
         ),
       )}
 
-      {/* 整条消息只有动作时，操作按钮仍然要有地方可放 */}
-      {lastSpeechIndex === -1 && children !== undefined ? (
-        <div className="row-actions action-only">{children}</div>
-      ) : null}
+      {/* 操作按钮是气泡的**兄弟**，不在气泡里：放在气泡里的后果是每个气泡底部
+          都拖着一块看不见的空白（用户 2026-09-21 指出的「消息框下方空位较大」）。 */}
+      {children === undefined ? null : <div className="row-actions">{children}</div>}
     </>
   );
 }

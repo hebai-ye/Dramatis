@@ -291,12 +291,31 @@ button:disabled {
   cursor: not-allowed;
 }
 
+/*
+ * 次级按钮（顺序 42，用户要求统一成 Codex 那套）：**无边框**，
+ * 只有悬停（或聚焦）时一层很淡的底。
+ *
+ * 之前是「1px 边框的小胶囊」——一屏几十个边框，看起来像表格线；
+ * Codex 的工具栏是「平时只是灰字，鼠标过去才浮出来」。
+ * 触屏没有悬停，所以那一边给一层**常驻**的浅底（见 `@media (hover: none)`），
+ * 否则手机上这些按钮会退化成纯文字，看不出能点。
+ */
 button.ghost {
   background: transparent;
-  border: 1px solid var(--line);
+  border: none;
+  border-radius: 8px;
   color: var(--muted-text);
   font-weight: 400;
-  padding: 4px 10px;
+  padding: 5px 9px;
+  transition:
+    background-color 110ms ease,
+    color 110ms ease;
+}
+
+button.ghost:hover:not(:disabled),
+button.ghost:focus-visible {
+  background: color-mix(in srgb, var(--text) 8%, transparent);
+  color: var(--text);
 }
 
 .grid-3 {
@@ -364,7 +383,12 @@ button.ghost {
 }
 
 .ghost.danger {
-  border-color: var(--danger);
+  color: var(--danger);
+}
+
+.ghost.danger:hover:not(:disabled),
+.ghost.danger:focus-visible {
+  background: color-mix(in srgb, var(--danger) 14%, transparent);
   color: var(--danger);
 }
 
@@ -427,7 +451,13 @@ button.ghost {
   display: flex;
   gap: 4px;
   justify-content: flex-end;
-  margin-top: 6px;
+  /*
+   * 这一条的高度是**空位**（按钮平时透明）：
+   * 用户认这个空位的存在（「我明白这是为其他按键留的」），但不希望它长在气泡里。
+   * 所以它现在挂在气泡外面，并且收紧到按钮本身那么高。
+   */
+  margin-top: 4px;
+  min-height: 20px;
   opacity: 0;
   transition: opacity 120ms ease;
 }
@@ -498,6 +528,15 @@ button.ghost {
 @media (hover: none) {
   .row-actions {
     display: none;
+  }
+
+  /*
+   * 触屏没有悬停：次级按钮给一层常驻的浅底。
+   * 顺序 42 把它们改成无边框之后，这一条是手机上的可点性兜底——
+   * 否则「归档」「导入素材」这些会退化成纯灰字。
+   */
+  button.ghost:not(:disabled) {
+    background: color-mix(in srgb, var(--text) 7%, transparent);
   }
 
   /* 手指要按得准：菜单里每一项都撑到 44px 高（顺序 9 的触控目标要求） */
@@ -685,8 +724,12 @@ button.ghost {
 
 /* 选中的那个视图：和左栏「设置」是同一套 .ghost.active 语义 */
 .ghost.active {
-  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
   color: var(--accent);
+}
+
+.ghost.active:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
 }
 
 .memory-list.contrast li {
@@ -1591,10 +1634,6 @@ details summary {
   text-align: center;
 }
 
-.row-actions.action-only {
-  margin-top: 0;
-}
-
 /* 归属可疑提示（T18）：只在真的可疑时出现，点按钮才改数据 */
 .intent-line {
   color: var(--muted-text);
@@ -1842,6 +1881,29 @@ details summary {
 .mode-option span {
   display: flex;
   flex-direction: column;
+}
+
+/*
+ * 「＋」里的便捷指令（顺序 42 同一批）：左边是标记本身（等宽字体，
+ * 让人一眼看出「这是要打进去的东西」），右边一行说明。
+ */
+.mode-menu .quick-command {
+  align-items: baseline;
+  display: flex;
+  gap: 8px;
+  text-align: left;
+}
+
+.mode-menu .quick-command code {
+  color: var(--text);
+  flex: 0 0 auto;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+}
+
+.mode-menu .quick-command .hint {
+  font-size: 11px;
+  line-height: 1.35;
 }
 
 /* ---------- 右缘窄栏 ---------- */

@@ -116,6 +116,21 @@ function formatUsage(usage: Message['usage']): string {
 const LONG_PRESS_MS = 450;
 
 /**
+ * 输入区「＋」里的便捷指令（用户 2026-09-21 要求）。
+ *
+ * 背景：`#` 在 Dramatis 里是「这一段是动作、不是台词」的标记（LAYOUT 规格），
+ * 但玩家得先知道有这回事才会用——把写法直接摆进菜单，点一下即插入，
+ * 光标落在标记之后，接着写就行。
+ *
+ * `caret` 是插入后光标该停的位置（相对插入内容开头）：`#` 之后是 1，
+ * 引号要落在两个引号**中间**所以也是 1。
+ */
+const QUICK_COMMANDS: { label: string; insert: string; caret: number; note: string }[] = [
+  { label: '# 动作', insert: '#', caret: 1, note: '后面写你要做的事；动作不进气泡，和台词分开' },
+  { label: '「台词」', insert: '「」', caret: 1, note: '光标落在引号中间，写你要说的话' },
+];
+
+/**
  * 主对话（LAYOUT「主对话状态」）。
  *
  * 形态是**群聊**：圆形头像、名字、聊天气泡，动作另起一段且不进气泡。
@@ -306,6 +321,26 @@ export function MainChat({
     if (text === '') return;
     onSend(text);
     setInput('');
+  };
+
+  /**
+   * 把一段标记插到光标处（「＋」里的便捷指令用它）。
+   *
+   * 光标是**插在中间**而不是扔到最后：点「# 动作」的人下一步就是写字，
+   * 让他还要再按一下方向键属于没做完。
+   */
+  const insertAtCursor = (text: string, caretOffset: number): void => {
+    const node = inputRef.current;
+    const start = node?.selectionStart ?? input.length;
+    const end = node?.selectionEnd ?? input.length;
+    setInput(`${input.slice(0, start)}${text}${input.slice(end)}`);
+    setModeMenuOpen(false);
+    window.requestAnimationFrame(() => {
+      const target = inputRef.current;
+      if (target === null) return;
+      target.focus();
+      target.setSelectionRange(start + caretOffset, start + caretOffset);
+    });
   };
 
   const nameOf = (message: Message): string => {
@@ -707,6 +742,25 @@ export function MainChat({
                         <span className="hint">{mode.note}</span>
                       </span>
                     </label>
+                  ))}
+
+                  {/*
+                    便捷指令（用户 2026-09-21）：把 `#` 这种写法摆到用户手边，
+                    点一下插到光标处，接着写就行——不用记格式，也不用去翻文档。
+                  */}
+                  <p className="hint">便捷指令</p>
+                  {QUICK_COMMANDS.map((command) => (
+                    <button
+                      key={command.label}
+                      type="button"
+                      className="ghost quick-command"
+                      disabled={archived}
+                      title={command.note}
+                      onClick={() => insertAtCursor(command.insert, command.caret)}
+                    >
+                      <code>{command.label}</code>
+                      <span className="hint">{command.note}</span>
+                    </button>
                   ))}
                 </div>
               ) : null}

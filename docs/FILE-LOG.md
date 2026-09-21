@@ -561,7 +561,26 @@ git ls-files | ForEach-Object {
 | `apps/web/src/components/MainChat.tsx` | 改 | 「＋」菜单加便捷指令（`QUICK_COMMANDS` + `insertAtCursor`） |
 | `docs/EVAL.md` / `docs/TASKS.md` / `docs/LAYOUT.md` / `docs/STATUS.md` | 改 | 第二十六节（含 100 轮 token 账）、总表 42–44、界面取舍 32–34、接续点 |
 
-## 十四、几点注意
+## 十四、2026-09-21 深夜：顺序表一次五项（10 / 9 / 12 / 13 / 16）
+
+| 文件 | 新增/修改 | 说明 |
+| --- | --- | --- |
+| `packages/core/src/platform/key-vault.ts` | **新增** | 口令加密的密钥库：PBKDF2 600k + AES-GCM、加密常量验口令、AAD 绑 ref、绝不覆盖已有库 |
+| `packages/core/src/platform/key-vault.test.ts` | **新增** | 7 个单测（盘上无明文、口令错、文件坏、AAD 换位） |
+| `packages/core/src/sync/limits.test.ts` | **新增** | 5 个单测：413 / 429 / 老存储跳过 / HTTP 状态码 |
+| `packages/core/src/sync/loop.ts` | 改 | 坏记录隔离（跳过 + 上报 + 游标照常推进）、停止条件改成「服务端没给东西」、推送按 200 条分块 |
+| `packages/core/src/sync/types.ts` | 改 | `SyncQuarantinedRecord` + `SyncReport.quarantined / quarantinedCount` |
+| `packages/core/src/sync/server.ts` | 改 | `SyncServerLimits` + 默认值、每空间配额与写入限流、内存存储的 `spaceUsage` |
+| `packages/core/src/sync/sqlite.ts` | 改 | `spaceUsage`（COUNT + LENGTH(sealed)） |
+| `apps/web/src/lib/keystore.ts` | 改 | 第三档 `encrypted`、浏览器里的口令库存储、解锁与「有没有库」 |
+| `apps/web/src/lib/providers.ts` | 改 | 口令库接线（新建/解锁、切档时删掉明文那份）、`vaultExists / vaultLocked / unlockVault` |
+| `apps/web/src/components/ProviderPanel.tsx` | 改 | 「密钥保存方式」第三档 + 口令输入 + 解锁按钮 + 还没解锁的如实提示 |
+| `apps/web/src/styles.css` | 改 | 手机上的触控目标（按元素给 44px 下限）与正文可读性（15px / 1.7） |
+| `tools/sync-server/src/main.ts` | 改 | 护栏可调（`--max-records` / `--max-mb` / `--pushes-per-minute` 与对应环境变量，非法值忽略） |
+| `docs/SYNC.md` | 改 | 新增 §4.8（坏记录隔离与分块）与 §4.9（配额与限流）——协议用法变了就要写进协议文档 |
+| `docs/EVAL.md` / `docs/TASKS.md` / `docs/LAYOUT.md` / `docs/STATUS.md` | 改 | 第二十七节、总表五项标记、界面取舍 35–36、接续点 |
+
+## 十五、几点注意
 
 ---
 

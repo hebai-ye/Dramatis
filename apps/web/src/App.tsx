@@ -66,7 +66,7 @@ import { useDatabase, useSession } from './lib/session';
 import { QUOTA_WARN_RATIO, useStorageStatus } from './lib/storage';
 import { useSync } from './lib/sync';
 import { extraCalls, useUsage } from './lib/usage';
-import { NARROW_SCREEN_QUERY, useNarrowScreen } from './lib/viewport';
+import { NARROW_SCREEN_QUERY, useFullscreen, useNarrowScreen } from './lib/viewport';
 import {
   MEMORY_BUDGET_TOKENS,
   SCENE_SUMMARY_TASK_KIND,
@@ -198,6 +198,8 @@ export function App() {
    * 默认铺开会把对话挤没（ROADMAP P2-1）。
    */
   const narrow = useNarrowScreen();
+  /** 全屏：手机上浏览器顶栏/底栏占地方时，一键把它们收起来。 */
+  const fullscreen = useFullscreen();
   const [collapsed, setCollapsed] = useState(
     () => typeof window !== 'undefined' && window.matchMedia(NARROW_SCREEN_QUERY).matches,
   );
@@ -1315,6 +1317,7 @@ export function App() {
         backendKind={boot?.backendKind ?? ''}
         degraded={boot?.degraded ?? false}
         backgroundPending={worker.pending}
+        fullscreen={fullscreen}
       />
 
       <div className={collapsed ? 'app-body collapsed' : 'app-body'}>

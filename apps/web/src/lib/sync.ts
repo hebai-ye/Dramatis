@@ -46,6 +46,9 @@ const KEY_REF_PASSWORD = 'sync:password';
  */
 const AUTO_SYNC_INTERVAL_MS = 20_000;
 
+/** 定期同步的心跳间隔：5 分钟。 */
+const AUTO_SYNC_HEARTBEAT_MS = 5 * 60 * 1000;
+
 export interface SyncConfig {
   endpoint: string;
   userId: string;
@@ -391,6 +394,21 @@ export function useSync(db: DramatisDb | null, options: { onChanged?: () => void
     });
   }
 
+  /**
+   * 定期同步（用户要求：把这些数据定期存到服务器上，好让多端接着用）。
+   *
+   * 「每轮结束自动推一次」已经在了，但那只覆盖「一直在聊」的场景：如果用户挂着页面
+   * 慢慢看、或者一轮里后台写入拖了很久，服务端就会落后。所以再加一条低频率的心跳
+   * （默认 5 分钟一次，页面可见时才跑），让服务端上的那份始终是"最近的"。
+   * 它和每轮那一次走同一个节流实例，不会叠加成两倍流量。
+   */
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      if (document.visibilityState !== 'visible') return;
+      autoRef.current?.request();
+    }, AUTO_SYNC_HEARTBEAT_MS);
+    return () => window.clearInterval(timer);
+  }, []);
   const requestAutoSync = useCallback((): void => {
     if (configRef.current === null) return;
     autoRef.current?.request();

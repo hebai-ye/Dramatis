@@ -1,9 +1,13 @@
+import type { FullscreenApi } from '../lib/viewport';
+
 interface Props {
   collapsed: boolean;
   onToggleCollapsed: () => void;
   backendKind: string;
   degraded: boolean;
   backgroundPending: number;
+  /** 全屏（手机上浏览器 UI 占地方时用）。 */
+  fullscreen: FullscreenApi;
 }
 
 /**
@@ -15,7 +19,7 @@ interface Props {
  * 所以这条栏是窄的，而且大部分是空的：宁可为将来的蓝图留一块干净的画布，
  * 也不要把导航再塞回来。世界切换与素材管理都在左栏，不在顶上。
  */
-export function TopBar({ collapsed, onToggleCollapsed, backendKind, degraded, backgroundPending }: Props) {
+export function TopBar({ collapsed, onToggleCollapsed, backendKind, degraded, backgroundPending, fullscreen }: Props) {
   return (
     <header className="topbar">
       <button
@@ -34,6 +38,23 @@ export function TopBar({ collapsed, onToggleCollapsed, backendKind, degraded, ba
       </span>
 
       <div className="topbar-spacer" />
+
+      {/*
+        全屏：手机上浏览器的地址栏与底部工具栏会吃掉很大一块，这两个按钮的差别是——
+        「全屏」当场把浏览器 UI 藏起来；装成应用（PWA）则是永远没有它。
+      */}
+      {fullscreen.supported ? (
+        <button
+          type="button"
+          className="ghost fullscreen-toggle"
+          title={fullscreen.active ? '退出全屏' : '全屏（藏起浏览器的地址栏与工具栏）'}
+          onClick={() => {
+            void (fullscreen.active ? fullscreen.exit() : fullscreen.enter());
+          }}
+        >
+          {fullscreen.active ? '退出全屏' : '全屏'}
+        </button>
+      ) : null}
 
       {backgroundPending > 0 ? <span className="tag">后台任务 {backgroundPending}</span> : null}
 

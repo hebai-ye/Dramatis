@@ -62,7 +62,14 @@ export interface ProvidersApi {
 export function useProviders(db: DramatisDb | null): ProvidersApi {
   const [profiles, setProfiles] = useState<ProviderProfile[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
-  const [keyMode, setKeyModeState] = useState<KeyStorageMode>('session');
+  /**
+   * 密钥保存方式的默认值：**保存在本机浏览器**。
+   *
+   * 之前默认「仅本次会话」，结果是用户填了 Key、点了保存，刷新之后又要重填——
+   * 看起来就像「保存按钮没用」（用户 2026-09-21 反馈）。功能是对的，默认不对：
+   * 「点保存就该留住」才符合直觉。想更保守的人随时可以切回「仅本次会话」。
+   */
+  const [keyMode, setKeyModeState] = useState<KeyStorageMode>('device');
   const [apiKey, setApiKeyState] = useState('');
   const [backgroundKey, setBackgroundKey] = useState('');
   const [keyKind, setKeyKind] = useState<KeyStore['kind']>('memory');
@@ -95,7 +102,7 @@ export function useProviders(db: DramatisDb | null): ProvidersApi {
 
       if (cancelled) return;
       setProfiles(list);
-      setKeyModeState(storedMode === 'device' ? 'device' : 'session');
+      setKeyModeState(storedMode === 'session' ? 'session' : 'device');
       setActiveId(storedActive ?? list[0]?.id ?? null);
     })();
 

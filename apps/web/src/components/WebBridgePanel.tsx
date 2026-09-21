@@ -66,6 +66,36 @@ export function WebBridgePanel({ bridge, busy, disabled, onReply, onAnalysis, on
     setCopied(false);
   }
 
+  /**
+   * 回到这个页面时，把剪贴板里的东西自动填进粘贴框。
+   *
+   * 省掉的正是「复制回来 → 点输入框 → 粘贴」这三下：从 DeepSeek 网页版复制完切回来，
+   * 框里已经是他刚复制的答案，只需要点「收下」。
+   *
+   * 三条约束：① 只在框还空着时填，绝不覆盖他已经写的字；② 读剪贴板需要许可，
+   * 被拒就静默放弃（照旧手动粘贴）；③ 只在窗口重新获得焦点时读一次，不轮询。
+   */
+  useEffect(() => {
+    const pullClipboard = (): void => {
+      if (document.visibilityState !== 'visible') return;
+      void navigator.clipboard
+        ?.readText()
+        .then((text) => {
+          const trimmed = text.trim();
+          if (trimmed === '') return;
+          setPaste((latest) => (latest.trim() === '' ? trimmed : latest));
+        })
+        .catch(() => {
+          // 没给剪贴板权限：什么都不说，用户手动粘贴即可
+        });
+    };
+    window.addEventListener('focus', pullClipboard);
+    document.addEventListener('visibilitychange', pullClipboard);
+    return () => {
+      window.removeEventListener('focus', pullClipboard);
+      document.removeEventListener('visibilitychange', pullClipboard);
+    };
+  }, []);
   useEffect(() => {
     if (!copied) return;
     const timer = window.setTimeout(() => setCopied(false), 2200);

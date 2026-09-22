@@ -11,6 +11,7 @@ import {
 } from '@dramatis/core';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { useCoarsePointer } from '../lib/viewport';
 import { IconPlus, IconScene, IconSend, IconStop } from './Icons';
 import { Avatar, MessageBody } from './MessageBody';
 import { WebBridgePanel, type WebBridgeState } from './WebBridgePanel';
@@ -165,6 +166,7 @@ export function MainChat({
   onDropInstance,
   onReassign,
 }: Props) {
+  const coarsePointer = useCoarsePointer();
   const [input, setInput] = useState('');
   const [editingId, setEditingId] = useState<MessageId | null>(null);
   const [editingText, setEditingText] = useState('');
@@ -697,15 +699,17 @@ export function MainChat({
               archived
                 ? '已归档的对话不能再说话'
                 : ready
-                  ? '说点什么……（Enter 发送，Shift+Enter 换行）'
+                  ? coarsePointer
+                    ? '说点什么……（回车换行，点右下角发送）'
+                    : '说点什么……（Enter 发送，Shift+Enter 换行）'
                   : '先导入角色卡'
             }
             onChange={(event) => setInput(event.target.value)}
             onKeyDown={(event) => {
-              if (event.key === 'Enter' && !event.shiftKey) {
-                event.preventDefault();
-                submit();
-              }
+              if (event.key !== 'Enter' || event.shiftKey || event.nativeEvent.isComposing) return;
+              if (coarsePointer) return;
+              event.preventDefault();
+              submit();
             }}
           />
 

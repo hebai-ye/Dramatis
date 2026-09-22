@@ -795,7 +795,22 @@ git ls-files | ForEach-Object {
 | `apps/web/src/components/PersonaLibrary.tsx` | 改 | 本地草稿、composition 起止保护、停止 300ms/失焦保存 |
 | `docs/EVAL.md` / `docs/TASKS.md` / `docs/STATUS.md` | 改 | 第四十四节、任务 54 与验证结果 |
 
-## 三十四、几点注意
+## 三十四、2026-09-22：顺序 55（移动端回车换行）
+
+| 文件 | 新增/修改 | 说明 |
+| --- | --- | --- |
+| `apps/web/src/lib/viewport.ts` | 改 | 增加粗指针检测，供输入区区分移动端软键盘 |
+| `apps/web/src/components/MainChat.tsx` / `SideChat.tsx` | 改 | 触摸设备回车换行，桌面保留 Enter 发送；组合输入不误发 |
+| `docs/EVAL.md` / `docs/TASKS.md` / `docs/STATUS.md` | 改 | 第四十五节、任务 55 与验证结果 |
+
+## 三十五、2026-09-22：服务器管理台方案
+
+| 文件 | 新增/修改 | 说明 |
+| --- | --- | --- |
+| `docs/ADMIN-CONSOLE.md` | **新增** | 明确服务器只有密文空间、三种管理形态比较、推荐 SSH 隧道本机网页台、接口与审计边界 |
+| `docs/STATUS.md` / `docs/TASKS.md` | 改 | 文档地图、任务 56 与待拍板方向 |
+
+## 三十六、几点注意
 
 ---
 

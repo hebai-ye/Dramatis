@@ -1,5 +1,6 @@
 import type { AdminArtifact, Conversation, Message, MessageId } from '@dramatis/core';
 import { useEffect, useRef, useState } from 'react';
+import { useCoarsePointer } from '../lib/viewport';
 import { IconSend, IconStop } from './Icons';
 import { WebBridgePanel } from './WebBridgePanel';
 
@@ -165,6 +166,7 @@ export function SideChat({
   onBridgeCommit,
   onBridgeCancel,
 }: Props) {
+  const coarsePointer = useCoarsePointer();
   const [input, setInput] = useState('');
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
@@ -260,13 +262,19 @@ export function SideChat({
             ref={inputRef}
             value={input}
             disabled={!ready || archived}
-            placeholder={archived ? '已归档的对话不能再说话' : '告诉管理员你想搭什么……（Enter 发送）'}
+            placeholder={
+              archived
+                ? '已归档的对话不能再说话'
+                : coarsePointer
+                  ? '告诉管理员你想搭什么……（回车换行，点右下角发送）'
+                  : '告诉管理员你想搭什么……（Enter 发送）'
+            }
             onChange={(event) => setInput(event.target.value)}
             onKeyDown={(event) => {
-              if (event.key === 'Enter' && !event.shiftKey) {
-                event.preventDefault();
-                submit();
-              }
+              if (event.key !== 'Enter' || event.shiftKey || event.nativeEvent.isComposing) return;
+              if (coarsePointer) return;
+              event.preventDefault();
+              submit();
             }}
           />
           <div className="composer-tools">

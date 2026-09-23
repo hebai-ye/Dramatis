@@ -374,6 +374,56 @@ describe('assemblePrompt / 跨对话记忆附件（顺序 27c）', () => {
     expect(prompt.messages[0]?.content).toContain('那一夜在货栈把账对上了');
   });
 });
+describe('assemblePrompt / 记忆的来源（顺序 57）', () => {
+  const memories = [
+    { id: 'm-recall', summary: '常规想起的一件事。', score: 40 },
+    { id: 'm-mention', summary: '被提起才想起的旧事。', score: 30, origin: 'mention' as const },
+    { id: 'm-source', summary: '印象里的一件具体的事。', score: 29, origin: 'source' as const },
+  ];
+
+  it('三种来源各自有标签与提示语，并按来源统计', () => {
+    const { card, instance, room, scene } = fixtures();
+    const prompt = assemblePrompt({
+      card,
+      instance,
+      room,
+      scene,
+      history: [],
+      playerInput: '夹层呢？',
+      memories,
+      budget: baseBudget,
+    });
+
+    expect(prompt.memoryStats).toEqual({ recall: 1, mention: 1, source: 1 });
+    expect(prompt.blocks.filter((block) => block.kind === 'memory').map((block) => block.label)).toEqual([
+      '相关记忆',
+      '提到才想起的旧事',
+      '印象背后的原文',
+    ]);
+    const system = prompt.messages[0]?.content ?? '';
+    expect(system).toContain('被提起才想起的旧事。 （旧事，因为被提起才想起）');
+    expect(system).toContain('印象里的一件具体的事。 （这是那段印象里的一件具体的事）');
+    expect(system).not.toContain('常规想起的一件事。 （');
+  });
+
+  it('来源统计只数预算后真正留下来的：分数最低的补充项先被丢', () => {
+    const { card, instance, room, scene } = fixtures();
+    const input = { card, instance, room, scene, history: [], playerInput: '夹层呢？', memories };
+    const full = assemblePrompt({ ...input, budget: baseBudget });
+
+    // 刚好差一个 token：预算守卫得丢一块，按分数丢的是「来源」那条
+    const reserveForReply = 100;
+    const squeezed = assemblePrompt({
+      ...input,
+      budget: { maxTokens: full.tokenEstimate + reserveForReply - 1, reserveForReply },
+    });
+
+    expect(squeezed.report.stages).toContain('drop-memory');
+    expect(squeezed.memoryStats).toEqual({ recall: 1, mention: 1, source: 0 });
+    expect(squeezed.messages[0]?.content).not.toContain('印象里的一件具体的事');
+  });
+});
+
 describe('assemblePrompt / 多角色场景', () => {
   it('场景块带上自动整理的本场场记（P1-5 的场景层）', () => {
     const { card, instance, room, scene } = fixtures();

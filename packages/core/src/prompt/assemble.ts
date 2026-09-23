@@ -30,10 +30,15 @@ export interface PromptMemory {
   summary: string;
   /** 该视角下的观感、误解与情绪反应。 */
   perception?: string;
-  /** 召回分数 0~1。 */
+  /** 召回分数；同一轮内只用于相对比较（预算紧张时分数低的先丢）。 */
   score: number;
   worldTime?: string;
   observerName?: string;
+  /**
+   * 这条是怎么被想起来的（顺序 57）：常规召回、玩家提到才想起的旧事、
+   * 问过去时从印象翻出的来源原文。缺省视为常规。
+   */
+  origin?: 'recall' | 'mention' | 'source';
 }
 
 export interface AssembleInput {
@@ -93,6 +98,8 @@ export interface AssembledPrompt {
   tokenEstimate: number;
   /** 本次装配按视角裁剪了多少历史，供检查器展示（P0-5）。 */
   historyStats: { total: number; visible: number };
+  /** 带进来的记忆各是怎么想起来的（顺序 57），供检查器展示。 */
+  memoryStats: { recall: number; mention: number; source: number };
 }
 
 /** 越大越不可丢弃。 */
@@ -381,11 +388,15 @@ function buildMemoryBlocks(memories: PromptMemory[]): PromptBlock[] {
     if (memory.perception !== undefined && memory.perception.trim() !== '') {
       parts.push(`他当时的感觉：${memory.perception.trim()}`);
     }
+    // 被提起才想起的旧事、印象背后的原文：标一下，模型知道这是「翻出来的细节」而不是当下的事
+    const origin = memory.origin ?? 'recall';
+    if (origin === 'mention') parts.push('（旧事，因为被提起才想起）');
+    if (origin === 'source') parts.push('（这是那段印象里的一件具体的事）');
 
     return {
       id: `memory:${memory.id}`,
       kind: 'memory',
-      label: '相关记忆',
+      label: origin === 'recall' ? '相关记忆' : origin === 'mention' ? '提到才想起的旧事' : '印象背后的原文',
       content: parts.join(' '),
       priority: PRIORITY.history + Math.round(memory.score * 200),
       droppable: true,
@@ -665,11 +676,19 @@ export function assemblePrompt(input: AssembleInput): AssembledPrompt {
   const available = Math.max(MIN_PROMPT_TOKENS, input.budget.maxTokens - input.budget.reserveForReply);
   const { blocks: kept, report } = applyBudget(blocks, { maxTokens: available, counter });
 
+  const memoryStats = { recall: 0, mention: 0, source: 0 };
+  const keptIds = new Set(kept.map((block) => block.id));
+  for (const memory of input.memories ?? []) {
+    if (!keptIds.has(`memory:${memory.id}`)) continue;
+    memoryStats[memory.origin ?? 'recall'] += 1;
+  }
+
   return {
     blocks: kept,
     messages: toChatMessages(kept),
     report,
     tokenEstimate: report.usedTokens,
     historyStats: { total: input.history.length, visible: visibleHistory.length },
+    memoryStats,
   };
 }

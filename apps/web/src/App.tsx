@@ -1,6 +1,7 @@
 import {
   type AssembledPrompt,
   applyTurnAnalysis,
+  asksAboutPast,
   buildIntentPlanMessages,
   buildSceneTransitionNarration,
   buildTurnAnalysisMessages,
@@ -21,7 +22,6 @@ import {
   importCardFromJson,
   importCardFromPng,
   isIntentFirst,
-  limitFallbackItems,
   type Message,
   type MessageId,
   type MessageUsage,
@@ -31,14 +31,13 @@ import {
   parseIntentPlan,
   parseWorldBook,
   pickPlannedSpeaker,
-  type RecalledMemory,
-  recallMemories,
+  type RecalledForPrompt,
+  recallForPrompt,
   renderPromptForWeb,
   runTurn,
   type Scene,
   scheduleSpeakers,
   selectSceneMembers,
-  selectWithinBudget,
   turnsSinceLastSpoke,
   WEB_BRIDGE_TARGET,
 } from '@dramatis/core';
@@ -101,12 +100,14 @@ function looksLikeWorldBook(value: unknown): boolean {
   return typeof value === 'object' && value !== null && 'entries' in value;
 }
 
-function toPromptMemory(recalled: RecalledMemory): PromptMemory {
+function toPromptMemory(recalled: RecalledForPrompt): PromptMemory {
   const event = recalled.event;
   return {
     id: event.id,
     summary: event.summary,
     score: recalled.score,
+    // 常规召回 / 提到才想起 / 印象来源：装配时按它标记，检查器按它统计（顺序 57）
+    origin: recalled.origin,
     ...(event.perception !== '' ? { perception: event.perception } : {}),
     ...(event.timeline.worldTime !== '' ? { worldTime: event.timeline.worldTime } : {}),
   };
@@ -706,21 +707,29 @@ export function App() {
            * 在关键词/过去意图命中时按需展开。
            */
           const recallPool = session.memories.filter((memory) => memory.conversationId === conversation?.id);
-          const recalled = selectWithinBudget(
-            // 兜底上限（T22）：有命中的那一轮最多再带两条「顺带想起」的记忆。
-            // 实测 800 token 里原本平均有 5 条是这类无关条目，把预算让出去之后，
-            // 命中条目从 4.0 涨到 5.1 条（EVAL 第五节）。
-            limitFallbackItems(
-              recallMemories(recallPool, {
-                observerId: speaker.id,
-                text: [text, ...history.slice(-6).map((message) => message.content)].join('\n'),
-                participantIds: scene.cast,
-                location: scene.location,
-                now,
-              }),
-            ),
-            MEMORY_BUDGET_TOKENS,
+          /*
+           * 顺序 57：统一的记忆入口。常规通路只在**未被印象取代**的条目里召回
+           * （合并过的原文不再线性涨池子），兜底上限照旧（T22：有命中时最多再带两条
+           * 「顺带想起」，实测 800 token 里原本平均 5 条是无关条目，EVAL 第五节）。
+           * 被取代的原文只走两条补充通路：玩家**这一句**提到了它的关键词（不看历史，
+           * 否则一个词会连着六轮翻旧账），或玩家在问过去时顺着印象的来源展开。
+           */
+          const recall = recallForPrompt(
+            recallPool,
+            {
+              observerId: speaker.id,
+              text: [text, ...history.slice(-6).map((message) => message.content)].join('\n'),
+              participantIds: scene.cast,
+              location: scene.location,
+              now,
+            },
+            {
+              budgetTokens: MEMORY_BUDGET_TOKENS,
+              mentionText: text,
+              askingPast: asksAboutPast(text),
+            },
           );
+          const recalled = recall.selected;
 
           setStreamSpeaker(speaker.displayName);
           setPhase('writing');

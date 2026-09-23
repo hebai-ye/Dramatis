@@ -152,6 +152,18 @@ export function scoreMemory(
 export interface RecallOptions {
   weights?: RecallWeights;
   limit?: number;
+  /**
+   * 被印象取代的原文（`supersededBy` 非空）要不要参与（顺序 57）。
+   *
+   * 默认 **不参与**：合并（27a）的目的就是让池子不再线性涨。原文既然已经并进印象，
+   * 常规召回就只看印象；原文留给 `recallForPrompt` 的「提到才想起」通路。
+   */
+  superseded?: 'exclude' | 'include';
+}
+
+/** 这条记忆已经被合并进某条印象。 */
+export function isSuperseded(event: Pick<MemoryEvent, 'supersededBy'>): boolean {
+  return event.supersededBy !== null && event.supersededBy !== undefined;
 }
 
 /**
@@ -168,9 +180,11 @@ export function recallMemories(
 ): RecalledMemory[] {
   const terms = tokenizeQuery(query.text);
   const weights = options.weights ?? DEFAULT_RECALL_WEIGHTS;
+  const includeSuperseded = options.superseded === 'include';
 
   const scored = events
     .filter((event) => event.observerId === query.observerId)
+    .filter((event) => includeSuperseded || !isSuperseded(event))
     .map((event) => scoreMemory(event, query, terms, weights))
     .filter((recalled) => recalled.score > 0)
     .sort((a, b) => b.score - a.score || a.event.createdAt.localeCompare(b.event.createdAt));
@@ -179,22 +193,27 @@ export function recallMemories(
 }
 
 /** 按 token 预算裁剪，超出部分宁可丢掉也不让 prompt 爆掉。 */
-export function selectWithinBudget(
-  recalled: readonly RecalledMemory[],
+export function selectWithinBudget<T extends RecalledMemory>(
+  recalled: readonly T[],
   budgetTokens: number,
   counter: TokenCounter = heuristicTokenCounter,
-): RecalledMemory[] {
-  const selected: RecalledMemory[] = [];
+): T[] {
+  const selected: T[] = [];
   let used = 0;
 
   for (const item of recalled) {
-    const cost = counter.count(item.event.summary) + counter.count(item.event.perception);
+    const cost = memoryCost(item, counter);
     if (used + cost > budgetTokens) continue;
     selected.push(item);
     used += cost;
   }
 
   return selected;
+}
+
+/** 一条记忆进提示词要花多少 token（与 `selectWithinBudget` 同一把尺子）。 */
+function memoryCost(item: RecalledMemory, counter: TokenCounter): number {
+  return counter.count(item.event.summary) + counter.count(item.event.perception);
 }
 
 /**
@@ -288,4 +307,140 @@ export function limitFallbackItems(
     used += 1;
     return used <= maxFallback;
   });
+}
+
+/**
+ * 给一轮生成挑记忆（顺序 57）：常规召回 + 「提到才想起」+ 「问过去时翻出印象背后的原文」。
+ *
+ * 用户拍板的语义：被印象取代的原文**不参与常规召回**（否则合并白做，池子反而多一条），
+ * 但**保留索引**——玩家明确提到那件事时，仍然能把原文想起来。所以这里有三条通路：
+ *
+ * 1. **常规**：只在未被取代的条目里召回（印象在内），照旧限兜底、按预算裁剪；
+ * 2. **提到**：被取代的原文只看**玩家这句话本身**（不看最近几轮历史，否则一个词会连着
+ *    六轮把旧事翻出来）有没有命中它的关键词；命中的最多带 `mentionLimit` 条；
+ * 3. **问过去**：玩家在问「还记得吗 / 上次」这类话时，把召回到的印象顺着 `supersedes`
+ *    展开最多 `sourceLimit` 条来源原文——印象是概括，问细节时要给得出细节。
+ *
+ * 后两条通路的条目**分数一律压到低于所有常规条目**：它们是补充，窗口不够时预算守卫先丢它们；
+ * 在提示词里也标出「旧事」，模型知道这是被提起才想起来的。
+ *
+ * 但记忆预算里要给它们**留一小块位置**（默认不超过 1/4，且只按实际装得下的量留）。
+ * 真机演练抓到的：常规召回的查询文本带着最近几轮，台词里反复出现的地名按二元组一切，
+ * 近几十条原文**全部**算命中、把预算填满——补充项排在最后就永远进不来，
+ * 「提到才想起」形同虚设。预留只在补充项真的存在、也真的装得下时才占；预算小到
+ * 一条补充项都装不下时预留为 0，常规项一条不少。
+ */
+export type RecallOrigin = 'recall' | 'mention' | 'source';
+
+export interface RecallForPromptOptions {
+  weights?: RecallWeights;
+  /** 每个角色每轮最多带多少 token 的记忆。 */
+  budgetTokens: number;
+  counter?: TokenCounter;
+  /** 有命中时最多再带几条「顺带想起」的（T22）。 */
+  fallbackLimit?: number;
+  /** 被取代原文按「提到」取回的上限。 */
+  mentionLimit?: number;
+  /** 问过去时，每轮最多展开几条印象来源。 */
+  sourceLimit?: number;
+  /** 补充项最多能占预算的几分之几（0~1）；默认 1/4。 */
+  supplementShare?: number;
+  /**
+   * 用来判断「有没有明确提到」的文本：**只能是玩家这一句**，不含历史。
+   *
+   * 故意做成必填而不是缺省退回 `query.text`：常规召回的 `query.text` 通常带着
+   * 最近六轮，拿它判「提到」会让一个词连着六轮把旧事翻出来——那就不是「提到才想起」了。
+   */
+  mentionText: string;
+  /** 玩家是否在问过去；由调用方用 `asksAboutPast(玩家这句)` 判断。 */
+  askingPast?: boolean;
+}
+
+export interface RecalledForPrompt extends RecalledMemory {
+  origin: RecallOrigin;
+}
+
+export interface RecallForPromptResult {
+  /** 已按预算裁剪、按「常规 → 提到 → 来源」排好的条目。 */
+  selected: RecalledForPrompt[];
+  /** 裁剪前各通路各有几条，给检查器与日志用。 */
+  candidates: Record<RecallOrigin, number>;
+}
+
+export const DEFAULT_MENTION_LIMIT = 2;
+export const DEFAULT_SOURCE_LIMIT = 2;
+export const DEFAULT_SUPPLEMENT_SHARE = 0.25;
+
+export function recallForPrompt(
+  events: readonly MemoryEvent[],
+  query: RecallQuery,
+  options: RecallForPromptOptions,
+): RecallForPromptResult {
+  const weights = options.weights ?? DEFAULT_RECALL_WEIGHTS;
+  const mentionText = options.mentionText;
+  const mentionLimit = options.mentionLimit ?? DEFAULT_MENTION_LIMIT;
+  const sourceLimit = options.sourceLimit ?? DEFAULT_SOURCE_LIMIT;
+
+  // 1) 常规：未被取代的条目（印象在内）
+  const primary: RecalledForPrompt[] = limitFallbackItems(
+    recallMemories(events, query, { weights, superseded: 'exclude' }),
+    options.fallbackLimit,
+  ).map((item) => ({ ...item, origin: 'recall' }));
+  const taken = new Set(primary.map((item) => item.event.id));
+
+  // 补充通路的分数上限：严格低于常规里最低的那条，预算紧张时先让位
+  const floor = primary.reduce((lowest, item) => Math.min(lowest, item.score), Number.POSITIVE_INFINITY);
+  const demote = (item: RecalledMemory, order: number): number =>
+    (Number.isFinite(floor) ? Math.min(item.score, floor) : item.score) - 1 - order * 0.001;
+
+  // 2) 提到：被取代的原文，只认玩家这句话里的关键词（或置顶）
+  const mentionTerms = tokenizeQuery(mentionText);
+  const mentioned: RecalledForPrompt[] = events
+    .filter((event) => event.observerId === query.observerId && isSuperseded(event) && !taken.has(event.id))
+    .map((event) => scoreMemory(event, { ...query, text: mentionText }, mentionTerms, weights))
+    .filter((item) => item.reasons.some((reason) => reason.code === 'keyword' || reason.code === 'pinned'))
+    .sort((a, b) => b.score - a.score || a.event.createdAt.localeCompare(b.event.createdAt))
+    .slice(0, mentionLimit)
+    .map((item, index) => ({ ...item, score: demote(item, index), origin: 'mention' }));
+  for (const item of mentioned) taken.add(item.event.id);
+
+  // 3) 问过去：召回到的印象顺着 supersedes 展开来源原文
+  const sources: RecalledForPrompt[] = [];
+  if (options.askingPast === true) {
+    const byId = new Map(events.map((event) => [event.id, event]));
+    for (const impression of primary) {
+      for (const id of impression.event.supersedes ?? []) {
+        if (sources.length >= sourceLimit) break;
+        const source = byId.get(id);
+        if (source === undefined || taken.has(source.id) || source.deletedAt !== null) continue;
+        taken.add(source.id);
+        sources.push({
+          event: source,
+          score: demote(impression, mentioned.length + sources.length),
+          reasons: [{ code: 'rehearsal', label: '玩家在问过去，从印象翻出来源', delta: 0 }],
+          origin: 'source',
+        });
+      }
+      if (sources.length >= sourceLimit) break;
+    }
+  }
+
+  /*
+   * 预算：常规项优先，但给补充项留一块「实际装得下」的位置。
+   * 先在预留上限里试装补充项，装进多少就留多少；常规项用剩下的；最后补充项再按真正剩余的
+   * 空间装一次（常规项没用满时，余下的也归它们）。
+   */
+  const counter = options.counter ?? heuristicTokenCounter;
+  const supplements = [...mentioned, ...sources];
+  const share = Math.max(0, Math.min(1, options.supplementShare ?? DEFAULT_SUPPLEMENT_SHARE));
+  const reserved = selectWithinBudget(supplements, Math.floor(options.budgetTokens * share), counter);
+  const reserve = reserved.reduce((sum, item) => sum + memoryCost(item, counter), 0);
+  const primarySelected = selectWithinBudget(primary, options.budgetTokens - reserve, counter);
+  const used = primarySelected.reduce((sum, item) => sum + memoryCost(item, counter), 0);
+  const supplementSelected = selectWithinBudget(supplements, options.budgetTokens - used, counter);
+
+  return {
+    selected: [...primarySelected, ...supplementSelected],
+    candidates: { recall: primary.length, mention: mentioned.length, source: sources.length },
+  };
 }

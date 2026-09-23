@@ -23,7 +23,8 @@ export function PromptInspector({ prompt }: Props) {
     );
   }
 
-  const { report, messages, blocks } = prompt;
+  const { report, messages, blocks, memoryStats } = prompt;
+  const memoryTotal = memoryStats.recall + memoryStats.mention + memoryStats.source;
 
   return (
     <section className="panel">
@@ -35,6 +36,11 @@ export function PromptInspector({ prompt }: Props) {
         <span>{blocks.length} 个块</span>
         <span>{messages.length} 条消息</span>
       </div>
+      {/* 记忆各是怎么想起来的（顺序 57）：常规召回之外，被取代的原文只在被提到或问过去时回来 */}
+      <p className="hint memory-origins">
+        记忆 {memoryTotal} 条：常规召回 {memoryStats.recall} 条 · 提到才想起 {memoryStats.mention} 条 · 印象来源{' '}
+        {memoryStats.source} 条
+      </p>
 
       {report.stages.length > 0 ? (
         <div className="notice warn">
@@ -58,7 +64,7 @@ export function PromptInspector({ prompt }: Props) {
         <summary>各区块（按装配顺序）</summary>
         <ol className="blocks">
           {blocks.map((block) => (
-            <li key={block.id}>
+            <li key={block.id} title={block.id}>
               <span className="tag">{block.kind}</span>
               <strong>{block.label}</strong>
               <span className="hint">{block.content.length} 字符</span>

@@ -810,7 +810,19 @@ git ls-files | ForEach-Object {
 | `docs/ADMIN-CONSOLE.md` | **新增** | 明确服务器只有密文空间、三种管理形态比较、推荐 SSH 隧道本机网页台、接口与审计边界 |
 | `docs/STATUS.md` / `docs/TASKS.md` | 改 | 文档地图、任务 56 与待拍板方向 |
 
-## 三十六、几点注意
+## 三十六、2026-09-23：顺序 57（被取代原文退出常规召回，保留「提到才想起」）
+
+| 文件 | 新增/修改 | 说明 |
+| --- | --- | --- |
+| `packages/core/src/memory/recall.ts` | 改 | `RecallOptions.superseded`（默认排除被取代原文）、`isSuperseded()`、统一入口 `recallForPrompt()`（常规 / 提到 / 印象来源三条通路，补充项分数压低并在预算里留 ≤1/4 的位置）；`selectWithinBudget` 改成泛型 |
+| `packages/core/src/memory/recall.test.ts` | 改 | 新增 9 条：默认排除、include、提到 ≤2 且排后、只看玩家这一句、问过去展开来源、不重复、预算先丢补充项、近事填满预算时仍留位置 |
+| `packages/core/src/prompt/assemble.ts` | 改 | `PromptMemory.origin`、记忆块按来源标注与提示语、`AssembledPrompt.memoryStats`（只数预算后留下的） |
+| `packages/core/src/prompt/assemble.test.ts` | 改 | 新增 2 条：来源标签与统计；统计只数留下的 |
+| `apps/web/src/App.tsx` | 改 | 召回段改走 `recallForPrompt`（`mentionText` 只传玩家这一句、`askingPast`），`toPromptMemory` 带 `origin` |
+| `apps/web/src/components/PromptInspector.tsx` | 改 | 「记忆 N 条：常规召回 · 提到才想起 · 印象来源」一行；区块列表项悬停显示 id |
+| `docs/EVAL.md` / `docs/TASKS.md` / `docs/STATUS.md` / `docs/MEMORY.md` | 改 | 第四十六节、任务 57 与偏差、接续点；MEMORY 改正「合并任务每 40 条一个桶」 |
+
+## 三十七、几点注意
 
 ---
 

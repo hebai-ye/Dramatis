@@ -1,4 +1,4 @@
-import type { ConversationId, RoomId, SceneId } from '../model/ids.js';
+import type { ConversationId, MessageId, RoomId, SceneId } from '../model/ids.js';
 import type { Message } from '../model/message.js';
 import { localSeqOf } from '../model/message.js';
 import type { Scene } from '../model/room.js';
@@ -245,6 +245,19 @@ function uncoveredBySummary(scene: Scene, inScene: readonly Message[]): Message[
 
   const cursor = scene.recapUpToSeq ?? 0;
   return inScene.filter((message) => localSeqOf(message) > cursor);
+}
+
+/**
+ * 这一场里**已经被场记覆盖**的消息 id（顺序 58 的历史策略要用）。
+ *
+ * 与 `uncoveredBySummary` 是同一把尺子的两面：游标之前的算覆盖。没有场记文字时
+ * 一条都不算——游标只说明「摘到哪」，能替原文站台的是那段文字本身。
+ * `inScene` 要传这一场的**全部**消息（别先按视角裁），否则消息 id 游标可能找不到。
+ */
+export function coveredBySummary(scene: Scene, inScene: readonly Message[]): Set<MessageId> {
+  if ((scene.recap ?? '').trim() === '') return new Set();
+  const uncovered = new Set(uncoveredBySummary(scene, inScene).map((message) => message.id));
+  return new Set(inScene.filter((message) => !uncovered.has(message.id)).map((message) => message.id));
 }
 
 /** 轮数或 token 谁先到阈值就压一次。没有新内容当然不压。 */

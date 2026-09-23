@@ -70,15 +70,20 @@ export function applyBudget(blocks: PromptBlock[], options: BudgetOptions): Budg
   //
   // 前情提要与召回记忆都是压缩过的东西，所以同一级里让位；但它是「叙述的连续性」，
   // 比零散条目更值钱，所以排在记忆之后（丢到第 3 级才开始动它）。
+  // 提到才取回的远处原文（顺序 58）与附件展开同级：都是「被提起才带的补充」。
   if (used() > maxTokens) {
     const memories = current
       .filter(
         (block) =>
-          (block.kind === 'memory' || block.kind === 'attachment' || block.kind === 'chapter') && block.droppable,
+          (block.kind === 'memory' ||
+            block.kind === 'attachment' ||
+            block.kind === 'history-recall' ||
+            block.kind === 'chapter') &&
+          block.droppable,
       )
       .sort((a, b) => {
         const rank = (block: PromptBlock): number =>
-          block.kind === 'chapter' ? 2 : block.kind === 'attachment' ? 1 : 0;
+          block.kind === 'chapter' ? 2 : block.kind === 'attachment' || block.kind === 'history-recall' ? 1 : 0;
         return rank(a) - rank(b) || (a.score ?? 0) - (b.score ?? 0);
       });
     for (const block of memories) {

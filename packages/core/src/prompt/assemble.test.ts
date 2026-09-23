@@ -424,6 +424,186 @@ describe('assemblePrompt / 记忆的来源（顺序 57）', () => {
   });
 });
 
+describe('assemblePrompt / 历史按场记覆盖收起（顺序 58）', () => {
+  /** 两场戏：第一场已结束（场记覆盖全部 30 条），第二场是当前场（场记覆盖前 10 条，共 20 条）。 */
+  function twoScenes() {
+    const base = fixtures();
+    const ended: Scene = {
+      ...base.scene,
+      id: sceneId(newId()),
+      title: '码头的黄昏',
+      location: '码头',
+      recap: '玩家在码头追问铜钥匙的下落，Alice 说钥匙在柜子第三层。',
+      endedAt: nowIso(),
+    };
+    const current: Scene = { ...base.scene, title: '货栈后院', location: '货栈后院', recap: '玩家又问起账本。' };
+
+    const make = (sceneValue: Scene, count: number, startSeq: number, tag: string) =>
+      Array.from({ length: count }, (_, index) => {
+        const player = index % 2 === 0;
+        const seq = startSeq + index;
+        return {
+          ...(player
+            ? createPlayerMessage({
+                roomId: base.room.id,
+                sceneId: sceneValue.id,
+                turnId: `${tag}-${String(Math.floor(index / 2))}`,
+                speakerName: base.room.playerName,
+                content: seq === 3 ? '那把断了的铜钥匙还在你那儿吗？' : `${tag}玩家第 ${String(seq)} 句`,
+                audience: [base.instance.id],
+              })
+            : createCharacterMessage({
+                roomId: base.room.id,
+                sceneId: sceneValue.id,
+                turnId: `${tag}-${String(Math.floor(index / 2))}`,
+                speakerInstanceId: base.instance.id,
+                speakerName: 'Alice',
+                content: seq === 4 ? '「铜钥匙在柜子第三层。」' : `${tag}角色第 ${String(seq)} 句`,
+                audience: [base.instance.id],
+              })),
+          localSeq: seq,
+        };
+      });
+
+    const endedLines = make(ended, 30, 1, '甲');
+    const currentLines = make(current, 20, 31, '乙');
+    const endedWithCursor: Scene = { ...ended, recapUpToMessageId: endedLines[29]?.id ?? null };
+    const currentWithCursor: Scene = { ...current, recapUpToMessageId: currentLines[9]?.id ?? null };
+    return {
+      ...base,
+      ended: endedWithCursor,
+      current: currentWithCursor,
+      history: [...endedLines, ...currentLines],
+    };
+  }
+
+  it('已被场记覆盖且在近窗外的原文收起；未覆盖的与近窗内的照带', () => {
+    const { card, instance, room, ended, current, history } = twoScenes();
+    const prompt = assemblePrompt({
+      card,
+      instance,
+      room,
+      scene: current,
+      scenes: [ended, current],
+      history,
+      playerInput: '今晚喝点酒？',
+      historyPolicy: { mode: 'recap-aware', nearWindow: 8 },
+      budget: baseBudget,
+    });
+
+    // 50 条可见：第一场 30 条 + 当前场前 10 条被覆盖；近窗 8 条（41–50）；41–50 里 41、42 本就没被覆盖
+    expect(prompt.historyStats).toEqual({ total: 50, visible: 50, collapsed: 40, recalled: 0 });
+    const historyMessages = prompt.messages.filter((message) => message.role !== 'system').slice(0, -1);
+    expect(historyMessages).toHaveLength(10);
+    expect(historyMessages[0]?.content).toBe('乙玩家第 41 句');
+    // 收起的那段由场记代表：当前场的在场景块里，已结束的在「前几场」里
+    const system = prompt.messages[0]?.content ?? '';
+    expect(system).toContain('本场已经发生：玩家又问起账本。');
+    expect(system).toContain('### 前几场');
+    expect(system).toContain('码头的黄昏（码头）：玩家在码头追问铜钥匙的下落');
+    expect(system).not.toContain('提到的旧对话原文');
+  });
+
+  it('玩家这一句提到收起段里的词，就取回最多三条原文，自成一节', () => {
+    const { card, instance, room, ended, current, history } = twoScenes();
+    const prompt = assemblePrompt({
+      card,
+      instance,
+      room,
+      scene: current,
+      scenes: [ended, current],
+      history,
+      playerInput: '铜钥匙呢？',
+      historyPolicy: { mode: 'recap-aware', nearWindow: 8 },
+      budget: baseBudget,
+    });
+
+    expect(prompt.historyStats.recalled).toBe(2);
+    const system = prompt.messages[0]?.content ?? '';
+    expect(system).toContain('### 提到的旧对话原文');
+    expect(system).toContain('旅人（玩家）：那把断了的铜钥匙还在你那儿吗？');
+    expect(system).toContain('Alice：「铜钥匙在柜子第三层。」');
+    expect(prompt.blocks.some((block) => block.kind === 'history-recall')).toBe(true);
+  });
+
+  it('同一回合第二名角色发言时 playerInput 为空，靠 mention 传玩家这一句', () => {
+    const { card, instance, room, ended, current, history } = twoScenes();
+    const prompt = assemblePrompt({
+      card,
+      instance,
+      room,
+      scene: current,
+      scenes: [ended, current],
+      history,
+      playerInput: '',
+      mention: { text: '铜钥匙呢？' },
+      historyPolicy: { mode: 'recap-aware', nearWindow: 8 },
+      budget: baseBudget,
+    });
+    expect(prompt.historyStats.recalled).toBe(2);
+  });
+
+  it('已进章节的场景不再重复进「前几场」', () => {
+    const { card, instance, room, ended, current, history } = twoScenes();
+    const prompt = assemblePrompt({
+      card,
+      instance,
+      room,
+      scene: current,
+      scenes: [ended, current],
+      history,
+      playerInput: '继续',
+      chapters: [
+        {
+          id: 'chapter-1',
+          roomId: room.id,
+          conversationId: null,
+          title: '第一章',
+          sceneIds: [ended.id],
+          summary: '码头那一段。',
+          keyFacts: [],
+          createdAt: nowIso(),
+          updatedAt: nowIso(),
+          deletedAt: null,
+        },
+      ],
+      budget: baseBudget,
+    });
+    const system = prompt.messages[0]?.content ?? '';
+    expect(system).toContain('前情提要');
+    expect(system).not.toContain('### 前几场');
+  });
+
+  it('full 模式原文全带，与老行为一致；缺省策略是 recap-aware / 40', () => {
+    const { card, instance, room, ended, current, history } = twoScenes();
+    const full = assemblePrompt({
+      card,
+      instance,
+      room,
+      scene: current,
+      scenes: [ended, current],
+      history,
+      playerInput: '继续',
+      modes: { playerFirst: false, silent: false, historyMode: 'full' },
+      budget: baseBudget,
+    });
+    expect(full.historyStats).toEqual({ total: 50, visible: 50, collapsed: 0, recalled: 0 });
+
+    const defaults = assemblePrompt({
+      card,
+      instance,
+      room,
+      scene: current,
+      scenes: [ended, current],
+      history,
+      playerInput: '继续',
+      budget: baseBudget,
+    });
+    // 50 条里被覆盖 40 条，近窗 40 条保住其中 30 条：只收起最早的 10 条
+    expect(defaults.historyStats).toEqual({ total: 50, visible: 50, collapsed: 10, recalled: 0 });
+  });
+});
+
 describe('assemblePrompt / 多角色场景', () => {
   it('场景块带上自动整理的本场场记（P1-5 的场景层）', () => {
     const { card, instance, room, scene } = fixtures();
@@ -612,7 +792,7 @@ describe('assemblePrompt / 多角色场景', () => {
     const rendered = prompt.messages.map((message) => message.content).join('\n');
     expect(rendered).toContain('两人都在时说的');
     expect(rendered).not.toContain('只有 Alice 在场时说的');
-    expect(prompt.historyStats).toEqual({ total: 2, visible: 1 });
+    expect(prompt.historyStats).toEqual({ total: 2, visible: 1, collapsed: 0, recalled: 0 });
   });
 
   it('会话级模式会落成 prompt 里的指令，而不只是界面上的开关', () => {

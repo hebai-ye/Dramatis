@@ -23,7 +23,7 @@ export function PromptInspector({ prompt }: Props) {
     );
   }
 
-  const { report, messages, blocks, memoryStats } = prompt;
+  const { report, messages, blocks, memoryStats, historyStats } = prompt;
   const memoryTotal = memoryStats.recall + memoryStats.mention + memoryStats.source;
 
   return (
@@ -36,6 +36,11 @@ export function PromptInspector({ prompt }: Props) {
         <span>{blocks.length} 个块</span>
         <span>{messages.length} 条消息</span>
       </div>
+      {/* 历史怎么带的（顺序 58）：这个角色看得见多少、场记覆盖后收起多少、提到又取回几条 */}
+      <p className="hint history-stats">
+        历史 {historyStats.total} 条：可见 {historyStats.visible} 条 · 场记覆盖后收起 {historyStats.collapsed} 条 ·
+        提到取回 {historyStats.recalled} 条
+      </p>
       {/* 记忆各是怎么想起来的（顺序 57）：常规召回之外，被取代的原文只在被提到或问过去时回来 */}
       <p className="hint memory-origins">
         记忆 {memoryTotal} 条：常规召回 {memoryStats.recall} 条 · 提到才想起 {memoryStats.mention} 条 · 印象来源{' '}

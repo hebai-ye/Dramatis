@@ -3,6 +3,8 @@ import {
   type CharacterInstance,
   type Conversation,
   type ConversationModes,
+  DEFAULT_HISTORY_NEAR_WINDOW,
+  historyPolicyOf,
   type InstanceId,
   type Message,
   type MessageId,
@@ -52,7 +54,8 @@ interface Props {
   onRegenerate: (id: MessageId) => void;
   onEdit: (id: MessageId, content: string) => void;
   onDelete: (id: MessageId) => void;
-  onToggleMode: (key: keyof ConversationModes, value: boolean) => void;
+  /** 改对话模式：传要改的那几个字段（对话级，落 `ConversationModes`）。 */
+  onChangeModes: (patch: Partial<ConversationModes>) => void;
   onOpenScene: () => void;
   /** 从右栏把角色拖进来：进入当前场景。 */
   onDropInstance: (id: InstanceId) => void;
@@ -66,13 +69,41 @@ export interface FocusRequest {
   seq: number;
 }
 
-const MODE_LABELS: Array<{ key: keyof ConversationModes; label: string; note: string }> = [
-  { key: 'playerFirst', label: '角色等我先说', note: '所有角色都必须在你发言之后才能接话' },
-  { key: 'silent', label: '静默模式', note: '你连续说话期间，其他角色只能做动作，不能开口' },
+const MODE_OPTIONS: Array<{
+  key: string;
+  label: string;
+  note: string;
+  read: (modes: ConversationModes) => boolean;
+  write: (checked: boolean) => Partial<ConversationModes>;
+}> = [
+  {
+    key: 'playerFirst',
+    label: '角色等我先说',
+    note: '所有角色都必须在你发言之后才能接话',
+    read: (modes) => modes.playerFirst === true,
+    write: (checked) => ({ playerFirst: checked }),
+  },
+  {
+    key: 'silent',
+    label: '静默模式',
+    note: '你连续说话期间，其他角色只能做动作，不能开口',
+    read: (modes) => modes.silent === true,
+    write: (checked) => ({ silent: checked }),
+  },
   {
     key: 'intentFirst',
     label: '意图先行',
     note: '发言前先花一次便宜调用判断「这一轮谁开口、他想做什么」；关掉可以省一次调用',
+    // 老数据里没有 intentFirst 这个字段，缺省视为开
+    read: (modes) => modes.intentFirst !== false,
+    write: (checked) => ({ intentFirst: checked }),
+  },
+  {
+    key: 'historyMode',
+    label: '场记覆盖后收起远处原文',
+    note: `已被场记压过、又不在最近 ${String(DEFAULT_HISTORY_NEAR_WINDOW)} 条里的原文不再逐条带给模型，由场记、章节与记忆代表；你提到关键词时会取回原文。关掉就是原文全带（超出窗口才从最旧的丢）`,
+    read: (modes) => historyPolicyOf(modes).mode === 'recap-aware',
+    write: (checked) => ({ historyMode: checked ? 'recap-aware' : 'full' }),
   },
 ];
 
@@ -161,7 +192,7 @@ export function MainChat({
   onRegenerate,
   onEdit,
   onDelete,
-  onToggleMode,
+  onChangeModes,
   onOpenScene,
   onDropInstance,
   onReassign,
@@ -728,18 +759,13 @@ export function MainChat({
               {modeMenuOpen ? (
                 <div className="mode-menu">
                   <p className="hint">对话模式（只影响这条对话）</p>
-                  {MODE_LABELS.map((mode) => (
+                  {MODE_OPTIONS.map((mode) => (
                     <label key={mode.key} className="mode-option">
                       <input
                         type="checkbox"
-                        // 老数据里没有 intentFirst 这个字段，缺省视为开
-                        checked={
-                          mode.key === 'intentFirst'
-                            ? conversation.modes.intentFirst !== false
-                            : conversation.modes[mode.key] === true
-                        }
+                        checked={mode.read(conversation.modes)}
                         disabled={archived}
-                        onChange={(event) => onToggleMode(mode.key, event.target.checked)}
+                        onChange={(event) => onChangeModes(mode.write(event.target.checked))}
                       />
                       <span>
                         <strong>{mode.label}</strong>

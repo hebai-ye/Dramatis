@@ -356,7 +356,12 @@ export function useBackgroundWorker(options: {
       // **触发判断只在这一处**：界面只负责「这一轮结算完了，来看一眼」，
       // 攒够没攒够由拿到最新数据的人判断。放在界面侧会让过期的场景对象
       // 重复触发（真机第一轮就出现过两次摘要调用）。
-      if (!shouldSummarizeScene(scene, messages)) return { called: false, usage: null };
+      //
+      // 已结束的场景例外（顺序 58）：换场时排的那趟「收尾」原来也按 8 轮 / 2400 token 判，
+      // 于是每一场最后的几轮永远进不了场记；历史按场记覆盖收起之后，它们会永久留在提示词里。
+      // 结束了、还有没压的尾巴，就压——一场只多一次小调用。
+      const closedWithTail = scene.endedAt !== null && pendingSummary(scene, messages).messages.length > 0;
+      if (!closedWithTail && !shouldSummarizeScene(scene, messages)) return { called: false, usage: null };
       const pending = pendingSummary(scene, messages);
 
       const room = await db.repository.getRoom(payload.roomId);

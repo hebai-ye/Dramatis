@@ -822,7 +822,25 @@ git ls-files | ForEach-Object {
 | `apps/web/src/components/PromptInspector.tsx` | 改 | 「记忆 N 条：常规召回 · 提到才想起 · 印象来源」一行；区块列表项悬停显示 id |
 | `docs/EVAL.md` / `docs/TASKS.md` / `docs/STATUS.md` / `docs/MEMORY.md` | 改 | 第四十六节、任务 57 与偏差、接续点；MEMORY 改正「合并任务每 40 条一个桶」 |
 
-## 三十七、几点注意
+## 三十七、2026-09-23：顺序 58（提示词按场记覆盖收起远处原文）
+
+| 文件 | 新增/修改 | 说明 |
+| --- | --- | --- |
+| `packages/core/src/model/conversation.ts` | 改 | `ConversationModes.historyMode / historyNearWindow`、`HistoryPolicy`、`historyPolicyOf()`（缺省 recap-aware / 40） |
+| `packages/core/src/memory/summary.ts` | 改 | `coveredBySummary()`：一场里已被场记覆盖的消息 id |
+| `packages/core/src/prompt/history.ts` | 改 | `partitionHistory()`（未覆盖全带 / 近窗内全带 / 其余收起）、`expandHistoryOnMention()`（提到才取回 ≤3 条） |
+| `packages/core/src/prompt/history.test.ts` | **新增** | 8 条：full 模式、覆盖 + 近窗、无场记文字不收、消息 id 游标与多场、按可见历史计近窗；取回的排序 / 上限 / 不命中 |
+| `packages/core/src/prompt/assemble.ts` | 改 | `scenes / historyPolicy / mention` 入参；「前几场」块（已结束未进章节的场记）；「提到的旧对话原文」块；`historyStats` 扩成 total / visible / collapsed / recalled |
+| `packages/core/src/prompt/assemble.test.ts` | 改 | 新增 5 条（收起与近窗、提到取回、mention 单独传、已进章节不重复、full 与缺省策略） |
+| `packages/core/src/prompt/types.ts` / `budget.ts` | 改 | 块类型加 `history-recall`，预算第 2 级与附件展开同级 |
+| `apps/web/src/lib/session.ts` | 改 | `scenes`：当前对话的全部场景（含已结束） |
+| `apps/web/src/lib/worker.ts` | 改 | 已结束场景有没压的尾巴就压场记（不再按门槛判） |
+| `apps/web/src/App.tsx` | 改 | 装配传 `scenes / historyPolicy / mention`；`mentionText` 单独传玩家这一句；`handleChangeModes` |
+| `apps/web/src/components/MainChat.tsx` | 改 | 对话模式菜单加「场记覆盖后收起远处原文」；`onChangeModes(patch)` |
+| `apps/web/src/components/PromptInspector.tsx` | 改 | 历史账一行：可见 / 收起 / 取回 |
+| `docs/EVAL.md` / `docs/TASKS.md` / `docs/STATUS.md` / `docs/MEMORY.md` | 改 | 第四十七节、任务 58 与偏差、接续点；MEMORY 第八节成本按新曲线修订 |
+
+## 三十八、几点注意
 
 ---
 

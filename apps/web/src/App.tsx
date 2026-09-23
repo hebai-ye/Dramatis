@@ -18,6 +18,7 @@ import {
   createTurnId,
   evaluateBudget,
   hasSpeech,
+  historyPolicyOf,
   type InstanceId,
   importCardFromJson,
   importCardFromPng,
@@ -315,6 +316,11 @@ export function App() {
       history: Message[];
       playerInput: string;
       memories?: readonly PromptMemory[];
+      /**
+       * 判「提到」用的玩家这一句（顺序 57/58）：同一回合第二名角色发言时 `playerInput` 为空
+       * （玩家的话已经在历史里），但「提到什么」仍然要按玩家这一句判。缺省用 `playerInput`。
+       */
+      mentionText?: string;
       showStream: boolean;
       signal: AbortSignal;
       /** 导演调用给出的这一轮打算（P1-6）；没有就退回让模型自己判断。 */
@@ -353,6 +359,7 @@ export function App() {
       // 推理流也算「模型自己的盘算」：它不肯按格式写意图时，这是唯一真实的计划来源
       let reasoning = '';
       let assembled: AssembledPrompt | null = null;
+      const mentionText = options.mentionText ?? options.playerInput;
       for await (const event of runTurn(
         {
           card: options.card,
@@ -372,6 +379,14 @@ export function App() {
           chapters: session.chapters,
           attachmentSources: { memories: session.memories, chapters: session.allChapters },
           modes: conversation?.modes,
+          /*
+           * 历史按场记覆盖收起（顺序 58）：这条对话的全部场景用来判断哪些原文已被场记覆盖、
+           * 带上还没进章节的前几场场记；策略落在对话模式里（缺省 recap-aware / 40）；
+           * 玩家这一句提到收起段里的什么，装配会把那几条原文取回来。
+           */
+          scenes: session.scenes,
+          historyPolicy: historyPolicyOf(conversation?.modes),
+          mention: { text: mentionText, askingPast: asksAboutPast(mentionText) },
           ...(options.intent === undefined || options.intent === null
             ? {}
             : { intent: options.intent.intent, intentMode: options.intent.mode as 'reply' }),
@@ -409,6 +424,7 @@ export function App() {
       session.allChapters,
       session.chapters,
       session.memories,
+      session.scenes,
       session.worldBooks,
       world,
     ],
@@ -739,6 +755,8 @@ export function App() {
             card: speakerCard,
             history: first ? history : continuedHistory,
             playerInput: first ? text : '',
+            // 第二名角色发言时 playerInput 为空，但「提到了什么」仍按玩家这一句判
+            mentionText: text,
             memories: recalled.map(toPromptMemory),
             showStream: true,
             signal: controller.signal,
@@ -1364,10 +1382,10 @@ export function App() {
     }
   }, [bridge]);
 
-  const handleToggleMode = useCallback(
-    (key: keyof ConversationModes, value: boolean) => {
+  const handleChangeModes = useCallback(
+    (patch: Partial<ConversationModes>) => {
       if (!conversation) return;
-      void session.updateConversation({ modes: { ...conversation.modes, [key]: value } });
+      void session.updateConversation({ modes: { ...conversation.modes, ...patch } });
     },
     [conversation, session],
   );
@@ -1614,7 +1632,7 @@ export function App() {
                   onRegenerate={(id) => void handleRegenerate(id)}
                   onEdit={(id, content) => void session.updateMessage(id, { content })}
                   onDelete={(id) => void handleDeleteMessage(id)}
-                  onToggleMode={handleToggleMode}
+                  onChangeModes={handleChangeModes}
                   onOpenScene={() => setSceneOpen(true)}
                   onDropInstance={(id) => void session.setPresence(id, 'onstage')}
                   onReassign={(id, instanceId) => void handleReassignMessage(id, instanceId)}

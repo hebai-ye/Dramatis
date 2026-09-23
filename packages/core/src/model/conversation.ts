@@ -38,6 +38,43 @@ export interface ConversationModes {
    * 想省调用的用户可以在这里关掉（额外调用从 2 次降到 1 次）。
    */
   intentFirst?: boolean;
+  /**
+   * 历史策略（顺序 58）：远处**已被场记覆盖**的原文要不要收起。
+   *
+   * 缺省 `recap-aware`——老数据没有这个字段，缺省即新默认，不需要迁移。
+   * `full` 是老行为：原文全带，超窗口时由预算守卫从最旧的丢。
+   */
+  historyMode?: HistoryMode;
+  /** 近窗：就算场记已覆盖也保留原文的最近条数。缺省 40。 */
+  historyNearWindow?: number;
+}
+
+export type HistoryMode = 'full' | 'recap-aware';
+
+/**
+ * 装配历史时用的策略（顺序 58）。
+ *
+ * 不是固定条数砍历史：**未被场记覆盖的原文全带**；已被覆盖但在近窗内的也全带；
+ * 只有「已被覆盖、又在近窗之外」的才收起，由场记、章节、记忆代表，提到关键词时按需取回。
+ */
+export interface HistoryPolicy {
+  mode: HistoryMode;
+  /** 已被场记覆盖仍保留原文的最近条数（按这个角色看得见的历史数）。 */
+  nearWindow: number;
+}
+
+export const DEFAULT_HISTORY_NEAR_WINDOW = 40;
+
+/** 从对话模式里读出历史策略；缺省 `recap-aware / 40`，不合法的近窗退回默认。 */
+export function historyPolicyOf(modes: ConversationModes | undefined): HistoryPolicy {
+  const nearWindow = modes?.historyNearWindow;
+  return {
+    mode: modes?.historyMode === 'full' ? 'full' : 'recap-aware',
+    nearWindow:
+      nearWindow !== undefined && Number.isFinite(nearWindow) && nearWindow >= 0
+        ? Math.floor(nearWindow)
+        : DEFAULT_HISTORY_NEAR_WINDOW,
+  };
 }
 
 export function defaultConversationModes(): ConversationModes {

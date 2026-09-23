@@ -40,6 +40,8 @@ export type PromptBlockKind =
   | 'attachment'
   /** 分层摘要滚出来的前情（P1-5）：自成一节，不与召回记忆合并。 */
   | 'chapter'
+  /** 玩家提到关键词时，从收起的远处原文里取回的几条（顺序 58）。 */
+  | 'history-recall'
   | 'scene'
   | 'history'
   | 'instruction'

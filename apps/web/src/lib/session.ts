@@ -142,6 +142,8 @@ export interface SessionApi {
   /** 当前打开的对话。 */
   conversation: Conversation | null;
   scene: Scene | null;
+  /** 当前对话的全部场景（含已结束的），按开始时间正序；装配历史时判断场记覆盖要用（顺序 58）。 */
+  scenes: Scene[];
   /** 当前对话的消息；副对话用它渲染管理员工作流。 */
   messages: Message[];
   instances: CharacterInstance[];
@@ -1378,6 +1380,14 @@ export function useSession(db: DramatisDb | null): SessionApi {
       ? []
       : snapshot.messages.filter((message) => message.conversationId === conversation.id);
 
+  // 这条对话的场景线（含已结束的）：历史按场记覆盖收起、「前几场」场记都要看它
+  const scenes =
+    snapshot === null || conversation === null
+      ? []
+      : snapshot.scenes
+          .filter((item) => item.conversationId === conversation.id)
+          .sort((left, right) => left.createdAt.localeCompare(right.createdAt));
+
   return {
     ready,
     error,
@@ -1388,6 +1398,7 @@ export function useSession(db: DramatisDb | null): SessionApi {
     archivedConversations: snapshot === null ? [] : snapshot.conversations.filter((item) => item.archivedAt !== null),
     conversation,
     scene,
+    scenes,
     messages,
     instances: snapshot?.instances ?? [],
     cards: snapshot?.cards ?? [],

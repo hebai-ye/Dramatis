@@ -8,7 +8,7 @@ import {
 } from '../memory/attachment.js';
 import type { ChapterSummary } from '../memory/summary.js';
 import type { Card } from '../model/card.js';
-import type { ConversationModes } from '../model/conversation.js';
+import { type ConversationModes, type HistoryPolicy, historyPolicyOf } from '../model/conversation.js';
 import { type InstanceId, PLAYER } from '../model/ids.js';
 import type { Affect, CharacterInstance, TraitAxis } from '../model/instance.js';
 import type { Message } from '../model/message.js';
@@ -17,7 +17,7 @@ import { INTENT_FORMAT_RULE } from '../render/intent.js';
 import { ACTION_FORMAT_EXAMPLES, ACTION_FORMAT_RULE, normalizeCardExample } from '../render/segments.js';
 import { heuristicTokenCounter, type TokenCounter } from '../token/estimate.js';
 import { applyBudget } from './budget.js';
-import { selectHistoryFor } from './history.js';
+import { expandHistoryOnMention, partitionHistory, selectHistoryFor } from './history.js';
 import type { BudgetReport, ChatMessage, PromptBlock } from './types.js';
 
 /**
@@ -59,6 +59,19 @@ export interface AssembleInput {
   chapters?: readonly ChapterSummary[];
   /** 场景内的角色，用于让模型知道还有谁在场（P0-6）。 */
   cast?: readonly CharacterInstance[];
+  /**
+   * 这条对话的全部场景（含已结束的），顺序 58 要用：
+   * ① 判断哪些原文已被各自场景的场记覆盖；② 把「已结束但还没进章节」的场记带上。
+   * 缺省只看 `scene` 一个。
+   */
+  scenes?: readonly Scene[];
+  /** 历史策略（顺序 58）；缺省从 `modes` 读，再缺省 `recap-aware / 40`。 */
+  historyPolicy?: HistoryPolicy;
+  /**
+   * 判断「提到」用的文本：**只能是玩家这一句**，不含历史（与顺序 57 同一口径）。
+   * 缺省用 `playerInput`；同一回合第二名角色发言时 `playerInput` 为空，调用方要单独传。
+   */
+  mention?: { text: string; askingPast?: boolean };
   /** 附件索引里那些 id 对应的原文；没有时只注入索引，不展开正文。 */
   attachmentSources?: AttachmentSourceLookup;
   /** 会话级对话模式：静默、是否必须等主角先开口（LAYOUT「输入区 · 加号」）。 */
@@ -96,8 +109,11 @@ export interface AssembledPrompt {
   messages: ChatMessage[];
   report: BudgetReport;
   tokenEstimate: number;
-  /** 本次装配按视角裁剪了多少历史，供检查器展示（P0-5）。 */
-  historyStats: { total: number; visible: number };
+  /**
+   * 本次装配的历史账（P0-5 / 顺序 58）：`total` 这条对话有多少条，`visible` 这个角色看得见多少条，
+   * `collapsed` 其中被场记覆盖而收起了多少条，`recalled` 又因玩家提到而取回了几条。
+   */
+  historyStats: { total: number; visible: number; collapsed: number; recalled: number };
   /** 带进来的记忆各是怎么想起来的（顺序 57），供检查器展示。 */
   memoryStats: { recall: number; mention: number; source: number };
 }
@@ -445,6 +461,71 @@ function buildAttachmentBlocks(input: AssembleInput): PromptBlock[] {
 const CHAPTER_BLOCK_LIMIT = 3;
 
 /**
+ * 前几场的场记（顺序 58 顺带补的漏洞）。
+ *
+ * 章节要攒够 3 场才滚，所以**已结束、但还没进章节**的那几场，它们的场记在原文滚出
+ * 窗口之后没有任何载体——历史收起之后这段戏就凭空消失了。这里把它们带上，
+ * 优先级同章节块；已经进了章节的不再重复。
+ */
+function buildPastScenesBlock(
+  scenes: readonly Scene[],
+  currentSceneId: string | null,
+  chapters: readonly ChapterSummary[],
+): PromptBlock | null {
+  const covered = new Set(chapters.flatMap((chapter) => chapter.sceneIds));
+  const past = scenes
+    .filter(
+      (scene) =>
+        scene.id !== currentSceneId &&
+        scene.endedAt !== null &&
+        scene.deletedAt === null &&
+        !covered.has(scene.id) &&
+        (scene.recap ?? '').trim() !== '',
+    )
+    .sort((left, right) => left.createdAt.localeCompare(right.createdAt));
+  if (past.length === 0) return null;
+
+  const body = past
+    .map((scene) => {
+      const where = scene.location.trim() === '' ? '' : `（${scene.location.trim()}）`;
+      return `${scene.title.trim() === '' ? '前一场' : scene.title.trim()}${where}：${(scene.recap ?? '').trim()}`;
+    })
+    .join('\n');
+
+  return {
+    id: 'scene-recaps',
+    kind: 'chapter',
+    label: '前几场',
+    content: body,
+    priority: PRIORITY.history + 10,
+    droppable: true,
+  };
+}
+
+/**
+ * 玩家提到关键词时，从收起的远处原文里取回的几条（顺序 58）。
+ *
+ * 自成一节而不是插回对话记录：它们是「翻出来的旧话」，按原位置插回去会让记录
+ * 看起来缺了一大段；集中列出并标明是旧对话，模型知道该怎么用。
+ */
+function buildHistoryRecallBlock(messages: readonly Message[]): PromptBlock | null {
+  if (messages.length === 0) return null;
+  const lines = messages.map((message) => {
+    const name = message.role === 'player' ? `${message.speakerName}（玩家）` : message.speakerName;
+    return `- ${name}：${message.content.replace(/\s*\n\s*/g, ' ')}`;
+  });
+  return {
+    id: 'history-recall',
+    kind: 'history-recall',
+    label: '提到的旧对话原文',
+    content: ['【这几句是更早的对话原文，因为被提起才翻出来】', ...lines].join('\n'),
+    priority: PRIORITY.history + 180,
+    droppable: true,
+    score: 1.2,
+  };
+}
+
+/**
  * 章节块（P1-5 的第三层）。
  *
  * 前面的戏早就不在窗口里了，靠零散的记忆条目召回是**抽查**；这一块给的是
@@ -587,6 +668,10 @@ export function assemblePrompt(input: AssembleInput): AssembledPrompt {
   const chapterBlock = buildChapterBlock(input.chapters ?? []);
   if (chapterBlock) blocks.push(chapterBlock);
 
+  const scenes = input.scenes ?? (input.scene === null ? [] : [input.scene]);
+  const pastScenesBlock = buildPastScenesBlock(scenes, input.scene?.id ?? null, input.chapters ?? []);
+  if (pastScenesBlock) blocks.push(pastScenesBlock);
+
   const cast = input.cast ?? [];
   const sceneBlock = buildSceneBlock(input.scene, cast, input.instance.id);
   if (sceneBlock) blocks.push(sceneBlock);
@@ -598,18 +683,26 @@ export function assemblePrompt(input: AssembleInput): AssembledPrompt {
   // 按视角裁剪：角色看不到自己不在场时发生的事（P0-5）
   const visibleHistory = selectHistoryFor(input.history, input.instance.id);
   /*
-   * 历史上限（2026-09-21 改过）。
+   * 历史怎么带（2026-09-21 放开上限，2026-09-23 顺序 58 改成按场记覆盖收起）。
    *
-   * 原来是 `?? 40`——**它才是真正的约束**：窗口调到多大都只带最近 40 条消息，
-   * 于是长对话里「40 条以前的事」只能靠记忆。用户要求「800 条用户输入」之后，
-   * 这里必须放开，让**窗口**去当那个约束：
+   * 原来是 `?? 40` 写死只带最近 40 条——窗口调多大都没用；放开成 3000 条之后
+   * 提示词随对话线性长（60 轮 5.9 千字、每轮几万 token）。用户要求**质量优先于省 token**，
+   * 所以不按固定条数砍，而是：
    *
-   * - 默认给 3000 条消息（≈1500 轮）的上限，实际上够不着；
-   * - 真正的裁剪交给 `applyBudget`：超窗口时**从最旧的历史开始丢**，
-   *   丢到装得下为止（见 budget.ts 第 1 级）；
-   * - 想手动收窄的人仍然可以传 `historyLimit`（测试里就是这么用的）。
+   * - 未被场记覆盖的原文全带；已被覆盖但在近窗内的也全带；
+   * - 已被覆盖且在近窗外的收起，由场记 / 前几场 / 章节 / 记忆代表；
+   * - 玩家这一句提到了收起段里的什么，就取回最多三条原文（下面的「提到的旧对话原文」块）；
+   * - 真正超窗口时仍由 `applyBudget` 从最旧的历史开始丢（budget.ts 第 1 级）。
+   *
+   * `historyLimit` 保留给测试与想手动收窄的人。
    */
-  blocks.push(...buildHistoryBlocks(visibleHistory, options.historyLimit ?? 3000, prefixSpeaker));
+  const policy = input.historyPolicy ?? historyPolicyOf(input.modes);
+  const partition = partitionHistory(visibleHistory, { messages: input.history, scenes, policy });
+  const mentionText = input.mention?.text ?? input.playerInput;
+  const recalledHistory = expandHistoryOnMention(partition.collapsed, mentionText);
+  const historyRecallBlock = buildHistoryRecallBlock(recalledHistory);
+  if (historyRecallBlock) blocks.push(historyRecallBlock);
+  blocks.push(...buildHistoryBlocks(partition.kept, options.historyLimit ?? 3000, prefixSpeaker));
 
   // 让发言者知道场上还有谁，否则多角色场景里模型会替别人说话
   const otherSpeakers = cast
@@ -688,7 +781,12 @@ export function assemblePrompt(input: AssembleInput): AssembledPrompt {
     messages: toChatMessages(kept),
     report,
     tokenEstimate: report.usedTokens,
-    historyStats: { total: input.history.length, visible: visibleHistory.length },
+    historyStats: {
+      total: input.history.length,
+      visible: visibleHistory.length,
+      collapsed: partition.collapsed.length,
+      recalled: recalledHistory.length,
+    },
     memoryStats,
   };
 }

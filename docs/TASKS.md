@@ -8,7 +8,8 @@
 > 本文是工作清单（条目可勾选、可拆、做完就删）。每条都尽量带上**来源**——
 > 是路线图里的既定任务，还是真实使用/真实模型验证里冒出来的问题。
 >
-> 最后更新：2026-09-21 深夜（顺序 17/18/26 一批做完；总排期见下一节）
+> 最后更新：2026-09-23（全量代码审阅后重排总表：顺序 57–75，见第〇节「2026-09-23 总排期」；
+> 它是**当前有效**的处理顺序，下面各个带日期的小节是历史排期，只作上下文）
 
 ## 图例
 
@@ -39,7 +40,151 @@
 | **P3** | 值得做但不急：内容深度与流程打磨 | 副对话不卡；管理员与记忆质量到位 |
 | **P4** | 等条件：备案、邀请、安卓真机、可选参考实现 | 条件一到就能开工 |
 
-### 真实处理顺序（我打算这么走，一行一个动作）
+### 2026-09-23 总排期（全量代码审阅后重排，当前有效）
+
+来源：2026-09-23 把内核、前端、同步服务端与工具链全部读了一遍（记 `[审]`）。
+用户拍板的三条原则，决定了下面的顺序与做法：
+
+1. **先做 57 / 58 / 59**（记忆召回池、提示词膨胀、流式重渲染）——它们直接影响「记忆与长对话」这个核心目标；
+2. **同步与数据安全是底线**：不抢在三件之前，但任何一批都不能把它做坏，61 那一组要尽早收；
+3. **对话质量优先于省 token**：58 不按固定条数砍历史，只收起「已被场记覆盖」的远处原文，且提到就能取回。
+
+另外两条：被印象取代的原文**退出常规召回，但保留索引**（玩家明确提到时可回想）；
+世界书的插入位置语义**要做**（60）。工作约定不变：每小步能构建 / 测试 / 提交，提交信息带顺序号，
+偏差写进 EVAL 与设计文档，真机验证，私有信息不进仓库。
+
+级别在这一轮的口径：**P0** = 直接影响核心目标且现在每一轮都在发生；**P1** = 底线与明显失真；
+**P2** = 出事才后悔 / 代码健康；**P3** = 打磨；**P4** = 等外部条件。
+
+#### 总表（一行一个动作，按真实处理顺序）
+
+| 顺序 | 任务 | 级别 | 为什么排在这儿 | 状态 |
+| --- | --- | --- | --- | --- |
+| 57 | **被印象取代的原文退出常规召回，保留「提到才想起」** `[审][用]` | **P0** | 合并（27a）在召回路径上没有兑现：`recall.ts` 与 `App.tsx:708` 都不过滤 `supersededBy`，合并后池子反而多一条。一行过滤 + 一条「按关键词取回」的通路 | ⬜ |
+| 58 | **提示词按「场记覆盖」收起远处原文，不按固定条数砍** `[审][用]` | **P0** | 历史上限放到 3000 后每轮 6 万 token（MEMORY.md 第八节）；用户要求质量优先，所以不定死 N，而是「场记已覆盖的才收起、提到就取回」 | ⬜ |
+| 59 | **流式每个 token 整棵树重渲染** `[审]` | **P0** | `setStreamText` 在 App 顶层，且 `useSession/useProviders/useSync` 返回未 memo 的字面量，App 里 21 个 `useCallback` 全部失效；长对话会卡 | ⬜ |
+| 60 | **世界书插入位置语义（position / depth / scanDepth / 递归 / group）** `[审][用]` | **P1** | 解析后零消费，所有命中合成一块，违反「不静默丢弃」；用户在意 | ⬜ |
+| 61 | **同步与数据安全底线（七件小修一批收）** `[审][数]` | **P1** | 错误码丢失靠字符串判 413、PBKDF2 多跑一倍、SQLite 无 WAL、`POST /spaces` 无护栏、配额口径不一、凭据墓碑带密文、死参数 | ⬜ |
+| 62 | **存储层 O(N) 热点：索引 + 缓存 + 别每条消息都重数** `[审]` | **P1** | `listRooms` 每世界全表扫三次消息且每次 `appendMessages` 都调；同步每 20 秒全表扫 12 个集合；`stampUpdatedAt` 每写多读三次 | ⬜ |
+| 63 | **逐键写库 → 统一草稿 hook** `[审]` | **P1** | 场景 / 阵容 / 标题 / 记忆编辑的 `onChange` 直接写仓储并重载快照；仓库里已有三种草稿策略，统一成一个 | ⬜ |
+| 66 | **App.tsx 拆成四个 hook** `[审]` | **P2** | 1777 行的 god component；放在 59 之后做，避免两次改同一片 | ⬜ |
+| 65 | **代码重复收敛** `[审]` | **P2** | `asRecord` 7 份、`formatTime` 4 份、composer 两份、记账/入队各三份、模态框三个无共享组件 | ⬜ |
+| 64 | **PNG 的 CRC 真的校验** `[审]` | **P2** | 注释说校验，实际 `crc32` 是死代码 | ⬜ |
+| 67 | **管理员小修：错误展示 / 注释 / 未知参数提示** `[审][测]` | **P2** | `admin.error` 从未显示；「三个工具」注释与文案实际是五个；原顺序 45 并进来 | ⬜ |
+| 68 | **账单查询下推与增量汇总** `[审]` | **P2** | `usage.list` 全量拉取后内存过滤，`summary` 每次全表扫；依赖 62 的索引 | ⬜ |
+| 69 | **可访问性：模态框焦点与 Esc、去掉原生 confirm/prompt、aria、key** `[审]` | **P3** | 12 处 `window.confirm`、遮罩无 `aria-modal`、三个模态无焦点管理、两处用值当 key | ⬜ |
+| 70 | **打包：低频面板懒加载、PlanPage 移出生产包、SW 版本化** `[审]` | **P3** | 零代码分割；PlanPage 约 260 行样式随生产包发布；SW 缓存名从不变 | ⬜ |
+| 71 | **token 估算校准** `[审]` | **P3** | 英文按 4 字符/token 低估约 25%；账单里有真实 `promptTokens` 可以对照校准 | ⬜ |
+| 72 | **`dedupeRecalled` 处置** `[审]` | **P3** | 只在测试里用（T22 结论是不接，换成限流）；留着会误导 | ⬜ |
+| 73 | **部署文档漂移** `[审]` | **P3** | `deploy/cloudflare/` 不存在却被引用；nginx 模板硬编码域名；systemd 单元两份且 chown 指引冲突 | ⬜ |
+| 74 | **local-bridge 加固** `[审]` | **P3** | 注释说只允许本机但 CORS 是 `*`；选择器 `[class*="message"]` 会读到用户自己的消息 | ⬜ |
+| 75 | **供应商流的坏帧与空内容** `[审]` | **P3** | SSE 坏 JSON 帧静默丢；`ProviderError` 不带 body 摘要；assistant 空 `content` + `tool_calls` 部分网关拒收 | ⬜ |
+| 28 / 29 / 30 / 56 | 语音归属模型侧根治 / 平板横屏 / 备案切 443 等 / 服务器管理台 | **P4** | 原有条目，等条件或等拍板，不变 | ⬜ |
+
+依赖关系：58 复用 57 的「按关键词取回」；66 在 59 之后；68 在 62 之后；65 可以插在任何两批之间。
+
+#### 每一项怎么做（改哪里 / 怎么改 / 怎么验）
+
+**57 被印象取代的原文退出常规召回，保留「提到才想起」**（P0，S）
+
+- 改哪里：`core/memory/recall.ts`、`apps/web/src/App.tsx` 的召回段（约 700–723 行）、`PromptInspector`。
+- 怎么改：
+  1. `recallMemories` 增加选项 `superseded: 'exclude' | 'on-keyword'`，默认 `exclude`：`supersededBy` 非空的条目不进主池。
+  2. 新增纯函数 `recallSupersededOnMention(events, query, limit = 2)`：只对被取代的原文打分，**只有** `reasons` 里含 `keyword`（或 `pinned`）的才返回，按分数取前 `limit` 条——这就是「玩家明确提到才想起」。
+  3. 玩家在问过去（`asksAboutPast`）且召回结果里有印象时，顺着 `supersedes` 把来源原文再展开最多 2 条（复用 27e 的 `resolveMemorySources`）。
+  4. App 里把主池换成「未被取代」，附加池走 2 / 3；附加条目的 `score` 压到低于印象，让预算守卫先丢它们。
+  5. Prompt 检查器的记忆小节标出「从印象取回 N 条」。
+- 怎么验：单测三条——默认不出现被取代原文；关键词命中时出现且 ≤2 且排在印象之后；问过去时印象带来源。假模型 60 轮演练（触发一次合并后）读 IndexedDB 对账：召回池条数 = 未取代 + 印象；提到关键词那一轮，Prompt 检查器里出现原文。EVAL 记一节。
+- 风险：印象的关键词靠启发式，可能漏；漏了只是「想不起来」，不会想错。
+
+**58 提示词按「场记覆盖」收起远处原文**（P0，M）
+
+- 改哪里：`core/prompt/history.ts`、`core/prompt/assemble.ts`（历史块与场景块）、`core/model/conversation.ts`（一个可选开关）、App 的装配入参、设置或对话模式菜单。
+- 怎么改（质量优先的规则，**不是**固定 N）：把当前对话的原文分三段——
+  1. **未被任何场记覆盖的**：全带（场记每 8 轮 / 2400 token 才滚一次，所以最近这一段本来就在）；
+  2. **已被覆盖、但在近窗内的**：全带。近窗默认 **40 条**，只是「就算场记已覆盖也保留原文」的下限，可调；
+  3. **已被覆盖、且在近窗之外的**：不带原文，由 `scene.recap`、章节、记忆代表；玩家提到关键词或问过去时，用 57 的同一套触发从这一段取回 ≤3 条原文（新函数 `expandHistoryOnMention`）。
+  - 顺带补一个现在就有的漏洞：章节要攒够 3 场才滚，所以**已结束但还没进章节的前几场**，它们的场记在原文滚出窗口后没有任何载体。新增「前几场场记」块（当前对话里 `endedAt` 非空、且未被章节收录的场景的 `recap`），优先级同章节块。
+  - `historyPolicy: { mode: 'full' | 'recap-aware'; nearWindow: number }`，默认 `recap-aware / 40`；在对话模式菜单里给一个「历史：完整 / 场记覆盖后收起」的开关（对话级，落 `ConversationModes`，老数据缺省即新默认，不需要迁移）。
+- 怎么验：假模型 300 轮长跑（MEMORY.md 第七节的脚本）：提示词曲线**封顶**且不再线性涨，预期落在场记周期 + 近窗 ≈ 5–6 千字；场记 / 章节 / 记忆块都在；真模型 50 轮定向问答（EVAL 第十节那种）**长程召回不低于 T4 的全中**；关键词取回的原文在 Prompt 检查器可见。把 MEMORY.md 第八节的成本估算按新曲线修订。
+- 风险：场记质量决定远处细节能否保住——它本来就是「只压已发生的、保留人名数字承诺」，且原文永不删、提到就取回，所以最坏情况是多花一次取回，不是丢。
+
+**59 流式每个 token 整棵树重渲染**（P0，M）
+
+- 改哪里：`apps/web/src/lib/session.ts:1381`、`providers.ts:418`、`sync.ts:682`、`worker.ts`、`usage.ts` 的返回值；`App.tsx` 的流式状态；`MainChat.tsx`；各顶层组件。
+- 怎么改：
+  1. 五个 hook 的返回对象 `useMemo` 化（依赖列出全部字段与回调）——不做这一步，后面的 `memo` 全是摆设。
+  2. 流式四态（`streamText / reasoningText / phase / streamSpeaker`）挪进 `lib/stream-store.ts`（`useSyncExternalStore`），只有 `StreamingBubble` 订阅；`runGeneration` 直接写 store，不再 `setState`。
+  3. `React.memo`：`MainChat`、`LeftRail`、`WorldTree`、`CastRail`、`RuntimePanel`、`MessageBody`；`MainChat` 内把单条消息抽成 `MessageItem`（memo），`attributionOf` 按消息 id `useMemo`。
+  4. 顺手：`MainChat:291/318` 的 `reduce` 与 `reverse().find` 缓存。
+- 怎么验：无头 Chrome + 假模型 `--chunk-ms 30`，一条 600 条消息的对话：用 `React.Profiler` 的 `onRender` 计数，每个 token 的 commit 只含流式气泡；流式期间在输入框打字无掉帧（`PerformanceObserver` long task 为 0）；回归顺序 39 / 41 的消息菜单与输入区测试（本机 + 线上那两套）。
+
+**60 世界书插入位置语义**（P1，M）
+
+- 改哪里：`core/compat/sillytavern/worldbook.ts`、`core/prompt/assemble.ts`、`core/prompt/types.ts`、`App.tsx:346-348` 的 scanText、导入 warning。
+- 怎么改：
+  1. **匹配**：按每条的 `scanDepth`（null 用全局默认 8 条）各自截 scanText；**递归**最多 3 轮——上一轮命中的 `content` 加入扫描文本，`preventRecursion` 的条目不做触发源、`excludeRecursion` 的条目不被递归触发；**group**：同 group 只留一条（`order` 最高，`useProbability` 时按概率抽）。
+  2. **落点**：`PromptBlock` 加 `placement`；`before_char` → 人设块前，`after_char` → 人设块后，`before_an / after_an` → 场景块前 / 后（没有作者注释这个概念，映射写进 DESIGN §9），`at_depth` → 作为 system 消息插到历史倒数第 `depth` 条之前（`toChatMessages` 支持历史中插 system 块），`unknown` → 现状。每条命中各成一块，`droppable` 按 `order` 反向。
+  3. 导入 warning 只保留真正不支持的（`unknown` 位置）。
+- 怎么验：单测每种 position 的落点与 `at_depth` 的插入位置；递归 / 排除递归 / group 三条；拿 `tmp-test-cards` 里的真实世界书对照 SillyTavern 的插入顺序；Prompt 检查器显示每条的位置。DESIGN §9 与 README 的「已经能用的」更新。
+
+**61 同步与数据安全底线**（P1，M，一批七件）
+
+- a. `core/sync/http-client.ts:63`：错误透传 `status` 与 `code`，客户端按 `code` 判 413 / 429 / 401，删掉 `sync.ts:250` 的 `includes('存满')`。
+- b. `core/crypto/keys.ts`：`wrapSpaceKey / unwrapSpaceKey` 接受已派生的 `SecretKeys`，`createSpaceCredentials` 4 次 PBKDF2 → 2 次，`openSpace / rotatePassword` 2 → 1；`sync.ts:176-197` 密码错再试恢复码的路径也跟着省。
+- c. `tools/sync-server/src/main.ts` 与 `core/sync/sqlite.ts`：`PRAGMA journal_mode=WAL; busy_timeout=5000`；`backup.mjs` 同样设置。
+- d. `POST /spaces`：每 IP 每分钟限流 + 空间总数上限（env 可调），409 语义不变。
+- e. 配额口径统一：条数与字节都按「写完之后」判。
+- f. `providerCredentials` 的墓碑剥掉 `encryptedSecret`（`softDelete` 对该集合只留 `id / providerId / updatedAt / deletedAt`），与 Persona 删除一致。
+- g. `rotatePassword` 后重复写 KeyStore 的那一次去掉；`SyncPushInput.baseHead` 服务端从不使用——删掉，SYNC.md 同步修订。
+- 怎么验：`http.test` 加错误码断言；`keys.test` 用 spy 断言派生次数；服务端重新部署 + `/health`；真机重跑「换密码 / 恢复码 / 坏记录隔离」三条演练（各 9/9 那套）；SYNC.md §4.x 修订。这一组做完之前，后面所有批次都要回归同步冒烟（两台设备各聊两轮 → 合并 → 删一条）。
+
+**62 存储层 O(N) 热点**（P1，M）
+
+- 改哪里：`apps/web/src/lib/db.ts`（`DB_VERSION` 1 → 2）、`core/platform/entity-store.ts`（可选方法）、`core/storage/repository.ts`、`lib/session.ts`。
+- 怎么改：
+  1. IndexedDB 加两个索引：`byCollectionRoom = ['collection', 'value.roomId']`、`byCollectionUpdated = ['collection', 'value.updatedAt']`（嵌套 keyPath 建索引是标准能力）；`list` 在 `where` 只有 `roomId` 时走索引；`count` 同理。
+  2. `EntityStore` 加可选 `listSince(collection, updatedAt)`，`listSyncRecords` 有它就用；内存实现同样实现，保证语义一致。
+  3. `stampUpdatedAt`：逻辑时钟与推送水位线缓存在内存（写 meta 照写，省掉每次三次读）。
+  4. `useSession.appendMessages` 不再 `refreshWorlds()`，改本地把该世界的 `messageCount` 加一；`listRooms` 的三次计数走索引。
+- 怎么验：`repository.test` 全过（内存实现语义不变）；无头：老库（v1）打开自动升级建索引，世界种子探针数据不丢；600 条消息 + 3 个世界发一轮，包一层事务计数看读次数下降；同步一轮 `listSyncRecords` 耗时对比。
+
+**63 逐键写库 → 统一草稿 hook**（P1，S）
+
+- 改哪里：从 `PersonaLibrary` 抽出 `lib/useDraftField.ts`（防抖 300ms + 失焦提交 + IME 组合期只留本地草稿）；替换 `ScenePanel:34/45/71`、`CastPanel:76`、`MainHeader:44`、`CastDetail:87`、`MemoryPanel:445/455`。
+- 怎么验：顺序 54 那套手写 / 组合回归（桌面 8/8、手机 3/3）；打字期间仓储写次数 = 提交次数。
+
+**66 App.tsx 拆成四个 hook**（P2，M，在 59 之后）
+
+- `hooks/useTurnRunner.ts`（`runGeneration / runIntentPlan / handleSend / handleRegenerate / handleReassignMessage`）、`hooks/useWebBridge.ts`（桥接两阶段 + sessionStorage）、`hooks/useImport.ts`、`hooks/useNotices.ts`（warnings / installHint / error 四个来源合一）；`App.tsx` 只剩布局壳与对话框开关，目标 < 600 行。纯搬家，不改行为。
+- 怎么验：typecheck / test / build；真机回归「导入 → 聊一轮 → 重抽 → 桥接一轮 → 改归属」。
+
+**65 代码重复收敛**（P2，S–M，可插在任何两批之间）
+
+- `core/util/json.ts`（`asRecord / str / text / toFinite`，替换 7 处）；web `lib/format.ts`（`formatTime / formatBytes`）；`components/Modal.tsx`（焦点与 Esc 交给 69）；`components/Composer.tsx`（主副对话共用）；`lib/turn-bookkeeping.ts`（记账 + 入队三份合一）；`lib/labels.ts`（`PRESENCE_OPTIONS / CAST_POLICY_OPTIONS / signed`）；`viewport.ts` 两个逐字复制的 hook 合成一个带参的。
+- 怎么验：无行为改变——lint / typecheck / test 全绿，界面回归 10 条。
+
+**64 PNG 的 CRC 真的校验**（P2，S）：遍历时算 `crc32`，不匹配的块跳过并发 `png.bad-crc` warning；单测构造一个坏块。注释与行为对齐。
+
+**67 管理员小修**（P2，S）：`admin.error` 传给 `SideChat` 显示；`tools.ts:21-24` 注释与 `bridge.ts:90` 文案改成五个工具；未知参数不再静默忽略，回填「未识别的参数：…」（原顺序 45）。真机走一遍「起草 → 采纳 → 撤回」。
+
+**68 账单查询下推**（P2，S，在 62 之后）：`usage.list` 的 `since / limit` 走 `byCollectionUpdated`；`summary` 做增量缓存（按最后一条记录 id 失效）。用量页在 1000 条流水下打开不卡。
+
+**69 可访问性**（P3，M）：`Modal` 加焦点陷阱、Esc、`aria-modal`、返回焦点；`useConfirm` 替换 12 处 `window.confirm` 与 `ScenePanel:109` 的 `window.prompt`；WorldTree 的 ✕ 加 `aria-label`；`CardDesigner:23` 与 `App:1440` 的 key 改稳定 id。键盘走一遍所有对话框。
+
+**70 打包**（P3，S）：`React.lazy` 设置弹窗及四个面板、`CardDesigner / WorldDesigner / MemoryPanel / UsagePanel / PlanPage`；PlanPage 的样式与代码只在 `?plan=1` 时动态加载；SW 缓存名带构建哈希，`activate` 后向页面发「有新版本」并给一个刷新按钮。看首屏 JS 体积与 PWA 更新提示。
+
+**71 token 估算校准**（P3，S）：先用账单里的真实 `promptTokens` 与装配时的估算做一次对照统计（有现成数据）；再改 `estimate.ts`（英文约 3.5 字符/token，区间表二分）。目标：估算误差 < 10%。
+
+**72 `dedupeRecalled` 处置**（P3，XS）：从 `index.ts` 导出移除、标 `@internal` 或删除；EVAL 第五节已有结论，指过去即可。
+
+**73 部署文档漂移**（P3，XS）：删掉 `SYNC.md` 与 `sync-dev-backend.ts` 对 `deploy/cloudflare/` 的引用；`nginx-80-redirect.conf.example` 的域名换成占位；systemd 单元只留一份，`chown` 指引统一。
+
+**74 local-bridge 加固**（P3，S）：CORS 只放行 `127.0.0.1` / `localhost` 来源；选择器可通过参数配置；「最后一条消息」要能区分用户与助手（按站点结构或按内容是否等于刚发出的提示词）。用假网页版回归 5/5 + 4/4。
+
+**75 供应商流的坏帧与空内容**（P3，S）：SSE 坏 JSON 帧计数并在 debug 日志里可见；`ProviderError` 带 body 前 200 字；assistant 消息 `content` 为空且带 `tool_calls` 时发 `null`。用假模型注入坏帧回归。
+
+### 真实处理顺序（2026-09-20 深夜那一版；历史排期，只作上下文）
 
 | 顺序 | 任务 | 级别 | 为什么排在这儿 | 状态 |
 | --- | --- | --- | --- | --- |

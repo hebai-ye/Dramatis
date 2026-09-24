@@ -930,7 +930,16 @@ git ls-files | ForEach-Object {
 | `apps/web/src/lib/session.ts` | 改 | 新增 `renameConversation(id, title)`：按 id 改名，**不切换当前对话** |
 | `docs/LAYOUT.md` / `EVAL.md` / `STATUS.md` / `FILE-LOG.md` | 改 | 手机端第二批的规格、第五十四节（含实测 11/11 与那个 transform/fixed 的坑）、接续点 |
 
-## 四十五、几点注意
+## 四十五、2026-09-24：手机端第三批（铺满整屏 + 顶栏覆盖 + 点对话区收起）
+
+| 文件 | 新增/修改 | 说明 |
+| --- | --- | --- |
+| `apps/web/src/styles.css` | 改 | 手机端：`.app` padding/gap 归零、对话无边框铺满整屏、顶栏改 `fixed` 半透明覆盖层（毛玻璃 + 安全区）、`.chat-body` 给覆盖层留起始内边距、新增 `.drawer-backdrop`；删掉 `.drawer-close` / `.rail-head-close` 两组规则 |
+| `apps/web/src/App.tsx` | 改 | 删掉面板里的「收起面板」按钮；新增透明可点层：`narrow && (左栏开着 || 面板开着)` 时点它同时收起两侧；左栏不再传 `narrow` / `onClose` |
+| `apps/web/src/components/LeftRail.tsx` | 改 | 移除窄屏时那颗 ≡ 收起按钮（改由点对话区收起） |
+| `docs/LAYOUT.md` / `EVAL.md` / `STATUS.md` / `FILE-LOG.md` | 改 | 第三批规格与第五十四节第二轮实测（14/14）、接续点 |
+
+## 四十六、几点注意
 
 ---
 

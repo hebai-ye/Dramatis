@@ -1601,8 +1601,6 @@ export function App() {
             onOpenSettings={() => setSettingsCategory('model')}
             onOpenAccount={() => setSettingsCategory('account')}
             disabled={disabled}
-            narrow={narrow}
-            onClose={() => setCollapsed(true)}
             list={
               <>
                 {error !== null || dbError !== null || session.error !== null ? (
@@ -1788,10 +1786,6 @@ export function App() {
               <div className={panelOpen ? 'runtime-drawer open' : 'runtime-drawer'}>
                 {panelOpen || narrow ? (
                   <>
-                    {/* 手机上「面板」按钮被盖住了，抽屉里要有一个能自己关的出口 */}
-                    <button type="button" className="ghost drawer-close" onClick={() => setPanelOpen(false)}>
-                      收起面板
-                    </button>
                     <RuntimePanel
                       scene={scene}
                       instances={instances}
@@ -1865,6 +1859,23 @@ export function App() {
             知道了
           </button>
         </div>
+      ) : null}
+
+      {/*
+        点「被移开的对话区」= 收起侧栏（用户 2026-09-24 第二轮要求）：
+        一层透明的可点区域，盖在对话与顶栏之上、侧栏卡片之下。
+        侧栏自己那些关闭按钮（左栏的 ≡、面板的「收起面板」）已经按用户要求删掉。
+      */}
+      {narrow && (!collapsed || panelOpen) ? (
+        <button
+          type="button"
+          className="drawer-backdrop"
+          aria-label="收起侧栏"
+          onClick={() => {
+            setCollapsed(true);
+            setPanelOpen(false);
+          }}
+        />
       ) : null}
 
       {newConversationOpen ? (

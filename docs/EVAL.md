@@ -3111,3 +3111,21 @@ Chromium 的 390×844 触屏模拟。
 **还没做**：`useImport`（导入流程：PNG / JSON 卡、世界书、导入警告）与 `useTurnRunner`
 （`runGeneration` / `runIntentPlan` / `handleSend` / `handleRegenerate` / `handleReassignMessage`，
 最大的一块）。目标 App < 600 行。
+
+### 第二步：导入流程（同日稍后）
+
+`hooks/useImport.ts`：PNG / JSON 角色卡与世界书的导入、导入警告、内嵌世界书挂载、
+「本机一张卡都没有时导入即开一条新世界线」、导完收起手机左栏，连同 `looksLikePng` /
+`looksLikeWorldBook` 两个判定一起搬走。App.tsx **1905 → 1853 行**，门禁五项全绿。
+
+### 剩下的那一块（`useTurnRunner`）为什么这一轮没做
+
+它是四块里最大的一块：`runGeneration`（271–415）+ `runIntentPlan`（416–534）+
+`handleSend`（535–830）+ `handleRegenerate`（831–945）+ `handleReassignMessage`（967–1010），
+**合计约 740 行**，依赖面包括会话 / 提供方 / 后台队列 / 账单 / 桥接 / 流式 store / 世界与场景快照
+等二十多项。搬家本身是纯移动，但**一次搬错就动到聊天主循环**（发一句、重抽、改归属都要用），
+所以按「每小步都能构建 / 测试 / 提交」的规矩，它应该独占一轮、配一次假模型端到端演练。
+
+顺带记一个判断：把四个 hook 全搬完之后 App 大约还有 **1100 行**（剩下的主要是布局 JSX），
+要真的做到 §0 里写的「< 600 行」，还得把布局也拆成组件——那超出「四个 hook」的范围，
+建议作为 66 的收尾项单独记一笔。

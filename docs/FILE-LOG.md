@@ -978,7 +978,15 @@ git ls-files | ForEach-Object {
 | `apps/web/src/App.tsx` | 改 | 两处状态改由新 hook 提供（解构沿用原名）；依赖数组按 Biome 提示补齐；1947 → 1905 行 |
 | `docs/EVAL.md` / `TASKS.md` / `STATUS.md` / `FILE-LOG.md` | 改 | 第五十七节、任务 66 标「进行中（2/4）」、接续点 |
 
-## 五十、几点注意
+## 五十、2026-09-24：顺序 66 第二步（useImport）
+
+| 文件 | 新增/修改 | 说明 |
+| --- | --- | --- |
+| `apps/web/src/hooks/useImport.ts` | **新增** | 导入 PNG/JSON 角色卡与世界书、导入警告、内嵌世界书、导完收起手机左栏；`looksLikePng` / `looksLikeWorldBook` 一并搬来 |
+| `apps/web/src/App.tsx` | 改 | 导入逻辑改调 hook；删掉搬走的两个判定函数；1905 → 1853 行 |
+| `docs/EVAL.md` / `TASKS.md` / `STATUS.md` / `FILE-LOG.md` | 改 | 第五十七节补第二步与「为什么 useTurnRunner 留到下一轮」、任务 66 状态（3/4） |
+
+## 五十一、几点注意
 
 ---
 

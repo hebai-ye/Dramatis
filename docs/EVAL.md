@@ -3129,3 +3129,60 @@ Chromium 的 390×844 触屏模拟。
 顺带记一个判断：把四个 hook 全搬完之后 App 大约还有 **1100 行**（剩下的主要是布局 JSX），
 要真的做到 §0 里写的「< 600 行」，还得把布局也拆成组件——那超出「四个 hook」的范围，
 建议作为 66 的收尾项单独记一笔。
+
+## 五十八、顺序 66 收尾：App.tsx 拆成四个 hook（2026-09-24 深夜 → 09-25 凌晨）
+
+**做完的样子**：`hooks/useTurnRunner.ts` 把聊天主循环搬出 App.tsx，四个 hook 全部落地，
+**App.tsx 1853 → 1090 行**（原始 1947 行）。
+
+| hook | 搬走了什么 |
+| --- | --- |
+| `useNotices`（第一步） | `error` / `warnings` / 「装到桌面」引导 + 存储快满时提醒一次 |
+| `useWebBridge`（第一步） | 网页版桥接的状态与 sessionStorage 落盘 |
+| `useImport`（第二步） | PNG / JSON 卡与世界书的导入、导入警告、内嵌世界书挂载 |
+| **`useTurnRunner`（第三步）** | `runGeneration` / `runIntentPlan` / `handleSend` / `handleRegenerate` / `handleReassignMessage`，连同共用的 `makeCharacterLine`、`enqueueSceneSummary`、`enqueueMemoryConsolidation` 与流式的 `abortRef` |
+
+**对外只暴露 App 还要用的入口**：`makeCharacterLine`（桥接第一步要用）、`enqueueSceneSummary`
+（换场时要收上一场）、`handleSend` / `handleRegenerate` / `handleReassignMessage`、`stop`
+（输入区那颗「停止」）。`runGeneration` / `runIntentPlan` 只在这个 hook 内部使用、不返回——
+免得外面多出两条能绕过主循环的路。
+
+**怎么确认是纯搬家（逐行比对）**：把搬走前的 App.tsx 段落与新文件按行 diff，差异只有三处——
+① `budget.reason` 变成参数 `budgetReason`（两处）；② `runIntentPlan` 补了返回类型标注
+（`Promise<IntentPlanEntry[] | null>`）；③ `setBusy` / `setError` / `setWarnings` / `setBridge` /
+`setLastPrompt` 五个 setter 补进依赖数组（都是 `useState` 的 setter，引用稳定，补进去不改行为，
+Biome 的 `useExhaustiveDependencies` 也会要求）。其余逐字一致。
+
+### 真机验证（真 Chrome 390×844 触屏模拟 + 本机假模型 `:5288 --chunk-ms 60`）
+
+| 检查 | 结果 |
+| --- | --- |
+| 发一句：忙态出现过（真的在生成） | **通过** |
+| 发一句：落库 = 玩家一条 + 角色一条 | **通过**（2 条；玩家那句原文逐字一致） |
+| 发一句：角色回复非空、带说话人 | **通过** |
+| 发一句：账上多一笔生成 | **通过**（1 笔） |
+| 重抽 ×3：每次新消息 id、条数不变、账多一笔、忙态收得掉 | **通过**（3/3；账 1 → 2 → 3 → 4） |
+| 重抽之后这一轮的后台任务重新排上（记忆被重写） | **通过**（3 条记忆） |
+| 改归属：库里的 `speakerInstanceId` 换人、正文不动、条数不变 | **通过** |
+| 改归属：气泡上的名字跟着换 | **通过**（秦娘 → 小满） |
+| 没有 Key 时走桥接：发一句进入「贴回来」这一步 | **通过**（提示词 1114 字，玩家那条已落库） |
+| 桥接：贴回来的回复按普通角色消息落库 | **通过**（`makeCharacterLine` 这条路没断） |
+| 全程没有页面级报错 | **通过** |
+
+13/13 通过。脚本 `verify-66-turn-runner.mjs`，报告 `verify-66-report.json`，截图
+`66-before-send.png` / `66-after-send.png` / `66-after-regenerate.png` / `66-after-reassign.png` /
+`66-bridge.png`（都在工作区外 `C:\Users\35350\.codex\visualizations\2026\09\24\01a0d419-...\`）。
+
+**一条值得记下来的验证教训**：第一版把「重抽成功」判成「正文变了」，结果三次全 FAIL——
+假模型对同一段提示词返回的是同一句 canned 台词，**文本没变并不代表没重抽**。改成
+「消息 id 换了（重抽是删掉旧回复再写一条）+ 账上多一笔 + 条数不变 + 忙态收掉」四条一起看，
+才是有意义的证据。以后写这类断言要盯「能证明动作发生过的痕迹」，别盯内容本身。
+
+### 没验的 / 留下的口子
+
+1. **App.tsx 还有 1090 行，没到 §0 里写的「< 600 行」**。剩下的几乎全是布局壳 JSX
+   （左栏 / 工作区 / 顶栏 / 四个弹窗），要再往下拆得把布局也拆成组件——那超出「拆四个 hook」
+   的范围，已单独记进 TASKS 第〇节（顺序 76）。
+2. 真机（软键盘 / 安全区）与真模型效果照旧没验（要真手机 / 要用户的 Key）。
+3. 「614 条世界里重抽会卡死」那条 **P1 待复核**这一轮没复现：本机小世界上重抽 3 次忙态每次都
+   收掉了。但这一轮不是那条的复现条件，仍要按原计划在干净环境里拿大世界复核。

@@ -67,7 +67,7 @@
 | 61 | **同步与数据安全底线（七件小修一批收）** `[审][数]` | **P1** | 错误码丢失靠字符串判 413、PBKDF2 多跑一倍、SQLite 无 WAL、`POST /spaces` 无护栏、配额口径不一、凭据墓碑带密文、死参数 | ✅ 2026-09-24（代码与单测；部署与真机演练待做，见 EVAL 第五十节） |
 | 62 | **存储层 O(N) 热点：索引 + 缓存 + 别每条消息都重数** `[审]` | **P1** | `listRooms` 每世界全表扫三次消息且每次 `appendMessages` 都调；同步每 20 秒全表扫 12 个集合；`stampUpdatedAt` 每写多读三次 | ✅ 2026-09-24（含 59 留下的两处重画；P1 卡死未复现，见 EVAL 第五十一节） |
 | 63 | **逐键写库 → 统一草稿 hook** `[审]` | **P1** | 场景 / 阵容 / 标题 / 记忆编辑的 `onChange` 直接写仓储并重载快照；仓库里已有三种草稿策略，统一成一个 | ✅ 2026-09-24（EVAL 第五十六节） |
-| 66 | **App.tsx 拆成四个 hook** `[审]` | **P2** | 1777 行的 god component；放在 59 之后做，避免两次改同一片 | 🟡 进行中（2026-09-24：拆出 **3/4** —— `useNotices` / `useWebBridge` / `useImport`，App 1947→1853 行；只剩 `useTurnRunner`） |
+| 66 | **App.tsx 拆成四个 hook** `[审]` | **P2** | 1777 行的 god component；放在 59 之后做，避免两次改同一片 | ✅ 2026-09-24（四个 hook 全搬完，App **1947 → 1090 行**；真机 13/13，见 EVAL 第五十八节） |
 | 65 | **代码重复收敛** `[审]` | **P2** | `asRecord` 7 份、`formatTime` 4 份、composer 两份、记账/入队各三份、模态框三个无共享组件 | ⬜ |
 | 64 | **PNG 的 CRC 真的校验** `[审]` | **P2** | 注释说校验，实际 `crc32` 是死代码 | ⬜ |
 | 67 | **管理员小修：错误展示 / 注释 / 未知参数提示** `[审][测]` | **P2** | `admin.error` 从未显示；「三个工具」注释与文案实际是五个；原顺序 45 并进来 | ⬜ |
@@ -79,6 +79,7 @@
 | 73 | **部署文档漂移** `[审]` | **P3** | `deploy/cloudflare/` 不存在却被引用；nginx 模板硬编码域名；systemd 单元两份且 chown 指引冲突 | ⬜ |
 | 74 | **local-bridge 加固** `[审]` | **P3** | 注释说只允许本机但 CORS 是 `*`；选择器 `[class*="message"]` 会读到用户自己的消息 | ⬜ |
 | 75 | **供应商流的坏帧与空内容** `[审]` | **P3** | SSE 坏 JSON 帧静默丢；`ProviderError` 不带 body 摘要；assistant 空 `content` + `tool_calls` 部分网关拒收 | ⬜ |
+| 76 | **App.tsx 布局壳拆组件（把 66 的「< 600 行」做到底）** `[审]` | **P3** | 66 只搬走了四个 hook，剩下的 1090 行几乎全是布局 JSX（左栏 / 工作区 / 顶栏 / 四个弹窗）；再往下要按区域拆组件 | ⬜ |
 | 28 / 29 / 30 / 56 | 语音归属模型侧根治 / 平板横屏 / 备案切 443 等 / 服务器管理台 | **P4** | 原有条目，等条件或等拍板，不变 | ⬜ |
 
 依赖关系：58 复用 57 的「按关键词取回」；66 在 59 之后；68 在 62 之后；65 可以插在任何两批之间。
@@ -231,6 +232,14 @@
 
 - `hooks/useTurnRunner.ts`（`runGeneration / runIntentPlan / handleSend / handleRegenerate / handleReassignMessage`）、`hooks/useWebBridge.ts`（桥接两阶段 + sessionStorage）、`hooks/useImport.ts`、`hooks/useNotices.ts`（warnings / installHint / error 四个来源合一）；`App.tsx` 只剩布局壳与对话框开关，目标 < 600 行。纯搬家，不改行为。
 - 怎么验：typecheck / test / build；真机回归「导入 → 聊一轮 → 重抽 → 桥接一轮 → 改归属」。
+- **✅ 做完（2026-09-24 深夜 → 09-25 凌晨）**：四块全搬完，**App.tsx 1947 → 1090 行**
+  （第一步 `useNotices` / `useWebBridge`，第二步 `useImport`，第三步 `useTurnRunner`）。
+  最后一块搬完时逐行比对过：差异只有 `budget.reason` 改名成参数 `budgetReason`、`runIntentPlan`
+  补返回类型、五个稳定 setter 补进依赖数组，其余逐字一致。**真机手机视口 13/13**：
+  发一句 2 条落库 + 账 1 笔、重抽 ×3 每次新消息 id 且账多一笔、改归属换人正文不动、
+  没 Key 时桥接贴回来照样落库、全程无页面报错（EVAL 第五十八节）。
+  **没收的口子**：目标「< 600 行」还没到——剩下的 1090 行几乎全是布局 JSX，要按区域拆组件，
+  单独记成顺序 76。
 
 **65 代码重复收敛**（P2，S–M，可插在任何两批之间）
 

@@ -910,7 +910,16 @@ git ls-files | ForEach-Object {
 | `apps/web/src/styles.css` | 改 | `.topbar.narrow`（无卡片 + 安全区）、`.cast-strip`（半高、可横滑、隐藏滚动条）、`.chat-controls` / `.kind-toggle` / `.kind-half`、窄屏标题栏不再换行 |
 | `docs/LAYOUT.md` / `EVAL.md` / `STATUS.md` / `FILE-LOG.md` | 改 | 顶栏规格的手机端分支与两处删除、第五十二节（含前后截图路径与实测数字）、接续点 |
 
-## 四十三、几点注意
+## 四十三、2026-09-24：上线（部署 + push）
+
+| 文件 | 新增/修改 | 说明 |
+| --- | --- | --- |
+| `docs/STATUS.md` / `EVAL.md` / `FILE-LOG.md` | 改 | 上线记录：提交区间、两个构建、health、`journal_mode=wal`、同步冒烟 6/6、两个回滚点、仍然没验的项 |
+
+本轮**没有改任何源码**——部署的是 `6086096` 那个提交构建出来的产物：
+`apps/web/dist`（`index-CqzQpPAn.js`）与 `tools/sync-server/dist`（另加 `backup.mjs`）。
+
+## 四十四、几点注意
 
 ---
 

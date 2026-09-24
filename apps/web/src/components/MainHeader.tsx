@@ -1,4 +1,5 @@
 import type { CharacterInstance, Conversation, Room } from '@dramatis/core';
+import { useDraftField } from '../lib/useDraftField';
 
 interface Props {
   world: Room | null;
@@ -35,6 +36,17 @@ export function MainHeader({
   onRenameConversation,
 }: Props) {
   const isSide = conversation?.kind === 'side';
+  /**
+   * 对话名用草稿 hook（顺序 63）：以前每敲一个字就 `updateConversation` 写一次库。
+   * 空名字不提交（标题总得有点东西），其余交给 hook 的防抖与失焦提交。
+   */
+  const titleField = useDraftField({
+    value: conversation?.title ?? '',
+    commit: (next) => {
+      if (next.trim() === '') return;
+      onRenameConversation(next);
+    },
+  });
 
   return (
     <header className="main-header">
@@ -43,11 +55,10 @@ export function MainHeader({
         <span className="dot">·</span>
         <input
           className="conversation-name"
-          value={conversation?.title ?? ''}
           disabled={disabled || conversation === null}
           placeholder="对话名"
           aria-label="对话名"
-          onChange={(event) => onRenameConversation(event.target.value)}
+          {...titleField.bind}
         />
       </div>
 

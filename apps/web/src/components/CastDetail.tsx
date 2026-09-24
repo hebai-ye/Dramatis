@@ -1,4 +1,5 @@
 import type { Card, CharacterInstance, InstanceId, MemoryEvent, Presence } from '@dramatis/core';
+import { useDraftField } from '../lib/useDraftField';
 import { Avatar } from './MessageBody';
 
 interface Props {
@@ -72,6 +73,14 @@ export function CastDetail({
     ),
   ].sort((left, right) => right.at.localeCompare(left.at));
   const revertedIds = new Set(stateChanges.map((change) => change.reversionOf).filter((id) => id !== null));
+  /** 显示名用草稿 hook（顺序 63）：以前每敲一个字就把实例写回仓储。 */
+  const nameField = useDraftField({
+    value: instance.displayName,
+    commit: (next) => {
+      if (next.trim() === '') return;
+      onRename(instance.id, next);
+    },
+  });
 
   return (
     <div className="modal-backdrop">
@@ -79,13 +88,7 @@ export function CastDetail({
       <section className="modal" role="dialog" aria-label="角色详情">
         <header className="modal-head">
           <Avatar name={instance.displayName} size={40} />
-          <input
-            className="conversation-name"
-            value={instance.displayName}
-            disabled={disabled}
-            aria-label="显示名"
-            onChange={(event) => onRename(instance.id, event.target.value)}
-          />
+          <input className="conversation-name" disabled={disabled} aria-label="显示名" {...nameField.bind} />
           <div className="topbar-spacer" />
           <button type="button" className="ghost" onClick={onClose}>
             关闭

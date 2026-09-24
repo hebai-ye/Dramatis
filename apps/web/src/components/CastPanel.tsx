@@ -1,4 +1,5 @@
 import { type CharacterInstance, type InstanceId, PLAYER, type Presence, type Scene } from '@dramatis/core';
+import { useDraftField } from '../lib/useDraftField';
 
 interface Props {
   instances: CharacterInstance[];
@@ -53,6 +54,31 @@ function describeState(instance: CharacterInstance): string {
  * presence 与场景名单是一对需要保持同步的状态，所以放在同一个面板里操作，
  * 而不是分散到两个地方让用户自己对齐。
  */
+/**
+ * 一条角色名输入框。
+ *
+ * 单独抽成组件是因为草稿 hook 必须在**组件顶层**调用，而这里是 `instances.map(...)`——
+ * 在循环里调 hook 会破坏 hook 顺序（React 会直接报错）。
+ */
+function CastNameInput({
+  instance,
+  disabled,
+  onRename,
+}: {
+  instance: CharacterInstance;
+  disabled: boolean;
+  onRename: (id: InstanceId, name: string) => void;
+}) {
+  const nameField = useDraftField({
+    value: instance.displayName,
+    commit: (next) => {
+      if (next.trim() === '') return;
+      onRename(instance.id, next);
+    },
+  });
+  return <input type="text" className="cast-name" disabled={disabled} aria-label="显示名" {...nameField.bind} />;
+}
+
 export function CastPanel({ instances, scene, disabled, onSetPresence, onRename, onRemove }: Props) {
   if (instances.length === 0) return null;
 
@@ -68,13 +94,7 @@ export function CastPanel({ instances, scene, disabled, onSetPresence, onRename,
         {instances.map((instance) => (
           <li key={instance.id}>
             <div className="cast-row">
-              <input
-                type="text"
-                className="cast-name"
-                value={instance.displayName}
-                disabled={disabled}
-                onChange={(event) => onRename(instance.id, event.target.value)}
-              />
+              <CastNameInput instance={instance} disabled={disabled} onRename={onRename} />
               <select
                 value={instance.presence}
                 disabled={disabled}

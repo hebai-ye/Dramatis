@@ -959,7 +959,17 @@ git ls-files | ForEach-Object {
 | `apps/web/src/styles.css` | 改 | `.sync-primary`（按钮 + 状态行）与 `.sync-advanced`（折叠区） |
 | `docs/EVAL.md` / `STATUS.md` / `FILE-LOG.md` | 改 | 第五十五节追加、接续点、文件记录 |
 
-## 四十八、几点注意
+## 四十八、2026-09-24：顺序 63（统一草稿 hook）
+
+| 文件 | 新增/修改 | 说明 |
+| --- | --- | --- |
+| `apps/web/src/lib/useDraftField.ts` | **新增** | 文本字段的本地草稿 + 防抖 300ms + 失焦提交 + 组合期不提交 + 同值不重复提交 |
+| `apps/web/src/components/ScenePanel.tsx` | 改 | 地点 / 世界内时间 / 场景设定三处改用草稿 hook |
+| `apps/web/src/components/MainHeader.tsx` / `CastDetail.tsx` | 改 | 对话名、角色显示名改用草稿 hook（空值不提交） |
+| `apps/web/src/components/CastPanel.tsx` / `MemoryPanel.tsx` | 改 | 在 `map` 里的输入框各抽小组件（`CastNameInput` / `MemoryDraftArea`）：hook 不能在循环里调 |
+| `docs/EVAL.md` / `TASKS.md` / `STATUS.md` / `FILE-LOG.md` | 改 | 第五十六节、任务 63 收口、接续点 |
+
+## 四十九、几点注意
 
 ---
 

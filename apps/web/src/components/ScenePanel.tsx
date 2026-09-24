@@ -1,4 +1,5 @@
 import type { CastPolicy, Scene } from '@dramatis/core';
+import { useDraftField } from '../lib/useDraftField';
 
 interface Props {
   scene: Scene;
@@ -16,6 +17,22 @@ const CAST_POLICY_OPTIONS: Array<{ value: CastPolicy; label: string; note: strin
 
 export function ScenePanel({ scene, onChange, onStartNewScene, disabled }: Props) {
   const current = CAST_POLICY_OPTIONS.find((option) => option.value === scene.castPolicy);
+  /*
+   * 三个文本字段都用草稿 hook（顺序 63）：打字只改本地草稿，停手 300ms 或失焦才落库。
+   * 以前每敲一个字就 `onChange` 写一次库，输入法还会被打断。
+   */
+  const locationField = useDraftField({
+    value: scene.location,
+    commit: (next) => onChange({ location: next }),
+  });
+  const timeField = useDraftField({
+    value: scene.worldTime,
+    commit: (next) => onChange({ worldTime: next }),
+  });
+  const summaryField = useDraftField({
+    value: scene.summary,
+    commit: (next) => onChange({ summary: next }),
+  });
 
   return (
     <section className="panel">
@@ -26,24 +43,12 @@ export function ScenePanel({ scene, onChange, onStartNewScene, disabled }: Props
 
       <label>
         地点
-        <input
-          type="text"
-          value={scene.location}
-          disabled={disabled}
-          placeholder="例如：旧城东侧的夜间酒馆"
-          onChange={(event) => onChange({ location: event.target.value })}
-        />
+        <input type="text" disabled={disabled} placeholder="例如：旧城东侧的夜间酒馆" {...locationField.bind} />
       </label>
 
       <label>
         世界内时间
-        <input
-          type="text"
-          value={scene.worldTime}
-          disabled={disabled}
-          placeholder="例如：第三日 · 黄昏"
-          onChange={(event) => onChange({ worldTime: event.target.value })}
-        />
+        <input type="text" disabled={disabled} placeholder="例如：第三日 · 黄昏" {...timeField.bind} />
       </label>
 
       <label>
@@ -64,12 +69,7 @@ export function ScenePanel({ scene, onChange, onStartNewScene, disabled }: Props
 
       <label>
         场景设定
-        <textarea
-          rows={4}
-          value={scene.summary}
-          disabled={disabled}
-          onChange={(event) => onChange({ summary: event.target.value })}
-        />
+        <textarea rows={4} disabled={disabled} {...summaryField.bind} />
       </label>
 
       {/*

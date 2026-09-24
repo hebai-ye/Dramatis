@@ -19,6 +19,28 @@ import {
   resolveMemorySources,
 } from '@dramatis/core';
 import { useEffect, useMemo, useState } from 'react';
+import { useDraftField } from '../lib/useDraftField';
+
+/**
+ * 记忆正文的编辑框（客观经过 / 角色感受）。
+ *
+ * 抽成组件是因为草稿 hook 必须在组件顶层调用，而这些输入框在 `memories.map(...)` 里。
+ * 以前它们每敲一个字就 `onUpdate` 写一次库（顺序 63 统一成防抖 + 失焦提交）。
+ */
+function MemoryDraftArea({
+  value,
+  disabled,
+  label,
+  onCommit,
+}: {
+  value: string;
+  disabled: boolean;
+  label: string;
+  onCommit: (next: string) => void;
+}) {
+  const field = useDraftField({ value, commit: onCommit });
+  return <textarea rows={2} disabled={disabled} aria-label={label} {...field.bind} />;
+}
 
 interface Props {
   memories: MemoryEvent[];
@@ -436,25 +458,25 @@ export function MemoryPanel({
 
               {expandedId === memory.id ? (
                 <div className="memory-editor">
-                  <label>
+                  <div className="field">
                     客观经过
-                    <textarea
-                      rows={2}
+                    <MemoryDraftArea
                       value={memory.summary}
                       disabled={disabled}
-                      onChange={(event) => onUpdate(memory.id, { summary: event.target.value })}
+                      label="客观经过"
+                      onCommit={(next) => onUpdate(memory.id, { summary: next })}
                     />
-                  </label>
+                  </div>
                   {memory.observerId !== null ? (
-                    <label>
+                    <div className="field">
                       这个角色的感受
-                      <textarea
-                        rows={2}
+                      <MemoryDraftArea
                         value={memory.perception}
                         disabled={disabled}
-                        onChange={(event) => onUpdate(memory.id, { perception: event.target.value })}
+                        label="这个角色的感受"
+                        onCommit={(next) => onUpdate(memory.id, { perception: next })}
                       />
-                    </label>
+                    </div>
                   ) : null}
                   <label>
                     重要度（改了之后不再自动衰减）

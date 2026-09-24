@@ -146,9 +146,8 @@ export function SettingsDialog(props: Props) {
                 <section className="panel">
                   <h2>多设备同步</h2>
                   <p className="hint">
-                    账户 ID 就是「同步空间」的名字，**账户密码就是同步密码**（注册账户时设的那个）。
-                    没有邮箱、没有验证码，也没有找回密码——所以注册时显示的恢复码要抄下来。
-                    服务端只存密文与哈希，解不开也读不到。
+                    账户 ID 就是同步空间的名字，账户密码就是同步密码（注册时设的那个）。
+                    点下面的「同步」即可；多台设备、快照、改密码都在「高级」里。
                   </p>
                   <SyncPanel api={props.sync} disabled={props.disabled} />
                 </section>

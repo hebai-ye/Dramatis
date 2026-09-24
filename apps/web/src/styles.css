@@ -801,6 +801,40 @@ button.ghost:focus-visible {
   font-size: 12px;
 }
 
+/*
+ * 多设备同步：账户已经有服务器地址，所以日常**只留一个同步按钮 + 一行状态**
+ * （用户 2026-09-24 要求）；设备、快照、改密码、断开等收进「高级」。
+ */
+.sync-primary {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.sync-primary button {
+  min-height: 40px;
+  min-width: 96px;
+}
+
+.sync-primary .hint {
+  margin: 0;
+}
+
+.sync-advanced {
+  border-top: 1px dashed var(--line);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding-top: 8px;
+}
+
+.sync-advanced summary {
+  color: var(--muted-text);
+  cursor: pointer;
+  font-size: 12px;
+}
+
 /* 恢复码：等宽、能换行、允许整段选中复制 */
 .recovery-code {
   background: var(--panel-soft);

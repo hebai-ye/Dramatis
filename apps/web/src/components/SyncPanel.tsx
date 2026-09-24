@@ -113,23 +113,7 @@ export function SyncPanel({ api, disabled }: Props) {
 
   return (
     <div className="stack">
-      <p className="hint">
-        让你自己的多台设备看到同一条世界线：所有内容在本机加密后才上传，服务端只存密文与哈希，
-        解不开也读不到。**同步用的是账户密码**（注册账户时设的那个），这里不用再填一遍；
-        注册账户、登录别的设备、重新解锁，都在「账户」里做。
-      </p>
-
-      {connected ? (
-        <div className="notice">
-          <strong>这个账户已经连上同步空间</strong>
-          <p className="hint">
-            服务端：<code>{api.config?.endpoint ?? '—'}</code>；账户 ID：<code>{api.config?.userId ?? '—'}</code>。
-          </p>
-          {api.status === 'needs-secret' ? (
-            <p className="hint">现在还没解锁：到「账户」里点这个账户的「输入密码」即可。</p>
-          ) : null}
-        </div>
-      ) : (
+      {connected ? null : (
         <>
           <p className="hint">
             这个账户还没有同步空间。**推荐**直接去「账户」里注册一个新账户（那里会一起设好密码），
@@ -204,323 +188,352 @@ export function SyncPanel({ api, disabled }: Props) {
         </>
       )}
 
-      <div className="save-bar">
-        <button
-          type="button"
-          disabled={disabled || api.busy}
-          hidden={connected}
-          onClick={() => void run(() => api.connect({ endpoint, userId, secret, keyMode }))}
-        >
-          {connected ? '用这个密码重新连接' : '开通 / 加入并同步'}
-        </button>
-        <button
-          type="button"
-          className="ghost"
-          disabled={disabled || api.busy || !connected}
-          onClick={() => void run(api.syncNow)}
-        >
-          {api.busy ? '同步中…' : '立即同步'}
-        </button>
-        {connected ? (
+      {/*
+        账户已经有服务器地址了，所以这里**只留一个同步按钮**（用户 2026-09-24 要求）：
+        点一下就把这一轮的东西推上去、把别处的新东西拉下来。状态压成一行字。
+        设备列表、服务端快照、重新拉一遍、改账户密码、保存方式、断开——全部收进「高级」。
+      */}
+      {connected ? (
+        <div className="sync-primary">
+          <button type="button" disabled={disabled || api.busy} onClick={() => void run(api.syncNow)}>
+            {api.busy ? '同步中…' : '同步'}
+          </button>
+          <p className="hint">
+            {api.status === 'needs-secret'
+              ? '这个账户还没解锁：到「账户」里点它卡片上的「输入密码」。'
+              : `上次同步 ${formatTime(api.config?.lastSyncAt ?? null)} · ${describeReport(api.config?.lastReport ?? null)}`}
+          </p>
+        </div>
+      ) : (
+        <div className="save-bar">
           <button
             type="button"
-            className="ghost"
-            disabled={api.busy}
-            onClick={() => void run(async () => api.setKeyMode(keyMode))}
+            disabled={disabled || api.busy}
+            onClick={() => void run(() => api.connect({ endpoint, userId, secret, keyMode }))}
           >
-            保存方式生效
+            开通 / 加入并同步
           </button>
-        ) : null}
-      </div>
+        </div>
+      )}
 
-      {connected ? (
-        <ul className="usage-list">
-          <li>
-            <span className="usage-name">状态</span>
-            <span className="usage-figure">
-              {api.status === 'ready' ? '已连接' : api.status === 'needs-secret' ? '需要重填密码' : '出错'}
-            </span>
-          </li>
-          <li>
-            <span className="usage-name">上次同步</span>
-            <span className="usage-figure">{formatTime(api.config?.lastSyncAt ?? null)}</span>
-          </li>
-          <li>
-            <span className="usage-name">上次结果</span>
-            <span className="usage-figure">{describeReport(api.config?.lastReport ?? null)}</span>
-          </li>
-          <li>
-            <span className="usage-name">上次合并</span>
-            <span className="usage-figure">
-              {api.config?.lastReport === null || api.config?.lastReport === undefined
-                ? '还没同步过'
-                : `写进本机 ${String(api.config.lastReport.applied)} 条 · 本机更新较新保留 ${String(
-                    api.config.lastReport.skipped,
-                  )} 条`}
-            </span>
-          </li>
-          {/*
+      {/* 下面是「高级」：日常只需要上面那颗同步按钮 */}
+      <details className="sync-advanced">
+        <summary>高级</summary>
+        {connected ? (
+          <div className="field">
+            <label htmlFor="sync-keymode-advanced">密码保存方式</label>
+            <select
+              id="sync-keymode-advanced"
+              value={keyMode}
+              disabled={disabled || api.busy}
+              onChange={(event) => setKeyMode(event.target.value as KeyStorageMode)}
+            >
+              <option value="session">仅本次会话（最安全，重开要重填）</option>
+              <option value="device">保存在本机浏览器（方便，换设备要重填）</option>
+            </select>
+            <button
+              type="button"
+              className="ghost"
+              disabled={api.busy}
+              onClick={() => void run(async () => api.setKeyMode(keyMode))}
+            >
+              保存方式生效
+            </button>
+          </div>
+        ) : null}
+
+        {connected ? (
+          <ul className="usage-list">
+            <li>
+              <span className="usage-name">状态</span>
+              <span className="usage-figure">
+                {api.status === 'ready' ? '已连接' : api.status === 'needs-secret' ? '需要重填密码' : '出错'}
+              </span>
+            </li>
+            <li>
+              <span className="usage-name">上次同步</span>
+              <span className="usage-figure">{formatTime(api.config?.lastSyncAt ?? null)}</span>
+            </li>
+            <li>
+              <span className="usage-name">上次结果</span>
+              <span className="usage-figure">{describeReport(api.config?.lastReport ?? null)}</span>
+            </li>
+            <li>
+              <span className="usage-name">上次合并</span>
+              <span className="usage-figure">
+                {api.config?.lastReport === null || api.config?.lastReport === undefined
+                  ? '还没同步过'
+                  : `写进本机 ${String(api.config.lastReport.applied)} 条 · 本机更新较新保留 ${String(
+                      api.config.lastReport.skipped,
+                    )} 条`}
+              </span>
+            </li>
+            {/*
             覆盖可见性（顺序 19）：LWW 静默覆盖是这个设计里最容易让人不放心的地方，
             所以要能说出「有多少条是别的设备写得更旧、被我这边留住了」。
             只算**来自别的设备**的：自己本机改两遍不叫覆盖。
           */}
-          {(api.config?.lastReport?.overriddenCount ?? 0) > 0 ? (
+            {(api.config?.lastReport?.overriddenCount ?? 0) > 0 ? (
+              <li>
+                <span className="usage-name">挡住旧版本</span>
+                <span className="usage-figure">
+                  别的设备写得更旧、本机留住的 {String(api.config?.lastReport?.overriddenCount ?? 0)} 条
+                  {describeDevices(api.config?.lastReport?.overridden ?? [])}
+                </span>
+              </li>
+            ) : null}
+            {(api.config?.lastReport?.quarantinedCount ?? 0) > 0 ? (
+              <li>
+                <span className="usage-name">跳过</span>
+                <span className="usage-figure">
+                  解不开、已跳过 {String(api.config?.lastReport?.quarantinedCount ?? 0)} 条（
+                  {api.config?.lastReport?.quarantined[0]?.reason.slice(0, 24) ?? ''}…）
+                </span>
+              </li>
+            ) : null}
             <li>
-              <span className="usage-name">挡住旧版本</span>
+              <span className="usage-name">自动同步</span>
               <span className="usage-figure">
-                别的设备写得更旧、本机留住的 {String(api.config?.lastReport?.overriddenCount ?? 0)} 条
-                {describeDevices(api.config?.lastReport?.overridden ?? [])}
+                {api.autoSyncPending ? '正在推这一轮…' : '每轮对话结束后自动推（最快 20 秒一次）'}
               </span>
             </li>
-          ) : null}
-          {(api.config?.lastReport?.quarantinedCount ?? 0) > 0 ? (
             <li>
-              <span className="usage-name">跳过</span>
-              <span className="usage-figure">
-                解不开、已跳过 {String(api.config?.lastReport?.quarantinedCount ?? 0)} 条（
-                {api.config?.lastReport?.quarantined[0]?.reason.slice(0, 24) ?? ''}…）
-              </span>
+              <span className="usage-name">空间</span>
+              <span className="usage-figure">{api.config?.spaceHandle.slice(0, 10)}…</span>
             </li>
-          ) : null}
-          <li>
-            <span className="usage-name">自动同步</span>
-            <span className="usage-figure">
-              {api.autoSyncPending ? '正在推这一轮…' : '每轮对话结束后自动推（最快 20 秒一次）'}
-            </span>
-          </li>
-          <li>
-            <span className="usage-name">空间</span>
-            <span className="usage-figure">{api.config?.spaceHandle.slice(0, 10)}…</span>
-          </li>
-        </ul>
-      ) : null}
+          </ul>
+        ) : null}
 
-      {api.recoveryCode !== null ? (
-        <div className="notice">
-          <p>
-            <strong>恢复码（只显示这一次，请抄到安全的地方）：</strong>
-          </p>
-          {/*
+        {api.recoveryCode !== null ? (
+          <div className="notice">
+            <p>
+              <strong>恢复码（只显示这一次，请抄到安全的地方）：</strong>
+            </p>
+            {/*
             手机上「抄下来」多半是复制粘贴，所以给一键复制 + 等宽大字 + 可选中；
             抄错一位等于丢了这条线，值得把这一步做顺。
           */}
-          <p className="recovery-code">{api.recoveryCode}</p>
-          <button
-            type="button"
-            className="ghost"
-            onClick={() => {
-              void copyRecoveryCode(api.recoveryCode ?? '').then((ok) => {
-                setRecoveryCopied(ok);
-                if (!ok) {
-                  setNotice({
-                    ok: false,
-                    message: '这个浏览器不让复制（可能是非 https 或没给剪贴板权限），请手动选中上面那串。',
-                  });
-                }
-              });
-            }}
-          >
-            {recoveryCopied ? '已复制 ✓' : '复制恢复码'}
-          </button>
-          <p className="hint">
-            忘了同步密码时，它就是你的密码（一样能解开数据、一样能登录）。丢了就只剩封存文件那条路。
-          </p>
-          <button type="button" className="ghost" onClick={api.dismissRecoveryCode}>
-            我抄好了
-          </button>
-        </div>
-      ) : null}
+            <p className="recovery-code">{api.recoveryCode}</p>
+            <button
+              type="button"
+              className="ghost"
+              onClick={() => {
+                void copyRecoveryCode(api.recoveryCode ?? '').then((ok) => {
+                  setRecoveryCopied(ok);
+                  if (!ok) {
+                    setNotice({
+                      ok: false,
+                      message: '这个浏览器不让复制（可能是非 https 或没给剪贴板权限），请手动选中上面那串。',
+                    });
+                  }
+                });
+              }}
+            >
+              {recoveryCopied ? '已复制 ✓' : '复制恢复码'}
+            </button>
+            <p className="hint">
+              忘了同步密码时，它就是你的密码（一样能解开数据、一样能登录）。丢了就只剩封存文件那条路。
+            </p>
+            <button type="button" className="ghost" onClick={api.dismissRecoveryCode}>
+              我抄好了
+            </button>
+          </div>
+        ) : null}
 
-      {/*
+        {/*
         顺序 11：服务端上的空间没了（被清过库、或者换了服务器），客户端只会报一句
         「服务端上没有这个空间了」——用户不知道下一步该干嘛。这里把路指出来：
         填回同一套 id + 密码再连一次，就会用同样的空间名重新开通，并把本机数据推上去。
       */}
-      {/* 判据是状态码 404，不是中文文案（顺序 61）：服务端换一句话这里不会失效 */}
-      {api.error !== null && api.errorStatus === 404 ? (
-        <div className="notice warn">
-          <strong>服务端上的这个空间不在了</strong>
-          <p>{api.error}</p>
-          <p className="hint">
-            本机数据<strong>没有丢</strong>。到「账户」里点这个账户的「输入密码」（或用「添加账户 → 注册」 填同一个账户
-            ID 与密码）——会用同一个空间名重新开通，然后把本机这份数据推上去 （服务端上原本那份已经没了，找不回来）。
-          </p>
-        </div>
-      ) : api.error !== null ? (
-        <div className="notice error">{api.error}</div>
-      ) : null}
+        {/* 判据是状态码 404，不是中文文案（顺序 61）：服务端换一句话这里不会失效 */}
+        {api.error !== null && api.errorStatus === 404 ? (
+          <div className="notice warn">
+            <strong>服务端上的这个空间不在了</strong>
+            <p>{api.error}</p>
+            <p className="hint">
+              本机数据<strong>没有丢</strong>。到「账户」里点这个账户的「输入密码」（或用「添加账户 → 注册」
+              填同一个账户 ID 与密码）——会用同一个空间名重新开通，然后把本机这份数据推上去
+              （服务端上原本那份已经没了，找不回来）。
+            </p>
+          </div>
+        ) : api.error !== null ? (
+          <div className="notice error">{api.error}</div>
+        ) : null}
 
-      {/*
+        {/*
         顺序 17 演练发现的洞：撞满之后接下来几次同步往往是「成功的」（没新东西要推），
         于是错误提示被清掉、画面看起来一切正常，而数据其实推不上去了。
         所以这一条**不跟着 error 走**：它只在真的推进去东西之后才消失。
       */}
-      {api.spaceFull ? (
-        <div className="notice warn">
-          <strong>服务端上的这个空间已经存满</strong>
-          <p>
-            数据推不上去了，但<strong>本机一切都还在</strong>。服务端上的记录只增不减（删掉的会留成墓碑），
-            所以「清理本机」不会让它变小。可行的两条路：① 先把本机数据导出一份封存留底 （「数据」那一档）；② 换一个用户
-            id 重新开一个空间，本机这份会推过去。
-          </p>
-        </div>
-      ) : null}
-      {notice !== null ? <div className={notice.ok ? 'notice' : 'notice error'}>{notice.message}</div> : null}
+        {api.spaceFull ? (
+          <div className="notice warn">
+            <strong>服务端上的这个空间已经存满</strong>
+            <p>
+              数据推不上去了，但<strong>本机一切都还在</strong>。服务端上的记录只增不减（删掉的会留成墓碑），
+              所以「清理本机」不会让它变小。可行的两条路：① 先把本机数据导出一份封存留底 （「数据」那一档）；②
+              换一个用户 id 重新开一个空间，本机这份会推过去。
+            </p>
+          </div>
+        ) : null}
+        {notice !== null ? <div className={notice.ok ? 'notice' : 'notice error'}>{notice.message}</div> : null}
 
-      {/* ---------- 顺序 17：服务端快照（存一份 / 灌回去）---------- */}
-      {connected ? (
-        <div className="panel-inner">
-          <h3>服务端快照</h3>
-          <p className="hint">
-            把服务端那份<strong>原文</strong>（密文 + 坐标）存成一个文件拿在手里。它解不开内容
-            ——要读还得有同步密码或恢复码——但服务端被清空、换机器时，它能原样灌回去。
-            本机数据没了可以让服务端补，服务端没了可以让本机补，只有**两边同时出事**才用得上它。
-          </p>
-          <p className={snapshotStale ? 'hint warn' : 'hint'}>
-            上次存快照：{snapshotAge}
-            {snapshotStale ? '（超过一天了，建议再存一份：它很便宜，几秒钟）' : ''}
-          </p>
-          <div className="save-bar">
-            <button
-              type="button"
-              disabled={api.busy || snapshotBusy}
-              title="从服务端把所有记录（密文）拉下来存成一个文件"
-              onClick={() => {
+        {/* ---------- 顺序 17：服务端快照（存一份 / 灌回去）---------- */}
+        {connected ? (
+          <div className="panel-inner">
+            <h3>服务端快照</h3>
+            <p className="hint">
+              把服务端那份<strong>原文</strong>（密文 + 坐标）存成一个文件拿在手里。它解不开内容
+              ——要读还得有同步密码或恢复码——但服务端被清空、换机器时，它能原样灌回去。
+              本机数据没了可以让服务端补，服务端没了可以让本机补，只有**两边同时出事**才用得上它。
+            </p>
+            <p className={snapshotStale ? 'hint warn' : 'hint'}>
+              上次存快照：{snapshotAge}
+              {snapshotStale ? '（超过一天了，建议再存一份：它很便宜，几秒钟）' : ''}
+            </p>
+            <div className="save-bar">
+              <button
+                type="button"
+                disabled={api.busy || snapshotBusy}
+                title="从服务端把所有记录（密文）拉下来存成一个文件"
+                onClick={() => {
+                  setSnapshotNotice(null);
+                  setSnapshotBusy(true);
+                  void api
+                    .exportSnapshot()
+                    .then((result) => {
+                      if (result === null) return;
+                      setSnapshotNotice(
+                        `存好了：${String(result.records)} 条记录，${(result.bytes / 1024).toFixed(0)} KB`,
+                      );
+                    })
+                    .catch((error: unknown) =>
+                      setSnapshotNotice(error instanceof Error ? error.message : String(error)),
+                    )
+                    .finally(() => setSnapshotBusy(false));
+                }}
+              >
+                {snapshotBusy ? '正在拉…' : '存一份服务端快照'}
+              </button>
+              <button
+                type="button"
+                className="ghost"
+                disabled={api.busy || snapshotBusy}
+                title="选一个快照文件，把它的记录原样推回服务端（服务端被清空后用）"
+                onClick={() => snapshotInput.current?.click()}
+              >
+                从快照灌回服务端
+              </button>
+            </div>
+            <input
+              ref={snapshotInput}
+              type="file"
+              accept="application/json,.json"
+              className="hidden-file"
+              onChange={(event) => {
+                const file = event.target.files?.[0];
+                event.target.value = '';
+                if (file === undefined) return;
                 setSnapshotNotice(null);
                 setSnapshotBusy(true);
-                void api
-                  .exportSnapshot()
-                  .then((result) => {
-                    if (result === null) return;
-                    setSnapshotNotice(
-                      `存好了：${String(result.records)} 条记录，${(result.bytes / 1024).toFixed(0)} KB`,
-                    );
-                  })
+                void file
+                  .text()
+                  .then((text) => parseSnapshot(text))
+                  .then((snapshot: ServerSnapshot) => api.restoreSnapshot(snapshot))
+                  .then((result) => setSnapshotNotice(`灌回去了：${String(result.pushed)} 条记录`))
                   .catch((error: unknown) => setSnapshotNotice(error instanceof Error ? error.message : String(error)))
                   .finally(() => setSnapshotBusy(false));
               }}
-            >
-              {snapshotBusy ? '正在拉…' : '存一份服务端快照'}
-            </button>
+            />
+            {snapshotNotice === null ? null : <p className="hint">{snapshotNotice}</p>}
+          </div>
+        ) : null}
+
+        {connected ? (
+          <div className="save-bar">
             <button
               type="button"
               className="ghost"
-              disabled={api.busy || snapshotBusy}
-              title="选一个快照文件，把它的记录原样推回服务端（服务端被清空后用）"
-              onClick={() => snapshotInput.current?.click()}
-            >
-              从快照灌回服务端
-            </button>
-          </div>
-          <input
-            ref={snapshotInput}
-            type="file"
-            accept="application/json,.json"
-            className="hidden-file"
-            onChange={(event) => {
-              const file = event.target.files?.[0];
-              event.target.value = '';
-              if (file === undefined) return;
-              setSnapshotNotice(null);
-              setSnapshotBusy(true);
-              void file
-                .text()
-                .then((text) => parseSnapshot(text))
-                .then((snapshot: ServerSnapshot) => api.restoreSnapshot(snapshot))
-                .then((result) => setSnapshotNotice(`灌回去了：${String(result.pushed)} 条记录`))
-                .catch((error: unknown) => setSnapshotNotice(error instanceof Error ? error.message : String(error)))
-                .finally(() => setSnapshotBusy(false));
-            }}
-          />
-          {snapshotNotice === null ? null : <p className="hint">{snapshotNotice}</p>}
-        </div>
-      ) : null}
-
-      {connected ? (
-        <div className="save-bar">
-          <button
-            type="button"
-            className="ghost"
-            disabled={api.busy}
-            title="把本机的拉取游标清掉，从服务端完整拉一遍。本地数据与服务端数据都不会被删。"
-            onClick={() => void run(api.resync)}
-          >
-            重新拉一遍
-          </button>
-          <button type="button" className="ghost danger" disabled={api.busy} onClick={() => void run(api.disconnect)}>
-            断开同步（不影响本机数据，也不会删除服务端的数据）
-          </button>
-        </div>
-      ) : null}
-
-      {/* ---------- 顺序 14 / 15：设备可见性 + 断开一台设备 ---------- */}
-      {connected ? (
-        <div className="panel-inner">
-          <h3>设备</h3>
-          <p className="hint">
-            这个空间最近有哪些设备在写。想断掉一台（比如旧手机丢了），做法是**换同步密码**：
-            换完之后只知道旧密码的设备再也同步不了，你手上的其它设备用新密码重连即可。 恢复码不受影响。
-          </p>
-          <div className="save-bar">
-            <button type="button" className="ghost" disabled={api.busy} onClick={() => void loadDevices()}>
-              {devices === null ? '看有哪些设备' : '刷新设备列表'}
-            </button>
-          </div>
-          {devices === null ? null : devices.devices.length === 0 ? (
-            <p className="hint">服务端还没记下任何设备（可能是这台服务端还没更新到带设备列表的版本）。</p>
-          ) : (
-            <ul className="usage-list">
-              {devices.devices.map((device) => (
-                <li key={device.deviceId}>
-                  <span className="usage-name">
-                    {device.deviceId === devices.localDeviceId ? '这台设备' : `设备 ${device.deviceId.slice(0, 8)}…`}
-                  </span>
-                  <span className="usage-figure">
-                    {String(device.records)} 条 · 最后写入 {formatTime(device.lastWriteAt)}
-                  </span>
-                </li>
-              ))}
-            </ul>
-          )}
-
-          <div className="field">
-            <label htmlFor="sync-new-password">换同步密码（= 让旧密码失效）</label>
-            <input
-              id="sync-new-password"
-              type="password"
-              value={newPassword}
               disabled={api.busy}
-              autoComplete="off"
-              placeholder="新密码（至少 6 位）"
-              onChange={(event) => setNewPassword(event.target.value)}
-            />
-          </div>
-          <div className="save-bar">
-            <button
-              type="button"
-              disabled={api.busy || newPassword.trim().length < 6}
-              title="换完之后只知道旧密码的设备会同步不了；恢复码仍然有效"
-              onClick={() => {
-                if (
-                  !window.confirm(
-                    '换同步密码？换完之后，只知道旧密码的设备会同步不了（这就是「断开」）。恢复码仍然有效。',
-                  )
-                ) {
-                  return;
-                }
-                void run(async () => {
-                  await api.rotatePassword(newPassword);
-                  setNewPassword('');
-                  setNotice({ ok: true, message: '换好了。其它设备请用新密码重新连接。' });
-                });
-              }}
+              title="把本机的拉取游标清掉，从服务端完整拉一遍。本地数据与服务端数据都不会被删。"
+              onClick={() => void run(api.resync)}
             >
-              换密码
+              重新拉一遍
             </button>
-            <span className="hint">本机不用重连（凭证已经就地换掉了）</span>
+            <button type="button" className="ghost danger" disabled={api.busy} onClick={() => void run(api.disconnect)}>
+              断开同步（不影响本机数据，也不会删除服务端的数据）
+            </button>
           </div>
-        </div>
-      ) : null}
+        ) : null}
+
+        {/* ---------- 顺序 14 / 15：设备可见性 + 断开一台设备 ---------- */}
+        {connected ? (
+          <div className="panel-inner">
+            <h3>设备</h3>
+            <p className="hint">
+              这个空间最近有哪些设备在写。想断掉一台（比如旧手机丢了），做法是**换同步密码**：
+              换完之后只知道旧密码的设备再也同步不了，你手上的其它设备用新密码重连即可。 恢复码不受影响。
+            </p>
+            <div className="save-bar">
+              <button type="button" className="ghost" disabled={api.busy} onClick={() => void loadDevices()}>
+                {devices === null ? '看有哪些设备' : '刷新设备列表'}
+              </button>
+            </div>
+            {devices === null ? null : devices.devices.length === 0 ? (
+              <p className="hint">服务端还没记下任何设备（可能是这台服务端还没更新到带设备列表的版本）。</p>
+            ) : (
+              <ul className="usage-list">
+                {devices.devices.map((device) => (
+                  <li key={device.deviceId}>
+                    <span className="usage-name">
+                      {device.deviceId === devices.localDeviceId ? '这台设备' : `设备 ${device.deviceId.slice(0, 8)}…`}
+                    </span>
+                    <span className="usage-figure">
+                      {String(device.records)} 条 · 最后写入 {formatTime(device.lastWriteAt)}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
+
+            <div className="field">
+              <label htmlFor="sync-new-password">换同步密码（= 让旧密码失效）</label>
+              <input
+                id="sync-new-password"
+                type="password"
+                value={newPassword}
+                disabled={api.busy}
+                autoComplete="off"
+                placeholder="新密码（至少 6 位）"
+                onChange={(event) => setNewPassword(event.target.value)}
+              />
+            </div>
+            <div className="save-bar">
+              <button
+                type="button"
+                disabled={api.busy || newPassword.trim().length < 6}
+                title="换完之后只知道旧密码的设备会同步不了；恢复码仍然有效"
+                onClick={() => {
+                  if (
+                    !window.confirm(
+                      '换同步密码？换完之后，只知道旧密码的设备会同步不了（这就是「断开」）。恢复码仍然有效。',
+                    )
+                  ) {
+                    return;
+                  }
+                  void run(async () => {
+                    await api.rotatePassword(newPassword);
+                    setNewPassword('');
+                    setNotice({ ok: true, message: '换好了。其它设备请用新密码重新连接。' });
+                  });
+                }}
+              >
+                换密码
+              </button>
+              <span className="hint">本机不用重连（凭证已经就地换掉了）</span>
+            </div>
+          </div>
+        ) : null}
+      </details>
     </div>
   );
 }

@@ -950,7 +950,16 @@ git ls-files | ForEach-Object {
 | `apps/web/src/styles.css` | 改 | 账户卡片、添加账户、恢复码等样式 |
 | `docs/SYNC.md` / `EVAL.md` / `STATUS.md` / `FILE-LOG.md` | 改 | §4.9.3 设计、第五十五节验证、接续点 |
 
-## 四十七、几点注意
+## 四十七、2026-09-24：多设备同步精简为一个按钮
+
+| 文件 | 新增/修改 | 说明 |
+| --- | --- | --- |
+| `apps/web/src/components/SyncPanel.tsx` | 改 | 已连接的账户：只留「同步」按钮 + 一行状态；其余（保存方式 / 状态明细 / 快照 / 设备与改密码 / 重新拉 / 断开）收进折叠的「高级」；删掉重复的信息卡与长段落 |
+| `apps/web/src/components/SettingsDialog.tsx` | 改 | 「多设备同步」的说明压成两行 |
+| `apps/web/src/styles.css` | 改 | `.sync-primary`（按钮 + 状态行）与 `.sync-advanced`（折叠区） |
+| `docs/EVAL.md` / `STATUS.md` / `FILE-LOG.md` | 改 | 第五十五节追加、接续点、文件记录 |
+
+## 四十八、几点注意
 
 ---
 

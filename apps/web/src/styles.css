@@ -2687,6 +2687,129 @@ details summary {
     gap: 6px;
     padding: 6px 8px;
   }
+
+  /*
+   * 手机顶栏（用户 2026-09-24 要求，照 DeepSeek 手机端的样子排）：
+   * 左上角开左栏、中间是在场角色（半高、可横滑）、右上角主/副切换 + 面板。
+   *
+   * 三条刻意的决定：
+   * 1. **去掉卡片外观**（无边框、与页面同色）：DeepSeek 那条栏是「一片留白 + 两个图标」，
+   *    带边框的卡片会把四个控件框成一条罐头；
+   * 2. 顶栏 padding 里带上 `env(safe-area-inset-top)`：全面屏的刘海与状态栏不会压到按钮；
+   * 3. 触摸目标一律 ≥44px（宽度可以窄，高度不能）。
+   */
+  .topbar.narrow {
+    background: transparent;
+    border: none;
+    border-radius: 0;
+    gap: 8px;
+    min-height: 48px;
+    padding: calc(4px + env(safe-area-inset-top)) 10px 4px;
+  }
+
+  .topbar.narrow .rail-toggle {
+    align-items: center;
+    display: inline-flex;
+    flex: 0 0 auto;
+    height: 44px;
+    justify-content: center;
+    padding: 0;
+    width: 44px;
+  }
+
+  /* 在场角色：与顶栏齐平、高度只有顶栏一半（用户原话） */
+  .cast-strip {
+    align-items: center;
+    display: flex;
+    flex: 1 1 auto;
+    gap: 6px;
+    height: 24px;
+    min-width: 0;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    scrollbar-width: none;
+  }
+
+  .cast-strip::-webkit-scrollbar {
+    display: none;
+  }
+
+  .cast-strip .cast-chip {
+    /*
+     * 这里必须显式写清底色与文字色：`button` 的基础样式是「强调色底 + 白字」，
+     * 而 `.cast-chip` 原本只服务标题栏里的 `<span>`——照搬过来会变成
+     * 「浅灰底 + 白字」，在手机上几乎看不见（第一版就踩了这个）。
+     */
+    background: color-mix(in srgb, var(--accent) 12%, var(--panel-soft));
+    border: none;
+    color: var(--text);
+    flex: 0 0 auto;
+    font-size: 12px;
+    font-weight: 500;
+    height: 24px;
+    line-height: 1;
+    padding: 0 10px;
+  }
+
+  .strip-note {
+    color: var(--muted-text);
+    flex: 1 1 auto;
+    font-size: 12px;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .chat-controls {
+    align-items: center;
+    display: flex;
+    flex: 0 0 auto;
+    gap: 6px;
+  }
+
+  /* 主/副合并成一个按钮：点一下切换，里面两个字标出「现在在哪边、点去哪边」 */
+  .chat-controls .kind-toggle {
+    align-items: center;
+    background: transparent;
+    /* 一颗完整的胶囊：左「主」右「副」，亮着的那半边表示现在在哪条线上 */
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    display: inline-flex;
+    flex: 0 0 auto;
+    gap: 2px;
+    height: 44px;
+    padding: 0 4px;
+  }
+
+  .kind-half {
+    border-radius: 999px;
+    color: var(--muted-text);
+    font-size: 13px;
+    font-weight: 500;
+    padding: 4px 8px;
+  }
+
+  .kind-half.active {
+    background: color-mix(in srgb, var(--accent) 16%, transparent);
+    color: var(--accent);
+    font-weight: 600;
+  }
+
+  .chat-controls .panel-toggle {
+    flex: 0 0 auto;
+    height: 44px;
+    padding: 0 12px;
+  }
+
+  /* 手机上主区标题栏只剩「世界名 · 对话名」，不再换行 */
+  .main-header {
+    flex-wrap: nowrap;
+  }
+
+  .main-header .cast-inline {
+    display: none;
+  }
 }
 
 /* 手机上的「装成应用」引导（顺序 29）：贴在底部，可关，只出现一次 */

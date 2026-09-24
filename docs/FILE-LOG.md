@@ -895,7 +895,22 @@ git ls-files | ForEach-Object {
 | `packages/core/src/storage/repository.test.ts` | 改 | +5：快照引用复用的四个方向（不变 / 消息变了 / 空 / 换世界）、墓碑不计入计数、`listSince` 与整表过滤一致 |
 | `docs/EVAL.md` / `STATUS.md` / `TASKS.md` / `FILE-LOG.md` | 改 | 第五十一节、接续点、任务 62 收口与 P1 的「未复现」结论 |
 
-## 四十二、几点注意
+## 四十二、2026-09-24：手机端顶栏按 DeepSeek 布局重排
+
+| 文件 | 新增/修改 | 说明 |
+| --- | --- | --- |
+| `apps/web/src/components/TopBar.tsx` | 改 | 窄屏分支：三横图标开左栏、中间角色条、右上角两颗控件；删掉「全屏」与「存储」；保留「数据不会保存」警告 |
+| `apps/web/src/components/CastStrip.tsx` | **新增** | 手机顶栏里的半高在场角色条；点一下把名字插进输入框 |
+| `apps/web/src/components/ChatControls.tsx` | **新增** | 主/副合一的可切换按钮 + 面板按钮（只在窄屏由 TopBar 渲染） |
+| `apps/web/src/components/MainHeader.tsx` | 改 | 窄屏时不再渲染在场角色与两颗按钮（都由顶栏接管），只留「世界名 · 对话名」 |
+| `apps/web/src/components/MainChat.tsx` | 改 | 新增 `insertRequest`：把顶栏递来的角色名插到光标处并聚焦输入框 |
+| `apps/web/src/components/Icons.tsx` | 改 | 新增 `IconMenu`（三横） |
+| `apps/web/src/lib/viewport.ts` | 改 | 删掉 `useFullscreen` / `FullscreenApi`（功能弃掷） |
+| `apps/web/src/App.tsx` | 改 | 接线（castNames / castAsk / ChatControls / CastStrip）；删除全屏；安装引导文案去掉「点顶栏的全屏」 |
+| `apps/web/src/styles.css` | 改 | `.topbar.narrow`（无卡片 + 安全区）、`.cast-strip`（半高、可横滑、隐藏滚动条）、`.chat-controls` / `.kind-toggle` / `.kind-half`、窄屏标题栏不再换行 |
+| `docs/LAYOUT.md` / `EVAL.md` / `STATUS.md` / `FILE-LOG.md` | 改 | 顶栏规格的手机端分支与两处删除、第五十二节（含前后截图路径与实测数字）、接续点 |
+
+## 四十三、几点注意
 
 ---
 

@@ -7,6 +7,7 @@ import {
   buildSceneTransitionNarration,
   buildTurnAnalysisMessages,
   type Card,
+  type CastName,
   type CharacterInstance,
   type Conversation,
   type ConversationId,
@@ -50,6 +51,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { CardDesigner } from './components/CardDesigner';
 import { CastDetail } from './components/CastDetail';
 import { CastRail } from './components/CastRail';
+import { CastStrip } from './components/CastStrip';
+import { ChatControls } from './components/ChatControls';
 import { LeftRail, type RailPane } from './components/LeftRail';
 import { type FocusRequest, MainChat } from './components/MainChat';
 import { MainHeader } from './components/MainHeader';
@@ -73,7 +76,7 @@ import { QUOTA_WARN_RATIO, useStorageStatus } from './lib/storage';
 import { resetStreamState, setStreamState } from './lib/stream-store';
 import { useSync } from './lib/sync';
 import { extraCalls, useUsage } from './lib/usage';
-import { NARROW_SCREEN_QUERY, useFullscreen, useNarrowScreen } from './lib/viewport';
+import { NARROW_SCREEN_QUERY, useNarrowScreen } from './lib/viewport';
 import {
   MEMORY_BUDGET_TOKENS,
   MEMORY_CONSOLIDATE_TASK_KIND,
@@ -208,8 +211,6 @@ export function App() {
    * 默认铺开会把对话挤没（ROADMAP P2-1）。
    */
   const narrow = useNarrowScreen();
-  /** 全屏：手机上浏览器顶栏/底栏占地方时，一键把它们收起来。 */
-  const fullscreen = useFullscreen();
   const [collapsed, setCollapsed] = useState(
     () => typeof window !== 'undefined' && window.matchMedia(NARROW_SCREEN_QUERY).matches,
   );
@@ -298,6 +299,24 @@ export function App() {
     () => (scene === null ? [] : instances.filter((instance) => scene.cast.includes(instance.id))),
     [instances, scene],
   );
+
+  /**
+   * 手机顶栏的角色条只要名字（顺序 62 起 `CastName` 就是这个形状）。
+   *
+   * 点一下某个角色 = 把他的名字插进输入框（应用里已有的「点名叫人」规则），
+   * 于是**不用开面板、也不打断这一轮对话**就能直接跟他说话。
+   * 用 `seq` 递增是为了「同一个名字连点两次」也能再插一次——只比文本的话第二次什么都不发生。
+   */
+  const castNames = useMemo<CastName[]>(
+    () => cast.map((instance) => ({ id: instance.id, displayName: instance.displayName })),
+    [cast],
+  );
+  const [castAsk, setCastAsk] = useState<{ text: string; seq: number } | null>(null);
+  const castAskSeq = useRef(0);
+  const handleAskCast = useCallback((displayName: string): void => {
+    castAskSeq.current += 1;
+    setCastAsk({ text: displayName, seq: castAskSeq.current });
+  }, []);
 
   const availableCards = useMemo(
     () => session.library.cards.filter((card) => !instances.some((instance) => instance.cardId === card.id)),
@@ -1510,10 +1529,19 @@ export function App() {
       <TopBar
         collapsed={collapsed}
         onToggleCollapsed={() => setCollapsed((value) => !value)}
-        backendKind={boot?.backendKind ?? ''}
         degraded={boot?.degraded ?? false}
         backgroundPending={worker.pending}
-        fullscreen={fullscreen}
+        narrow={narrow}
+        castStrip={<CastStrip cast={castNames} isSide={isSide} onAsk={handleAskCast} />}
+        chatControls={
+          <ChatControls
+            isSide={isSide}
+            disabled={disabled}
+            panelOpen={panelOpen}
+            onToggleKind={() => void handleToggleKind()}
+            onTogglePanel={() => setPanelOpen((value) => !value)}
+          />
+        }
       />
 
       <div className={collapsed ? 'app-body collapsed' : 'app-body'}>
@@ -1643,6 +1671,7 @@ export function App() {
             cast={cast}
             disabled={disabled}
             panelOpen={panelOpen}
+            narrow={narrow}
             onToggleKind={() => void handleToggleKind()}
             onTogglePanel={() => setPanelOpen((value) => !value)}
             onRenameConversation={(title) => void session.updateConversation({ title })}
@@ -1694,6 +1723,7 @@ export function App() {
                   showIntent={appearance.value.showIntent}
                   bridge={bridge}
                   manualMode={bridge !== null || needsWebBridge(providers.apiKey)}
+                  insertRequest={castAsk}
                   onBridgeReply={handleBridgeReplyText}
                   onBridgeAnalysis={handleBridgeAnalysisText}
                   onBridgeSkip={handleBridgeSkip}
@@ -1790,7 +1820,6 @@ export function App() {
           <p>
             地址栏与底部工具栏会一直占着地方。用浏览器菜单里的「安装应用」／「添加到主屏幕」 （iPhone 上是分享 →
             添加到主屏幕）装一次，打开就是全屏，也更容易拿到持久化存储。
-            现在也可以点顶栏的「全屏」先把浏览器界面收起来。
           </p>
           <button
             type="button"

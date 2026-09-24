@@ -36,6 +36,13 @@ interface Props {
    * 它只负责滚动与高亮，不改数据。
    */
   focus?: FocusRequest | null;
+  /**
+   * 手机顶栏点角色条时递进来的「把这段文字插到光标处」（用户 2026-09-24 要求）。
+   *
+   * 带 `seq` 的理由与 `focus` 一样：同一个名字连点两次，第二次也要真的插进去。
+   * 只插文字、不改任何数据——插进去之后用户自己接着写，或直接发送。
+   */
+  insertRequest?: { text: string; seq: number } | null;
   /** 心理活动是否默认展开（个性化里可改；默认收起）。 */
   showIntent?: boolean;
   /** 网页版桥接：非 null 时正等着用户把网页版的输出贴回来。 */
@@ -161,6 +168,7 @@ function MainChatImpl({
   ready,
   archived,
   focus = null,
+  insertRequest = null,
   showIntent = false,
   bridge = null,
   manualMode = false,
@@ -385,6 +393,29 @@ function MainChatImpl({
       target.setSelectionRange(start + caretOffset, start + caretOffset);
     });
   };
+
+  /*
+   * 顶栏角色条点一下 → 把名字插到光标处（用户 2026-09-24 要求）。
+   *
+   * 插完**聚焦输入框并把光标放在名字后面**：下一步就是写你要问他的那句话，
+   * 不该再让人点一下输入框。`insertRequest` 换了引用才跑，所以同一个名字连点两次
+   * 也会插两次（`seq` 由 App 递增）。
+   */
+  // biome-ignore lint/correctness/useExhaustiveDependencies: 只在请求变化时插一次；把 input 放进依赖会因为「插入本身改了 input」而自己触发自己
+  useEffect(() => {
+    if (insertRequest === null) return;
+    const node = inputRef.current;
+    const start = node?.selectionStart ?? input.length;
+    const end = node?.selectionEnd ?? input.length;
+    setInput(`${input.slice(0, start)}${insertRequest.text}${input.slice(end)}`);
+    window.requestAnimationFrame(() => {
+      const target = inputRef.current;
+      if (target === null) return;
+      target.focus();
+      const caret = start + insertRequest.text.length;
+      target.setSelectionRange(caret, caret);
+    });
+  }, [insertRequest]);
 
   const startEdit = useCallback((id: MessageId): void => setEditingId(id), []);
   const cancelEdit = useCallback((): void => setEditingId(null), []);

@@ -67,3 +67,16 @@ export function IconStop({ size }: IconProps) {
     </Frame>
   );
 }
+
+/**
+ * 三横：手机顶栏左上角打开左栏（用户要求照 DeepSeek 的样子放这里）。
+ *
+ * 桌面仍然用 `≫` / `≪` 两个方向字符——那里空间够，文字能直接说明「展开/折叠」。
+ */
+export function IconMenu({ size }: IconProps) {
+  return (
+    <Frame size={size}>
+      <path d="M3 4.6h10M3 8h10M3 11.4h10" />
+    </Frame>
+  );
+}

@@ -939,7 +939,18 @@ git ls-files | ForEach-Object {
 | `apps/web/src/components/LeftRail.tsx` | 改 | 移除窄屏时那颗 ≡ 收起按钮（改由点对话区收起） |
 | `docs/LAYOUT.md` / `EVAL.md` / `STATUS.md` / `FILE-LOG.md` | 改 | 第三批规格与第五十四节第二轮实测（14/14）、接续点 |
 
-## 四十六、几点注意
+## 四十六、2026-09-24：账户重构（账户密码 = 同步密码，添加账户分注册/登录）
+
+| 文件 | 新增/修改 | 说明 |
+| --- | --- | --- |
+| `apps/web/src/lib/account-auth.ts` | **新增** | `registerAccount` / `loginAccount` / `readAccountSyncInfo` / `selfEndpoint`：账户 ID + 密码 → 同步空间；注册先建服务端空间再建本地容器 |
+| `apps/web/src/components/AccountPanel.tsx` | 改（基本重写） | 一账户一张卡片 + 「＋ 添加账户」卡片（注册 / 登录两个页签）+ 恢复码先显示再进入 + 高级服务器地址 |
+| `apps/web/src/components/SyncPanel.tsx` / `SettingsDialog.tsx` | 改 | 已连接的账户不再显示「用户 id / 同步密码」三件套，改成状态卡；文案改成「账户密码就是同步密码」 |
+| `apps/web/src/lib/sync.ts` | 改 | 导出 `SYNC_CONFIG_META_KEY`（注册/登录时要往别的账户库里写这份配置） |
+| `apps/web/src/styles.css` | 改 | 账户卡片、添加账户、恢复码等样式 |
+| `docs/SYNC.md` / `EVAL.md` / `STATUS.md` / `FILE-LOG.md` | 改 | §4.9.3 设计、第五十五节验证、接续点 |
+
+## 四十七、几点注意
 
 ---
 

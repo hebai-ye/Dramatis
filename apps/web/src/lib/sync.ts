@@ -43,7 +43,9 @@ import { buildSnapshot, parseSnapshot, type ServerSnapshot, snapshotFileName } f
  * 它的哈希（做凭证校验用）。
  */
 
-const META_CONFIG = 'sync.config';
+/** 每个账户自己的同步配置存在它自己的库里（注册/登录账户时会被写入）。 */
+export const SYNC_CONFIG_META_KEY = 'sync.config';
+const META_CONFIG = SYNC_CONFIG_META_KEY;
 const LEGACY_SYNC_PASSWORD_KEY_REF = 'sync:password';
 
 /**

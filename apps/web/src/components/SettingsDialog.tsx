@@ -146,8 +146,9 @@ export function SettingsDialog(props: Props) {
                 <section className="panel">
                   <h2>多设备同步</h2>
                   <p className="hint">
-                    账号就是「同步空间」：用户 id 与密码由你自己定，没有邮箱、没有验证码，也没有找回密码——
-                    所以建空间时显示的恢复码要抄下来。服务端只存密文与哈希。
+                    账户 ID 就是「同步空间」的名字，**账户密码就是同步密码**（注册账户时设的那个）。
+                    没有邮箱、没有验证码，也没有找回密码——所以注册时显示的恢复码要抄下来。
+                    服务端只存密文与哈希，解不开也读不到。
                   </p>
                   <SyncPanel api={props.sync} disabled={props.disabled} />
                 </section>

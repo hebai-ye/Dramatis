@@ -114,81 +114,101 @@ export function SyncPanel({ api, disabled }: Props) {
   return (
     <div className="stack">
       <p className="hint">
-        让你自己的多台设备看到同一条世界线：所有内容在本机加密后才上传，服务端只存密文与哈希， 解不开也读不到。用户 id
-        和密码由你自己定，没有验证码，也没有"找回密码"——所以建空间时 显示的恢复码要抄下来。
+        让你自己的多台设备看到同一条世界线：所有内容在本机加密后才上传，服务端只存密文与哈希，
+        解不开也读不到。**同步用的是账户密码**（注册账户时设的那个），这里不用再填一遍；
+        注册账户、登录别的设备、重新解锁，都在「账户」里做。
       </p>
 
-      <div className="field">
-        <label htmlFor="sync-endpoint">服务端地址</label>
-        <input
-          id="sync-endpoint"
-          value={endpoint}
-          disabled={disabled || api.busy}
-          /* 手机上别自动大写、别自动纠正：地址里没有大写，改错了很难看出来 */
-          inputMode="url"
-          autoCapitalize="none"
-          autoCorrect="off"
-          spellCheck={false}
-          placeholder={sameOriginEndpoint}
-          onChange={(event) => setEndpoint(event.target.value)}
-        />
-        <button
-          type="button"
-          className="ghost"
-          disabled={disabled || api.busy || endpoint === sameOriginEndpoint}
-          onClick={() => setEndpoint(sameOriginEndpoint)}
-        >
-          用本站地址（{sameOriginEndpoint}）
-        </button>
-      </div>
+      {connected ? (
+        <div className="notice">
+          <strong>这个账户已经连上同步空间</strong>
+          <p className="hint">
+            服务端：<code>{api.config?.endpoint ?? '—'}</code>；账户 ID：<code>{api.config?.userId ?? '—'}</code>。
+          </p>
+          {api.status === 'needs-secret' ? (
+            <p className="hint">现在还没解锁：到「账户」里点这个账户的「输入密码」即可。</p>
+          ) : null}
+        </div>
+      ) : (
+        <>
+          <p className="hint">
+            这个账户还没有同步空间。**推荐**直接去「账户」里注册一个新账户（那里会一起设好密码），
+            下面的字段留给老账户或想连别的服务器的情况。
+          </p>
+          <div className="field">
+            <label htmlFor="sync-endpoint">服务端地址</label>
+            <input
+              id="sync-endpoint"
+              value={endpoint}
+              disabled={disabled || api.busy}
+              /* 手机上别自动大写、别自动纠正：地址里没有大写，改错了很难看出来 */
+              inputMode="url"
+              autoCapitalize="none"
+              autoCorrect="off"
+              spellCheck={false}
+              placeholder={sameOriginEndpoint}
+              onChange={(event) => setEndpoint(event.target.value)}
+            />
+            <button
+              type="button"
+              className="ghost"
+              disabled={disabled || api.busy || endpoint === sameOriginEndpoint}
+              onClick={() => setEndpoint(sameOriginEndpoint)}
+            >
+              用本站地址（{sameOriginEndpoint}）
+            </button>
+          </div>
 
-      <div className="field">
-        <label htmlFor="sync-user">用户 id</label>
-        <input
-          id="sync-user"
-          value={userId}
-          disabled={disabled || api.busy || connected}
-          autoCapitalize="none"
-          autoCorrect="off"
-          spellCheck={false}
-          placeholder="自己想一个（别用手机号）"
-          onChange={(event) => setUserId(event.target.value)}
-        />
-        <span className="hint">只在服务端留一个折过的句柄；别填手机号或邮箱。</span>
-      </div>
+          <div className="field">
+            <label htmlFor="sync-user">账户 ID</label>
+            <input
+              id="sync-user"
+              value={userId}
+              disabled={disabled || api.busy || connected}
+              autoCapitalize="none"
+              autoCorrect="off"
+              spellCheck={false}
+              placeholder="自己想一个（别用手机号）"
+              onChange={(event) => setUserId(event.target.value)}
+            />
+            <span className="hint">就是账户卡片上那个 ID；服务端只留一个折过的句柄，别填手机号或邮箱。</span>
+          </div>
 
-      <div className="field">
-        <label htmlFor="sync-secret">{connected ? '同步密码（或恢复码）' : '同步密码'}</label>
-        <input
-          id="sync-secret"
-          type="password"
-          value={secret}
-          disabled={disabled || api.busy}
-          autoCapitalize="none"
-          autoCorrect="off"
-          spellCheck={false}
-          placeholder={connected ? '改了密码/恢复码才需要填' : '自己设一个够长的'}
-          onChange={(event) => setSecret(event.target.value)}
-        />
-      </div>
+          <div className="field">
+            <label htmlFor="sync-secret">账户密码（忘了就填恢复码）</label>
+            <input
+              id="sync-secret"
+              type="password"
+              value={secret}
+              disabled={disabled || api.busy}
+              autoCapitalize="none"
+              autoCorrect="off"
+              spellCheck={false}
+              placeholder={connected ? '改了密码/恢复码才需要填' : '自己设一个够长的'}
+              onChange={(event) => setSecret(event.target.value)}
+            />
+          </div>
 
-      <div className="field">
-        <label htmlFor="sync-keymode">密码保存方式</label>
-        <select
-          id="sync-keymode"
-          value={keyMode}
-          disabled={disabled || api.busy}
-          onChange={(event) => setKeyMode(event.target.value as KeyStorageMode)}
-        >
-          <option value="session">仅本次会话（最安全，重开要重填）</option>
-          <option value="device">保存在本机浏览器（方便，换设备要重填）</option>
-        </select>
-      </div>
+          <div className="field">
+            <label htmlFor="sync-keymode">密码保存方式</label>
+            <select
+              id="sync-keymode"
+              value={keyMode}
+              disabled={disabled || api.busy}
+              onChange={(event) => setKeyMode(event.target.value as KeyStorageMode)}
+            >
+              <option value="session">仅本次会话（最安全，重开要重填）</option>
+              <option value="device">保存在本机浏览器（方便，换设备要重填）</option>
+            </select>
+          </div>
+        </>
+      )}
 
       <div className="save-bar">
         <button
           type="button"
           disabled={disabled || api.busy}
+          hidden={connected}
           onClick={() => void run(() => api.connect({ endpoint, userId, secret, keyMode }))}
         >
           {connected ? '用这个密码重新连接' : '开通 / 加入并同步'}

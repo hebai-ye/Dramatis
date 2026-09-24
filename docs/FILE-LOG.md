@@ -919,7 +919,18 @@ git ls-files | ForEach-Object {
 本轮**没有改任何源码**——部署的是 `6086096` 那个提交构建出来的产物：
 `apps/web/dist`（`index-CqzQpPAn.js`）与 `tools/sync-server/dist`（另加 `backup.mjs`）。
 
-## 四十四、几点注意
+## 四十四、2026-09-24：手机端第二批（删标题栏 + 推开式卡片）
+
+| 文件 | 新增/修改 | 说明 |
+| --- | --- | --- |
+| `apps/web/src/styles.css` | 改 | 手机端：左栏与面板都改成圆角卡片 + 位移进出（`--drawer-ms`）、主对话与顶栏让位、删掉两条 scrim 规则、`prefers-reduced-motion` 兜底 |
+| `apps/web/src/App.tsx` | 改 | 根节点加 `rail-open` / `panel-open`；左栏在手机上始终挂载；删掉两个遮罩按钮；手机上不渲染主区标题栏；两侧开关互斥（`handleToggleRail` / `handleTogglePanel`） |
+| `apps/web/src/components/LeftRail.tsx` | 改 | 窄屏时顶上多一颗 ≡ 收起按钮（`narrow` / `onClose`） |
+| `apps/web/src/components/WorldTree.tsx` | 改 | 每条对话加「改名」（就地输入、Enter 保存、Esc 取消、失焦保存） |
+| `apps/web/src/lib/session.ts` | 改 | 新增 `renameConversation(id, title)`：按 id 改名，**不切换当前对话** |
+| `docs/LAYOUT.md` / `EVAL.md` / `STATUS.md` / `FILE-LOG.md` | 改 | 手机端第二批的规格、第五十四节（含实测 11/11 与那个 transform/fixed 的坑）、接续点 |
+
+## 四十五、几点注意
 
 ---
 

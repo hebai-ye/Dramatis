@@ -194,6 +194,14 @@ export interface SessionApi {
   /** 打开（或新建）这个世界的副对话。 */
   openSideConversation: () => Promise<Conversation | null>;
   updateConversation: (patch: Partial<Conversation>) => Promise<void>;
+  /**
+   * 改**指定**对话的名字（可以不是当前这条）。
+   *
+   * 为什么单独来一个：`updateConversation` 只作用于当前对话，而手机端左栏的列表里
+   * 要能直接给任意一条改名（用户 2026-09-24：删掉标题栏之后，改名搬到这里）。
+   * 靠「先切换过去再改」会打断正在读的那条对话，不能接受。
+   */
+  renameConversation: (id: ConversationId, title: string) => Promise<void>;
   archiveConversation: (id: ConversationId) => Promise<ArchiveReport | null>;
   deleteConversation: (id: ConversationId) => Promise<void>;
 
@@ -669,6 +677,26 @@ export function useSession(db: DramatisDb | null): SessionApi {
       setSnapshot({
         ...current,
         conversations: current.conversations.map((item) => (item.id === next.id ? next : item)),
+      });
+    },
+    [db, setSnapshot],
+  );
+
+  /** 按 id 改名（左栏列表用）：不动「当前是哪条对话」，所以不会打断对话。 */
+  const renameConversation = useCallback(
+    async (id: ConversationId, title: string) => {
+      const current = snapshotRef.current;
+      if (!db || !current) return;
+      const target = current.conversations.find((item) => item.id === id);
+      if (!target) return;
+      const next = title.trim();
+      if (next === '' || next === target.title) return;
+
+      const renamed: Conversation = { ...target, title: next, updatedAt: nowIso() };
+      await db.repository.saveConversation(renamed);
+      setSnapshot({
+        ...current,
+        conversations: current.conversations.map((item) => (item.id === renamed.id ? renamed : item)),
       });
     },
     [db, setSnapshot],
@@ -1479,6 +1507,7 @@ export function useSession(db: DramatisDb | null): SessionApi {
       startConversation,
       openSideConversation,
       updateConversation,
+      renameConversation,
       archiveConversation,
       deleteConversation,
       addInstance,
@@ -1559,6 +1588,7 @@ export function useSession(db: DramatisDb | null): SessionApi {
     startConversation,
     startNewScene,
     updateConversation,
+    renameConversation,
     updateInstance,
     updateMemory,
     updateMessage,

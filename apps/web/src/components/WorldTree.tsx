@@ -1,5 +1,5 @@
 import type { Conversation, ConversationId, RoomId, RoomSummary } from '@dramatis/core';
-import { memo } from 'react';
+import { memo, useEffect, useRef, useState } from 'react';
 import { countRender } from '../lib/render-count';
 
 interface Props {
@@ -12,6 +12,13 @@ interface Props {
   onOpenWorld: (id: RoomId) => void;
   onOpenConversation: (id: ConversationId) => void;
   onArchiveConversation: (conversation: Conversation) => void;
+  /**
+   * 改对话名。
+   *
+   * 为什么在这里：手机端把「世界名 · 对话名」那一行删掉之后（用户 2026-09-24 要求），
+   * 标题栏里那个输入框就没了——改名入口搬到对话列表里，和「归档」「彻底删除」并排。
+   */
+  onRenameConversation: (conversation: Conversation, title: string) => void;
   onDeleteConversation: (conversation: Conversation) => void;
   onDeleteWorld: (id: RoomId) => void;
 }
@@ -34,10 +41,34 @@ function WorldTreeImpl({
   onOpenWorld,
   onOpenConversation,
   onArchiveConversation,
+  onRenameConversation,
   onDeleteConversation,
   onDeleteWorld,
 }: Props) {
   countRender('WorldTree');
+  /** 正在改名的那条对话：一次只允许一条，避免一屏好几个输入框。 */
+  const [renamingId, setRenamingId] = useState<string | null>(null);
+  const [draft, setDraft] = useState('');
+  const renameRef = useRef<HTMLInputElement | null>(null);
+
+  /*
+   * 进入改名状态就把光标放进输入框。
+   *
+   * 不用 `autoFocus`：那是无障碍上的忌讳（焦点会被突然抢走），biome 也直接报错；
+   * 但这里是「用户刚点了改名」——焦点本来就该落在这儿，所以手动聚焦。
+   */
+  useEffect(() => {
+    if (renamingId === null) return;
+    renameRef.current?.focus();
+    renameRef.current?.select();
+  }, [renamingId]);
+
+  const commitRename = (conversation: Conversation): void => {
+    const next = draft.trim();
+    setRenamingId(null);
+    if (next !== '' && next !== conversation.title) onRenameConversation(conversation, next);
+  };
+
   if (worlds.length === 0) {
     return (
       <div className="rail-empty">
@@ -90,17 +121,46 @@ function WorldTreeImpl({
                 {conversations.length === 0 ? <li className="hint">这个世界还没有对话</li> : null}
                 {conversations.map((conversation) => (
                   <li key={conversation.id} className={conversation.id === activeConversationId ? 'active' : ''}>
+                    {renamingId === conversation.id ? (
+                      /* 改名就地做：输入框顶掉标题，Enter 保存、Esc 取消、失焦也算保存 */
+                      <input
+                        ref={renameRef}
+                        className="conversation-rename"
+                        value={draft}
+                        aria-label="对话名"
+                        onChange={(event) => setDraft(event.target.value)}
+                        onKeyDown={(event) => {
+                          if (event.key === 'Enter') commitRename(conversation);
+                          if (event.key === 'Escape') setRenamingId(null);
+                        }}
+                        onBlur={() => commitRename(conversation)}
+                      />
+                    ) : (
+                      <button
+                        type="button"
+                        className="conversation-open"
+                        disabled={disabled}
+                        onClick={() => onOpenConversation(conversation.id)}
+                      >
+                        <span>
+                          {conversation.kind === 'side' ? '⚙ ' : ''}
+                          {conversation.title}
+                        </span>
+                        <span className="tag">{conversation.kind === 'side' ? '副对话' : '主对话'}</span>
+                      </button>
+                    )}
                     <button
                       type="button"
-                      className="conversation-open"
+                      className="ghost"
                       disabled={disabled}
-                      onClick={() => onOpenConversation(conversation.id)}
+                      title="改这条对话的名字"
+                      aria-label="改名"
+                      onClick={() => {
+                        setDraft(conversation.title);
+                        setRenamingId(conversation.id);
+                      }}
                     >
-                      <span>
-                        {conversation.kind === 'side' ? '⚙ ' : ''}
-                        {conversation.title}
-                      </span>
-                      <span className="tag">{conversation.kind === 'side' ? '副对话' : '主对话'}</span>
+                      改名
                     </button>
                     <button
                       type="button"

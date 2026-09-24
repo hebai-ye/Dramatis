@@ -11,6 +11,8 @@
   --on-accent: #241b0b;
   --danger: #d9705f;
   --radius: 10px;
+  /* 手机端两侧卡片滑出 / 主对话让位的时长（用户 2026-09-24 的顶栏与侧栏批次） */
+  --drawer-ms: 240ms;
   color-scheme: dark;
 }
 
@@ -2505,18 +2507,40 @@ details summary {
     overflow-y: auto;
     position: fixed;
     top: 0;
-    width: min(86vw, 320px);
+    width: min(78vw, 300px);
     z-index: 30;
+    /*
+     * 「滑出来 + 把主对话推开」（用户 2026-09-24 要求，参考他给的 DeepSeek 截图）：
+     * 收起时用位移推到屏幕外（**保持挂载**，否则没有动效），打开时归位；
+     * 主对话同时被推开（见下面的 `.app.rail-open`），不再盖一层黑遮罩。
+     */
+    transform: translateX(-102%);
+    transition:
+      transform var(--drawer-ms) ease,
+      visibility 0s linear var(--drawer-ms);
+    visibility: hidden;
   }
 
-  /* 遮罩：抽屉开着时盖住对话，点一下收起 */
-  .rail-scrim {
-    background: rgba(0, 0, 0, 0.55);
-    border: 0;
-    inset: 0;
-    padding: 0;
-    position: fixed;
-    z-index: 20;
+  .app.rail-open .app-body .left-rail {
+    transform: none;
+    transition:
+      transform var(--drawer-ms) ease,
+      visibility 0s;
+    visibility: visible;
+  }
+
+  /* 卡片顶上那颗关闭按钮（顶栏的同类按钮被这张卡片盖住了） */
+  .rail-head-close {
+    display: flex;
+    justify-content: flex-start;
+  }
+
+  .rail-head-close button {
+    align-items: center;
+    display: inline-flex;
+    height: 40px;
+    justify-content: center;
+    width: 40px;
   }
 
   /* 角色栏让位：标题栏里已经列了此刻在场的角色 */
@@ -2529,32 +2553,86 @@ details summary {
   }
 
   /*
-   * 运行时面板在小屏上改成**覆盖层**。
+   * 运行时面板在小屏上也是一张从右侧滑出来的卡片。
    *
    * 实测（390×844，侧边浏览器）：它原本是 `.workspace-body` 这个 flex 行里的一项，
    * 宽 340px → 会话区被挤到 **30px**，文字一字一行，手机上半个应用不能用。
-   * 现在照左栏抽屉那套做：固定定位、从右侧盖上来、带遮罩、自己就能关。
+   * 现在固定定位、从右侧滑出，**由主对话向左让位**（`.app.panel-open`），
+   * 不再铺黑遮罩——打开面板时对话还在，收起就回到原位，这就是「不打断对话」。
    */
-  .runtime-drawer.open {
+  .runtime-drawer {
     background: var(--panel);
     border-left: 1px solid var(--line);
+    border-radius: var(--radius) 0 0 var(--radius);
     bottom: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    min-height: 0;
+    overflow-y: auto;
     box-shadow: -12px 0 28px rgba(0, 0, 0, 0.4);
     padding: 12px;
     position: fixed;
     right: 0;
     top: 0;
-    width: min(92vw, 400px);
+    width: min(78vw, 320px);
     z-index: 30;
+    transform: translateX(102%);
+    transition:
+      transform var(--drawer-ms) ease,
+      visibility 0s linear var(--drawer-ms);
+    visibility: hidden;
   }
 
-  .runtime-scrim {
-    background: rgba(0, 0, 0, 0.55);
-    border: 0;
-    inset: 0;
-    padding: 0;
-    position: fixed;
-    z-index: 20;
+  .runtime-drawer.open {
+    transform: none;
+    transition:
+      transform var(--drawer-ms) ease,
+      visibility 0s;
+    visibility: visible;
+  }
+
+  /*
+   * 主对话（含顶栏）整体位移：卡片把「这一叠」推开，而不是盖住。
+   * 位移量正好是卡片宽度——于是屏幕上留着一条能看见的对话，跟参考图一致。
+   *
+   * 注意**只能平移 `.chat-surface` 本身，不能平移 `.workspace`**：运行时面板是
+   * `.workspace` 的 `position: fixed` 后代，而「祖先有 transform 时 fixed 以它为参照」
+   * 是 CSS 的硬规则——第一版平移 `.workspace`，结果面板跟着一起跑到屏幕外
+   * （实测截图里右侧整片是空的）。平移对话卡片就没有这个问题。
+   */
+  .topbar,
+  .chat-surface {
+    transition: transform var(--drawer-ms) ease;
+  }
+
+  .app.rail-open .topbar,
+  .app.rail-open .chat-surface {
+    transform: translateX(min(78vw, 300px));
+  }
+
+  .app.panel-open .topbar,
+  .app.panel-open .chat-surface {
+    transform: translateX(calc(-1 * min(78vw, 320px)));
+  }
+
+  /* 被推开的那一叠看起来像一张卡片：外缘给一圈阴影 */
+  .app.rail-open .chat-surface {
+    box-shadow: -14px 0 30px rgba(0, 0, 0, 0.22);
+  }
+
+  .app.panel-open .chat-surface {
+    box-shadow: 14px 0 30px rgba(0, 0, 0, 0.22);
+  }
+
+  /* 关掉动效的人：不要位移与滑出，直接切（可见性仍然跟着状态走） */
+  @media (prefers-reduced-motion: reduce) {
+    .topbar,
+    .chat-surface,
+    .app-body .left-rail,
+    .runtime-drawer {
+      transition: none;
+    }
   }
 
   .drawer-close {

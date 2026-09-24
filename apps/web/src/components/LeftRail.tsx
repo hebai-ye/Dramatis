@@ -1,5 +1,6 @@
 import { memo, type ReactNode, useRef } from 'react';
 import { countRender } from '../lib/render-count';
+import { IconMenu } from './Icons';
 
 /**
  * 左栏里的三段（列表 / 世界书 / 角色卡）。
@@ -22,6 +23,12 @@ interface Props {
   /** 打开「个人账户」（同步空间与身份）。 */
   onOpenAccount: () => void;
   disabled: boolean;
+  /**
+   * 窄屏：左栏是一张从左侧滑出来的卡片（顺序 UI：主对话被**推开**而不是被盖住）。
+   * 这时它自己顶上要有一颗关闭按钮——顶栏那颗被卡片盖住了。
+   */
+  narrow: boolean;
+  onClose: () => void;
   /** 世界与对话列表。 */
   list: ReactNode;
   /** 素材与设置面板，逐个切换。 */
@@ -54,6 +61,8 @@ function LeftRailImpl({
   onOpenSettings,
   onOpenAccount,
   disabled,
+  narrow,
+  onClose,
   list,
   panel,
 }: Props) {
@@ -63,6 +72,13 @@ function LeftRailImpl({
 
   return (
     <aside className="left-rail">
+      {narrow ? (
+        <div className="rail-head-close">
+          <button type="button" className="ghost" aria-label="收起左栏" title="收起左栏" onClick={onClose}>
+            <IconMenu size={18} />
+          </button>
+        </div>
+      ) : null}
       <input
         ref={fileRef}
         type="file"

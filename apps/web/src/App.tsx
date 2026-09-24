@@ -1217,6 +1217,30 @@ export function App() {
     await session.openSideConversation();
   }, [conversation, session]);
 
+  /**
+   * 手机上左右两张卡片互斥（用户 2026-09-24 要求的「推开」效果里，同时推开两侧没有意义，
+   * 而且位移会互相叠加）。桌面保持原来的独立行为。
+   */
+  const handleToggleRail = useCallback((): void => {
+    if (!narrow) {
+      setCollapsed((value) => !value);
+      return;
+    }
+    const opening = collapsed;
+    setCollapsed(!opening);
+    if (!opening) setPanelOpen(false);
+  }, [collapsed, narrow]);
+
+  const handleTogglePanel = useCallback((): void => {
+    if (!narrow) {
+      setPanelOpen((value) => !value);
+      return;
+    }
+    const opening = !panelOpen;
+    setPanelOpen(opening);
+    if (opening) setCollapsed(true);
+  }, [narrow, panelOpen]);
+
   const handleArchive = useCallback(
     async (targetConversationId: string) => {
       const report = await session.archiveConversation(targetConversationId as never);
@@ -1518,7 +1542,19 @@ export function App() {
      * 背景挂在不滚动的那一层上，所以滑动时它固定、只有对话在动。
      */
     <div
-      className={appearance.value.background === '' ? 'app' : 'app has-bg'}
+      className={[
+        'app',
+        appearance.value.background === '' ? '' : 'has-bg',
+        /*
+         * 手机上左右两侧都是「把主对话推开」的卡片（用户 2026-09-24 要求，
+         * 参考他给的 DeepSeek 截图），所以打开状态要落在根上，CSS 才能一起位移
+         * 顶栏与工作区。桌面不加这两个类，行为一个字不变。
+         */
+        narrow && !collapsed ? 'rail-open' : '',
+        narrow && panelOpen ? 'panel-open' : '',
+      ]
+        .filter((name) => name !== '')
+        .join(' ')}
       style={
         {
           '--chat-bg': appearance.value.background === '' ? 'none' : `url("${appearance.value.background}")`,
@@ -1528,7 +1564,7 @@ export function App() {
     >
       <TopBar
         collapsed={collapsed}
-        onToggleCollapsed={() => setCollapsed((value) => !value)}
+        onToggleCollapsed={handleToggleRail}
         degraded={boot?.degraded ?? false}
         backgroundPending={worker.pending}
         narrow={narrow}
@@ -1539,13 +1575,17 @@ export function App() {
             disabled={disabled}
             panelOpen={panelOpen}
             onToggleKind={() => void handleToggleKind()}
-            onTogglePanel={() => setPanelOpen((value) => !value)}
+            onTogglePanel={handleTogglePanel}
           />
         }
       />
 
       <div className={collapsed ? 'app-body collapsed' : 'app-body'}>
-        {collapsed ? null : (
+        {/*
+          手机上左栏**始终挂着**（收起时用位移推到屏幕外）：不挂就没法播「滑出来」的动效，
+          而打开时主对话是靠 CSS 平移让位的。桌面保持原样——收起就是不渲染那一列。
+        */}
+        {collapsed && !narrow ? null : (
           <LeftRail
             pane={pane}
             onPaneChange={setPane}
@@ -1561,6 +1601,8 @@ export function App() {
             onOpenSettings={() => setSettingsCategory('model')}
             onOpenAccount={() => setSettingsCategory('account')}
             disabled={disabled}
+            narrow={narrow}
+            onClose={() => setCollapsed(true)}
             list={
               <>
                 {error !== null || dbError !== null || session.error !== null ? (
@@ -1610,6 +1652,7 @@ export function App() {
                   onOpenWorld={handleOpenWorld}
                   onOpenConversation={handleOpenConversation}
                   onArchiveConversation={handleArchiveConversation}
+                  onRenameConversation={(target, title) => void session.renameConversation(target.id, title)}
                   onDeleteConversation={handleDeleteConversation}
                   onDeleteWorld={handleDeleteWorld}
                 />
@@ -1656,26 +1699,25 @@ export function App() {
           />
         )}
 
-        {/*
-          窄屏上左栏是抽屉（P2-1）：铺一层遮罩，点哪儿都收起来。
-          桌面上不渲染——那时左栏是常驻的一列，遮罩没有意义。
-        */}
-        {!collapsed && narrow ? (
-          <button type="button" className="rail-scrim" aria-label="收起左栏" onClick={() => setCollapsed(true)} />
-        ) : null}
-
         <div className="workspace">
-          <MainHeader
-            world={world}
-            conversation={conversation}
-            cast={cast}
-            disabled={disabled}
-            panelOpen={panelOpen}
-            narrow={narrow}
-            onToggleKind={() => void handleToggleKind()}
-            onTogglePanel={() => setPanelOpen((value) => !value)}
-            onRenameConversation={(title) => void session.updateConversation({ title })}
-          />
+          {/*
+            手机上这一行（「世界名 · 对话名」）整条不渲染（用户 2026-09-24 要求）：
+            在场角色与两颗按钮已经搬到顶栏，剩下的标题在对话区上面白占一行。
+            改名入口搬到左栏的对话列表里（WorldTree 的「改名」）。
+          */}
+          {narrow ? null : (
+            <MainHeader
+              world={world}
+              conversation={conversation}
+              cast={cast}
+              disabled={disabled}
+              panelOpen={panelOpen}
+              narrow={narrow}
+              onToggleKind={() => void handleToggleKind()}
+              onTogglePanel={handleTogglePanel}
+              onRenameConversation={(title) => void session.updateConversation({ title })}
+            />
+          )}
 
           {world === null || conversation === null ? (
             <section className="chat-surface empty">
@@ -1740,20 +1782,11 @@ export function App() {
               )}
 
               {/*
-                手机上运行时面板是**覆盖层**（CSS 里 ≤640px 那段）：铺一层遮罩，
-                点哪儿都收起来。桌面上不渲染——那时它是一个常驻的窄列。
+                手机上运行时面板也是一张从右侧滑出来的卡片（CSS ≤640px）：
+                打开时主对话向左让位，不再铺一层黑遮罩盖住它。
               */}
-              {panelOpen && narrow ? (
-                <button
-                  type="button"
-                  className="runtime-scrim"
-                  aria-label="收起运行时面板"
-                  onClick={() => setPanelOpen(false)}
-                />
-              ) : null}
-
               <div className={panelOpen ? 'runtime-drawer open' : 'runtime-drawer'}>
-                {panelOpen ? (
+                {panelOpen || narrow ? (
                   <>
                     {/* 手机上「面板」按钮被盖住了，抽屉里要有一个能自己关的出口 */}
                     <button type="button" className="ghost drawer-close" onClick={() => setPanelOpen(false)}>

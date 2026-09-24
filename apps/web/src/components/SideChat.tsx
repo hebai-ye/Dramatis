@@ -25,6 +25,13 @@ interface Props {
   manualMode?: boolean;
   onBridgeCommit?: (text: string) => void;
   onBridgeCancel?: () => void;
+  /**
+   * 副对话自己的错误（顺序 67）。
+   *
+   * 以前 `useAdminChat` 里的 `error` 只写进状态、没人接：副对话失败时**界面上什么都不显示**，
+   * 用户看到的是「点了没反应」。主对话的错误早就显示在左栏提示条里，副对话这条补上。
+   */
+  error?: string | null;
 }
 
 const STATUS_LABEL: Record<AdminArtifact['status'], string> = {
@@ -165,6 +172,7 @@ function SideChatImpl({
   manualMode = false,
   onBridgeCommit,
   onBridgeCancel,
+  error = null,
 }: Props) {
   countRender('SideChat');
   const coarsePointer = useCoarsePointer();
@@ -207,6 +215,13 @@ function SideChatImpl({
           <strong>世界管理员</strong>
           <span className="hint">帮你起草角色卡、世界书与场景设置。它不扮演任何角色，产出的素材由你决定去留。</span>
         </div>
+
+        {error === null ? null : (
+          <div className="notice error">
+            <strong>出错了</strong>
+            <p>{error}</p>
+          </div>
+        )}
 
         {messages.length === 0 && streamText === '' ? (
           <p className="hint">例如：「按这个世界的风格，起草一个酒馆老板，再补一段旧城的设定。」</p>

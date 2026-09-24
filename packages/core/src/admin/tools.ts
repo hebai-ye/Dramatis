@@ -19,10 +19,13 @@ import type { ChatToolCall, ToolDefinition } from '../prompt/types.js';
 import { asRecord, text } from '../util/json.js';
 
 /**
- * 副对话的工具集（LAYOUT 待确认第 4 条：先只做三件）。
+ * 副对话的工具集（LAYOUT 待确认第 4 条：先只做素材那几件）。
  *
- * 三件事都对应一种素材：角色卡、世界书、当前场景。刻意不多给——
- * 管理员的职责是「帮你起草素材」，不是「替你玩这个游戏」。
+ * 现在**五件**：角色卡、世界书、玩家身份（建 / 删）、当前场景。每一件都对应一种素材，
+ * 刻意不多给——管理员的职责是「帮你起草素材」，不是「替你玩这个游戏」。
+ *
+ * （原先只写了三件，后来加了 `upsert_persona` / `delete_persona`，注释没跟上；
+ * 顺序 67 把注释、文案与这里的清单对齐。）
  */
 export type AdminToolName =
   | 'upsert_character_card'
@@ -187,7 +190,20 @@ export interface PersonaDeleteDraft {
 
 export type AdminDraft = CharacterCardDraft | WorldBookDraft | PersonaUpsertDraft | PersonaDeleteDraft | SceneDraft;
 
-export type AdminToolParseResult = { ok: true; draft: AdminDraft } | { ok: false; error: string };
+export type AdminToolParseResult =
+  | {
+      ok: true;
+      draft: AdminDraft;
+      /**
+       * 模型多写的参数名（它自己发明的字段）。
+       *
+       * 顺序 67 之前这些是**静默丢掉**的：模型以为写进去了，用户看不到任何提示，
+       * 下一轮它还会照着同一个错的形状再写一遍。现在原样回填给它——
+       * 「未识别的参数：…」，让它自己改，比在界面上弹一句有用。
+       */
+      unknownArgs?: string[];
+    }
+  | { ok: false; error: string };
 
 export interface AdminToolContext {
   /** 素材库里已有的卡与世界书，用来校验 cardId / bookId。 */
@@ -431,23 +447,68 @@ function parseSceneDraft(args: Record<string, unknown>): AdminToolParseResult {
  * 返回的是结果而不是抛异常：**校验失败也是一条要回填给模型的工具结果**。
  * 模型看到「cardId 不存在」就会改用新建，这比在界面上弹一个错误有用得多。
  */
+/** 每件工具认得的参数（多出来的会在结果里回填给模型；顺序 67）。 */
+const KNOWN_ARGS: Record<AdminToolName, readonly string[]> = {
+  upsert_character_card: [
+    'name',
+    'cardId',
+    'description',
+    'nickname',
+    'personality',
+    'scenario',
+    'firstMessage',
+    'alternateGreetings',
+    'exampleMessages',
+    'systemPrompt',
+    'tags',
+  ],
+  upsert_world_book: ['name', 'bookId', 'entries'],
+  upsert_persona: ['name', 'description', 'personaId'],
+  delete_persona: ['personaId', 'confirmName'],
+  set_scene: ['title', 'location', 'worldTime', 'summary', 'castPolicy'],
+};
+
+/** 世界书条目里认得的那几个键（条目里多写的也要说一声）。 */
+const KNOWN_ENTRY_ARGS: readonly string[] = ['title', 'keys', 'content', 'constant', 'order'];
+
+function unknownArgsOf(args: Record<string, unknown>, known: readonly string[]): string[] {
+  return Object.keys(args)
+    .filter((key) => !known.includes(key))
+    .sort();
+}
+
 export function parseAdminToolCall(call: ChatToolCall, context: AdminToolContext = {}): AdminToolParseResult {
   const name = call.function.name as AdminToolName;
   const parsed = parseJsonArguments(call.function.arguments);
   if (!parsed.ok) return { ok: false, error: parsed.error };
 
-  switch (name) {
-    case 'upsert_character_card':
-      return parseCardDraft(parsed.value, context);
-    case 'upsert_world_book':
-      return parseWorldBookDraft(parsed.value, context);
-    case 'upsert_persona':
-      return parsePersonaUpsertDraft(parsed.value, context);
-    case 'delete_persona':
-      return parsePersonaDeleteDraft(parsed.value, context);
-    case 'set_scene':
-      return parseSceneDraft(parsed.value);
-    default:
-      return { ok: false, error: `没有名为 ${call.function.name} 的工具` };
+  const result = ((): AdminToolParseResult => {
+    switch (name) {
+      case 'upsert_character_card':
+        return parseCardDraft(parsed.value, context);
+      case 'upsert_world_book':
+        return parseWorldBookDraft(parsed.value, context);
+      case 'upsert_persona':
+        return parsePersonaUpsertDraft(parsed.value, context);
+      case 'delete_persona':
+        return parsePersonaDeleteDraft(parsed.value, context);
+      case 'set_scene':
+        return parseSceneDraft(parsed.value);
+      default:
+        return { ok: false, error: `没有名为 ${call.function.name} 的工具` };
+    }
+  })();
+
+  if (!result.ok) return result;
+
+  const extra = unknownArgsOf(parsed.value, KNOWN_ARGS[name] ?? []);
+  if (name === 'upsert_world_book' && Array.isArray(parsed.value.entries)) {
+    for (const [index, item] of parsed.value.entries.entries()) {
+      const record = asRecord(item);
+      if (record === null) continue;
+      for (const key of unknownArgsOf(record, KNOWN_ENTRY_ARGS)) extra.push(`entries[${String(index)}].${key}`);
+    }
   }
+
+  return extra.length === 0 ? result : { ...result, unknownArgs: extra };
 }

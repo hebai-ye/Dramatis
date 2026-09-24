@@ -130,10 +130,18 @@ async function runToolCall(
 
   try {
     const result = await execute(parsed.draft);
+    /*
+     * 模型多写的参数（顺序 67）：回填给它，让它下一轮自己改。
+     * 静默丢掉的话，它会一直以为那个字段生效了。
+     */
+    const note =
+      parsed.unknownArgs === undefined
+        ? ''
+        : `（未识别的参数：${parsed.unknownArgs.join('、')}——这些没有生效，请改用工具说明里的字段名）`;
     return {
       callId: call.id,
       toolName: call.function.name,
-      result,
+      result: `${result}${note}`,
       draft: parsed.draft,
       ok: true,
     };

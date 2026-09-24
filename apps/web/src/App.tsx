@@ -887,6 +887,7 @@ export function App() {
                   archived={archived}
                   bridge={admin.bridge}
                   manualMode={needsWebBridge(providers.apiKey)}
+                  error={admin.error}
                   onBridgeCommit={handleAdminBridgeCommit}
                   onBridgeCancel={admin.cancelBridge}
                   onSend={handleAdminSend}

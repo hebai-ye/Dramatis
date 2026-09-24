@@ -9,7 +9,7 @@ import { buildAdminBridgeMessages, describeAdminTools, parseAdminBridgeOutput } 
 import { parseAdminToolCall } from './tools.js';
 
 describe('describeAdminTools', () => {
-  it('把三件事连同参数与必填都写出来（网页版只能靠这段文字知道能做什么）', () => {
+  it('把五件事连同参数与必填都写出来（网页版只能靠这段文字知道能做什么）', () => {
     const text = describeAdminTools();
 
     expect(text).toContain('upsert_character_card');

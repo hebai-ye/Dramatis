@@ -162,7 +162,7 @@ export function useAdminChat(options: {
         return;
       }
       /*
-       * 没有 API Key 就走**网页版桥接**：把管理员的提示词（含三个工具的声明与
+       * 没有 API Key 就走**网页版桥接**：把管理员的提示词（含五个工具的声明与
        * 「这次没有工具接口，请写成 JSON 块」的特殊说明）交给用户贴进 DeepSeek 网页版，
        * 再把回复贴回来。原来这里是一句「还没有填 API Key」——左栏最诱人的「创建」
        * 按钮点下去直接失败，是当时唯一还会卡住的入口。
@@ -345,18 +345,24 @@ export function useAdminChat(options: {
 
         const artifacts: AdminArtifact[] = [];
         const failed: string[] = [];
+        const unknown: string[] = [];
         for (const call of parsed.calls) {
           const result = parseAdminToolCall(call, context);
           if (!result.ok) {
             failed.push(result.error);
             continue;
           }
+          if (result.unknownArgs !== undefined) unknown.push(...result.unknownArgs);
           await executeDraft(result.draft, artifacts);
         }
 
         const notes: string[] = [];
         if (parsed.invalid.length > 0) {
           notes.push(`它提到了一件这里没有的事（${parsed.invalid.join('、')}），那部分没有执行。`);
+        }
+        // 多写的参数要说一声（顺序 67）：界面上没有工具结果的回填通道，只能在这儿落下
+        if (unknown.length > 0) {
+          notes.push(`它多写了几个用不上的参数（${[...new Set(unknown)].join('、')}），那部分没有生效。`);
         }
         if (failed.length > 0) {
           notes.push(`有一件没能落下：${failed.join('；')}。可以把要求说得更具体一点，再贴一次。`);

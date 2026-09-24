@@ -95,9 +95,36 @@ describe('upsert_character_card', () => {
     expect(result.draft.card.description).toBe('摆渡人，五十多岁。\n白天撑船，天黑后停在东岸。');
     expect(result.draft.card.exampleMessages).toBe('「河上今晚没人。」他慢慢说。\n「你要过河，等天亮。」');
   });
+
+  it('多写的参数不再静默丢掉（顺序 67）', () => {
+    const extra = parseAdminToolCall(
+      call('upsert_character_card', { name: '秦娘', description: '货栈掌柜。', temper: '冷', age: 40 }),
+    );
+
+    expect(extra.ok).toBe(true);
+    if (!extra.ok) return;
+    expect(extra.unknownArgs).toEqual(['age', 'temper']);
+
+    // 规矩写对了就一条也不提
+    const clean = parseAdminToolCall(call('set_scene', { location: '旧城' }));
+    expect(clean.ok && clean.unknownArgs).toBeUndefined();
+  });
 });
 
 describe('upsert_world_book', () => {
+  it('条目里多写的字段也点出来（带下标）', () => {
+    const result = parseAdminToolCall(
+      call('upsert_world_book', {
+        name: '旧城',
+        entries: [{ keys: ['旧城'], content: '城墙是青的。', colour: '青' }],
+      }),
+    );
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.unknownArgs).toEqual(['entries[0].colour']);
+  });
+
   it('把条目整理成可用的世界书', () => {
     const result = parseAdminToolCall(
       call('upsert_world_book', {

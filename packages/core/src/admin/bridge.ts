@@ -87,7 +87,7 @@ export function buildAdminBridgeInstructions(tools: readonly ToolDefinition[] = 
     '3. 代码块之外，用自然语言说清：你打算做什么、做了什么、要用户确认什么。',
     '4. 不要输出别的代码块，不要在 JSON 里写注释，不要写多余的解释。',
     '',
-    '可用的事（就是原来的三个工具）：',
+    '可用的事（就是原来的五个工具）：',
     '',
     describeAdminTools(tools),
   ].join('\n');

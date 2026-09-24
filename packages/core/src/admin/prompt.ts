@@ -103,7 +103,7 @@ function describeLibrary(
  * 副对话的提示词（LAYOUT「副对话状态」）。
  *
  * 这是**世界管理员与用户的对话**，形态更接近 AI 工作流：没有角色扮演、
- * 没有气泡、不注入角色人设与记忆。它唯一能做的事就是调用那三个工具，
+ * 没有气泡、不注入角色人设与记忆。它唯一能做的事就是调用那五个工具，
  * 所以提示词里也必须把这一点说清楚，而不是让它自由发挥。
  */
 export function buildAdminMessages(input: AdminPromptInput): ChatMessage[] {

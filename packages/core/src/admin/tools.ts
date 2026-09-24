@@ -16,6 +16,7 @@ import {
 import type { Persona } from '../model/persona.js';
 import type { CastPolicy, Scene } from '../model/room.js';
 import type { ChatToolCall, ToolDefinition } from '../prompt/types.js';
+import { asRecord, text } from '../util/json.js';
 
 /**
  * 副对话的工具集（LAYOUT 待确认第 4 条：先只做三件）。
@@ -194,15 +195,6 @@ export interface AdminToolContext {
   knownBookIds?: readonly string[];
   /** 当前账户里的 Persona；删除时用 name 做二次确认。 */
   knownPersonas?: readonly Persona[];
-}
-
-function asRecord(value: unknown): Record<string, unknown> | null {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) return null;
-  return value as Record<string, unknown>;
-}
-
-function text(value: unknown): string {
-  return typeof value === 'string' ? value.trim() : '';
 }
 
 /**

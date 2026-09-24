@@ -6,6 +6,7 @@ import {
   type WorldBookPosition,
 } from '../../model/card.js';
 import { nowIso, type WorldBookId, worldBookId } from '../../model/ids.js';
+import { asRecord, str, toFinite } from '../../util/json.js';
 import type { ImportWarning } from './card.js';
 
 export interface WorldBookImportResult {
@@ -47,21 +48,8 @@ const KNOWN_ENTRY_KEYS = new Set([
   'group',
 ]);
 
-function asRecord(value: unknown): Record<string, unknown> | null {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) return null;
-  return value as Record<string, unknown>;
-}
-
-function num(value: unknown, fallback: number): number {
-  return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
-}
-
 function bool(value: unknown, fallback: boolean): boolean {
   return typeof value === 'boolean' ? value : fallback;
-}
-
-function str(value: unknown): string {
-  return typeof value === 'string' ? value : '';
 }
 
 /** SillyTavern 的 key 字段有时是字符串，有时是字符串数组。 */
@@ -90,7 +78,7 @@ function parseEntry(raw: unknown, fallbackId: string, warnings: ImportWarning[])
   }
 
   const uid = record.uid ?? record.id ?? fallbackId;
-  const selectiveLogicRaw = num(record.selectiveLogic, SelectiveLogic.AND_ANY);
+  const selectiveLogicRaw = toFinite(record.selectiveLogic, SelectiveLogic.AND_ANY);
   const selectiveLogic = (
     [0, 1, 2, 3].includes(selectiveLogicRaw) ? selectiveLogicRaw : SelectiveLogic.AND_ANY
   ) as SelectiveLogicValue;
@@ -99,7 +87,7 @@ function parseEntry(raw: unknown, fallbackId: string, warnings: ImportWarning[])
    * 位置：认识的 0–4 各就各位（顺序 60），不认识的才记一条 warning。
    * 以前这里不提示，用户会以为导出后位置语义没了——「不静默丢弃」是这一层的要求。
    */
-  const positionCode = num(record.position, 0);
+  const positionCode = toFinite(record.position, 0);
   const position = POSITION_BY_CODE[positionCode];
   if (position === undefined) {
     warnings.push({
@@ -117,10 +105,10 @@ function parseEntry(raw: unknown, fallbackId: string, warnings: ImportWarning[])
     constant: bool(record.constant, false),
     selective: bool(record.selective, true),
     selectiveLogic,
-    order: num(record.order, 100),
+    order: toFinite(record.order, 100),
     position: position ?? 'unknown',
-    depth: num(record.depth, 4),
-    probability: num(record.probability, 100),
+    depth: toFinite(record.depth, 4),
+    probability: toFinite(record.probability, 100),
     useProbability: bool(record.useProbability, true),
     disabled: bool(record.disable, false),
     caseSensitive: bool(record.caseSensitive, false),

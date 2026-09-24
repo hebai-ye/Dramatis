@@ -19,6 +19,7 @@ import {
   resolveMemorySources,
 } from '@dramatis/core';
 import { useEffect, useMemo, useState } from 'react';
+import { formatTime } from '../lib/format';
 import { useDraftField } from '../lib/useDraftField';
 
 /**
@@ -76,12 +77,6 @@ interface Props {
 }
 
 type View = 'list' | 'contrast';
-
-function formatTime(iso: string): string {
-  const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) return '';
-  return date.toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
-}
 
 /**
  * 记忆面板（ROADMAP P1-4）。

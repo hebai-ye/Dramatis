@@ -2,6 +2,7 @@ import { type EventId, type InstanceId, newId, PLAYER } from '../model/ids.js';
 import type { CharacterInstance, Relationship } from '../model/instance.js';
 import type { Message } from '../model/message.js';
 import type { ChatMessage } from '../prompt/types.js';
+import { toFinite } from '../util/json.js';
 import { extractJsonObject } from './extract.js';
 import { MemoryExtractionError } from './types.js';
 
@@ -94,10 +95,6 @@ export function buildAffectMessages(input: AffectPromptInput): ChatMessage[] {
       ].join('\n'),
     },
   ];
-}
-
-function toFinite(value: unknown, fallback = 0): number {
-  return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
 }
 
 function parseRelationship(raw: unknown): RelationshipDelta[] {

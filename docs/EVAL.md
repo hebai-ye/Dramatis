@@ -3186,3 +3186,66 @@ Biome 的 `useExhaustiveDependencies` 也会要求）。其余逐字一致。
 2. 真机（软键盘 / 安全区）与真模型效果照旧没验（要真手机 / 要用户的 Key）。
 3. 「614 条世界里重抽会卡死」那条 **P1 待复核**这一轮没复现：本机小世界上重抽 3 次忙态每次都
    收掉了。但这一轮不是那条的复现条件，仍要按原计划在干净环境里拿大世界复核。
+
+## 五十九、顺序 65：代码重复收敛（2026-09-25 凌晨）
+
+**一句话**：七处 `asRecord`、四处 `formatTime`、两份输入区、三个模态框外壳、三份记账/入队、
+几张重复的选项表都收成了一份。改的是**同一件事写了几遍**，不是行为。
+
+| 收成什么 | 原来几份、在哪 | 现在住哪 |
+| --- | --- | --- |
+| `asRecord` / `str` / `text` / `toFinite` | 7 份（意图解析、管理员工具、世界书、角色卡、记忆抽取、分层摘要、同步 HTTP；`str` 与 `text` 各两份） | `packages/core/src/util/json.ts` |
+| `formatTime` | 4 份（记忆面板、设置、用量、同步） | `apps/web/src/lib/format.ts`（`formatBytes` 也从 `lib/storage.ts` 搬来同住） |
+| 输入区 | 2 份（主对话、副对话，逐字几乎一样） | `components/Composer.tsx` |
+| 模态框外壳 | 3 份（新对话 / 场景 / 角色详情） | `components/Modal.tsx` |
+| 记账 + 入队 | 3 份（发一句 / 重抽 / 改归属各自拼一遍） | `lib/turn-bookkeeping.ts` |
+| 选项表与数字 | `PRESENCE_OPTIONS` ×2、`CAST_POLICY_OPTIONS` ×2、`signed` ×2 | `lib/labels.ts` |
+| 媒体查询 hook | `useNarrowScreen` / `useCoarsePointer` 逐字两份 | `lib/viewport.ts` 的 `useMediaQuery` 一个实现 |
+
+### 收敛时发现两处**已经漂了**，这两处是有意统一（会看到文案/选项变化）
+
+1. **在场状态下拉**：角色栏那份少了「已离场」，所以从角色栏根本选不出「已离场」，只能进角色详情改。
+   以更全的那份为准，现在两处都是四项（`onstage / muted / offscreen / absent`）。
+2. **入场策略里「锁定名单」的说明**：一处写「不得引入任何新角色」，一处写「AI 不得引入任何新角色」，
+   取后者（说清是谁不许引入）。
+
+这两条不是「顺手改文案」，是重复副本本身已经分叉——留着不管，下次改一处就会漏另一处。
+
+### 验证
+
+五项门禁全绿（typecheck / lint / test / build / build:sync-server），测试 **626 个**
+（Core 621 + Web 5；比上一批多 3 个，是给 `util/json.ts` 新写的契约测试）。
+
+**真机回归 11/11**（真 Chrome 1440×900 + 本机假模型 `:5288`，脚本 `verify-65.mjs`）：
+
+| 检查 | 结果 |
+| --- | --- |
+| 主输入区：占位文字还是桌面那两句 | **通过** |
+| 主输入区：配了 Key 时那颗键是「发送」不是「生成提示词」 | **通过** |
+| 发一句：两条消息落库，账上有 intent / generation / analysis | **通过**（账 `["intent","generation","analysis"]`） |
+| 场景弹窗：外壳在、遮罩能关（`aria-label="关闭场景"`） | **通过** |
+| 入场策略的说明是统一后的那句 | **通过**（「AI 不得引入任何新角色」） |
+| 新对话弹窗：标题与「取消」都在、遮罩 `aria-label="关闭新对话"` | **通过** |
+| 角色详情弹窗：外壳在、显示名输入框还在、遮罩能关 | **通过** |
+| 在场状态下拉：四处合并成同一张表（含「已离场」） | **通过**（`onstage,muted,offscreen,absent`） |
+| 副对话输入区：共用 Composer 之后照常渲染 | **通过** |
+| 设置 → 数据：存占用那行还是「x MB / y MB」的形状 | **通过**（`84.0 KB / 3.00 GB`） |
+| 全程没有页面级报错 | **通过** |
+
+**记账/入队合并之后，把顺序 66 那套主循环回归又跑了一遍：13/13 全过**
+（发一句 / 重抽 ×3 / 改归属 / 没 Key 的桥接，脚本 `verify-66-turn-runner.mjs`）——
+这一批动了聊天主循环里「写账」与「入队」那几行，所以必须重跑，不能只看新写的回归。
+
+截图：`65-desktop.png` / `65-modal-scene.png` / `65-modal-new-conversation.png` /
+`65-modal-cast-detail.png` / `65-side-chat.png` / `65-settings-data.png`
+（工作区外 `C:\Users\35350\.codex\visualizations\2026\09\24\01a0d419-...\`）。
+
+### 没做的（如实记）
+
+1. **`lib/admin.ts:302` 与 `lib/worker.ts:577` 那两处记账没搬进 `turn-bookkeeping.ts`**：
+   它们各自带着所在模块的类型（管理员的 `profile`、后台任务的 `outcome`），搬进来要把
+   worker 与 admin 的返回类型一起往下传。顺序 65 只要求「记账 + 入队三份合一」，那三份
+   在主循环里，已经收了；这两处留着，等顺序 68（账单查询下推）那批一起做更自然。
+2. **设置弹窗那套 `.dialog-backdrop` / `.dialog` 没并进 `Modal`**：它是带左侧导航的大窗，
+   与三个小弹窗不是一种东西，硬并会让 `Modal` 长出一堆开关。
+3. 桌面/手机两套截图只各留了一张（65 是「无行为改变」，重点是功能点还在，不是像素比对）。

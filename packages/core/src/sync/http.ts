@@ -26,6 +26,7 @@
  */
 
 import type { EncryptedRecord } from '../crypto/records.js';
+import { asRecord } from '../util/json.js';
 import { type CreateSyncSpaceInput, type SyncServer, SyncServerError } from './server.js';
 import { SYNC_COLLECTIONS, type SyncCollection, type SyncWireRecord } from './types.js';
 
@@ -79,12 +80,6 @@ function withCors(response: Response, origin: string | null, allowed: readonly s
   headers.set('access-control-allow-headers', 'authorization, content-type');
   headers.set('access-control-max-age', '600');
   return new Response(response.body, { status: response.status, headers });
-}
-
-function asRecord(value: unknown): Record<string, unknown> | null {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : null;
 }
 
 function bearer(request: Request): string {

@@ -2,6 +2,7 @@ import type { CharacterInstance } from '../model/instance.js';
 import type { Message } from '../model/message.js';
 import type { Scene } from '../model/room.js';
 import type { ChatMessage } from '../prompt/types.js';
+import { asRecord } from '../util/json.js';
 import { type ExtractedMemory, MemoryExtractionError, type RawObservation } from './types.js';
 
 const SYSTEM_PROMPT = [
@@ -108,11 +109,6 @@ export function extractJsonObject(text: string): unknown {
   }
 
   throw new MemoryExtractionError('模型输出里的 JSON 对象没有闭合');
-}
-
-function asRecord(value: unknown): Record<string, unknown> | null {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) return null;
-  return value as Record<string, unknown>;
 }
 
 function clamp01(value: number): number {

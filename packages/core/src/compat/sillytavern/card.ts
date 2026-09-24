@@ -1,5 +1,6 @@
 import type { Card, CardSource } from '../../model/card.js';
 import { cardId, nowIso } from '../../model/ids.js';
+import { asRecord, str } from '../../util/json.js';
 import type { Inflate } from './inflate.js';
 import { findCardPayload, readPngTextChunks } from './png.js';
 
@@ -50,15 +51,6 @@ const KNOWN_SHELL_KEYS = new Set([
   'fav',
   'create_date',
 ]);
-
-function asRecord(value: unknown): Record<string, unknown> | null {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) return null;
-  return value as Record<string, unknown>;
-}
-
-function str(value: unknown): string {
-  return typeof value === 'string' ? value : '';
-}
 
 function strArray(value: unknown): string[] {
   if (!Array.isArray(value)) return [];

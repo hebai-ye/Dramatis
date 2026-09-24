@@ -41,14 +41,14 @@ import type { ProvidersApi } from '../lib/providers';
 import type { SessionApi } from '../lib/session';
 import { resetStreamState, setStreamState } from '../lib/stream-store';
 import type { SyncApi } from '../lib/sync';
-import type { UsageApi } from '../lib/usage';
 import {
-  type BackgroundWorkerApi,
-  MEMORY_BUDGET_TOKENS,
-  MEMORY_CONSOLIDATE_TASK_KIND,
-  SCENE_SUMMARY_TASK_KIND,
-  TURN_ANALYSIS_TASK_KIND,
-} from '../lib/worker';
+  enqueueMemoryConsolidation as enqueueMemoryConsolidationTask,
+  enqueueSceneSummary as enqueueSceneSummaryTask,
+  enqueueTurnAnalysis,
+  recordModelCall,
+} from '../lib/turn-bookkeeping';
+import type { UsageApi } from '../lib/usage';
+import { type BackgroundWorkerApi, MEMORY_BUDGET_TOKENS } from '../lib/worker';
 import type { Notice } from './useNotices';
 
 function toPromptMemory(recalled: RecalledForPrompt): PromptMemory {
@@ -342,14 +342,13 @@ export function useTurnRunner({
         );
         // 这一调用的开销也要算进成本：它是每回合固定多出来的一次。
         // 走账单而不是内存计数——刷新之后这笔钱还得在（T7）
-        await db?.ledger.record({
+        await recordModelCall(db, {
+          category: 'intent',
+          model: config.model,
           roomId: world?.id ?? null,
           conversationId: conversation?.id ?? null,
           turnId: input.turnId,
-          category: 'intent',
-          model: config.model,
-          promptTokens: completion.usage?.promptTokens ?? 0,
-          completionTokens: completion.usage?.completionTokens ?? 0,
+          usage: completion.usage ?? null,
           price: config.price,
         });
         void usage.reload();
@@ -362,49 +361,24 @@ export function useTurnRunner({
     [burned, conversation, db, providers, usage, world],
   );
 
-  /**
-   * 每回合结算之后，让后台看一眼这一场要不要压场记（P1-5 的场景层）。
-   *
-   * 这里**不做阈值判断**：攒够没攒够由后台拿着最新数据决定（同一个纯函数），
-   * 界面侧的判断会拿着过期的场景对象重复触发——真机第一轮就出现过两次摘要调用。
-   * 幂等键按回合给：一轮只排一次队，攒不够时那一趟是空跑，不发调用、不记账。
-   */
+  /** 当前世界与对话下压一场场记（拼装部分在 lib/turn-bookkeeping.ts，顺序 65）。 */
   const enqueueSceneSummary = useCallback(
     async (target: Scene, key: string) => {
-      if (!db || !world || !conversation) return;
-      if (burned) return;
-
-      await db.queue.enqueue({
-        kind: SCENE_SUMMARY_TASK_KIND,
-        idempotencyKey: `${SCENE_SUMMARY_TASK_KIND}:${target.id}:${key}`,
+      if (!db || !world || !conversation || burned) return;
+      await enqueueSceneSummaryTask(db, worker, {
         roomId: world.id,
-        turnId: null,
-        payload: { roomId: world.id, sceneId: target.id, conversationId: conversation.id },
+        conversationId: conversation.id,
+        sceneId: target.id,
+        key,
       });
-      worker.kick();
     },
     [burned, conversation, db, worker, world],
   );
 
-  /**
-   * 每回合结算之后，让后台看一眼「记忆该不该合并」（顺序 27a）。
-   *
-   * 与场记那条路同一个套路：这里**不做阈值判断**（判断在 worker 里拿着最新数据做），
-   * 只负责按「每 40 条记忆」排一次队——幂等键里带桶号，所以同一批记忆只会排一次，
-   * 攒不够时那一趟是空跑（不发调用、不记账）。
-   */
+  /** 当前对话的记忆该不该合并（顺序 27a；阈值判断在 worker 里）。 */
   const enqueueMemoryConsolidation = useCallback(async () => {
     if (!db || !world || !conversation || burned) return;
-    const memories = await db.repository.listMemories(world.id);
-    const bucket = Math.floor(memories.length / 40);
-    await db.queue.enqueue({
-      kind: MEMORY_CONSOLIDATE_TASK_KIND,
-      idempotencyKey: `${MEMORY_CONSOLIDATE_TASK_KIND}:${conversation.id}:${String(bucket)}`,
-      roomId: world.id,
-      turnId: null,
-      payload: { roomId: world.id, conversationId: conversation.id },
-    });
-    worker.kick();
+    await enqueueMemoryConsolidationTask(db, worker, { roomId: world.id, conversationId: conversation.id });
   }, [burned, conversation, db, worker, world]);
 
   const handleSend = useCallback(
@@ -562,17 +536,15 @@ export function useTurnRunner({
           // 所以这一条照样记——漏账会让用户低估开销（T7）
           // 网页版那一轮不经过服务商，没有 token 也没有钱——记一条 0 只会污染账单
           if (!manual) {
-            await db.ledger.record({
+            await recordModelCall(db, {
+              category: 'generation',
+              model: profile.model,
               roomId: world.id,
               conversationId: conversation.id,
               turnId,
-              category: 'generation',
-              model: profile.model,
-              promptTokens: generation.usage?.promptTokens ?? 0,
-              completionTokens: generation.usage?.completionTokens ?? 0,
-              speakerInstanceId: speaker.id,
-              speakerName: speaker.displayName,
+              usage: generation.usage,
               price: profile.price ?? null,
+              speaker: { id: speaker.id, name: speaker.displayName },
             });
           }
 
@@ -647,14 +619,12 @@ export function useTurnRunner({
           ]);
           return;
         }
-        await db.queue.enqueue({
-          kind: TURN_ANALYSIS_TASK_KIND,
-          idempotencyKey: `${TURN_ANALYSIS_TASK_KIND}:${turnId}`,
+        await enqueueTurnAnalysis(db, worker, {
           roomId: world.id,
+          conversationId: conversation.id,
+          sceneId: scene.id,
           turnId,
-          payload: { roomId: world.id, sceneId: scene.id, turnId, conversationId: conversation.id },
         });
-        worker.kick();
       } catch (sendError) {
         const message = sendError instanceof Error ? sendError.message : String(sendError);
         setError(controller.signal.aborted ? `已停止生成（${message}）` : message);
@@ -752,17 +722,15 @@ export function useTurnRunner({
         });
 
         // 重抽同样是一次真实调用：旧的那笔账不撤销（钱花了），新的这笔记上
-        await db.ledger.record({
+        await recordModelCall(db, {
+          category: 'generation',
+          model: providers.active?.model ?? '',
           roomId: world.id,
           conversationId: conversation.id,
           turnId: target.turnId,
-          category: 'generation',
-          model: providers.active?.model ?? '',
-          promptTokens: generation.usage?.promptTokens ?? 0,
-          completionTokens: generation.usage?.completionTokens ?? 0,
-          speakerInstanceId: speaker.id,
-          speakerName: speaker.displayName,
+          usage: generation.usage,
           price: providers.active?.price ?? null,
+          speaker: { id: speaker.id, name: speaker.displayName },
         });
         await usage.reload();
 
@@ -779,19 +747,12 @@ export function useTurnRunner({
         // 不补这一步的话，被重抽的那一轮会永远不再抽取记忆——角色的记忆里
         // 就永久缺了一段（真实模型端到端测试里就是这样发现的：重抽两次之后
         // 记忆条数少了一条，再也没有回来）。
-        await db.queue.enqueue({
-          kind: TURN_ANALYSIS_TASK_KIND,
-          idempotencyKey: `${TURN_ANALYSIS_TASK_KIND}:${target.turnId}`,
+        await enqueueTurnAnalysis(db, worker, {
           roomId: world.id,
+          conversationId: conversation.id,
+          sceneId: scene.id,
           turnId: target.turnId,
-          payload: {
-            roomId: world.id,
-            sceneId: scene.id,
-            turnId: target.turnId,
-            conversationId: conversation.id,
-          },
         });
-        worker.kick();
       } catch (regenerateError) {
         const message = regenerateError instanceof Error ? regenerateError.message : String(regenerateError);
         setError(controller.signal.aborted ? `已停止生成（${message}）` : message);
@@ -874,20 +835,14 @@ export function useTurnRunner({
         return;
       }
 
-      await db.queue.enqueue({
-        kind: TURN_ANALYSIS_TASK_KIND,
-        // 带时间戳：clearTurn 已经清掉旧记录，这里再带上时间戳保证一定起一条新任务
-        idempotencyKey: `${TURN_ANALYSIS_TASK_KIND}:${target.turnId}:${String(Date.now())}`,
+      // distinct：clearTurn 已经清掉旧记录，带上时间戳保证一定起一条新任务
+      await enqueueTurnAnalysis(db, worker, {
         roomId: world.id,
+        conversationId: conversation.id,
+        sceneId: target.sceneId,
         turnId: target.turnId,
-        payload: {
-          roomId: world.id,
-          sceneId: target.sceneId,
-          turnId: target.turnId,
-          conversationId: conversation.id,
-        },
+        distinct: true,
       });
-      worker.kick();
     },
     [conversation, db, messages, providers.apiKey, session, worker, world, setWarnings, setError, setBridge],
   );

@@ -1,5 +1,6 @@
 import type { SyncDeviceSummary } from '@dramatis/core';
 import { useRef, useState } from 'react';
+import { formatTime } from '../lib/format';
 import type { KeyStorageMode } from '../lib/keystore';
 import { parseSnapshot, type ServerSnapshot, SNAPSHOT_REMIND_MS } from '../lib/snapshot';
 import { describeReport, type SyncApi } from '../lib/sync';
@@ -7,13 +8,6 @@ import { describeReport, type SyncApi } from '../lib/sync';
 interface Props {
   api: SyncApi;
   disabled: boolean;
-}
-
-function formatTime(iso: string | null): string {
-  if (iso === null) return '还没同步过';
-  const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) return '';
-  return date.toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
 }
 
 /**
@@ -201,7 +195,7 @@ export function SyncPanel({ api, disabled }: Props) {
           <p className="hint">
             {api.status === 'needs-secret'
               ? '这个账户还没解锁：到「账户」里点它卡片上的「输入密码」。'
-              : `上次同步 ${formatTime(api.config?.lastSyncAt ?? null)} · ${describeReport(api.config?.lastReport ?? null)}`}
+              : `上次同步 ${formatTime(api.config?.lastSyncAt ?? null, '还没同步过')} · ${describeReport(api.config?.lastReport ?? null)}`}
           </p>
         </div>
       ) : (
@@ -252,7 +246,7 @@ export function SyncPanel({ api, disabled }: Props) {
             </li>
             <li>
               <span className="usage-name">上次同步</span>
-              <span className="usage-figure">{formatTime(api.config?.lastSyncAt ?? null)}</span>
+              <span className="usage-figure">{formatTime(api.config?.lastSyncAt ?? null, '还没同步过')}</span>
             </li>
             <li>
               <span className="usage-name">上次结果</span>

@@ -3,7 +3,7 @@ import { memo, useEffect, useRef, useState } from 'react';
 import { countRender } from '../lib/render-count';
 import { useStreamState } from '../lib/stream-store';
 import { useCoarsePointer } from '../lib/viewport';
-import { IconSend, IconStop } from './Icons';
+import { Composer } from './Composer';
 import { WebBridgePanel } from './WebBridgePanel';
 
 interface Props {
@@ -262,56 +262,26 @@ function SideChatImpl({
       )}
 
       {/* 与主对话同一个输入区形态（用户 2026-09-21 要求照 Codex 的样子） */}
-      <div className="composer">
-        <div className="composer-box">
-          <textarea
-            ref={inputRef}
-            value={input}
-            disabled={!ready || archived}
-            placeholder={
-              archived
-                ? '已归档的对话不能再说话'
-                : coarsePointer
-                  ? '告诉管理员你想搭什么……（回车换行，点右下角发送）'
-                  : '告诉管理员你想搭什么……（Enter 发送）'
-            }
-            onChange={(event) => setInput(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key !== 'Enter' || event.shiftKey || event.nativeEvent.isComposing) return;
-              if (coarsePointer) return;
-              event.preventDefault();
-              submit();
-            }}
-          />
-          <div className="composer-tools">
-            <span className="composer-location">{conversation.title}</span>
-            <div className="topbar-spacer" />
-            {busy ? (
-              <button
-                type="button"
-                className="composer-action stop"
-                title="停止这一轮"
-                aria-label="停止"
-                onClick={onStop}
-              >
-                <IconStop />
-              </button>
-            ) : (
-              <button
-                type="button"
-                disabled={!ready || archived || input.trim() === '' || bridge !== null}
-                title={bridge === null ? undefined : '先把这一轮贴回来（或点「放弃这次起草」）再发下一句'}
-                aria-label={bridge === null && manualMode ? '生成提示词' : '发送'}
-                className={bridge === null && manualMode ? 'composer-action labelled' : 'composer-action'}
-                onClick={submit}
-              >
-                <IconSend />
-                {bridge === null && manualMode ? <span>生成提示词</span> : null}
-              </button>
-            )}
-          </div>
-        </div>
-      </div>
+      <Composer
+        value={input}
+        onChange={setInput}
+        inputRef={inputRef}
+        disabled={!ready || archived}
+        busy={busy}
+        bridgeOpen={bridge !== null}
+        manualMode={bridge === null && manualMode}
+        bridgeTitle="先把这一轮贴回来（或点「放弃这次起草」）再发下一句"
+        onSend={submit}
+        onStop={onStop}
+        placeholder={
+          archived
+            ? '已归档的对话不能再说话'
+            : coarsePointer
+              ? '告诉管理员你想搭什么……（回车换行，点右下角发送）'
+              : '告诉管理员你想搭什么……（Enter 发送）'
+        }
+        tools={<span className="composer-location">{conversation.title}</span>}
+      />
     </section>
   );
 }

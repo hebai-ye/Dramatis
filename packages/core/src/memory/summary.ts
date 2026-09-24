@@ -4,6 +4,7 @@ import { localSeqOf } from '../model/message.js';
 import type { Scene } from '../model/room.js';
 import type { ChatMessage } from '../prompt/types.js';
 import { heuristicTokenCounter, type TokenCounter } from '../token/estimate.js';
+import { asRecord } from '../util/json.js';
 import { extractJsonObject } from './extract.js';
 
 /**
@@ -113,11 +114,6 @@ export function buildSceneSummaryMessages(input: SceneSummaryInput): ChatMessage
 export interface ParsedSummary {
   summary: string;
   keyFacts: string[];
-}
-
-function asRecord(value: unknown): Record<string, unknown> | null {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) return null;
-  return value as Record<string, unknown>;
 }
 
 function readKeyFacts(value: unknown): string[] {

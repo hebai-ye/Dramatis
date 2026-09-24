@@ -1,5 +1,6 @@
 import type { BudgetLimits, BudgetState, UsageGroup, UsageSummary, UsageTotals } from '@dramatis/core';
 import { useEffect, useState } from 'react';
+import { formatTime } from '../lib/format';
 import { CATEGORY_LABELS, formatCost, formatMoney, formatTokens } from '../lib/usage';
 
 interface Props {
@@ -172,13 +173,6 @@ function GroupList({
       ))}
     </ul>
   );
-}
-
-function formatTime(iso: string | null): string {
-  if (iso === null) return '';
-  const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) return '';
-  return date.toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
 }
 
 /**

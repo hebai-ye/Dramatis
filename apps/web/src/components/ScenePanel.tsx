@@ -1,4 +1,5 @@
 import type { CastPolicy, Scene } from '@dramatis/core';
+import { CAST_POLICY_OPTIONS } from '../lib/labels';
 import { useDraftField } from '../lib/useDraftField';
 
 interface Props {
@@ -7,13 +8,6 @@ interface Props {
   onStartNewScene: (title: string) => void;
   disabled: boolean;
 }
-
-const CAST_POLICY_OPTIONS: Array<{ value: CastPolicy; label: string; note: string }> = [
-  { value: 'locked', label: '锁定名单', note: 'AI 不得引入任何新角色' },
-  { value: 'invite_only', label: '仅限召唤', note: '只有你点名的角色才能入场' },
-  { value: 'triggered', label: '条件触发', note: '设定被触发时才入场' },
-  { value: 'open', label: '自由入场', note: '符合条件的角色可自行登场' },
-];
 
 export function ScenePanel({ scene, onChange, onStartNewScene, disabled }: Props) {
   const current = CAST_POLICY_OPTIONS.find((option) => option.value === scene.castPolicy);

@@ -1,4 +1,5 @@
 import { type CharacterInstance, type InstanceId, PLAYER, type Presence, type Scene } from '@dramatis/core';
+import { PRESENCE_OPTIONS, signed } from '../lib/labels';
 import { useDraftField } from '../lib/useDraftField';
 
 interface Props {
@@ -10,20 +11,10 @@ interface Props {
   onRemove: (id: InstanceId) => void;
 }
 
-const PRESENCE_OPTIONS: Array<{ value: Presence; label: string; note: string }> = [
-  { value: 'onstage', label: '在场', note: '会说话，也会记得发生的事' },
-  { value: 'muted', label: '沉默', note: '在场但不发言，仍然记得' },
-  { value: 'offscreen', label: '在幕后', note: '不在这个场景，但时间仍在流逝' },
-];
-
 function describe(instance: CharacterInstance, scene: Scene): string {
   const inCast = scene.cast.includes(instance.id);
   if (!inCast && instance.presence === 'onstage') return '名单与状态不一致：点了在场但不在名单里';
   return PRESENCE_OPTIONS.find((option) => option.value === instance.presence)?.note ?? '';
-}
-
-function signed(value: number): string {
-  return `${value >= 0 ? '+' : '-'}${Math.abs(value).toFixed(2)}`;
 }
 
 function describeState(instance: CharacterInstance): string {

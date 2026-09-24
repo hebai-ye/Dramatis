@@ -14,7 +14,8 @@ import { type MouseEvent, memo, useCallback, useEffect, useLayoutEffect, useMemo
 import { createPortal } from 'react-dom';
 import { countRender } from '../lib/render-count';
 import { useCoarsePointer } from '../lib/viewport';
-import { IconPlus, IconScene, IconSend, IconStop } from './Icons';
+import { Composer } from './Composer';
+import { IconPlus, IconScene } from './Icons';
 import { type MessageHandlers, MessageList } from './MessageItem';
 import { StreamingBubble } from './StreamingBubble';
 import { WebBridgePanel, type WebBridgeState } from './WebBridgePanel';
@@ -606,31 +607,32 @@ function MainChatImpl({
         焦点态由盒子统一表示（`.composer-box:focus-within`），所以不用再画
         「大输入框 + 外面一排带边框的小按钮」那种两层结构。
       */}
-      <div className="composer">
-        <div className="composer-box">
-          <textarea
-            ref={inputRef}
-            value={input}
-            disabled={!ready || archived}
-            placeholder={
-              archived
-                ? '已归档的对话不能再说话'
-                : ready
-                  ? coarsePointer
-                    ? '说点什么……（回车换行，点右下角发送）'
-                    : '说点什么……（Enter 发送，Shift+Enter 换行）'
-                  : '先导入角色卡'
-            }
-            onChange={(event) => setInput(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key !== 'Enter' || event.shiftKey || event.nativeEvent.isComposing) return;
-              if (coarsePointer) return;
-              event.preventDefault();
-              submit();
-            }}
-          />
-
-          <div className="composer-tools">
+      <Composer
+        value={input}
+        onChange={setInput}
+        inputRef={inputRef}
+        disabled={!ready || archived}
+        busy={busy}
+        /*
+         * 桥接开着的时候不让再发一句：那会把「正等着贴回来」的这一步冲掉，
+         * 而已经落盘的玩家消息又撤不回来。先把手上的这一轮转完。
+         */
+        bridgeOpen={bridge !== null}
+        manualMode={manualMode && bridge === null}
+        bridgeTitle="先把这一轮贴回来（或点「放弃这一轮」）再发下一句"
+        onSend={submit}
+        onStop={onStop}
+        placeholder={
+          archived
+            ? '已归档的对话不能再说话'
+            : ready
+              ? coarsePointer
+                ? '说点什么……（回车换行，点右下角发送）'
+                : '说点什么……（Enter 发送，Shift+Enter 换行）'
+              : '先导入角色卡'
+        }
+        tools={
+          <>
             <div className="mode-anchor">
               <button
                 type="button"
@@ -696,40 +698,9 @@ function MainChatImpl({
             <span className="composer-location">
               {scene === null || scene.location.trim() === '' ? '地点未指定' : shorten(scene.location, 18)}
             </span>
-
-            <div className="topbar-spacer" />
-
-            {busy ? (
-              <button
-                type="button"
-                className="composer-action stop"
-                title="停止这一轮"
-                aria-label="停止"
-                onClick={onStop}
-              >
-                <IconStop />
-              </button>
-            ) : (
-              <button
-                type="button"
-                /*
-                 * 桥接开着的时候不让再发一句：那会把「正等着贴回来」的这一步冲掉，
-                 * 而已经落盘的玩家消息又撤不回来。先把手上的这一轮转完。
-                 */
-                disabled={!ready || archived || input.trim() === '' || bridge !== null}
-                title={bridge === null ? undefined : '先把这一轮贴回来（或点「放弃这一轮」）再发下一句'}
-                /* 没配 Key 时这颗键不是「发送」而是「生成提示词」，得让读屏也听得出来 */
-                aria-label={manualMode && bridge === null ? '生成提示词' : '发送'}
-                className={manualMode && bridge === null ? 'composer-action labelled' : 'composer-action'}
-                onClick={submit}
-              >
-                <IconSend />
-                {manualMode && bridge === null ? <span>生成提示词</span> : null}
-              </button>
-            )}
-          </div>
-        </div>
-      </div>
+          </>
+        }
+      />
     </section>
   );
 }

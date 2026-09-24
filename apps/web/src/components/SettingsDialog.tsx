@@ -1,9 +1,9 @@
 import type { Conversation, ConversationId } from '@dramatis/core';
 import { useState } from 'react';
 import type { AppearanceApi } from '../lib/appearance';
+import { formatBytes, formatTime } from '../lib/format';
 import type { ProvidersApi } from '../lib/providers';
 import type { StorageApi } from '../lib/storage';
-import { formatBytes } from '../lib/storage';
 import type { SyncApi } from '../lib/sync';
 import { AccountPanel } from './AccountPanel';
 import { AppearancePanel } from './AppearancePanel';
@@ -56,12 +56,6 @@ interface Props {
   storage: StorageApi;
   backendKind: string;
   sync: SyncApi;
-}
-
-function formatTime(iso: string): string {
-  const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) return '';
-  return date.toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
 }
 
 export function SettingsDialog(props: Props) {

@@ -3,6 +3,7 @@ import type { CharacterInstance } from '../model/instance.js';
 import type { Message } from '../model/message.js';
 import type { Scene } from '../model/room.js';
 import type { ChatMessage } from '../prompt/types.js';
+import { asRecord } from '../util/json.js';
 
 /**
  * 生成前的意图（ROADMAP P1-6）。
@@ -89,11 +90,6 @@ export function buildIntentPlanMessages(input: IntentPlanInput): ChatMessage[] {
 }
 
 const MODES: readonly IntentMode[] = ['reply', 'cut_in', 'hold_back', 'initiate'];
-
-function asRecord(value: unknown): Record<string, unknown> | null {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) return null;
-  return value as Record<string, unknown>;
-}
 
 /** 宽松解析：认对象里的 speakers、认裸数组、认单个对象。 */
 export function parseIntentPlan(raw: string): IntentPlanEntry[] {

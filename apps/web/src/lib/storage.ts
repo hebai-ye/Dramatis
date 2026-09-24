@@ -30,12 +30,8 @@ const UNKNOWN: StorageStatus = { supported: false, persisted: null, usage: null,
 /** 用到这个比例就提醒用户备份（导出封存），而不是等到写不进去。 */
 export const QUOTA_WARN_RATIO = 0.8;
 
-export function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${String(bytes)} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  if (bytes < 1024 * 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
-  return `${(bytes / 1024 / 1024 / 1024).toFixed(2)} GB`;
-}
+// 体积的显示格式搬到 lib/format.ts（顺序 65 收敛重复）：与时间格式放在一起，
+// 想看「界面上这些数字长什么样」不用再翻存储模块。
 
 export interface StorageApi {
   status: StorageStatus;

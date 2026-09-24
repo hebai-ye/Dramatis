@@ -11,6 +11,7 @@ import {
   normalizeRecoveryCode,
   normalizeUserId,
   openSpace,
+  rotatePassword,
   unwrapSpaceKey,
   verifyCredential,
   wrapSpaceKey,
@@ -296,5 +297,111 @@ describe('WebCrypto 不在的时候', () => {
     vi.stubGlobal('crypto', undefined);
     expect(() => subtle()).toThrowError(CryptoError);
     expect(() => subtle()).toThrowError(/安全上下文/);
+  });
+});
+
+/**
+ * 顺序 61：PBKDF2 只跑该跑的次数。
+ *
+ * 600k 次迭代在手机上是几百毫秒，而建空间原本跑了**四次**（密码两次、恢复码两次），
+ * 换密码与登录各跑两次。这一组用例用 spy 把派生次数钉死——它是性能回归的哨兵：
+ * 以后谁把 `keys` 从参数里去掉、改成重新传 `secret`，这里立刻红。
+ */
+describe('派生次数（顺序 61）', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  function spyDeriveBits() {
+    return vi.spyOn(subtle(), 'deriveBits');
+  }
+
+  it('建空间只派生三次：句柄一次 + 密码一次 + 恢复码一次', async () => {
+    const spy = spyDeriveBits();
+    const created = await createSpaceCredentials({ userId: '旅人', password: '同步密码', ...FAST });
+    expect(spy).toHaveBeenCalledTimes(3);
+
+    // 而且算出来的东西仍然自洽：两份封装都能解回同一把主密钥
+    const byPassword = await openSpace({
+      spaceHandle: created.spaceHandle,
+      secret: '同步密码',
+      purpose: 'password',
+      wrapped: created.passwordWrap,
+      keyIterations: FAST.keyIterations,
+    });
+    const byRecovery = await openSpace({
+      spaceHandle: created.spaceHandle,
+      secret: created.recoveryCode,
+      purpose: 'recovery',
+      wrapped: created.recoveryWrap,
+      keyIterations: FAST.keyIterations,
+    });
+    const material = new TextEncoder().encode('同一把钥匙才解得开同一段密文');
+    const iv = new Uint8Array(12);
+    const sealed = await subtle().encrypt({ name: 'AES-GCM', iv }, byPassword.encKey, material);
+    const opened = await subtle().decrypt({ name: 'AES-GCM', iv }, byRecovery.encKey, sealed);
+    expect(new TextDecoder().decode(opened)).toBe('同一把钥匙才解得开同一段密文');
+  });
+
+  it('登录只派生一次（不再为了包/解钥匙跑第二遍）', async () => {
+    const created = await createSpaceCredentials({ userId: '旅人', password: '同步密码', ...FAST });
+    const spy = spyDeriveBits();
+
+    await openSpace({
+      spaceHandle: created.spaceHandle,
+      secret: '同步密码',
+      purpose: 'password',
+      wrapped: created.passwordWrap,
+      keyIterations: FAST.keyIterations,
+    });
+    expect(spy).toHaveBeenCalledTimes(1);
+  });
+
+  it('换密码只派生一次，且新密码立刻能解开主密钥', async () => {
+    const created = await createSpaceCredentials({ userId: '旅人', password: '旧密码', ...FAST });
+    const spy = spyDeriveBits();
+
+    const rotated = await rotatePassword({
+      spaceHandle: created.spaceHandle,
+      encKey: created.encKey,
+      newPassword: '新密码',
+      keyIterations: FAST.keyIterations,
+    });
+    expect(spy).toHaveBeenCalledTimes(1);
+
+    const opened = await openSpace({
+      spaceHandle: created.spaceHandle,
+      secret: '新密码',
+      purpose: 'password',
+      wrapped: rotated.passwordWrap,
+      keyIterations: FAST.keyIterations,
+    });
+    expect(opened.credential).toBe(rotated.credential);
+  });
+
+  it('没给 keys 时仍然自己派生（老调用方与单测的兜底路径）', async () => {
+    const master = await (await import('./keys.js')).createSpaceKey();
+    const spy = spyDeriveBits();
+    const wrapped = await wrapSpaceKey(master, {
+      secret: '同步密码',
+      spaceHandle: 'handle-x',
+      purpose: 'password',
+      iterations: FAST.keyIterations,
+    });
+    expect(spy).toHaveBeenCalledTimes(1);
+
+    // 两条路都要给一句人话：既没 keys 也没 secret 时不能拿空串去跑 KDF
+    await expect(wrapSpaceKey(master, { spaceHandle: 'handle-x', purpose: 'password' })).rejects.toBeInstanceOf(
+      CryptoError,
+    );
+
+    const keys = await deriveSecretKeys({
+      secret: '同步密码',
+      spaceHandle: 'handle-x',
+      purpose: 'password',
+      iterations: FAST.keyIterations,
+    });
+    const unwrapped = await unwrapSpaceKey(wrapped, { spaceHandle: 'handle-x', purpose: 'password', keys });
+    expect(unwrapped).toBeDefined();
   });
 });

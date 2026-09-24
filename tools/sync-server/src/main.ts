@@ -5,6 +5,7 @@ import { dirname, resolve } from 'node:path';
 import process from 'node:process';
 import { DatabaseSync } from 'node:sqlite';
 import {
+  applySqlitePragmas,
   createSqliteSyncStore,
   createSyncServer,
   handleSyncRequest,
@@ -86,10 +87,14 @@ export function readConfig(argv: readonly string[], env: Record<string, string |
   const maxRecords = positive('max-records', 'DRAMATIS_SYNC_MAX_RECORDS');
   const maxMb = positive('max-mb', 'DRAMATIS_SYNC_MAX_MB');
   const pushesPerMinute = positive('pushes-per-minute', 'DRAMATIS_SYNC_PUSHES_PER_MINUTE');
+  const spacesPerMinute = positive('spaces-per-minute', 'DRAMATIS_SYNC_SPACES_PER_MINUTE');
+  const maxSpaces = positive('max-spaces', 'DRAMATIS_SYNC_MAX_SPACES');
   const limits: Partial<SyncServerLimits> = {
     ...(maxRecords === undefined ? {} : { maxRecordsPerSpace: maxRecords }),
     ...(maxMb === undefined ? {} : { maxBytesPerSpace: maxMb * 1024 * 1024 }),
     ...(pushesPerMinute === undefined ? {} : { pushesPerMinute }),
+    ...(spacesPerMinute === undefined ? {} : { spacesPerMinute }),
+    ...(maxSpaces === undefined ? {} : { maxSpaces }),
   };
 
   return {
@@ -141,6 +146,8 @@ export interface RunningServer {
 export function startServer(config: ServerConfig): RunningServer {
   mkdirSync(dirname(config.dataPath), { recursive: true });
   const db = new DatabaseSync(config.dataPath);
+  // WAL + busy_timeout（顺序 61）：服务端写入与 6 小时一次的备份不再互相顶掉
+  applySqlitePragmas(db);
   const store = createSqliteSyncStore(db);
   const server = createSyncServer(store, { limits: config.limits });
   const startedAt = Date.now();
@@ -171,13 +178,33 @@ export function startServer(config: ServerConfig): RunningServer {
         }
         const body = await readBody(request);
 
+        /*
+         * 给公开接口限流用的「来源」（顺序 61）。
+         *
+         * 站在 nginx 后面时 socket 地址永远是 127.0.0.1，那样限流就退化成
+         * 「全服务器共用一个窗口」——所以**来自本机**的请求才信 `x-forwarded-for`
+         * 的第一跳（反代一定会覆盖这个头；外部直连的请求到不了这里）。
+         * 不配反代的直连用 socket 地址，同样有效。
+         */
+        const forwarded = request.headers['x-forwarded-for'];
+        const forwardedFirst = (Array.isArray(forwarded) ? forwarded[0] : forwarded)?.split(',')[0]?.trim();
+        const socketAddress = request.socket.remoteAddress ?? '';
+        const fromLoopback =
+          socketAddress === '127.0.0.1' || socketAddress === '::1' || socketAddress === '::ffff:127.0.0.1';
+        const clientKey =
+          fromLoopback && forwardedFirst !== undefined && forwardedFirst !== '' ? forwardedFirst : socketAddress;
+
         const handled = await handleSyncRequest(
           new Request(`http://${host}${path}`, {
             method: request.method ?? 'GET',
             headers,
             ...(body === undefined ? {} : { body }),
           }),
-          { server, cors: { allowedOrigins: config.allowedOrigins } },
+          {
+            server,
+            cors: { allowedOrigins: config.allowedOrigins },
+            ...(clientKey === '' ? {} : { clientKey }),
+          },
         );
 
         const text = await handled.text();

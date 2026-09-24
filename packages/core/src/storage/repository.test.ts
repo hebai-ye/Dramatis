@@ -980,3 +980,54 @@ describe('Repository / meta', () => {
     expect(spy).toHaveBeenCalledWith('room-1');
   });
 });
+
+/**
+ * 顺序 61：凭据的墓碑**不能带密文**。
+ *
+ * 删除 API Key 之后，墓碑唯一的用途是告诉别的设备「这条没了」。
+ * 原来的 `softDelete` 把整条记录原样写回，于是密文仍然躺在本地库里、
+ * 还会随同步推到服务端——删了等于没删干净。
+ */
+describe('凭据墓碑只留坐标（顺序 61）', () => {
+  it('删掉模型凭据后，库里那条只剩 id / providerId / 时间戳', async () => {
+    const store = createMemoryEntityStore();
+    const repo = new Repository(store);
+    const at = nowIso();
+
+    await repo.saveProviderCredential({
+      id: 'cred-1',
+      providerId: 'profile-1',
+      revision: 'r1',
+      encryptedSecret: { algorithm: 'AES-256-GCM', iv: 'aXY=', ciphertext: 'Y2lwaGVy' },
+      createdAt: at,
+      updatedAt: at,
+      deletedAt: null,
+    });
+
+    await repo.deleteProviderCredential('cred-1');
+
+    const row = await store.get<Record<string, unknown>>(COLLECTIONS.providerCredentials, 'cred-1');
+    expect(row).not.toBeNull();
+    expect(row?.deletedAt).toBeTruthy();
+    expect(row?.providerId).toBe('profile-1');
+    // 密文与修订号都不该留在墓碑里
+    expect(row?.encryptedSecret).toBeUndefined();
+    expect(row?.revision).toBeUndefined();
+    // 活着的列表里也没有它了
+    expect(await repo.listProviderCredentials()).toHaveLength(0);
+  });
+
+  it('其它集合的墓碑仍然保留整条（回滚与审计要用）', async () => {
+    const store = createMemoryEntityStore();
+    const repo = new Repository(store);
+    const { room } = fixtures();
+    await repo.saveRoom(room);
+
+    await repo.deleteRoom(room.id);
+
+    const row = await store.get<Record<string, unknown>>(COLLECTIONS.rooms, room.id);
+    // 标题还在：不是被清成空壳，只是盖了删除章
+    expect(row?.title).toBe(room.title);
+    expect(row?.deletedAt).toBeTruthy();
+  });
+});

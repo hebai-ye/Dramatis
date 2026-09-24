@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { createSpaceCredentials, openSpace } from '../crypto/keys.js';
 import { decryptRecord, encryptRecord } from '../crypto/records.js';
 import { handleSyncRequest } from './http.js';
+import { createHttpSyncTransport, SyncHttpError } from './http-client.js';
 import { createMemorySyncStore, createSyncServer } from './server.js';
 import type { SyncWireRecord } from './types.js';
 
@@ -109,7 +110,7 @@ describe('HTTP 外壳 · 鉴权与路由', () => {
     const response = await call(`/spaces/${created.spaceHandle}/push`, {
       method: 'POST',
       headers: { authorization: `Bearer ${created.credential}`, 'content-type': 'application/json' },
-      body: JSON.stringify({ baseHead: 0, records: [{ collection: 'messages', id: 'm1' }] }),
+      body: JSON.stringify({ records: [{ collection: 'messages', id: 'm1' }] }),
     });
     expect(response.status).toBe(400);
   });
@@ -138,7 +139,7 @@ describe('HTTP 外壳 · 走一遍真实推拉', () => {
     const pushed = await call(`/spaces/${created.spaceHandle}/push`, {
       method: 'POST',
       headers: { authorization: `Bearer ${created.credential}`, 'content-type': 'application/json' },
-      body: JSON.stringify({ baseHead: 0, records: [wire] }),
+      body: JSON.stringify({ records: [wire] }),
     });
     expect(pushed.status).toBe(200);
     const pushResult = await body<{ head: number; accepted: { serverRev: number }[] }>(pushed);
@@ -193,7 +194,7 @@ describe('HTTP 外壳 · 走一遍真实推拉', () => {
     await call(`/spaces/${created.spaceHandle}/push`, {
       method: 'POST',
       headers: { authorization: `Bearer ${created.credential}`, 'content-type': 'application/json' },
-      body: JSON.stringify({ baseHead: 0, records }),
+      body: JSON.stringify({ records }),
     });
 
     const firstPage = await body<{
@@ -264,7 +265,7 @@ describe('HTTP 外壳 · 走一遍真实推拉', () => {
     await first.call(`/spaces/${first.created.spaceHandle}/push`, {
       method: 'POST',
       headers: { authorization: `Bearer ${first.created.credential}`, 'content-type': 'application/json' },
-      body: JSON.stringify({ baseHead: 0, records: [await wireFor(first.created)] }),
+      body: JSON.stringify({ records: [await wireFor(first.created)] }),
     });
 
     const fromOtherSpace = await first.body<{ records: unknown[] }>(
@@ -369,5 +370,71 @@ describe('HTTP 外壳 · 跨源（部署到另一台机器时用）', () => {
     // 空间已存在 → 409；关键是**不是** 403（来源没有被误判成跨源）
     expect(response.status).toBe(409);
     expect(response.headers.get('access-control-allow-origin')).toBeNull();
+  });
+});
+
+/**
+ * 顺序 61：错误要带**机器可读的 code**，客户端才能按 code 判断，
+ * 而不是拿中文文案去 `includes`。
+ */
+describe('HTTP 客户端把错误码透传出来（顺序 61）', () => {
+  it('413 space-full 原样透出 status 与 code，文案仍然是服务端那句人话', async () => {
+    const created = await createSpaceCredentials({ userId: '旅人', password: '同步密码', ...FAST });
+    const store = createMemorySyncStore();
+    const server = createSyncServer(store, { limits: { maxRecordsPerPush: 1 } });
+    await server.createSpace({
+      spaceHandle: created.spaceHandle,
+      credentialHash: created.credentialHash,
+      recoveryCredentialHash: created.recoveryCredentialHash,
+      at: AT,
+    });
+
+    const transport = createHttpSyncTransport({
+      endpoint: 'http://sync.test',
+      fetchImpl: (input, init) =>
+        handleSyncRequest(new Request(input, init), { server, now: () => AT }) as Promise<Response>,
+    });
+
+    const records = await Promise.all(
+      [0, 1].map(async (index) => {
+        const id = `msg-${String(index)}`;
+        const updatedAt = AT;
+        const sealed = await encryptRecord(
+          created.encKey,
+          { spaceHandle: created.spaceHandle, collection: 'messages', id, updatedAt },
+          { id },
+        );
+        return { collection: 'messages' as const, id, updatedAt, deletedAt: null, sealed };
+      }),
+    );
+
+    const failure = await transport
+      .push({ spaceHandle: created.spaceHandle, credential: created.credential, records })
+      .then(
+        () => null,
+        (error: unknown) => error,
+      );
+
+    expect(failure).toBeInstanceOf(SyncHttpError);
+    const httpError = failure as SyncHttpError;
+    expect(httpError.status).toBe(413);
+    expect(httpError.code).toBe('space-full');
+    // 人话照旧：界面直接显示 message
+    expect(httpError.message).toContain('一次最多写');
+  });
+
+  it('非 JSON 的错误体退到状态码，code 记 unknown', async () => {
+    const transport = createHttpSyncTransport({
+      endpoint: 'http://sync.test',
+      fetchImpl: () => Promise.resolve(new Response('<html>502</html>', { status: 502 })),
+    });
+
+    const failure = await transport.head({ spaceHandle: 'h', credential: 'c' }).then(
+      () => null,
+      (error: unknown) => error,
+    );
+    expect(failure).toBeInstanceOf(SyncHttpError);
+    expect((failure as SyncHttpError).status).toBe(502);
+    expect((failure as SyncHttpError).code).toBe('unknown');
   });
 });

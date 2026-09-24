@@ -90,8 +90,6 @@ export interface SyncHeadResult {
 }
 
 export interface SyncPushInput extends SyncCredentials {
-  /** 客户端以为的服务端游标；服务端可以据此诊断「你落后了」，但不必拒绝。 */
-  baseHead: number;
   records: readonly SyncWireRecord[];
 }
 

@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { createSpaceCredentials } from '../crypto/keys.js';
 import { encryptRecord } from '../crypto/records.js';
 import { createSyncServer } from './server.js';
-import { createSqliteSyncStore, SYNC_SCHEMA_SQL } from './sqlite.js';
+import { applySqlitePragmas, createSqliteSyncStore, SYNC_SCHEMA_SQL } from './sqlite.js';
 import type { SyncWireRecord } from './types.js';
 
 /**
@@ -70,13 +70,11 @@ describe('SQLite 存储', () => {
     const first = await server.push({
       spaceHandle: created.spaceHandle,
       credential: created.credential,
-      baseHead: 0,
       records: [await wire('m1', '2026-09-20T00:00:01.000Z')],
     });
     const second = await server.push({
       spaceHandle: created.spaceHandle,
       credential: created.credential,
-      baseHead: first.head,
       records: [await wire('m1', '2026-09-20T00:00:02.000Z'), await wire('m2', '2026-09-20T00:00:03.000Z')],
     });
 
@@ -92,7 +90,6 @@ describe('SQLite 存储', () => {
     await server.push({
       spaceHandle: created.spaceHandle,
       credential: created.credential,
-      baseHead: 0,
       records: [
         await wire('m1', '2026-09-20T00:00:01.000Z'),
         await wire('m2', '2026-09-20T00:00:02.000Z'),
@@ -125,7 +122,6 @@ describe('SQLite 存储', () => {
     await server.push({
       spaceHandle: created.spaceHandle,
       credential: created.credential,
-      baseHead: 0,
       records: [await wire('m1', tombstoneAt, tombstoneAt)],
     });
 
@@ -147,7 +143,6 @@ describe('SQLite 存储', () => {
     await server.push({
       spaceHandle: created.spaceHandle,
       credential: created.credential,
-      baseHead: 0,
       records: [await wire('m1', '2026-09-20T00:00:01.000Z')],
     });
 
@@ -173,10 +168,34 @@ describe('SQLite 存储', () => {
     const result = await server.push({
       spaceHandle: created.spaceHandle,
       credential: created.credential,
-      baseHead: 0,
       records: [],
     });
 
     expect(result).toEqual({ head: 0, accepted: [] });
   });
+});
+
+/**
+ * 顺序 61：服务端与备份脚本并发时不能再互相顶掉。
+ *
+ * WAL 让读与写并行（备份的 `VACUUM INTO` 是读事务），`busy_timeout` 让撞上锁的
+ * 那一边**等一会儿**而不是立刻失败。`journal_mode` 在内存库上会被 SQLite 忽略
+ * （内存库没有日志文件），所以这里只钉 `busy_timeout` 这个一定生效的值。
+ */
+describe('SQLite 的并发设置（顺序 61）', () => {
+  it('applySqlitePragmas 设上 busy_timeout，内存库上也不报错', () => {
+    const db = new DatabaseSync(':memory:');
+    applySqlitePragmas(db);
+
+    const row = db.prepare('PRAGMA busy_timeout').get() as { timeout?: number } | undefined;
+    expect(row?.timeout).toBe(5000);
+    db.close();
+  });
+
+  /*
+   * 文件库上 `journal_mode` 会真的变成 `wal`——但 core 的 tsconfig 不带 Node 的类型
+   * （内核要保持平台无关），写文件要引 `node:fs` / `node:os`，会把这个测试拖成
+   * 「为了一条断言给内核加 Node 依赖」。所以这一条留给部署后的冒烟：
+   * 起服务端，`sqlite3 data/sync.db 'PRAGMA journal_mode;'` 应当回 `wal`。
+   */
 });

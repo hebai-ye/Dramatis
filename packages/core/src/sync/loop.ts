@@ -122,7 +122,6 @@ export async function runSync(input: RunSyncInput): Promise<SyncReport> {
       const result = await input.transport.push({
         spaceHandle: input.spaceHandle,
         credential: input.credential,
-        baseHead: state.pulledHead,
         records: wire,
       });
 

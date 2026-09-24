@@ -2699,6 +2699,42 @@ Prompt 检查器现在会在块列表里显示落点（人设前 / 场景后 / �
 - **浏览器回归**没做：检查器多了一个落点标签，理论上只影响显示，但没有在无头浏览器上走过一遍面板。
   真机验收时请顺带看一眼「Prompt 检查器 → 各区块」里是否出现「人设前 / 场景后 / 插进历史 2」这类标签。
 
+## 五十、顺序 61：同步与数据安全底线（2026-09-24）
+
+**基线**：顺序 60 的 605 个测试通过。这一批是七件小修，目标不是新功能，而是
+**把「服务端与客户端之间的约定」从字符串猜测改成结构化判断，并把几条护栏补齐**。
+
+### 七件各自做了什么、怎么验的
+
+| # | 问题（改前） | 改法 | 验证 |
+| --- | --- | --- | --- |
+| a | HTTP 客户端把错误压成一句 `Error(message)`，客户端只能 `message.includes('存满')` 判「空间满了」；`SyncPanel` 靠 `error.includes('空间')` 判「空间没了」 | 新增 `SyncHttpError extends Error`（带 `status` + `code`），错误体里的 `code` 原样透传；`sync.ts` 按 `code === 'space-full' \|\| status === 413` 判满，`SyncApi` 多一个 `errorStatus`，`SyncPanel` 按 `404` 判「空间没了」 | `http.test` 新增两条：413 透出 `space-full` 且文案仍是服务端那句人话；非 JSON 错误体退到状态码 + `code: 'unknown'` |
+| b | 建空间跑 **4 次** 600k 次 PBKDF2（密码两次、恢复码两次），登录与换密码各 2 次 | `wrapSpaceKey` / `unwrapSpaceKey` 接受**已派生**的 `SecretKeys`；建空间 = 句柄 1 + 钥匙 2 = 3 次，登录 1 次，换密码 1 次 | `keys.test` 用 `vi.spyOn(subtle(), 'deriveBits')` 把次数钉死（3 / 1 / 1），并验证两份封装仍解出**同一把**主密钥（能互相解密同一段密文） |
+| c | SQLite 默认 rollback journal：服务端写入会把读事务顶回去，备份 `VACUUM INTO` 正好撞上就失败 | 新增 `applySqlitePragmas()`（`journal_mode=WAL` + `busy_timeout=5000`），`startServer` 与 `backup.mjs` 都调 | `sqlite.test` 断言 `busy_timeout=5000` 在内存库上也生效且不报错；文件库上的 `journal_mode=wal` 留给部署冒烟（core 的 tsconfig 不带 Node 类型，为一条断言给内核加 `node:fs` 不划算） |
+| d | `POST /spaces` **完全没有护栏**（唯一不需要凭证的写接口） | 新增 `spacesPerMinute`（按来源）与 `maxSpaces`（总量）；来源由 HTTP 宿主给，反代后面且请求来自本机时取 `x-forwarded-for` 第一跳 | `limits.test` 新增四条：同来源 429、换来源不受影响、时钟滑动 61 秒后恢复、总量到顶 503 `server-full` **且已存在的空间仍是 409** |
+| e | 字节配额判的是「现在已经满了」（`usage.bytes >= max`），一批大记录能把上限顶出去；条数那条早就是写后判 | 改成 `usage.bytes + 本批字节 > max`，本批字节用 `recordSize(sealed)` 累加 | `limits.test` 加一条：上限 1 字节时任何一批都整批拒绝（413 `space-full`） |
+| f | 删掉模型凭据时 `softDelete` 把**整条**写回，密文还留在库里、还会随同步推到服务端 | `providerCredentials` 的墓碑只留 `id / providerId / updatedAt / deletedAt`（与 `deletePersona` 一致） | `repository.test` 新增两条：凭据墓碑里 `encryptedSecret` 与 `revision` 都没了、活列表为空；**房间等其它集合的墓碑仍保留整条**（回滚与审计要用） |
+| g | 换密码后连续写两次 KeyStore；`SyncPushInput.baseHead` 服务端从不读 | 去掉那次多余的写入（`remember` 已经写了）；`push` 请求体去掉 `baseHead`，协议记录在 SYNC §4.9.2 | `biome` 的 `useExhaustiveDependencies` 直接指出 `rotatePassword` 的 `passwordRef` 依赖成了多余项——**这行 lint 就是「多余的写入真的没了」的证据**；`baseHead` 从类型、两台实现与 18 处测试调用里一起删掉，typecheck 全绿 |
+
+### 这一轮被工具抓到的两件事（记下来，因为都是真 bug）
+
+1. **容量护栏差点把 409 变成 503**：第一版把「总量检查」放在整体最前面，结果服务端装满之后，
+   一个只是来重连的客户端会拿到 503、以为自己的空间没了。测试当场红（`expected 503 to be 409`），
+   改成「先查这个空间存不存在，只有真新建才过容量那条闸」。
+2. **我把两个 hook 的依赖数组改错了**：`setKeyMode` 与 `rotatePassword` 的依赖数组一模一样，
+   `apply_patch` 匹配到了第一处。lint 的 `useExhaustiveDependencies` 一边报「缺 `passwordRef`」、
+   一边报「多 `passwordRef`」，正好把两处都点出来——**成对的报错比单个报错更好用**。
+
+### 验证边界与遗留
+
+- 本轮只跑了 `typecheck / lint / test / build / build:sync-server` 与内核单测（Core 613 + Web 5 = **618 全绿**）。
+- **没有部署、没有连真机、没有跑线上站点**。TASKS 里写的「服务端重新部署 + `/health`」与
+  「换密码 / 恢复码 / 坏记录隔离三条演练」**都没做**，因为那需要真实服务器与两台设备。
+- **没有验证的**：文件库上 `journal_mode` 真的变成 `wal`（要起服务端，`sqlite3 data/sync.db 'PRAGMA journal_mode;'`）；
+  新护栏在反向代理后面的真实表现（`x-forwarded-for` 是否被 nginx 正确覆盖）；
+  以及「老客户端（带 `baseHead` 的请求）打新服务端」的兼容性——理论上服务端忽略未知字段，
+  但没有在真机两端跑过一轮。**这三条留给部署时验**。
+
 ### 三次独立演练的汇整（2026-09-24，同一份代码）
 
 上面那张表是第一次演练（5273 + 5285，假模型每 250ms 一块）。同一批代码后来又跑了两轮，

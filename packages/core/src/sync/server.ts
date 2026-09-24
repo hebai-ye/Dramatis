@@ -91,6 +91,11 @@ export interface SyncServerStore {
    * 「看得见设备」是增强，不该让旧后端连同步都做不了。
    */
   deviceUsage?(spaceHandle: string): Promise<SyncDeviceSummary[]>;
+  /**
+   * 可选：这台服务端上一共登记了多少个空间（顺序 61 的总量护栏）。
+   * 没实现就跳过总量检查——老后端照样能跑。
+   */
+  spaceCount?(): Promise<number>;
   /** 换同步密码：只替换密码那一份凭证与封装，恢复码那份不动。 */
   rotatePassword?(spaceHandle: string, patch: { credentialHash: string; passwordWrap: unknown }): Promise<boolean>;
 }
@@ -100,7 +105,14 @@ export class SyncServerError extends Error {
   override readonly name = 'SyncServerError';
   constructor(
     readonly status: number,
-    readonly code: 'space-not-found' | 'space-exists' | 'unauthorized' | 'bad-request' | 'space-full' | 'rate-limited',
+    readonly code:
+      | 'space-not-found'
+      | 'space-exists'
+      | 'unauthorized'
+      | 'bad-request'
+      | 'space-full'
+      | 'rate-limited'
+      | 'server-full',
     message: string,
   ) {
     super(message);
@@ -128,6 +140,16 @@ export interface SyncServerLimits {
   pushesPerMinute: number;
   /** 一次请求最多带多少条记录（正常客户端按 200 分块，见 loop.ts）。 */
   maxRecordsPerPush: number;
+  /**
+   * **同一个来源**每分钟最多登记几个新空间（顺序 61）。
+   *
+   * 为什么单独管 `POST /spaces`：它是唯一**不需要凭证**的写接口。没有这条线，
+   * 任何人可以在你的服务器上刷出无限多个空空间，把磁盘与内存吃干净——
+   * 写入配额只保护「已经存在的空间」，挡不住新建。
+   */
+  spacesPerMinute: number;
+  /** 这台服务端上最多有多少个空间（顺序 61）。限流挡「一分钟刷一千个」，总量挡「一年慢慢刷满」。 */
+  maxSpaces: number;
 }
 
 export const DEFAULT_SYNC_LIMITS: SyncServerLimits = {
@@ -135,6 +157,9 @@ export const DEFAULT_SYNC_LIMITS: SyncServerLimits = {
   maxBytesPerSpace: 256 * 1024 * 1024,
   pushesPerMinute: 120,
   maxRecordsPerPush: 500,
+  // 一个人从头建一遍自己的空间只需要几个，20 已经宽松得离谱
+  spacesPerMinute: 20,
+  maxSpaces: 10_000,
 };
 
 export interface CreateSyncSpaceInput {
@@ -148,7 +173,7 @@ export interface CreateSyncSpaceInput {
 
 export interface SyncServer {
   /** 登记一个新空间。已存在时返回 'exists'，**不覆盖**（否则谁先占谁定）。 */
-  createSpace(input: CreateSyncSpaceInput): Promise<'created' | 'exists'>;
+  createSpace(input: CreateSyncSpaceInput, context?: { clientKey?: string }): Promise<'created' | 'exists'>;
   /** 取空间元数据（句柄就是钥匙；里面只有哈希与密文，拿到也解不开）。 */
   getSpaceMeta(spaceHandle: string): Promise<SyncSpaceRecord | null>;
   head(input: SyncHeadInput): Promise<SyncHeadResult>;
@@ -193,6 +218,8 @@ export function createSyncServer(store: SyncServerStore, options: CreateSyncServ
    * 单进程部署（用户自己的服务器就是）下它就够了。
    */
   const pushWindow = new Map<string, number[]>();
+  /* 建空间也同样限流，但按**来源**而不是按空间（顺序 61）：这时空间还不存在。 */
+  const createWindow = new Map<string, number[]>();
 
   function checkPushRate(spaceHandle: string): void {
     const at = now();
@@ -209,14 +236,59 @@ export function createSyncServer(store: SyncServerStore, options: CreateSyncServ
     pushWindow.set(spaceHandle, recent);
   }
 
+  /**
+   * `POST /spaces` 的两道闸（顺序 61）：同一来源每分钟的登记次数、以及总量上限。
+   *
+   * `clientKey` 由 HTTP 宿主给（socket 地址，或在可信反向代理后面取 `x-forwarded-for` 的
+   * 第一跳）。宿主没给就退化成「所有请求共用一个 key」——那条线依然在，
+   * 只是粒度粗一些，总比完全没有好。
+   */
+  /** 第一道闸：同一个来源一分钟内不许建太多个。 */
+  function checkCreateRate(clientKey: string): void {
+    const at = now();
+    const windowStart = at - 60_000;
+    const recent = (createWindow.get(clientKey) ?? []).filter((stamp) => stamp > windowStart);
+    if (recent.length >= limits.spacesPerMinute) {
+      throw new SyncServerError(
+        429,
+        'rate-limited',
+        `一分钟内建了太多空间（上限 ${String(limits.spacesPerMinute)} 个）。等一下再试。`,
+      );
+    }
+    recent.push(at);
+    createWindow.set(clientKey, recent);
+  }
+
+  /** 第二道闸：这台服务端上的空间总数。**只对新建生效**——已存在的空间该回 409。 */
+  async function checkSpaceCapacity(): Promise<void> {
+    const count = await store.spaceCount?.();
+    if (count !== undefined && count >= limits.maxSpaces) {
+      throw new SyncServerError(
+        503,
+        'server-full',
+        `这台服务端上的空间数量已经到上限（${String(limits.maxSpaces)} 个）。这是给自建服务器的护栏，请联系服务器的主人。`,
+      );
+    }
+  }
+
   return {
-    async createSpace(input: CreateSyncSpaceInput) {
+    async createSpace(input: CreateSyncSpaceInput, context) {
       if (input.spaceHandle === '') {
         throw new SyncServerError(400, 'bad-request', '空间句柄不能为空。');
       }
       if (input.credentialHash === '' || input.recoveryCredentialHash === '') {
         throw new SyncServerError(400, 'bad-request', '凭证哈希不能为空。');
       }
+
+      /*
+       * 护栏（顺序 61）：先看「这个来源建得太频繁吗」，再看「这台服务器还装得下吗」。
+       *
+       * 顺序很关键：**已存在的空间必须先走 409**。容量那条闸只对真正的新建生效，
+       * 否则服务端装满之后，一个只是来重连的客户端会拿到 503、以为自己的空间没了。
+       */
+      checkCreateRate(context?.clientKey ?? 'unknown');
+      const existing = await store.getSpace(input.spaceHandle);
+      if (existing === null) await checkSpaceCapacity();
 
       const created = await store.createSpace({
         spaceHandle: input.spaceHandle,
@@ -276,11 +348,19 @@ export function createSyncServer(store: SyncServerStore, options: CreateSyncServ
             `这个空间已经存满（上限 ${String(limits.maxRecordsPerSpace)} 条）。这是给自建服务器的护栏，正常用很难碰到；碰到了最实际的办法是换一个用户 id 重新开一个空间（本机这份数据会推过去），并把本机数据先导出一份封存留底（设置 → 数据）。`,
           );
         }
-        if (usage.bytes >= limits.maxBytesPerSpace) {
+        /*
+         * 字节这一条也要按「**写完之后**」判（顺序 61）。
+         *
+         * 原来写的是 `usage.bytes >= max`——那是「现在满没满」。于是一批 20MB 的记录
+         * 可以把 256MB 的上限直接顶到 276MB：条数那条早已改成写后判定，
+         * 字节这条漏了，两条口径不一致。
+         */
+        const batchBytes = input.records.reduce((sum, record) => sum + recordSize(record.sealed), 0);
+        if (usage.bytes + batchBytes > limits.maxBytesPerSpace) {
           throw new SyncServerError(
             413,
             'space-full',
-            `这个空间已经写满（上限约 ${String(Math.round(limits.maxBytesPerSpace / 1024 / 1024))} MB）。先按「设置 → 数据」导出一份封存留底，再考虑换个用户 id 开一个新空间。`,
+            `这个空间已经写满（上限约 ${String(Math.round(limits.maxBytesPerSpace / 1024 / 1024))} MB，这一批还要 ${String(Math.round(batchBytes / 1024 / 1024))} MB）。先按「设置 → 数据」导出一份封存留底，再考虑换个用户 id 开一个新空间。`,
           );
         }
       }
@@ -365,6 +445,10 @@ export function createMemorySyncStore(): MemorySyncStore {
       rows.set(record.spaceHandle, new Map());
       heads.set(record.spaceHandle, 0);
       return true;
+    },
+
+    async spaceCount() {
+      return spaces.size;
     },
 
     async head(spaceHandle) {

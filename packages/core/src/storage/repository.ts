@@ -664,6 +664,23 @@ export class Repository {
     const record = await this.store.get<{ id: string; deletedAt?: string | null }>(collection, id);
     if (record === null || !isAlive(record)) return;
     const updatedAt = await this.stampUpdatedAt(collection, id, at);
+    /*
+     * 凭据类集合的墓碑**只留坐标**（顺序 61，与 `deletePersona` 一致）。
+     *
+     * 墓碑的用途只有一条：告诉别的设备「这条没了」。可 `softDelete` 原本把整条原样写回，
+     * 于是删掉的 API Key 密文仍然躺在本地库里、并且会**随同步推到服务端**——
+     * 删除之后密文还在原地多存一份，没有任何一层需要它。
+     */
+    if (collection === COLLECTIONS.providerCredentials) {
+      const providerId = (record as { providerId?: unknown }).providerId;
+      await this.store.put(collection, {
+        id,
+        providerId: typeof providerId === 'string' ? providerId : '',
+        updatedAt,
+        deletedAt: updatedAt,
+      });
+      return;
+    }
     await this.store.put(collection, { ...record, id, deletedAt: updatedAt, updatedAt });
   }
 

@@ -45,6 +45,14 @@ export interface SyncHttpDeps {
    * 虽然拿不到凭证就没有数据，但没有必要放开）。
    */
   cors?: { allowedOrigins: readonly string[] };
+  /**
+   * 调用方是谁（顺序 61）：只用来给**公开的 `POST /spaces`** 限流。
+   *
+   * 由 HTTP 宿主填——Node 那边是 socket 地址，或在可信反向代理后面取
+   * `x-forwarded-for` 的第一跳；Worker 那边可以取 `cf-connecting-ip`。
+   * 不填时退化成「所有请求共用一个 key」：粒度粗，但那道闸还在。
+   */
+  clientKey?: string;
 }
 
 const JSON_HEADERS = { 'content-type': 'application/json; charset=utf-8' } as const;
@@ -189,7 +197,11 @@ async function route(request: Request, deps: SyncHttpDeps): Promise<Response> {
     }
 
     try {
-      const result = await deps.server.createSpace({ ...input, at: input.at === '' ? now() : input.at });
+      const result = await deps.server.createSpace(
+        { ...input, at: input.at === '' ? now() : input.at },
+        // 公开接口，按来源限流（顺序 61）
+        deps.clientKey === undefined ? {} : { clientKey: deps.clientKey },
+      );
       if (result === 'exists') {
         // 不覆盖：这个 id 已经被占了。调用方该做的是「直接同步」，而不是换空间
         return fail(409, 'space-exists', '这个 id 已经有人用了。如果你就是在别处建过它，直接同步即可；否则换一个 id。');
@@ -256,7 +268,6 @@ async function route(request: Request, deps: SyncHttpDeps): Promise<Response> {
       return json(
         await deps.server.push({
           ...credentials,
-          baseHead: typeof record.baseHead === 'number' ? record.baseHead : 0,
           records,
         }),
       );

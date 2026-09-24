@@ -14,6 +14,7 @@ import {
   rotatePassword as rotateSpacePassword,
   runSync,
   type SyncDeviceSummary,
+  SyncHttpError,
   type SyncPulledRecord,
   type SyncReport,
 } from '@dramatis/core';
@@ -101,6 +102,11 @@ export interface SyncApi {
   status: SyncStatus;
   busy: boolean;
   error: string | null;
+  /**
+   * 上一次失败的 HTTP 状态码（顺序 61）；不是 HTTP 层失败时为 null。
+   * 界面用它区分「服务端上这个空间没了」（404）与其它错误，而不是猜中文文案。
+   */
+  errorStatus: number | null;
   /** 建空间时显示**一次**的恢复码；界面必须让用户抄下来。 */
   recoveryCode: string | null;
   dismissRecoveryCode: () => void;
@@ -202,6 +208,14 @@ export function useSync(db: DramatisDb | null, options: { onChanged?: () => void
   const [status, setStatus] = useState<SyncStatus>('off');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /**
+   * 上一次失败的 HTTP 状态码（顺序 61）。
+   *
+   * 为什么除了 `error` 还要单独留一个数字：界面要按**状态码**分情况说话
+   * （404 = 服务端上这个空间没了，该引导用户重新开通；其余一律只显示那句话）。
+   * 以前是拿文案 `error.includes('空间')` 去猜，服务端改一个字就失效。
+   */
+  const [errorStatus, setErrorStatus] = useState<number | null>(null);
   const [recoveryCode, setRecoveryCode] = useState<string | null>(null);
   const [autoSyncPending, setAutoSyncPending] = useState(false);
   /**
@@ -218,6 +232,20 @@ export function useSync(db: DramatisDb | null, options: { onChanged?: () => void
   const configRef = useRef<SyncConfig | null>(null);
   const keyModeRef = useRef<KeyStorageMode>('session');
   const passwordRef = syncPasswordKeyRef(readActiveAccount().id);
+
+  /**
+   * 统一登记一次失败：文案给人看，状态码给界面判断（顺序 61）。
+   * 传 `null` = 清掉上一次的提示。
+   */
+  const reportError = useCallback((failure: unknown | null): void => {
+    if (failure === null) {
+      setError(null);
+      setErrorStatus(null);
+      return;
+    }
+    setError(failure instanceof Error ? failure.message : String(failure));
+    setErrorStatus(failure instanceof SyncHttpError ? failure.status : null);
+  }, []);
 
   // 同步写完库之后要有人告诉界面「重新读一遍」——否则用户会以为
   // 「同步成功了但什么都没来」。用 ref 跟随，避免把 drain 变成依赖泥球。
@@ -246,8 +274,14 @@ export function useSync(db: DramatisDb | null, options: { onChanged?: () => void
         encKey: session.encKey,
       }).catch((error: unknown) => {
         // 撞上服务端护栏：记下来，界面会一直提示到真的恢复为止
-        const message = error instanceof Error ? error.message : String(error);
-        if (message.includes('存满')) setSpaceFull(true);
+        /*
+         * 判据是**机器可读的 code**，不是文案（顺序 61）。
+         * 以前这里写的是 `message.includes('存满')`：服务端把那句话改一个字，
+         * 「空间满了」这个状态就静默失效，用户会以为一切正常而数据推不上去。
+         */
+        if (error instanceof SyncHttpError && (error.code === 'space-full' || error.status === 413)) {
+          setSpaceFull(true);
+        }
         throw error;
       });
 
@@ -313,20 +347,20 @@ export function useSync(db: DramatisDb | null, options: { onChanged?: () => void
       } catch (syncError) {
         if (cancelled) return;
         setStatus('error');
-        setError(syncError instanceof Error ? syncError.message : String(syncError));
+        reportError(syncError);
       }
     })();
 
     return () => {
       cancelled = true;
     };
-  }, [db, doSync, passwordRef]);
+  }, [db, doSync, passwordRef, reportError]);
 
   const connect = useCallback(
     async (input: SyncConnectInput): Promise<void> => {
       if (db === null) throw new Error('数据库还没准备好。');
       setBusy(true);
-      setError(null);
+      reportError(null);
       try {
         const endpoint = normalizeEndpoint(input.endpoint);
         const secret = input.secret.trim();
@@ -381,21 +415,20 @@ export function useSync(db: DramatisDb | null, options: { onChanged?: () => void
         await doSync(next, session);
       } catch (connectError) {
         setStatus('error');
-        const message = connectError instanceof Error ? connectError.message : String(connectError);
-        setError(message);
+        reportError(connectError);
         throw connectError;
       } finally {
         setBusy(false);
       }
     },
-    [db, doSync, remember],
+    [db, doSync, remember, reportError],
   );
 
   const syncNow = useCallback(async (): Promise<void> => {
     const current = configRef.current;
     const session = sessionRef.current;
     setBusy(true);
-    setError(null);
+    reportError(null);
     try {
       if (current === null || session === null) {
         setStatus('needs-secret');
@@ -405,13 +438,12 @@ export function useSync(db: DramatisDb | null, options: { onChanged?: () => void
       setStatus('ready');
     } catch (syncError) {
       setStatus('error');
-      const message = syncError instanceof Error ? syncError.message : String(syncError);
-      setError(message);
+      reportError(syncError);
       throw syncError;
     } finally {
       setBusy(false);
     }
-  }, [doSync]);
+  }, [doSync, reportError]);
 
   const disconnect = useCallback(async (): Promise<void> => {
     if (db === null) return;
@@ -421,9 +453,9 @@ export function useSync(db: DramatisDb | null, options: { onChanged?: () => void
     configRef.current = null;
     setConfig(null);
     setStatus('off');
-    setError(null);
+    reportError(null);
     setRecoveryCode(null);
-  }, [db, passwordRef]);
+  }, [db, passwordRef, reportError]);
 
   const setKeyMode = useCallback(
     async (mode: KeyStorageMode): Promise<void> => {
@@ -526,10 +558,11 @@ export function useSync(db: DramatisDb | null, options: { onChanged?: () => void
 
       // 服务端换完了：本机的凭证与密码都要跟着换，否则下一次同步自己就 401 了
       sessionRef.current = { credential: rotated.credential, encKey: session.encKey };
+      // `remember` 已经把新密码写进 KeyStore 了，这里不再写第二遍（顺序 61）
       await remember({ ...current, lastReport: current.lastReport }, newPassword);
-      await createBrowserKeyStore(current.keyMode).set(passwordRef, newPassword);
     },
-    [db, passwordRef, remember],
+    // 不再直接写 KeyStore（顺序 61）：`remember` 已经写了，`passwordRef` 因此也不必是依赖
+    [db, remember],
   );
 
   /**
@@ -609,7 +642,6 @@ export function useSync(db: DramatisDb | null, options: { onChanged?: () => void
       const result = await transport.push({
         spaceHandle: current.spaceHandle,
         credential: session.credential,
-        baseHead: head,
         records: batch,
       });
       pushed += batch.length;
@@ -632,7 +664,14 @@ export function useSync(db: DramatisDb | null, options: { onChanged?: () => void
     const current = configRef.current;
     const session = sessionRef.current;
     if (db === null || current === null || session === null) return;
-    await doSync(current, session);
+    try {
+      await doSync(current, session);
+      reportError(null);
+    } catch (autoError) {
+      // 自动同步不把错抛给调度器，但**失败要留痕**：文案与状态码一起记（顺序 61）
+      reportError(autoError);
+      throw autoError;
+    }
   };
 
   if (autoRef.current === null) {
@@ -643,8 +682,9 @@ export function useSync(db: DramatisDb | null, options: { onChanged?: () => void
         await quietRunRef.current();
       },
       intervalMs: AUTO_SYNC_INTERVAL_MS,
+      // 失败那条路上面已经记好了（含状态码），这里只在成功时把提示清掉
       onResult: (result) => {
-        setError(result.ok ? null : result.error);
+        if (result.ok) reportError(null);
       },
       onBusyChange: setAutoSyncPending,
     });
@@ -688,6 +728,7 @@ export function useSync(db: DramatisDb | null, options: { onChanged?: () => void
       status,
       busy,
       error,
+      errorStatus,
       recoveryCode,
       dismissRecoveryCode,
       connect,
@@ -713,6 +754,7 @@ export function useSync(db: DramatisDb | null, options: { onChanged?: () => void
       disconnect,
       dismissRecoveryCode,
       error,
+      errorStatus,
       exportSnapshot,
       listDevices,
       openSecret,

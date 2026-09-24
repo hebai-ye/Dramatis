@@ -48,7 +48,7 @@ describe('每空间配额与限流（顺序 16）', () => {
     const records = await Promise.all([0, 1, 2, 3].map((index) => wire(created.encKey, created.spaceHandle, index)));
 
     await expect(
-      server.push({ spaceHandle: created.spaceHandle, credential: created.credential, baseHead: 0, records }),
+      server.push({ spaceHandle: created.spaceHandle, credential: created.credential, records }),
     ).rejects.toMatchObject({ status: 413, code: 'space-full' });
     expect(store.debugRows(created.spaceHandle).size).toBe(0);
   });
@@ -59,13 +59,12 @@ describe('每空间配额与限流（顺序 16）', () => {
     await server.push({
       spaceHandle: created.spaceHandle,
       credential: created.credential,
-      baseHead: 0,
       records: first,
     });
 
     const extra = [await wire(created.encKey, created.spaceHandle, 9)];
     await expect(
-      server.push({ spaceHandle: created.spaceHandle, credential: created.credential, baseHead: 0, records: extra }),
+      server.push({ spaceHandle: created.spaceHandle, credential: created.credential, records: extra }),
     ).rejects.toMatchObject({ status: 413 });
 
     // 覆盖同一条也被挡住：这是刻意的保守（护栏要挡的是「不许再写」，不是精确记账）
@@ -73,7 +72,6 @@ describe('每空间配额与限流（顺序 16）', () => {
       server.push({
         spaceHandle: created.spaceHandle,
         credential: created.credential,
-        baseHead: 0,
         records: [await wire(created.encKey, created.spaceHandle, 0)],
       }),
     ).rejects.toMatchObject({ status: 413 });
@@ -84,7 +82,7 @@ describe('每空间配额与限流（顺序 16）', () => {
     const { created, server } = await spaceWithServer({ pushesPerMinute: 2 }, () => clock);
     const one = await wire(created.encKey, created.spaceHandle, 0);
     const push = () =>
-      server.push({ spaceHandle: created.spaceHandle, credential: created.credential, baseHead: 0, records: [one] });
+      server.push({ spaceHandle: created.spaceHandle, credential: created.credential, records: [one] });
 
     await push();
     await push();
@@ -110,14 +108,14 @@ describe('每空间配额与限流（顺序 16）', () => {
 
     const one = await wire(created.encKey, created.spaceHandle, 0);
     await expect(
-      server.push({ spaceHandle: created.spaceHandle, credential: created.credential, baseHead: 0, records: [one] }),
+      server.push({ spaceHandle: created.spaceHandle, credential: created.credential, records: [one] }),
     ).resolves.toBeTruthy();
 
     // 有 spaceUsage 的存储、同一档限制：照样被挡住（说明护栏真的在看用量）
     const { created: other, server: strict } = await spaceWithServer({ maxRecordsPerSpace: 0 });
     const strictWire = await wire(other.encKey, other.spaceHandle, 0);
     await expect(
-      strict.push({ spaceHandle: other.spaceHandle, credential: other.credential, baseHead: 0, records: [strictWire] }),
+      strict.push({ spaceHandle: other.spaceHandle, credential: other.credential, records: [strictWire] }),
     ).rejects.toBeInstanceOf(SyncServerError);
   });
 
@@ -125,7 +123,6 @@ describe('每空间配额与限流（顺序 16）', () => {
     const { created, server } = await spaceWithServer({ maxRecordsPerPush: 1 });
     const deps = { server };
     const body = {
-      baseHead: 0,
       records: [await wire(created.encKey, created.spaceHandle, 0), await wire(created.encKey, created.spaceHandle, 1)],
     };
     const response = await handleSyncRequest(
@@ -139,5 +136,99 @@ describe('每空间配额与限流（顺序 16）', () => {
     expect(response.status).toBe(413);
     const parsed = (await response.json()) as { error: { code: string } };
     expect(parsed.error.code).toBe('space-full');
+  });
+});
+
+/**
+ * 顺序 61 补的三道闸：`POST /spaces` 的来源限流与总量上限、以及字节配额改成
+ * 「写完之后」判。这三条都是「公开接口能被不认识的人打」的防线。
+ */
+describe('建空间护栏（顺序 61）', () => {
+  async function createBody() {
+    const created = await createSpaceCredentials({
+      userId: `旅人-${String(Math.random())}`,
+      password: '同步密码',
+      ...FAST,
+    });
+    return {
+      created,
+      body: JSON.stringify({
+        spaceHandle: created.spaceHandle,
+        credentialHash: created.credentialHash,
+        recoveryCredentialHash: created.recoveryCredentialHash,
+        keyWraps: {},
+      }),
+    };
+  }
+
+  async function postSpace(server: ReturnType<typeof createSyncServer>, clientKey: string, body: string) {
+    return handleSyncRequest(
+      new Request('http://127.0.0.1:5273/sync/spaces', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body,
+      }),
+      { server, clientKey },
+    );
+  }
+
+  it('同一个来源一分钟内建太多 → 429，另一个来源不受影响', async () => {
+    const store = createMemorySyncStore();
+    const server = createSyncServer(store, { limits: { spacesPerMinute: 2 } });
+
+    const first = await createBody();
+    const second = await createBody();
+    const third = await createBody();
+
+    expect((await postSpace(server, '1.2.3.4', first.body)).status).toBe(201);
+    expect((await postSpace(server, '1.2.3.4', second.body)).status).toBe(201);
+
+    const blocked = await postSpace(server, '1.2.3.4', third.body);
+    expect(blocked.status).toBe(429);
+    expect(((await blocked.json()) as { error: { code: string } }).error.code).toBe('rate-limited');
+
+    // 换一个来源照常能建：限流是按来源，不是把整个服务端锁掉
+    expect((await postSpace(server, '5.6.7.8', third.body)).status).toBe(201);
+  });
+
+  it('限流窗口按注入的时钟滑动，一分钟后就又能建', async () => {
+    const store = createMemorySyncStore();
+    let clock = 0;
+    const server = createSyncServer(store, { limits: { spacesPerMinute: 1 }, now: () => clock });
+
+    const first = await createBody();
+    const second = await createBody();
+    expect((await postSpace(server, '1.2.3.4', first.body)).status).toBe(201);
+    expect((await postSpace(server, '1.2.3.4', second.body)).status).toBe(429);
+
+    clock += 61_000;
+    expect((await postSpace(server, '1.2.3.4', second.body)).status).toBe(201);
+  });
+
+  it('服务端上的空间总数到上限 → 503 server-full（409 的语义不变）', async () => {
+    const store = createMemorySyncStore();
+    const server = createSyncServer(store, { limits: { maxSpaces: 1 } });
+
+    const first = await createBody();
+    expect((await postSpace(server, '1.2.3.4', first.body)).status).toBe(201);
+
+    const second = await createBody();
+    const full = await postSpace(server, '9.9.9.9', second.body);
+    expect(full.status).toBe(503);
+    expect(((await full.json()) as { error: { code: string } }).error.code).toBe('server-full');
+
+    // 同一个空间再建一次仍然是 409（「已经有了」和「装不下了」是两件事）
+    const duplicate = await postSpace(server, '9.9.9.9', first.body);
+    expect(duplicate.status).toBe(409);
+  });
+
+  it('字节配额按「写完之后」判：一批塞不下就整批拒绝', async () => {
+    const { created, server } = await spaceWithServer({ maxBytesPerSpace: 1 });
+    const one = await wire(created.encKey, created.spaceHandle, 0);
+
+    // 上限 1 字节、随便一条密文都超：判据是 usage + 这一批 > 上限
+    await expect(
+      server.push({ spaceHandle: created.spaceHandle, credential: created.credential, records: [one] }),
+    ).rejects.toMatchObject({ status: 413, code: 'space-full' });
   });
 });

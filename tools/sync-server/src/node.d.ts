@@ -11,6 +11,8 @@ declare module 'node:http' {
     method?: string | undefined;
     url?: string | undefined;
     headers: Record<string, string | string[] | undefined>;
+    /** 请求来自哪个 socket（顺序 61 给 `POST /spaces` 限流按来源分桶用）。 */
+    socket: { remoteAddress?: string | undefined };
     [Symbol.asyncIterator](): AsyncIterator<Uint8Array>;
   }
   export interface ServerResponse {

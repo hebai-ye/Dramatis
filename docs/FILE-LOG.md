@@ -866,7 +866,22 @@ git ls-files | ForEach-Object {
 | `docs/DESIGN.md` | 改 | 新增 §9.3：`position` → prompt 层的映射表与理由 |
 | `docs/EVAL.md` / `STATUS.md` / `TASKS.md` / `README.md` / `FILE-LOG.md` | 改 | 第四十九节、接续点、任务 60 收口、README「已经能用的」补位置语义 |
 
-## 四十、几点注意
+## 四十、2026-09-24：顺序 61（同步与数据安全底线）
+
+| 文件 | 新增/修改 | 说明 |
+| --- | --- | --- |
+| `packages/core/src/sync/http-client.ts` | 改 | 新增 `SyncHttpError`（`status` + `code`），错误体的 code 原样透传 |
+| `packages/core/src/sync/http.ts` / `types.ts` / `loop.ts` | 改 | 删除 `push` 的死参数 `baseHead`；`handleSyncRequest` 接受 `clientKey` 并传给建空间 |
+| `packages/core/src/sync/server.ts` | 改 | `spacesPerMinute` / `maxSpaces` 两条护栏（容量只对新建生效）、字节配额改成写后判定、`spaceCount` |
+| `packages/core/src/sync/sqlite.ts` | 改 | 新增 `applySqlitePragmas()`（WAL + busy_timeout）与 `spaceCount()` |
+| `packages/core/src/crypto/keys.ts` | 改 | `wrapSpaceKey` / `unwrapSpaceKey` 接受已派生的 `SecretKeys`：建空间 4→2 次、登录与换密码 2→1 次 PBKDF2 |
+| `packages/core/src/storage/repository.ts` | 改 | `providerCredentials` 的墓碑只留坐标（不再带密文） |
+| `apps/web/src/lib/sync.ts` / `components/SyncPanel.tsx` | 改 | 按 `code`/`status` 判空间满与空间不在；`SyncApi` 多 `errorStatus`；去掉换密码后多余的 KeyStore 写入 |
+| `tools/sync-server/src/main.ts` / `src/node.d.ts` / `backup.mjs` / `.env.example` | 改 | 启动时设 PRAGMA、按来源限流取 `x-forwarded-for`、新环境变量、备份设 `busy_timeout` |
+| `packages/core/src/sync/{http,limits,sqlite}.test.ts` / `crypto/keys.test.ts` / `storage/repository.test.ts` | 改 | +13：错误码透传 2、建空间护栏 4、字节配额 1、SQLite 并发 1、派生次数 4、墓碑 2（其中两条同时覆盖反向情形） |
+| `docs/SYNC.md` / `EVAL.md` / `STATUS.md` / `TASKS.md` / `FILE-LOG.md` | 改 | §4.9.1 / §4.9.2、第五十节、接续点、任务 61 收口 |
+
+## 四十一、几点注意
 
 ---
 

@@ -172,14 +172,50 @@ function wrapAad(spaceHandle: string, purpose: SecretPurpose): Uint8Array<ArrayB
   return utf8(`dramatis:key-wrap:v1|${purpose}|${spaceHandle}`);
 }
 
-export interface WrapSpaceKeyInput extends DeriveSecretKeysInput {
+export interface WrapSpaceKeyInput {
+  /** `deriveSpaceHandle` 的输出（也进封装的 AAD）。 */
+  spaceHandle: string;
+  purpose: SecretPurpose;
+  /**
+   * 已经派生好的两把钥匙（顺序 61）。给了它就直接用，**不再跑一遍 PBKDF2**。
+   *
+   * 为什么要有这个口子：调用方（建空间 / 换密码 / 登录）本来就要派生一次来算凭证，
+   * 再把 `secret` 传进来会让 600k 次迭代白跑第二遍——手机上那是好几百毫秒。
+   */
+  keys?: SecretKeys;
+  /** 没给 `keys` 时的兜底：现场派生（老调用方与单测用它）。 */
+  secret?: string;
+  /** 测试用：把迭代数调小（只在没给 `keys` 时有效）。 */
+  iterations?: number;
   /** 测试用：固定 IV。 */
   iv?: Uint8Array<ArrayBuffer>;
 }
 
+/** 解封装用的输入：与 `WrapSpaceKeyInput` 同一套「给 keys 或给 secret」的规则。 */
+export type UnwrapSpaceKeyInput = Omit<WrapSpaceKeyInput, 'iv'>;
+
+/**
+ * 拿到这次要用的两把钥匙：优先用调用方已经派生好的那份。
+ *
+ * 没给 `keys` 时现场派生，`secret` 也不能为空——两条路都不通就报一句人话，
+ * 而不是拿空字符串去跑 PBKDF2（那会抛一个更难懂的错）。
+ */
+async function resolveSecretKeys(input: WrapSpaceKeyInput): Promise<SecretKeys> {
+  if (input.keys !== undefined) return input.keys;
+  if (input.secret === undefined || input.secret === '') {
+    throw new CryptoError('包 / 解主密钥需要钥匙：给 keys（已派生的两把）或者 secret（明文）。');
+  }
+  return deriveSecretKeys({
+    secret: input.secret,
+    spaceHandle: input.spaceHandle,
+    purpose: input.purpose,
+    iterations: input.iterations,
+  });
+}
+
 /** 用密码（或恢复码）把主密钥包起来。同一把主密钥包两次：一份给密码，一份给恢复码。 */
 export async function wrapSpaceKey(masterKey: CryptoKey, input: WrapSpaceKeyInput): Promise<WrappedKey> {
-  const { keyEncryptionKey } = await deriveSecretKeys(input);
+  const { keyEncryptionKey } = await resolveSecretKeys(input);
   const iv = input.iv ?? randomBytes(WRAP_IV_BYTES);
   if (iv.byteLength !== WRAP_IV_BYTES) {
     throw new CryptoError(`包钥匙的 IV 必须是 ${String(WRAP_IV_BYTES)} 字节。`);
@@ -205,11 +241,11 @@ export async function wrapSpaceKey(masterKey: CryptoKey, input: WrapSpaceKeyInpu
  * 解出来的主密钥是不可导出的——它只活在当前会话的内存里，除了加解密记录
  * 以外拿不去别处。
  */
-export async function unwrapSpaceKey(wrapped: WrappedKey, input: DeriveSecretKeysInput): Promise<CryptoKey> {
+export async function unwrapSpaceKey(wrapped: WrappedKey, input: UnwrapSpaceKeyInput): Promise<CryptoKey> {
   if (wrapped.algorithm !== WRAPPED_KEY_ALGORITHM) {
     throw new CryptoError(`不认识的钥匙封装算法：${String(wrapped.algorithm)}。`);
   }
-  const { keyEncryptionKey } = await deriveSecretKeys(input);
+  const { keyEncryptionKey } = await resolveSecretKeys(input);
   const iv = fromBase64Url(wrapped.iv);
 
   try {
@@ -362,10 +398,10 @@ export async function rotatePassword(input: RotatePasswordInput): Promise<Rotate
   });
   const credential = await deriveCredential(keys.authKey, input.spaceHandle);
   const passwordWrap = await wrapSpaceKey(input.encKey, {
-    secret: input.newPassword,
     spaceHandle: input.spaceHandle,
     purpose: 'password',
-    iterations: input.keyIterations,
+    // 复用上面刚派生的那一份：换密码从「两次 600k 迭代」降到一次（顺序 61）
+    keys,
   });
   return { credential, credentialHash: await hashCredential(credential), passwordWrap };
 }
@@ -397,16 +433,15 @@ export async function createSpaceCredentials(input: CreateSpaceInput): Promise<S
   });
 
   const passwordWrap = await wrapSpaceKey(encKey, {
-    secret: input.password,
     spaceHandle,
     purpose: 'password',
-    iterations: keyIterations,
+    // 复用上面派生好的两份：建空间从「四次 600k 迭代」降到两次（顺序 61）
+    keys: passwordKeys,
   });
   const recoveryWrap = await wrapSpaceKey(encKey, {
-    secret: normalizedRecovery,
     spaceHandle,
     purpose: 'recovery',
-    iterations: keyIterations,
+    keys: recoveryKeys,
   });
 
   const credential = await deriveCredential(passwordKeys.authKey, spaceHandle);
@@ -452,18 +487,18 @@ export interface OpenedSpace {
  */
 export async function openSpace(input: OpenSpaceInput): Promise<OpenedSpace> {
   const secret = input.purpose === 'recovery' ? normalizeRecoveryCode(input.secret) : input.secret;
-  const { authKey } = await deriveSecretKeys({
+  const keys = await deriveSecretKeys({
     secret,
     spaceHandle: input.spaceHandle,
     purpose: input.purpose,
     iterations: input.keyIterations,
   });
   const encKey = await unwrapSpaceKey(input.wrapped, {
-    secret,
     spaceHandle: input.spaceHandle,
     purpose: input.purpose,
-    iterations: input.keyIterations,
+    // 复用上面那一次派生：登录从「两次 600k 迭代」降到一次（顺序 61）
+    keys,
   });
-  const credential = await deriveCredential(authKey, input.spaceHandle);
+  const credential = await deriveCredential(keys.authKey, input.spaceHandle);
   return { credential, credentialHash: await hashCredential(credential), encKey };
 }

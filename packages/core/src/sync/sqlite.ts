@@ -78,6 +78,24 @@ export function ensureSyncSchema(db: SqliteDatabase): void {
   }
 }
 
+/**
+ * 打开库之后立刻设的两个 PRAGMA（顺序 61）。
+ *
+ * - `journal_mode = WAL`：默认的 rollback journal 是**写的时候锁住整库读**，
+ *   于是「服务端在写 + 备份脚本在 `VACUUM INTO`」会互相把对方顶回去（`SQLITE_BUSY`
+ *   直接失败）。WAL 让读与写并行，备份也就不必抢窗口。
+ * - `busy_timeout = 5000`：撞上锁时**等 5 秒**再放弃，而不是立刻报错。
+ *   对一个每 20 秒推一次、每次几百毫秒的自建服务端来说，这条比重试逻辑更实在。
+ *
+ * 放在独立的函数里而不是塞进 `ensureSyncSchema`：一个是「库的形状」，
+ * 一个是「库怎么并发」，混在一起以后调不动。开在 `:memory:` 上时 WAL 会被
+ * SQLite 忽略（内存库本来就没有日志文件），不会报错。
+ */
+export function applySqlitePragmas(db: SqliteDatabase): void {
+  db.exec('PRAGMA journal_mode = WAL;');
+  db.exec('PRAGMA busy_timeout = 5000;');
+}
+
 interface SpaceRow {
   space_handle: string;
   credential_hash: string;
@@ -265,6 +283,12 @@ export function createSqliteSyncStore(db: SqliteDatabase): SyncServerStore & { s
         records: row.records,
         lastWriteAt: row.last_write_at,
       }));
+    },
+
+    /** 总量护栏（顺序 61）：数一下这张表有多少个空间。 */
+    async spaceCount() {
+      const row = db.prepare('SELECT COUNT(*) AS count FROM spaces').get() as { count: number } | undefined;
+      return row?.count ?? 0;
     },
 
     /**

@@ -37,6 +37,12 @@ const stamp = new Date().toISOString().replace(/[:.]/g, '-');
 const target = join(outDir, `${basename(dbPath)}.${stamp}.bak`);
 
 const db = new DatabaseSync(dbPath);
+/*
+ * 撞上锁时等 5 秒再放弃（顺序 61）。服务端现在开着 WAL，读写能并行；
+ * `VACUUM INTO` 是读事务，但**别的写事务**仍可能正好占着排他锁，
+ * 默认的 busy_timeout 是 0——那一刻备份会直接失败，而不是等一下。
+ */
+db.exec('PRAGMA busy_timeout = 5000;');
 // VACUUM INTO 要求目标文件不存在
 db.exec(`VACUUM INTO '${target.replace(/'/g, "''")}'`);
 db.close();

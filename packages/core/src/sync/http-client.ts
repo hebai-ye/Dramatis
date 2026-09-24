@@ -50,18 +50,49 @@ function base(endpoint: string): string {
   return endpoint.endsWith('/') ? endpoint.slice(0, -1) : endpoint;
 }
 
-async function readError(response: Response): Promise<string> {
+/**
+ * 服务端返回的结构化错误（顺序 61）。
+ *
+ * 为什么不能只抛一句人话：客户端要按**机器可读的 code** 判断「是不是撞满配额」
+ * （413 / `space-full`）、「是不是写入太频繁」（429 / `rate-limited`）、
+ * 「是不是凭证不对」（401 / `unauthorized`）。在此之前只能拿中文文案
+ * `message.includes('存满')` 去猜——服务端改一个字，客户端就静默失效。
+ *
+ * 它仍然 `extends Error`：老调用方与 `catch (error) { error.message }` 照常工作。
+ */
+export class SyncHttpError extends Error {
+  override readonly name = 'SyncHttpError';
+  constructor(
+    readonly status: number,
+    readonly code: string,
+    message: string,
+  ) {
+    super(message);
+  }
+}
+
+async function readError(response: Response): Promise<{ code: string; message: string }> {
   try {
-    const body = (await response.json()) as { error?: { message?: string } };
-    if (typeof body.error?.message === 'string') return body.error.message;
+    const body = (await response.json()) as { error?: { code?: unknown; message?: unknown } };
+    const message = typeof body.error?.message === 'string' ? body.error.message : '';
+    const code = typeof body.error?.code === 'string' ? body.error.code : '';
+    if (message !== '' || code !== '') {
+      return {
+        code: code === '' ? 'unknown' : code,
+        message: message === '' ? `同步服务端返回了 ${String(response.status)}。` : message,
+      };
+    }
   } catch {
     // 不是 JSON 就退到状态码
   }
-  return `同步服务端返回了 ${String(response.status)}。`;
+  return { code: 'unknown', message: `同步服务端返回了 ${String(response.status)}。` };
 }
 
 async function expectOk(response: Response): Promise<unknown> {
-  if (!response.ok) throw new Error(await readError(response));
+  if (!response.ok) {
+    const { code, message } = await readError(response);
+    throw new SyncHttpError(response.status, code, message);
+  }
   return response.json();
 }
 
@@ -113,7 +144,7 @@ export function createHttpSyncTransport(options: HttpSyncTransportOptions): Sync
       const response = await doFetch(`${base(options.endpoint)}/spaces/${encodeURIComponent(input.spaceHandle)}/push`, {
         method: 'POST',
         headers: auth(input.credential),
-        body: JSON.stringify({ baseHead: input.baseHead, records: input.records }),
+        body: JSON.stringify({ records: input.records }),
       });
       return (await expectOk(response)) as SyncPushResult;
     },

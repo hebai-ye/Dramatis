@@ -316,7 +316,8 @@ export function SyncPanel({ api, disabled }: Props) {
         「服务端上没有这个空间了」——用户不知道下一步该干嘛。这里把路指出来：
         填回同一套 id + 密码再连一次，就会用同样的空间名重新开通，并把本机数据推上去。
       */}
-      {api.error !== null && api.error.includes('空间') ? (
+      {/* 判据是状态码 404，不是中文文案（顺序 61）：服务端换一句话这里不会失效 */}
+      {api.error !== null && api.errorStatus === 404 ? (
         <div className="notice warn">
           <strong>服务端上的这个空间不在了</strong>
           <p>{api.error}</p>

@@ -189,7 +189,7 @@ export interface SyncServer {
 async function authorize(store: SyncServerStore, credentials: SyncCredentials): Promise<void> {
   const space = await store.getSpace(credentials.spaceHandle);
   if (space === null) {
-    throw new SyncServerError(404, 'space-not-found', '这个空间不存在（或者用户 id 打错了）。');
+    throw new SyncServerError(404, 'space-not-found', '这个空间不存在（或者账户 ID 打错了）。');
   }
 
   const ok =
@@ -345,7 +345,7 @@ export function createSyncServer(store: SyncServerStore, options: CreateSyncServ
              * （`deletedAt` 非空），而墓碑同样占一行。所以「删掉一些」在这里没用，
              * 写上去只会让用户白折腾一轮（顺序 17 的演练里就是这么发现的）。
              */
-            `这个空间已经存满（上限 ${String(limits.maxRecordsPerSpace)} 条）。这是给自建服务器的护栏，正常用很难碰到；碰到了最实际的办法是换一个用户 id 重新开一个空间（本机这份数据会推过去），并把本机数据先导出一份封存留底（设置 → 数据）。`,
+            `这个空间已经存满（上限 ${String(limits.maxRecordsPerSpace)} 条）。这是给自建服务器的护栏，正常用很难碰到；碰到了最实际的办法是换一个账户 ID 重新开一个空间（本机这份数据会推过去），并把本机数据先导出一份封存留底（设置 → 数据）。`,
           );
         }
         /*

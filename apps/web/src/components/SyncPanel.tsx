@@ -342,8 +342,8 @@ export function SyncPanel({ api, disabled }: Props) {
           <strong>服务端上的这个空间不在了</strong>
           <p>{api.error}</p>
           <p className="hint">
-            本机数据<strong>没有丢</strong>。上面把「用户 id 与同步密码」再填一次，点「开通 / 加入并同步」——
-            会用同一个空间名重新开通，然后把本机这份数据推上去（服务端上原本那份已经没了，找不回来）。
+            本机数据<strong>没有丢</strong>。到「账户」里点这个账户的「输入密码」（或用「添加账户 → 注册」 填同一个账户
+            ID 与密码）——会用同一个空间名重新开通，然后把本机这份数据推上去 （服务端上原本那份已经没了，找不回来）。
           </p>
         </div>
       ) : api.error !== null ? (

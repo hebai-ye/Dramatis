@@ -19,6 +19,55 @@
 
 ## 新会话从这里接（2026-09-23）
 
+### 🔴 新会话第一份要读的：截至 2026-09-24 深夜的交接
+
+**一句话**：57–63 已落地，**66 做到 3/4**（还差 `useTurnRunner`）；本地 `main` 比 `origin/main`
+**多 5 个提交、也还没部署**。下一步从「做完 66 的最后一个 hook」开始。
+
+| 项 | 值 |
+| --- | --- |
+| 本地 `main` HEAD | `1f6fa0f`（`git log --oneline origin/main..HEAD` 列出那 5 个未推的提交） |
+| 线上网页 | 还是 `index-JFtj61pq.js`（2026-09-24 23:16 那次部署）；**63 与 66 的两步都还没上线** |
+| 同步服务端 | 与线上一致（61 的 WAL 与护栏已在跑）；有两条「用户 id → 账户 ID」的文案改动**等下次服务端部署**才生效 |
+| 工作区 | 干净（`git status` 无输出），没有未提交改动 |
+| 本机进程 | **vite 开发服务器在 5273 上开着**（它同时挂着 `/sync` 开发后端）；没有假模型、没有本机 8787 |
+
+**下一步（严格按 [TASKS.md](./TASKS.md) 第〇节的顺序，不要插队）**
+
+1. **66 的最后一个 hook**：`useTurnRunner`（`runGeneration` / `runIntentPlan` / `handleSend` /
+   `handleRegenerate` / `handleReassignMessage`，约 740 行、二十多个依赖）。搬完**必须**用假模型
+   跑一遍「发一句 / 重抽 / 改归属」——它是聊天主循环，不要没验就提交。
+2. 然后 **65**（代码重复收敛）→ **64**（PNG 的 CRC 真校验）→ **67**（管理员小修）。
+3. 这 5 个任务（63 / 66 / 65 / 64 / 67）做完时，用户要一次完整汇报；**上线与推送要问用户**
+   （他明确说过「部署及 push」才做，别默认每次都部署）。
+
+**工作约定（每一轮都适用）**
+
+- **绝不** `git reset / restore / checkout / stash / clean`；未提交的改动一律先审阅再收口。
+- 每小步都能构建 / 测试 / 提交；**提交信息带顺序号**（如「顺序 66」）。
+- 每次提交前跑五项门禁：`pnpm typecheck && pnpm lint && pnpm test && pnpm build && pnpm build:sync-server`。
+- 实现与计划的偏差、验证里抓到的问题，写进 [EVAL.md](./EVAL.md) 与相关设计文档；私有信息不进仓库
+  （`deploy/LOCAL-NOTES.md` 已被 .gitignore 挡住，**不要提交它**）。
+- **验证边界**：另一个 AI（Claude）只做 typecheck / lint / 假模型 / 单测 / build / build:sync-server；
+  **浏览器真机验证由 Codex 做**（用户明确这么分工）。不碰线上站点、真实 API Key、真实模型。
+- **多智能体**：用户要求过用 Agent Teams，但实测**子代理收不到任务正文**（8/8 失败），
+  只能让它们自己从 docs 里挑活、再事后核对；**不要假装用了它们**。
+
+**本机怎么跑浏览器验证**：开发服务器与假模型两条命令——
+`cd apps\web ; node node_modules\vite\bin\vite.js --host 127.0.0.1 --port 5273 --strictPort`，
+需要模型时 `node tools\fake-model\server.mjs --port 5288 --chunk-ms 120`（可加 `--reasoning`）。
+Playwright 从 `C:\Users\35350\.cache\codex-runtimes\codex-primary-runtime\dependencies\node\node_modules`
+用 `createRequire` 加载，Chrome 用 `C:\Program Files\Google\Chrome\Application\chrome.exe`。
+一次性验证脚本都在工作区外 `C:\Users\35350\.codex\visualizations\2026\09\24\01a0d30c-...\`：
+`verify-draft-hook.mjs`（63：逐键写库 / 真 IME）、`verify-66-smoke.mjs`（66 冒烟）、
+`verify-account-flow.mjs`（账户注册 + 另一台设备登录）、`verify-sync-button.mjs`、
+`verify-drawer.mjs`（侧栏推开）、`verify-62-db.mjs` / `verify-62-perf.mjs`、
+`smoke-sync-deployed.mjs`（打线上服务端的同步冒烟）、`shots-topbar.mjs`（前后截图）——都还能直接跑。
+
+**仍然没验的（别写成通过）**：真机软键盘与安全区、真模型效果（要用户的 Key）、
+两台**真设备**（不是两个浏览器 profile）的同步演练、顺序 39/41 的线上回归、
+以及 61 之后那两条服务端文案（等下次部署）。
+
 > **2026-09-23 全量代码审阅**：把内核、前端、同步服务端与工具链整个读了一遍，
 > 发现的问题按 P0–P4 重排成 [TASKS.md](./TASKS.md) 第〇节的「2026-09-23 总排期」
 > （顺序 57–75，每条带改哪里 / 怎么改 / 怎么验）。用户拍板：**先做 57 / 58 / 59**

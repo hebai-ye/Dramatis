@@ -56,6 +56,25 @@ export interface HistoryMessageRef {
 }
 
 /**
+ * 这一块插到 prompt 的哪儿（顺序 60，对齐 SillyTavern 的 `position` 语义）。
+ *
+ * 缺省是 `default`——并进那条大 system 提示里的原位置。这个名字故意不叫 `unknown`：
+ * 认不出来的位置码落到 `default`，行为与顺序 60 之前完全一样。
+ */
+export type PromptPlacement =
+  | 'default'
+  /** 人设块之前（`before_char`）。 */
+  | 'before_char'
+  /** 人设块之后（`after_char`）。 */
+  | 'after_char'
+  /** 场景块之前（`before_an`）。 */
+  | 'before_scene'
+  /** 场景块之后（`after_an`）。 */
+  | 'after_scene'
+  /** 不进 system 提示，而是插到历史里（`at_depth`，位置由 `depth` 决定）。 */
+  | 'at_depth';
+
+/**
  * Prompt 的装配单元（设计文档 §6）。
  *
  * 每个块自带优先级与降级信息，预算守卫只依据这些字段工作，
@@ -79,6 +98,10 @@ export interface PromptBlock {
   score?: number;
   /** 仅历史消息块携带。 */
   message?: HistoryMessageRef;
+  /** 插到哪儿；不带 = 并进 system 提示的默认位置。 */
+  placement?: PromptPlacement;
+  /** 仅 `at_depth` 用：插到历史**倒数第 depth 条之前**（SillyTavern 的 depth 语义）。 */
+  depth?: number;
 }
 
 /** 预算降级的阶段，按设计文档 §4.6 的顺序执行。 */

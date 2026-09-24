@@ -95,6 +95,19 @@ function parseEntry(raw: unknown, fallbackId: string, warnings: ImportWarning[])
     [0, 1, 2, 3].includes(selectiveLogicRaw) ? selectiveLogicRaw : SelectiveLogic.AND_ANY
   ) as SelectiveLogicValue;
 
+  /*
+   * 位置：认识的 0–4 各就各位（顺序 60），不认识的才记一条 warning。
+   * 以前这里不提示，用户会以为导出后位置语义没了——「不静默丢弃」是这一层的要求。
+   */
+  const positionCode = num(record.position, 0);
+  const position = POSITION_BY_CODE[positionCode];
+  if (position === undefined) {
+    warnings.push({
+      code: 'unsupported-position',
+      message: `世界书条目「${str(record.comment) || fallbackId}」的插入位置 ${String(positionCode)} 不认识，按默认位置（并进世界设定）处理`,
+    });
+  }
+
   return {
     id: String(uid),
     title: str(record.comment),
@@ -105,7 +118,7 @@ function parseEntry(raw: unknown, fallbackId: string, warnings: ImportWarning[])
     selective: bool(record.selective, true),
     selectiveLogic,
     order: num(record.order, 100),
-    position: POSITION_BY_CODE[num(record.position, 0)] ?? 'unknown',
+    position: position ?? 'unknown',
     depth: num(record.depth, 4),
     probability: num(record.probability, 100),
     useProbability: bool(record.useProbability, true),
@@ -187,14 +200,33 @@ export interface WorldBookMatch {
   entry: WorldBookEntry;
   matchedKeys: string[];
   reason: 'constant' | 'keyword';
+  /** 第几轮扫出来的：1 是玩家输入 + 最近历史那一轮，>1 是被上一轮命中带出来的（顺序 60）。 */
+  round: number;
 }
 
 export interface MatchOptions {
-  /** 用于扫描的文本，通常是最近若干轮对话 + 玩家输入。 */
-  scanText: string;
+  /** 单块扫描文本。与 `scanLines` 二选一时以 `scanLines` 为准（保留它给简单调用与老测试）。 */
+  scanText?: string;
+  /**
+   * 扫描窗口，**按时间从旧到新**排列（通常是最近若干条对话 + 玩家这一句）。
+   *
+   * 为什么是数组而不是一段拼好的文本：顺序 60 起，每条世界书条目按**自己的** `scanDepth`
+   * 从末尾截取，所以「扫描窗口有多长」是逐条决定的，调用方不能提前拼死。
+   */
+  scanLines?: readonly string[];
+  /** 条目没写 `scanDepth` 时看多少条（SillyTavern 的全局默认是 8）。 */
+  globalScanDepth?: number;
+  /** 递归最多跑几轮（默认 3）：上一轮命中的正文会被当成新的扫描文本。 */
+  maxRecursionRounds?: number;
   /** 注入随机源便于测试；默认 Math.random。 */
   random?: () => number;
 }
+
+/** SillyTavern 里 `scanDepth` 为空时看的条数。 */
+export const DEFAULT_SCAN_DEPTH = 8;
+
+/** 递归轮数上限。再长就是「世界书自己和自己互相触发」，收益小、提示词涨得快。 */
+export const DEFAULT_MAX_RECURSION_ROUNDS = 3;
 
 const REGEXP_SPECIALS = /[.*+?^${}()|[\]\\]/g;
 
@@ -237,39 +269,130 @@ function applySelectiveLogic(entry: WorldBookEntry, hitSecondary: boolean[]): bo
 }
 
 /**
- * 按关键词筛选应当插入的世界书条目。
+ * 一条条目在这段文本里命中了哪些主键；没命中返回 null。
+ *
+ * 常驻条目（constant）不看文本，永远算命中——所以它返回空数组而不是 null。
+ */
+function matchedKeysIn(entry: WorldBookEntry, scanText: string): string[] | null {
+  if (entry.constant) return [];
+
+  const matchedKeys = entry.keys.filter((key) => keyMatches(scanText, key, entry));
+  if (matchedKeys.length === 0) return null;
+
+  const secondaryHits = entry.secondaryKeys.map((key) => keyMatches(scanText, key, entry));
+  if (!applySelectiveLogic(entry, secondaryHits)) return null;
+  return matchedKeys;
+}
+
+/**
+ * 这一条该看多长的窗口。
+ *
+ * 条目自己的 `scanDepth` 优先，`null` 才用全局默认；递归带出来的正文不算「对话条数」，
+ * 它们永远留在窗口里（否则第二轮一进来就被自己的 scanDepth 截掉了）。
+ */
+function scanWindowFor(
+  entry: WorldBookEntry,
+  lines: readonly string[],
+  injected: readonly string[],
+  globalScanDepth: number,
+): string {
+  const depth = entry.scanDepth ?? globalScanDepth;
+  const count = Number.isFinite(depth) ? Math.max(0, Math.floor(depth)) : 0;
+  const tail = count === 0 ? [] : lines.slice(Math.max(0, lines.length - count));
+  return [...tail, ...injected].join('\n');
+}
+
+/** 概率骰子。`useProbability` 关掉或写满 100 时**不消耗**随机源（老测试盯着这一点）。 */
+function passesProbability(entry: WorldBookEntry, random: () => number): boolean {
+  if (!entry.useProbability || entry.probability >= 100) return true;
+  return random() * 100 < entry.probability;
+}
+
+/**
+ * 按关键词筛选应当插入的世界书条目（顺序 60 补齐了 SillyTavern 的匹配语义）。
+ *
+ * 与旧版的差别有四条：
+ * 1. **逐条 `scanDepth`**：每条条目看自己那一段窗口，而不是所有条目共用「最后 8 条」；
+ * 2. **递归**：最多 3 轮，上一轮命中的正文当新的扫描文本；`preventRecursion` 的条目不做
+ *    触发源，`excludeRecursion` 的条目不被递归触发；
+ * 3. **group**：同一组只留一条（`order` 最高优先，用了概率的条目没过骰子就顺延给下一条）；
+ * 4. 概率骰子从「边扫边掷」挪到**收口之后**，否则同组的两条会被掷两次，语义不一致。
  *
  * 返回结果按 `order` 降序排列，与 SillyTavern 的插入优先级一致。
  */
 export function matchWorldBookEntries(book: WorldBook, options: MatchOptions): WorldBookMatch[] {
   const random = options.random ?? Math.random;
-  const matches: WorldBookMatch[] = [];
+  const globalScanDepth = options.globalScanDepth ?? DEFAULT_SCAN_DEPTH;
+  const maxRounds = Math.max(1, Math.floor(options.maxRecursionRounds ?? DEFAULT_MAX_RECURSION_ROUNDS));
+  const lines =
+    options.scanLines ?? (options.scanText === undefined || options.scanText === '' ? [] : [options.scanText]);
 
-  for (const entry of book.entries) {
-    if (entry.disabled) continue;
+  const matched = new Map<string, WorldBookMatch>();
+  /** 递归用的「新扫描文本」：**上一轮**命中、且没标 preventRecursion 的正文。 */
+  const injected: string[] = [];
 
-    let matchedKeys: string[] = [];
-    let reason: WorldBookMatch['reason'] = 'keyword';
+  for (let round = 1; round <= maxRounds; round += 1) {
+    let hitThisRound = false;
+    /*
+     * 本轮新命中的正文先攒着，**等这一轮扫完再加进窗口**。
+     * 边扫边加会让「排在后面的条目」在同一轮里就看到前面条目的正文，
+     * 递归就退化成了一次全量扫描（实测：三层递归在 round 1 全部命中）。
+     */
+    const nextRoundInjection: string[] = [];
 
-    if (entry.constant) {
-      reason = 'constant';
-    } else {
-      matchedKeys = entry.keys.filter((key) => keyMatches(options.scanText, key, entry));
-      if (matchedKeys.length === 0) continue;
+    for (const entry of book.entries) {
+      if (entry.disabled) continue;
+      if (matched.has(entry.id)) continue;
+      // 第一轮是主扫描，谁都算；第二轮起跳过「不被递归触发」的条目
+      if (round > 1 && entry.excludeRecursion) continue;
 
-      const secondaryHits = entry.secondaryKeys.map((key) => keyMatches(options.scanText, key, entry));
-      if (!applySelectiveLogic(entry, secondaryHits)) continue;
+      const matchedKeys = matchedKeysIn(entry, scanWindowFor(entry, lines, injected, globalScanDepth));
+      if (matchedKeys === null) continue;
+
+      matched.set(entry.id, {
+        entry,
+        matchedKeys,
+        reason: entry.constant ? 'constant' : 'keyword',
+        round,
+      });
+      hitThisRound = true;
+
+      const content = entry.content.trim();
+      if (round < maxRounds && !entry.preventRecursion && content !== '') {
+        nextRoundInjection.push(content);
+      }
     }
 
-    if (entry.useProbability && entry.probability < 100 && random() * 100 >= entry.probability) {
-      continue;
-    }
-
-    matches.push({ entry, matchedKeys, reason });
+    // 这一轮既没命中、也没有新的触发源，再扫下去不会变
+    if (!hitThisRound || nextRoundInjection.length === 0) break;
+    injected.push(...nextRoundInjection);
   }
 
-  return matches.sort((a, b) => {
+  const compareByOrder = (a: WorldBookMatch, b: WorldBookMatch): number => {
     if (b.entry.order !== a.entry.order) return b.entry.order - a.entry.order;
     return a.entry.title.localeCompare(b.entry.title);
-  });
+  };
+
+  const picked: WorldBookMatch[] = [];
+  const groups = new Map<string, WorldBookMatch[]>();
+  for (const match of matched.values()) {
+    const group = match.entry.group.trim();
+    if (group === '') {
+      // 不进组的条目各掷各的
+      if (passesProbability(match.entry, random)) picked.push(match);
+      continue;
+    }
+    const list = groups.get(group);
+    if (list === undefined) groups.set(group, [match]);
+    else list.push(match);
+  }
+
+  for (const list of groups.values()) {
+    list.sort(compareByOrder);
+    // 同组只留一条：order 最高的先掷，没过骰子才轮到下一条
+    const winner = list.find((match) => passesProbability(match.entry, random));
+    if (winner !== undefined) picked.push(winner);
+  }
+
+  return picked.sort(compareByOrder);
 }

@@ -12,6 +12,16 @@ const STAGE_LABELS: Record<string, string> = {
   'drop-lowest-priority': '兜底丢弃（预算严重不足）',
 };
 
+/** 块落点的人话（顺序 60）：世界书的 position 现在真的有用，得让人看得见。 */
+const PLACEMENT_LABELS: Record<string, string> = {
+  before_char: '人设前',
+  after_char: '人设后',
+  before_scene: '场景前',
+  after_scene: '场景后',
+  at_depth: '插进历史',
+  default: '默认位置',
+};
+
 /** M0 的调试面板：让预算守卫的行为可见，而不是一个黑盒。 */
 export function PromptInspector({ prompt }: Props) {
   if (!prompt) {
@@ -72,6 +82,13 @@ export function PromptInspector({ prompt }: Props) {
             <li key={block.id} title={block.id}>
               <span className="tag">{block.kind}</span>
               <strong>{block.label}</strong>
+              {/* 世界书每条命中各成一块（顺序 60），落点要看得见：人设前 / 场景后 / 插进历史第几条 */}
+              {block.placement === undefined || block.placement === 'default' ? null : (
+                <span className="tag">
+                  {PLACEMENT_LABELS[block.placement] ?? block.placement}
+                  {block.depth === undefined ? '' : ` ${String(block.depth)}`}
+                </span>
+              )}
               <span className="hint">{block.content.length} 字符</span>
             </li>
           ))}

@@ -346,9 +346,13 @@ export function App() {
             includeUsage: true,
           });
 
-      // 世界书按关键词命中插入，扫描范围是玩家输入加最近几轮
-      const scanText = [options.playerInput, ...options.history.slice(-8).map((message) => message.content)].join('\n');
-      const worldBookMatches = session.worldBooks.flatMap((book) => matchWorldBookEntries(book, { scanText }));
+      /*
+       * 世界书按关键词命中插入（顺序 60）：窗口按时间从旧到新给过去，
+       * **每条条目用自己的 `scanDepth`** 从末尾截取（没写就用全局默认 8 条），
+       * 递归、group 与概率都在 `matchWorldBookEntries` 里处理。
+       */
+      const scanLines = [...options.history.map((message) => message.content), options.playerInput];
+      const worldBookMatches = session.worldBooks.flatMap((book) => matchWorldBookEntries(book, { scanLines }));
 
       let accumulated = '';
       let usage: MessageUsage | null = null;

@@ -7,7 +7,7 @@ import {
   renderAttachmentExpansion,
 } from '../memory/attachment.js';
 import type { ChapterSummary } from '../memory/summary.js';
-import type { Card } from '../model/card.js';
+import type { Card, WorldBookPosition } from '../model/card.js';
 import { type ConversationModes, type HistoryPolicy, historyPolicyOf } from '../model/conversation.js';
 import { type InstanceId, PLAYER } from '../model/ids.js';
 import type { Affect, CharacterInstance, TraitAxis } from '../model/instance.js';
@@ -18,7 +18,7 @@ import { ACTION_FORMAT_EXAMPLES, ACTION_FORMAT_RULE, normalizeCardExample } from
 import { heuristicTokenCounter, type TokenCounter } from '../token/estimate.js';
 import { applyBudget } from './budget.js';
 import { expandHistoryOnMention, partitionHistory, selectHistoryFor } from './history.js';
-import type { BudgetReport, ChatMessage, PromptBlock } from './types.js';
+import type { BudgetReport, ChatMessage, PromptBlock, PromptPlacement } from './types.js';
 
 /**
  * 召回记忆的展示形态。
@@ -370,24 +370,50 @@ function buildSceneBlock(
   };
 }
 
-function buildWorldBookBlock(matches: WorldBookMatch[]): PromptBlock | null {
-  if (matches.length === 0) return null;
+/** SillyTavern 的 `position` 落到装配的哪一层（DESIGN §9）。 */
+const PLACEMENT_BY_POSITION: Record<WorldBookPosition, PromptPlacement> = {
+  before_char: 'before_char',
+  after_char: 'after_char',
+  before_an: 'before_scene',
+  after_an: 'after_scene',
+  at_depth: 'at_depth',
+  unknown: 'default',
+};
 
-  const body = matches
-    .map(
-      (match) =>
-        `【${match.entry.title.trim() === '' ? '未命名条目' : match.entry.title.trim()}】\n${match.entry.content.trim()}`,
-    )
-    .join('\n\n');
+/**
+ * 世界书命中 → 一块一命中（顺序 60）。
+ *
+ * 为什么要一条一块：预算守卫是**按块**降级的，以前所有命中并成一块，要么全进要么全丢；
+ * 现在每条各带自己的优先级（按 `order` 排开），挤不下时先丢 `order` 最低的那几条。
+ *
+ * 标签统一叫「世界设定」，标题写在正文里（`【标题】`）——这样默认位置的几条会被
+ * `renderSystemBlocks` 合并回一个 `### 世界设定` 小节，和顺序 60 之前**逐字一样**。
+ */
+function buildWorldBookBlocks(matches: readonly WorldBookMatch[]): PromptBlock[] {
+  if (matches.length === 0) return [];
 
-  return {
-    id: 'worldbook',
-    kind: 'worldbook',
-    label: '世界设定',
-    content: body,
-    priority: PRIORITY.worldbook,
-    droppable: true,
-  };
+  // order 越小越先被丢：映射成一段夹在 relationship(400) 与 scene(600) 之间的优先级
+  const byOrderAscending = [...matches].sort((a, b) => {
+    if (a.entry.order !== b.entry.order) return a.entry.order - b.entry.order;
+    return a.entry.title.localeCompare(b.entry.title);
+  });
+  const rankOf = new Map(byOrderAscending.map((match, index) => [match.entry.id, index]));
+
+  return matches.map((match) => {
+    const rank = rankOf.get(match.entry.id) ?? 0;
+    const title = match.entry.title.trim() === '' ? '未命名条目' : match.entry.title.trim();
+    const placement = PLACEMENT_BY_POSITION[match.entry.position] ?? 'default';
+    return {
+      id: `worldbook:${match.entry.id}`,
+      kind: 'worldbook',
+      label: '世界设定',
+      content: `【${title}】\n${match.entry.content.trim()}`,
+      priority: Math.min(PRIORITY.scene - 1, PRIORITY.relationship + 1 + rank),
+      droppable: true,
+      placement,
+      ...(placement === 'at_depth' ? { depth: Math.max(0, Math.floor(match.entry.depth)) } : {}),
+    };
+  });
 }
 
 /**
@@ -589,6 +615,11 @@ function buildHistoryBlocks(history: Message[], limit: number, prefixSpeaker: bo
 function renderSystemBlocks(blocks: PromptBlock[]): string {
   const sections: string[] = [];
   let memoryGroup: string[] = [];
+  /*
+   * 世界书一条一块（顺序 60），但**相邻且同标签**的几条要合并回一个小节：
+   * 默认位置的老世界书因此仍然只出现一次 `### 世界设定`，与顺序 60 之前逐字一样。
+   */
+  let worldBookGroup: string[] = [];
 
   const flushMemory = (): void => {
     if (memoryGroup.length === 0) return;
@@ -596,21 +627,42 @@ function renderSystemBlocks(blocks: PromptBlock[]): string {
     memoryGroup = [];
   };
 
+  const flushWorldBook = (): void => {
+    if (worldBookGroup.length === 0) return;
+    sections.push(`### 世界设定\n${worldBookGroup.join('\n\n')}`);
+    worldBookGroup = [];
+  };
+
   for (const block of blocks) {
     if (block.kind === 'memory') {
+      flushWorldBook();
       memoryGroup.push(block.content.replace(/\s*\n\s*/g, ' '));
       continue;
     }
+    if (block.kind === 'worldbook' && block.label === '世界设定') {
+      flushMemory();
+      worldBookGroup.push(block.content);
+      continue;
+    }
     flushMemory();
+    flushWorldBook();
     sections.push(block.label.trim() === '' ? block.content : `### ${block.label}\n${block.content}`);
   }
 
   flushMemory();
+  flushWorldBook();
   return sections.join('\n\n');
 }
 
 export function toChatMessages(blocks: PromptBlock[]): ChatMessage[] {
-  const systemBlocks = blocks.filter((block) => block.kind !== 'history' && block.kind !== 'player');
+  /*
+   * `at_depth` 的块不进那条大 system 提示，而是插到历史里（顺序 60）。
+   * 位置按 SillyTavern 的语义：插到**倒数第 depth 条之前**——depth 越大越靠前。
+   */
+  const atDepthBlocks = blocks.filter((block) => block.placement === 'at_depth');
+  const systemBlocks = blocks.filter(
+    (block) => block.kind !== 'history' && block.kind !== 'player' && block.placement !== 'at_depth',
+  );
   const historyBlocks = blocks.filter((block) => block.kind === 'history' && block.message !== undefined);
   const playerBlock = blocks.find((block) => block.kind === 'player');
 
@@ -619,7 +671,23 @@ export function toChatMessages(blocks: PromptBlock[]): ChatMessage[] {
   const system = renderSystemBlocks(systemBlocks).trim();
   if (system !== '') messages.push({ role: 'system', content: system });
 
-  for (const block of historyBlocks) {
+  const insertionsAtIndex = new Map<number, PromptBlock[]>();
+  for (const block of atDepthBlocks) {
+    const depth = Math.max(0, Math.floor(block.depth ?? 0));
+    const index = Math.max(0, historyBlocks.length - depth);
+    const list = insertionsAtIndex.get(index);
+    if (list === undefined) insertionsAtIndex.set(index, [block]);
+    else list.push(block);
+  }
+
+  for (let index = 0; index <= historyBlocks.length; index += 1) {
+    const inserted = insertionsAtIndex.get(index);
+    if (inserted !== undefined && inserted.length > 0) {
+      const content = renderSystemBlocks(inserted).trim();
+      if (content !== '') messages.push({ role: 'system', content });
+    }
+    const block = historyBlocks[index];
+    if (block === undefined) continue;
     const ref = block.message;
     if (ref === undefined) continue;
     messages.push({ role: ref.role, content: block.content });
@@ -654,10 +722,20 @@ export function assemblePrompt(input: AssembleInput): AssembledPrompt {
     },
   ];
 
-  const worldBookBlock = buildWorldBookBlock(input.worldBookMatches ?? []);
-  if (worldBookBlock) blocks.push(worldBookBlock);
+  /*
+   * 世界书按位置落（顺序 60）：每条命中一块，`placement` 决定它插到哪一层。
+   *
+   * - `default`（含认不出的位置码）与 `before_char` 都落在「基本规则之后、人设之前」——
+   *   这正是顺序 60 之前唯一的位置，所以老世界书的提示词**逐字不变**；
+   * - `at_depth` 不进 system 提示，由 `toChatMessages` 插进历史。
+   */
+  const worldBookBlocks = buildWorldBookBlocks(input.worldBookMatches ?? []);
+  const placedAt = (placement: PromptPlacement): PromptBlock[] =>
+    worldBookBlocks.filter((block) => (block.placement ?? 'default') === placement);
 
+  blocks.push(...placedAt('default'), ...placedAt('before_char'));
   blocks.push(buildPersonaBlock(input.card, input.instance));
+  blocks.push(...placedAt('after_char'));
 
   const relationshipBlock = buildRelationshipBlock(input.instance);
   if (relationshipBlock) blocks.push(relationshipBlock);
@@ -674,7 +752,12 @@ export function assemblePrompt(input: AssembleInput): AssembledPrompt {
 
   const cast = input.cast ?? [];
   const sceneBlock = buildSceneBlock(input.scene, cast, input.instance.id);
+  blocks.push(...placedAt('before_scene'));
   if (sceneBlock) blocks.push(sceneBlock);
+  blocks.push(...placedAt('after_scene'));
+
+  // 插进历史的那几条（`at_depth`）：位置在 toChatMessages 里按 depth 算
+  blocks.push(...placedAt('at_depth'));
 
   // 多人同场时才需要标名字，单人场景标了只是浪费 token
   const onstageCount = cast.filter((member) => member.presence === 'onstage').length;

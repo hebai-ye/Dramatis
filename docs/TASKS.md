@@ -63,7 +63,7 @@
 | 57 | **被印象取代的原文退出常规召回，保留「提到才想起」** `[审][用]` | **P0** | 合并（27a）在召回路径上没有兑现：`recall.ts` 与 `App.tsx:708` 都不过滤 `supersededBy`，合并后池子反而多一条。一行过滤 + 一条「按关键词取回」的通路 | ✅ 2026-09-23 |
 | 58 | **提示词按「场记覆盖」收起远处原文，不按固定条数砍** `[审][用]` | **P0** | 历史上限放到 3000 后每轮 6 万 token（MEMORY.md 第八节）；用户要求质量优先，所以不定死 N，而是「场记已覆盖的才收起、提到就取回」 | ✅ 2026-09-23 |
 | 59 | **流式每个 token 整棵树重渲染** `[审]` | **P0** | `setStreamText` 在 App 顶层，且 `useSession/useProviders/useSync` 返回未 memo 的字面量，App 里 21 个 `useCallback` 全部失效；长对话会卡 | ✅ 2026-09-24（浏览器计数已验：600 条消息上打字与分块不再重画列表，见 EVAL 第四十八节末） |
-| 60 | **世界书插入位置语义（position / depth / scanDepth / 递归 / group）** `[审][用]` | **P1** | 解析后零消费，所有命中合成一块，违反「不静默丢弃」；用户在意 | ⬜ |
+| 60 | **世界书插入位置语义（position / depth / scanDepth / 递归 / group）** `[审][用]` | **P1** | 解析后零消费，所有命中合成一块，违反「不静默丢弃」；用户在意 | ✅ 2026-09-24（真实世界书端到端对照与真模型待补，见 EVAL 第四十九节） |
 | 61 | **同步与数据安全底线（七件小修一批收）** `[审][数]` | **P1** | 错误码丢失靠字符串判 413、PBKDF2 多跑一倍、SQLite 无 WAL、`POST /spaces` 无护栏、配额口径不一、凭据墓碑带密文、死参数 | ⬜ |
 | 62 | **存储层 O(N) 热点：索引 + 缓存 + 别每条消息都重数** `[审]` | **P1** | `listRooms` 每世界全表扫三次消息且每次 `appendMessages` 都调；同步每 20 秒全表扫 12 个集合；`stampUpdatedAt` 每写多读三次 | ⬜ |
 | 63 | **逐键写库 → 统一草稿 hook** `[审]` | **P1** | 场景 / 阵容 / 标题 / 记忆编辑的 `onChange` 直接写仓储并重载快照；仓库里已有三种草稿策略，统一成一个 | ⬜ |
@@ -143,6 +143,16 @@
   2. **落点**：`PromptBlock` 加 `placement`；`before_char` → 人设块前，`after_char` → 人设块后，`before_an / after_an` → 场景块前 / 后（没有作者注释这个概念，映射写进 DESIGN §9），`at_depth` → 作为 system 消息插到历史倒数第 `depth` 条之前（`toChatMessages` 支持历史中插 system 块），`unknown` → 现状。每条命中各成一块，`droppable` 按 `order` 反向。
   3. 导入 warning 只保留真正不支持的（`unknown` 位置）。
 - 怎么验：单测每种 position 的落点与 `at_depth` 的插入位置；递归 / 排除递归 / group 三条；拿 `tmp-test-cards` 里的真实世界书对照 SillyTavern 的插入顺序；Prompt 检查器显示每条的位置。DESIGN §9 与 README 的「已经能用的」更新。
+- **✅ 做完（2026-09-24）**：匹配阶段逐条 `scanDepth`（null 用全局默认 8、0 只看常驻）、递归最多 3 轮
+  （`preventRecursion` 不做触发源、`excludeRecursion` 不被递归触发）、group 只留一条（order 最高，
+  概率没过就顺延）；概率骰子挪到收口之后。落点：`PromptBlock` 加 `placement`／`depth`，
+  `before_char` → 人设前、`after_char` → 人设后、`before_an` → 场景前、`after_an` → 场景后、
+  `at_depth` → 独立 system 消息插到历史倒数第 depth 条之前、认不出的位置码 → 默认位置 + 导入 warning；
+  映射写进 **DESIGN §9.3**。每条命中各成一块（预算按 `order` 逐条丢），默认位置的多条在渲染时
+  合并回同一个 `### 世界设定` 小节，所以老世界书的提示词**逐字不变**。检查器显示落点。
+  **与计划的偏差**：① 「拿 `tmp-test-cards` 的真实世界书对照 SillyTavern 插入顺序」没做——
+  那里没有带 `position` 的样本，要先造样本；② 写实现时单测抓到一个真 bug（递归边扫边加导致
+  第 1 轮全命中），已修并留测试；③ 单测 +20（Core 600），EVAL 第四十九节。
 
 **61 同步与数据安全底线**（P1，M，一批七件）
 

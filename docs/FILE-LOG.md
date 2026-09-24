@@ -852,7 +852,21 @@ git ls-files | ForEach-Object {
 | `apps/web/src/main.tsx` / `apps/web/package.json` / `pnpm-lock.yaml` | 改 | 开发态 Profiler 与 Web Vitest 脚本 |
 | `docs/EVAL.md` / `STATUS.md` / `TASKS.md` / `FILE-LOG.md` | 改 | 第四十八节、59 状态与文件记录 |
 
-## 三十九、几点注意
+## 三十九、2026-09-24：顺序 60（世界书插入位置语义）
+
+| 文件 | 新增/修改 | 说明 |
+| --- | --- | --- |
+| `packages/core/src/compat/sillytavern/worldbook.ts` | 改 | 逐条 `scanDepth`、递归 ≤3 轮（`preventRecursion` / `excludeRecursion`）、group 只留一条；认不出的位置码记一条导入 warning；`WorldBookMatch.round` |
+| `packages/core/src/compat/sillytavern/worldbook.test.ts` | 改 | +13：scanDepth / 递归 / group / 位置码 warning |
+| `packages/core/src/prompt/types.ts` | 改 | `PromptPlacement` 与 `PromptBlock.placement` / `depth` |
+| `packages/core/src/prompt/assemble.ts` | 改 | 世界书每条命中各成一块并按位置插入；`toChatMessages` 支持 `at_depth` 插进历史；同标签相邻块合并渲染 |
+| `packages/core/src/prompt/worldbook-placement.test.ts` | **新增** | 7 个落点单测（每种 position、at_depth 的三种边界、默认位置形状不变、order 决定丢谁） |
+| `apps/web/src/App.tsx` | 改 | 扫描窗口不再预拼 `slice(-8)`，改成按时间传 `scanLines` |
+| `apps/web/src/components/PromptInspector.tsx` | 改 | 块列表显示落点（人设前 / 场景后 / 插进历史 N） |
+| `docs/DESIGN.md` | 改 | 新增 §9.3：`position` → prompt 层的映射表与理由 |
+| `docs/EVAL.md` / `STATUS.md` / `TASKS.md` / `README.md` / `FILE-LOG.md` | 改 | 第四十九节、接续点、任务 60 收口、README「已经能用的」补位置语义 |
+
+## 四十、几点注意
 
 ---
 

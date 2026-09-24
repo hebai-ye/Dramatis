@@ -45,7 +45,6 @@ import {
   scheduleSpeakers,
   selectSceneMembers,
   turnsSinceLastSpoke,
-  WEB_BRIDGE_TARGET,
 } from '@dramatis/core';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { CardDesigner } from './components/CardDesigner';
@@ -63,16 +62,16 @@ import { SceneDialog } from './components/SceneDialog';
 import { type SettingsCategory, SettingsDialog } from './components/SettingsDialog';
 import { SideChat } from './components/SideChat';
 import { TopBar } from './components/TopBar';
-import { WebBridgePanel, type WebBridgeState } from './components/WebBridgePanel';
 import { WorldDesigner } from './components/WorldDesigner';
 import { WorldTree } from './components/WorldTree';
+import { useNotices } from './hooks/useNotices';
+import { useWebBridge } from './hooks/useWebBridge';
 import { useAdminChat } from './lib/admin';
 import { useAppearance } from './lib/appearance';
 import { useArchive } from './lib/archive';
-import { loadBridge, saveBridge } from './lib/bridge-store';
 import { useProviders } from './lib/providers';
 import { useDatabase, useSession } from './lib/session';
-import { QUOTA_WARN_RATIO, useStorageStatus } from './lib/storage';
+import { useStorageStatus } from './lib/storage';
 import { resetStreamState, setStreamState } from './lib/stream-store';
 import { useSync } from './lib/sync';
 import { extraCalls, useUsage } from './lib/usage';
@@ -87,18 +86,11 @@ import {
 
 const PNG_SIGNATURE = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
 
-/** 界面上的提示条：导入警告与归档结果都走这一种形状。 */
-interface Notice {
-  code: string;
-  message: string;
-  /**
-   * 可选的「去那儿」按钮（T12）。
-   *
-   * 归档之后对话就不在主列表里了——只告诉用户「保留在设置里」，他下一刻
-   * 还是得自己找。给一个能点的入口，这件事才算说清楚。
-   */
-  action?: { label: string; run: () => void };
-}
+/**
+ * 界面上的提示条：导入警告与归档结果都走这一种形状。
+ * 定义搬到 `hooks/useNotices.ts`（顺序 66 拆 App）之后在这里复用同一份。
+ */
+type Notice = import('./hooks/useNotices').Notice;
 
 function looksLikePng(bytes: Uint8Array): boolean {
   return PNG_SIGNATURE.every((byte, index) => bytes[index] === byte);
@@ -229,60 +221,25 @@ export function App() {
   const [sceneOpen, setSceneOpen] = useState(false);
   const [detailId, setDetailId] = useState<InstanceId | null>(null);
 
-  const [warnings, setWarnings] = useState<Notice[]>([]);
-  /**
-   * 手机上的「装到桌面」引导（顺序 29）。
-   *
-   * 手机上浏览器会把地址栏与底部工具栏一直摆在那儿，装成应用之后才是真全屏——顺带还更容易
-   * 拿到持久化存储。只在窄屏、且用户没关过的时候提一次。
+  /*
+   * 通知与「装到桌面」引导（顺序 66 从 App 里搬到 hooks/useNotices）。
+   * 解构用**原来的名字**，所以下面二十多处调用点一个字都不用改。
    */
-  const [installHint, setInstallHint] = useState(
-    () => typeof window !== 'undefined' && window.localStorage.getItem('dramatis.installHint.dismissed') !== '1',
-  );
-  const [error, setError] = useState<string | null>(null);
+  const { error, setError, warnings, setWarnings, installHint, dismissInstallHint } = useNotices(storage.ratio);
+
   /** 「跳到原句」的最近一次请求（T11）：带序号，重复点击同一条也能再闪一次。 */
   const [focus, setFocus] = useState<FocusRequest | null>(null);
   const focusSeqRef = useRef(0);
-  /**
-   * 网页版桥接的状态（没有 API Key 时的第一条路）。
-   *
-   * 非 null 表示「正等着用户把网页版的输出贴回来」：`reply` 阶段等角色回复，
-   * `analysis` 阶段等这一轮的记忆与情绪。它只活在内存里——刷新页面等于放弃这次转接，
-   * 但已经落盘的玩家消息还在，重新发一次接着走就行。
+  /*
+   * 网页版桥接的状态（顺序 66 搬到 hooks/useWebBridge）：没有 API Key 时的第一条路。
+   * 进度落 sessionStorage，刷新之后还在原来的那一步。名字照旧，调用点不用改。
    */
-  const [bridge, setBridge] = useState<WebBridgeState | null>(() => loadBridge<WebBridgeState>('main'));
-
-  /** 桥接进度落进 sessionStorage：刷新（或切后台回来）之后还在原来的那一步（顺序 25）。 */
-  useEffect(() => {
-    saveBridge('main', bridge);
-  }, [bridge]);
+  const { bridge, setBridge } = useWebBridge('main');
   // 流式四态（正文 / 说话人 / 推理流 / 阶段）住在 lib/stream-store.ts（顺序 59）：
   // 每个 token 只让流式气泡重画，不再让整棵树跟着 setState。
   const [busy, setBusy] = useState(false);
   const [lastPrompt, setLastPrompt] = useState<AssembledPrompt | null>(null);
   const abortRef = useRef<AbortController | null>(null);
-
-  /**
-   * 存储快满时提醒一次（P2-3）。
-   *
-   * 等到写不进去才说就晚了——那时候用户已经丢了一轮对话。所以到 80% 就提醒
-   * 导出封存；同一个提醒只出现一次，用户点掉之后不再重复烦他。
-   */
-  useEffect(() => {
-    const ratio = storage.ratio;
-    if (ratio === null || ratio < QUOTA_WARN_RATIO) return;
-    setWarnings((previous) =>
-      previous.some((item) => item.code === 'quota')
-        ? previous
-        : [
-            ...previous,
-            {
-              code: 'quota',
-              message: `浏览器给本站的存储已经用掉约 ${String(Math.round(ratio * 100))}%，再写可能失败。建议现在导出一份封存（设置 → 封存）。`,
-            },
-          ],
-    );
-  }, [storage.ratio]);
 
   const scene = session.scene;
   const messages = session.messages;
@@ -624,7 +581,7 @@ export function App() {
         setError(importError instanceof Error ? importError.message : String(importError));
       }
     },
-    [activePersona, closeRailOnNarrow, session],
+    [activePersona, closeRailOnNarrow, session, setWarnings, setError],
   );
 
   const handleSend = useCallback(
@@ -911,6 +868,9 @@ export function App() {
       usage,
       worker,
       world,
+      setError,
+      setBridge,
+      setWarnings,
     ],
   );
 
@@ -1031,6 +991,7 @@ export function App() {
       usage,
       worker,
       world,
+      setError,
     ],
   );
 
@@ -1117,7 +1078,7 @@ export function App() {
       });
       worker.kick();
     },
-    [conversation, db, messages, providers.apiKey, session, worker, world],
+    [conversation, db, messages, providers.apiKey, session, worker, world, setWarnings, setError, setBridge],
   );
 
   /** 切换场景：开一场新的，并留下一条旁白式动作（谁跟谁去了哪里）。 */
@@ -1196,7 +1157,7 @@ export function App() {
         ]);
       }
     },
-    [activePersona, session],
+    [activePersona, session, setWarnings],
   );
 
   /** 「创建」走副对话；还没有世界就先建一个空世界，否则管理员无处落脚。 */
@@ -1263,7 +1224,7 @@ export function App() {
         },
       ]);
     },
-    [session],
+    [session, setWarnings, setError],
   );
 
   /**
@@ -1295,7 +1256,7 @@ export function App() {
       }
       setFocus(request);
     },
-    [conversation, session],
+    [conversation, session, setWarnings],
   );
 
   /**
@@ -1352,7 +1313,7 @@ export function App() {
         setBusy(false);
       }
     },
-    [bridge, conversation, db, instances, makeCharacterLine, scene, session, world],
+    [bridge, conversation, db, instances, makeCharacterLine, scene, session, world, setBridge, setError],
   );
 
   /**
@@ -1399,7 +1360,7 @@ export function App() {
         setBusy(false);
       }
     },
-    [bridge, conversation, db, instances, scene, session, sync, world],
+    [bridge, conversation, db, instances, scene, session, sync, world, setWarnings, setError, setBridge],
   );
 
   /** 放弃这一次转接：第一步放弃等于这一轮没有回复，第二步放弃等于这一轮没写记忆。 */
@@ -1415,7 +1376,7 @@ export function App() {
         },
       ]);
     }
-  }, [bridge]);
+  }, [bridge, setWarnings, setBridge]);
 
   const handleChangeModes = useCallback(
     (patch: Partial<ConversationModes>) => {
@@ -1785,43 +1746,41 @@ export function App() {
               */}
               <div className={panelOpen ? 'runtime-drawer open' : 'runtime-drawer'}>
                 {panelOpen || narrow ? (
-                  <>
-                    <RuntimePanel
-                      scene={scene}
-                      instances={instances}
-                      memories={session.memories}
-                      conversations={session.conversations}
-                      activeConversationId={conversation?.id ?? null}
-                      personas={session.personas}
-                      personaId={conversation?.personaId ?? null}
-                      playerName={conversation?.playerName ?? world?.playerName ?? ''}
-                      chapters={session.chapters}
-                      attachedWorldBooks={session.worldBooks}
-                      libraryCards={session.library.cards}
-                      worldCards={session.cards}
-                      prompt={lastPrompt}
-                      pending={worker.pending}
-                      extraCalls={extraCalls(usage.world)}
-                      usage={{ world: usage.world, conversation: usage.conversation }}
-                      budget={budget}
-                      budgetLimits={world?.budget ?? null}
-                      onSaveBudget={(limits) => void session.setBudget(limits)}
-                      conversationTitle={conversation?.title ?? ''}
-                      workerError={worker.lastError}
-                      disabled={disabled}
-                      onSceneChange={(patch) => void session.updateScene(patch)}
-                      onStartNewScene={(title) => void handleStartNewScene({ title, location: '', worldTime: '' })}
-                      onSetPresence={(id, presence) => void session.setPresence(id, presence)}
-                      onSelectPersona={(persona) => void session.setPersona(persona)}
-                      onRenameInstance={(id, name) => void session.updateInstance(id, { displayName: name })}
-                      onRemoveInstance={(id) => void session.removeInstance(id)}
-                      onAddInstance={(card) => void session.addInstance(card)}
-                      onDetachWorldBook={(id) => void session.detachWorldBook(id)}
-                      onUpdateMemory={(id, patch) => void session.updateMemory(id, patch)}
-                      onDeleteMemory={(id) => void session.deleteMemory(id)}
-                      onLocateMemory={handleLocateMemory}
-                    />
-                  </>
+                  <RuntimePanel
+                    scene={scene}
+                    instances={instances}
+                    memories={session.memories}
+                    conversations={session.conversations}
+                    activeConversationId={conversation?.id ?? null}
+                    personas={session.personas}
+                    personaId={conversation?.personaId ?? null}
+                    playerName={conversation?.playerName ?? world?.playerName ?? ''}
+                    chapters={session.chapters}
+                    attachedWorldBooks={session.worldBooks}
+                    libraryCards={session.library.cards}
+                    worldCards={session.cards}
+                    prompt={lastPrompt}
+                    pending={worker.pending}
+                    extraCalls={extraCalls(usage.world)}
+                    usage={{ world: usage.world, conversation: usage.conversation }}
+                    budget={budget}
+                    budgetLimits={world?.budget ?? null}
+                    onSaveBudget={(limits) => void session.setBudget(limits)}
+                    conversationTitle={conversation?.title ?? ''}
+                    workerError={worker.lastError}
+                    disabled={disabled}
+                    onSceneChange={(patch) => void session.updateScene(patch)}
+                    onStartNewScene={(title) => void handleStartNewScene({ title, location: '', worldTime: '' })}
+                    onSetPresence={(id, presence) => void session.setPresence(id, presence)}
+                    onSelectPersona={(persona) => void session.setPersona(persona)}
+                    onRenameInstance={(id, name) => void session.updateInstance(id, { displayName: name })}
+                    onRemoveInstance={(id) => void session.removeInstance(id)}
+                    onAddInstance={(card) => void session.addInstance(card)}
+                    onDetachWorldBook={(id) => void session.detachWorldBook(id)}
+                    onUpdateMemory={(id, patch) => void session.updateMemory(id, patch)}
+                    onDeleteMemory={(id) => void session.deleteMemory(id)}
+                    onLocateMemory={handleLocateMemory}
+                  />
                 ) : null}
               </div>
             </div>
@@ -1852,8 +1811,7 @@ export function App() {
             type="button"
             className="ghost"
             onClick={() => {
-              window.localStorage.setItem('dramatis.installHint.dismissed', '1');
-              setInstallHint(false);
+              dismissInstallHint();
             }}
           >
             知道了

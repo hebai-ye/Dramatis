@@ -27,6 +27,16 @@ export interface EntityStore {
   remove(collection: string, id: string): Promise<void>;
   list<T>(collection: string, query?: EntityQuery): Promise<T[]>;
   count(collection: string, where?: Record<string, unknown>): Promise<number>;
+  /**
+   * 可选：只要 `updatedAt > since` 的那些（顺序 62）。
+   *
+   * 同步每 20 秒跑一次增量拉推，在此之前它只能把 12 个集合**整表读出来**再逐条比时间戳——
+   * 600 条消息的对话就是每 20 秒白读 600 条。有这个口子之后，带索引的实现可以直接
+   * 从 `updatedAt` 索引上取那几条。
+   *
+   * 不实现它也能跑：调用方会退回整表 + 逐条过滤（语义完全一致，只是慢）。
+   */
+  listSince?<T>(collection: string, updatedAt: string): Promise<T[]>;
   clear(collection: string): Promise<void>;
 }
 

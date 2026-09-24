@@ -881,7 +881,21 @@ git ls-files | ForEach-Object {
 | `packages/core/src/sync/{http,limits,sqlite}.test.ts` / `crypto/keys.test.ts` / `storage/repository.test.ts` | 改 | +13：错误码透传 2、建空间护栏 4、字节配额 1、SQLite 并发 1、派生次数 4、墓碑 2（其中两条同时覆盖反向情形） |
 | `docs/SYNC.md` / `EVAL.md` / `STATUS.md` / `TASKS.md` / `FILE-LOG.md` | 改 | §4.9.1 / §4.9.2、第五十节、接续点、任务 61 收口 |
 
-## 四十一、几点注意
+## 四十一、2026-09-24：顺序 62（存储层 O(N) 热点与两处重画）
+
+| 文件 | 新增/修改 | 说明 |
+| --- | --- | --- |
+| `apps/web/src/lib/db.ts` | 改 | `DB_VERSION` 1→2；新增 `byCollectionRoom` / `byCollectionUpdated` 两个索引；`roomId` 查询走索引；`listSince` 走 `updatedAt` 索引；老库升级只补索引不动数据 |
+| `packages/core/src/platform/entity-store.ts` / `memory-store.ts` | 改 | `EntityStore.listSince?` 可选增量读口；内存实现同样实现（语义一致） |
+| `packages/core/src/storage/repository.ts` | 改 | `countAlive` 走 `store.count`；`listSyncRecords` 优先 `listSince`；`stampUpdatedAt` 缓存逻辑时钟与水位线；新增并导出 `reuseUnchangedCollections` |
+| `packages/core/src/render/attribution.ts` | 改 | `AttributionInput.cast` 收窄成 `{id, displayName}[]`（新增导出 `CastName`） |
+| `apps/web/src/lib/session.ts` | 改 | `reloadWorld` 用 `reuseUnchangedCollections`：没变的集合沿用旧数组 |
+| `apps/web/src/lib/worker.ts` | 改 | 空跑的 8 秒 tick 不再 `setRunning`（`runningRef` 镜像） |
+| `apps/web/src/App.tsx` / `components/MainChat.tsx` / `MessageItem.tsx` | 改 | App 回调过 ref 保持稳定；MainChat 用「名字没变就保持引用」的 `castNames`；消息列表只吃 `CastName[]` |
+| `packages/core/src/storage/repository.test.ts` | 改 | +5：快照引用复用的四个方向（不变 / 消息变了 / 空 / 换世界）、墓碑不计入计数、`listSince` 与整表过滤一致 |
+| `docs/EVAL.md` / `STATUS.md` / `TASKS.md` / `FILE-LOG.md` | 改 | 第五十一节、接续点、任务 62 收口与 P1 的「未复现」结论 |
+
+## 四十二、几点注意
 
 ---
 

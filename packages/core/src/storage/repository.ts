@@ -123,6 +123,45 @@ export interface RoomSnapshot {
   personas: Persona[];
 }
 
+/**
+ * 把「没变的那些集合」的数组引用沿用上一份（顺序 62）。
+ *
+ * 为什么需要它：一次仓储写入（记忆、情绪、章节、账单）都会让 `loadRoom` 重新读出
+ * 整份快照并造一批新数组，于是 React 那边 `messages` 的引用变了、`MessageList`
+ * 的 memo 立刻失效——**一轮收尾会把 600 条消息整体重画 7–10 次**（EVAL 第四十八节实测）。
+ * 其实这一轮收尾并没有改动消息本身。
+ *
+ * 判据是逐条比 `updatedAt`（所有实体都有它，而且每次写入都会盖新的）加长度相等：
+ * 便宜、无副作用、也不会漏掉「内容改了但时间戳没动」的情况——那种写入不存在。
+ * 只要有一条对不上就整条换新数组，绝不冒「显示旧数据」的风险。
+ */
+export function reuseUnchangedCollections(previous: RoomSnapshot | null, next: RoomSnapshot): RoomSnapshot {
+  if (previous === null || previous.room.id !== next.room.id) return next;
+
+  const sameArray = <T>(before: readonly T[] | undefined, after: T[]): T[] => {
+    if (before === undefined || before.length !== after.length) return after;
+    for (let index = 0; index < after.length; index += 1) {
+      const left = (before[index] as { id?: unknown; updatedAt?: unknown } | undefined) ?? {};
+      const right = (after[index] as { id?: unknown; updatedAt?: unknown } | undefined) ?? {};
+      if (left.id !== right.id || left.updatedAt !== right.updatedAt) return after;
+    }
+    return before as T[];
+  };
+
+  return {
+    ...next,
+    conversations: sameArray(previous.conversations, next.conversations),
+    scenes: sameArray(previous.scenes, next.scenes),
+    instances: sameArray(previous.instances, next.instances),
+    cards: sameArray(previous.cards, next.cards),
+    worldBooks: sameArray(previous.worldBooks, next.worldBooks),
+    messages: sameArray(previous.messages, next.messages),
+    memories: sameArray(previous.memories, next.memories),
+    chapters: sameArray(previous.chapters, next.chapters),
+    personas: sameArray(previous.personas, next.personas),
+  };
+}
+
 /** 归档一条对话的实际影响，供界面如实提示「回滚了什么」。 */
 export interface ArchiveReport {
   conversationId: ConversationId;
@@ -527,6 +566,18 @@ export class Repository {
    */
   private deviceIdCache: string | null = null;
 
+  /**
+   * `stampUpdatedAt` 要用的两个下界的内存缓存（顺序 62）。
+   *
+   * 每次写入消息/记忆/场景都要判断「新时间戳要比哪些旧值更大」：本机逻辑时钟（meta）
+   * 与同步推送水位线（sync state）。以前这两样**每次写入都各读一次库**——
+   * 一轮对话里几十次写入就是几十次多余的读。
+   *
+   * 缓存只在两处会失效：自己写下新时钟（`stampUpdatedAt` 里）、以及同步写完状态
+   * （`writeSyncState`）。两处都在这一类里，所以不需要额外的失效钩子。
+   */
+  private stampCache: { clock: string; watermark: string } | null = null;
+
   constructor(
     private readonly store: EntityStore,
     private readonly migrations: readonly Migration[] = MIGRATIONS,
@@ -577,6 +628,8 @@ export class Repository {
 
   async writeSyncState(state: SyncState): Promise<void> {
     await this.setMeta(META_KEYS.syncState, state);
+    // 水位线变了：下一次盖时间戳必须重新读（顺序 62）
+    this.stampCache = null;
   }
 
   /**
@@ -592,7 +645,15 @@ export class Repository {
     const out: LocalSyncRecord[] = [];
 
     for (const collection of SYNC_COLLECTIONS) {
-      const rows = await this.store.list<Record<string, unknown> & { id: string }>(COLLECTIONS[collection]);
+      /*
+       * 增量读（顺序 62）：`since` 给了又有索引实现时，只把新写的那几条拿出来；
+       * 否则退回整表（语义一致，只是慢）。下面那行 `updatedAt <= since` 的过滤
+       * 两种路径都要留着——它是正确性的最后一道，不依赖存储实现是否听话。
+       */
+      const rows: Array<Record<string, unknown> & { id: string }> =
+        since !== null && this.store.listSince !== undefined
+          ? await this.store.listSince<Record<string, unknown> & { id: string }>(COLLECTIONS[collection], since)
+          : await this.store.list<Record<string, unknown> & { id: string }>(COLLECTIONS[collection]);
       for (const row of rows) {
         const value = collection === 'messages' ? reviveMessage(row as unknown as StoredMessage, deviceId) : row;
         const updatedAt = typeof value.updatedAt === 'string' ? value.updatedAt : '';
@@ -706,8 +767,20 @@ export class Repository {
   private async stampUpdatedAt(collection: string, id: string, at: string = nowIso()): Promise<string> {
     const existing = await this.store.get<{ updatedAt?: string }>(collection, id);
     const previous = typeof existing?.updatedAt === 'string' ? existing.updatedAt : '';
-    const localClock = (await this.getMeta<string>(META_KEYS.clock)) ?? '';
-    const watermark = (await this.readSyncState()).pushedAt ?? '';
+    /*
+     * 逻辑时钟与推送水位线走内存缓存（顺序 62）：它们在一次会话里几乎不变，
+     * 而每一次写入都要用。缓存没命中的时候才读库（各一次）。
+     */
+    let cache = this.stampCache;
+    if (cache === null) {
+      cache = {
+        clock: (await this.getMeta<string>(META_KEYS.clock)) ?? '',
+        watermark: (await this.readSyncState()).pushedAt ?? '',
+      };
+      this.stampCache = cache;
+    }
+    const localClock = cache.clock;
+    const watermark = cache.watermark;
 
     let candidate = at;
     for (const floor of [previous, localClock, watermark]) {
@@ -717,6 +790,7 @@ export class Repository {
     }
 
     await this.setMeta(META_KEYS.clock, candidate);
+    this.stampCache = { ...cache, clock: candidate };
     return candidate;
   }
 
@@ -734,8 +808,19 @@ export class Repository {
   }
 
   private async countAlive(collection: string, where?: Record<string, unknown>): Promise<number> {
-    const records = await this.store.list<{ id: string; deletedAt?: string | null }>(collection, { where });
-    return aliveOnly(records).length;
+    /*
+     * 用 `count` 而不是「`list` 全读回来再数」（顺序 62）。
+     *
+     * 两件事一起改：
+     * 1. `count` 把 `deletedAt: null` 交给存储层——带索引的实现只需要数一数，
+     *    不必把 600 条消息的对象都反序列化出来；
+     * 2. `listRooms` 每个世界要数三次（消息 / 角色 / 对话），600 条消息的对话
+     *    以前就是每次 600 个对象的克隆。
+     *
+     * 语义没变：`matchesWhere` 把 `null` 与 `undefined` 视为等价，所以没写过
+     * `deletedAt` 的老记录照样算「活着」。
+     */
+    return this.store.count(collection, { ...(where ?? {}), deletedAt: null });
   }
 
   // ---- meta ----

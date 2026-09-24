@@ -1,4 +1,5 @@
 import {
+  type CastName,
   type CharacterInstance,
   type Conversation,
   type ConversationModes,
@@ -178,6 +179,19 @@ function MainChatImpl({
 }: Props) {
   countRender('MainChat');
   const coarsePointer = useCoarsePointer();
+  /**
+   * 消息列表只要「谁在场、叫什么」（顺序 62）。
+   *
+   * `cast` 是角色实例数组，而实例的情绪/关系**每轮都会被后台分析改写**——
+   * 一改就是新数组，600 条消息跟着重画一遍（实测一轮 36 次整表重画）。
+   * 名字没变时这里保持同一个引用，`MessageList` 的 memo 才拦得住。
+   */
+  const castKey = cast.map((member) => `${member.id}:${member.displayName}`).join('|');
+  // biome-ignore lint/correctness/useExhaustiveDependencies: 故意的——只在名字变了时才换引用
+  const castNames = useMemo<CastName[]>(
+    () => cast.map((member) => ({ id: member.id, displayName: member.displayName })),
+    [castKey],
+  );
   const [input, setInput] = useState('');
   const [editingId, setEditingId] = useState<MessageId | null>(null);
   const [modeMenuOpen, setModeMenuOpen] = useState(false);
@@ -446,7 +460,7 @@ function MainChatImpl({
 
         <MessageList
           messages={messages}
-          cast={cast}
+          cast={castNames}
           lastCharacterId={lastCharacterId}
           editingId={editingId}
           highlightId={highlightId}

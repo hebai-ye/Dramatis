@@ -148,6 +148,8 @@ export function useBackgroundWorker(options: {
   const [lastError, setLastError] = useState<string | null>(null);
 
   const drainingRef = useRef(false);
+  /** `running` 的镜像（顺序 62）：判断「要不要 setState」时不能读渲染期的状态。 */
+  const runningRef = useRef(false);
   const onChangedRef = useRef(onChanged);
   const providerRef = useRef(provider);
 
@@ -510,12 +512,23 @@ export function useBackgroundWorker(options: {
   const drain = useCallback(async () => {
     if (!db || drainingRef.current) return;
     drainingRef.current = true;
-    setRunning(true);
-
+    /*
+     * 只在「真的开始干活」时置忙（顺序 62）。
+     *
+     * 8 秒的兜底定时器每响一次都会调 `drain`，而队列常常是空的：
+     * 原来无论有没有活干都 `setRunning(true)` / `setRunning(false)`，React 对
+     * 「值没变」的 setState 仍会重渲染一次那个组件——而它就在 App 里，
+     * 于是**静置时每 8 秒整棵树重画两遍**（600 条消息的列表实测每次 350–840ms）。
+     */
     try {
       for (;;) {
         const [task] = await db.queue.take(1);
         if (!task) break;
+        // 真拿到活了才置忙：空跑的 tick 不该惊动 React（顺序 62）
+        if (!runningRef.current) {
+          runningRef.current = true;
+          setRunning(true);
+        }
 
         try {
           const config = providerRef.current;
@@ -589,7 +602,10 @@ export function useBackgroundWorker(options: {
       }
     } finally {
       drainingRef.current = false;
-      setRunning(false);
+      if (runningRef.current) {
+        runningRef.current = false;
+        setRunning(false);
+      }
       await refreshPending();
     }
   }, [

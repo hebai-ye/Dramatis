@@ -28,6 +28,7 @@ import {
   type RoomId,
   type RoomSnapshot,
   type RoomSummary,
+  reuseUnchangedCollections,
   revertAffectChange as revertAffectChangeForInstance,
   revertAffectForTurn,
   type Scene,
@@ -339,7 +340,9 @@ export function useSession(db: DramatisDb | null): SessionApi {
     const current = snapshotRef.current;
     if (!db || !current) return;
     const loaded = await db.repository.loadRoom(current.room.id);
-    if (loaded) setSnapshot(loaded);
+    // 没变的集合沿用旧数组引用（顺序 62）：一轮收尾写的是记忆/情绪/章节/账单，
+    // 消息本身没动，不该让 600 条消息整体重画。
+    if (loaded) setSnapshot(reuseUnchangedCollections(current, loaded));
   }, [db, setSnapshot]);
 
   const refreshAll = useCallback(async () => {

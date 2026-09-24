@@ -1386,19 +1386,36 @@ export function App() {
    * 传给 MainChat / CastRail / WorldTree 的回调都要是稳定引用（顺序 59）：
    * 它们 memo 了，内联箭头函数每次渲染都是新的，等于没 memo。
    */
+  /*
+   * 但「稳定引用」还差一步（顺序 62）：这几个回调自己依赖 `session`，而 `session`
+   * 每写一次库（记忆、情绪、章节、账单）都会换一个新对象——于是它一变，MainChat 里
+   * 那包 `handlers` 就跟着变，几百条 `MessageItem` 的 memo 全部失效。
+   * 实测：一轮对话整表重画 36 次。
+   *
+   * 所以过一道 ref：函数体每次都从最新的那个 session 取，但**函数本身的引用不变**。
+   */
+  const sessionRef = useRef(session);
+  sessionRef.current = session;
+  const regenerateRef = useRef(handleRegenerate);
+  regenerateRef.current = handleRegenerate;
+  const deleteMessageRef = useRef(handleDeleteMessage);
+  deleteMessageRef.current = handleDeleteMessage;
+  const reassignRef = useRef(handleReassignMessage);
+  reassignRef.current = handleReassignMessage;
+
   const handleSendText = useCallback((text: string) => void handleSend(text), [handleSend]);
   const handleStop = useCallback(() => abortRef.current?.abort(), []);
-  const handleRegenerateId = useCallback((id: MessageId) => void handleRegenerate(id), [handleRegenerate]);
+  const handleRegenerateId = useCallback((id: MessageId) => void regenerateRef.current(id), []);
   const handleEditMessage = useCallback(
-    (id: MessageId, content: string) => void session.updateMessage(id, { content }),
-    [session],
+    (id: MessageId, content: string) => void sessionRef.current.updateMessage(id, { content }),
+    [],
   );
-  const handleDeleteId = useCallback((id: MessageId) => void handleDeleteMessage(id), [handleDeleteMessage]);
+  const handleDeleteId = useCallback((id: MessageId) => void deleteMessageRef.current(id), []);
   const handleOpenScene = useCallback(() => setSceneOpen(true), []);
   const handleDropInstance = useCallback((id: InstanceId) => void session.setPresence(id, 'onstage'), [session]);
   const handleReassignId = useCallback(
-    (id: MessageId, instanceId: InstanceId) => void handleReassignMessage(id, instanceId),
-    [handleReassignMessage],
+    (id: MessageId, instanceId: InstanceId) => void reassignRef.current(id, instanceId),
+    [],
   );
   const handleBridgeReplyText = useCallback((text: string) => void handleBridgeReply(text), [handleBridgeReply]);
   const handleBridgeAnalysisText = useCallback(

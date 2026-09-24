@@ -1,16 +1,10 @@
-import {
-  assessAttribution,
-  type CharacterInstance,
-  type InstanceId,
-  type Message,
-  type MessageId,
-} from '@dramatis/core';
+import { assessAttribution, type CastName, type InstanceId, type Message, type MessageId } from '@dramatis/core';
 import { type MouseEvent, memo, type TouchEvent, useMemo, useState } from 'react';
 import { countRender } from '../lib/render-count';
 import { Avatar, MessageBody } from './MessageBody';
 
 /** 一条消息显示成谁说的：玩家永远是「我」，角色按当前在场名单的显示名。 */
-export function nameOf(message: Message, cast: readonly CharacterInstance[]): string {
+export function nameOf(message: Message, cast: readonly CastName[]): string {
   if (message.role === 'player') return '我';
   const speaker = cast.find((instance) => instance.id === message.speakerInstanceId);
   return speaker?.displayName ?? message.speakerName;
@@ -37,7 +31,8 @@ export interface MessageHandlers {
 
 interface ItemProps {
   message: Message;
-  cast: readonly CharacterInstance[];
+  /** 只要 id 与显示名（顺序 62）：情绪每轮都在变，名字不变就不该重画 */
+  cast: readonly CastName[];
   /** 只有最后一条角色回复可以重抽：重抽更早的消息会让后面的对话失去前提。 */
   isLastCharacter: boolean;
   editing: boolean;
@@ -228,7 +223,7 @@ export const MessageItem = memo(function MessageItem({
 
 interface ListProps {
   messages: readonly Message[];
-  cast: readonly CharacterInstance[];
+  cast: readonly CastName[];
   lastCharacterId: MessageId | null;
   editingId: MessageId | null;
   highlightId: MessageId | null;

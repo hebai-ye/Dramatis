@@ -1,5 +1,4 @@
 import type { InstanceId } from '../model/ids.js';
-import type { CharacterInstance } from '../model/instance.js';
 import { stripLeadingMarkers } from './segments.js';
 
 /**
@@ -41,8 +40,21 @@ export interface AttributionAssessment {
 export interface AttributionInput {
   content: string;
   speaker: { instanceId: InstanceId; displayName: string };
-  /** 当前场景的成员（用于判断「别人的名字」）。 */
-  cast: readonly CharacterInstance[];
+  /**
+   * 当前场景的成员（用于判断「别人的名字」）。
+   *
+   * 只要 `id` 与 `displayName`（顺序 62）：这一层既不读情绪也不读关系，
+   * 而调用方拿到的常常是**整份角色实例数组**——实例的情绪每轮都在变，
+   * 数组一换引用、几百条消息就跟着重画。把需求收窄之后，界面可以传一份
+   * 「只在名字变了才换引用」的清单。
+   */
+  cast: readonly CastName[];
+}
+
+/** 归属判断需要的最小成员信息。 */
+export interface CastName {
+  id: InstanceId;
+  displayName: string;
 }
 
 /** 第一人称的痕迹。中文角色扮演里「我」最常用，也捎上「咱」。 */

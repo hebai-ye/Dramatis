@@ -54,6 +54,15 @@ export function createMemoryEntityStore(): EntityStore {
       return total;
     },
 
+    /** 增量读口（顺序 62）：内存实现直接过滤，语义与带索引的实现必须一致。 */
+    async listSince<T>(collection: string, updatedAt: string): Promise<T[]> {
+      const rows = [...table(collection).values()].filter((item) => {
+        const stamp = (item as { updatedAt?: unknown }).updatedAt;
+        return typeof stamp === 'string' && stamp > updatedAt;
+      });
+      return structuredClone(rows) as T[];
+    },
+
     async clear(collection: string): Promise<void> {
       table(collection).clear();
     },

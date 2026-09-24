@@ -8,7 +8,14 @@ import { createBackgroundRunner } from '../platform/background-runner.js';
 import { createMemoryKeyStore } from '../platform/key-store.js';
 import { createMemoryEntityStore } from '../platform/memory-store.js';
 import { createPlayerMessage } from '../session/turn.js';
-import { COLLECTIONS, META_KEYS, type Migration, Repository, SCHEMA_VERSION } from './repository.js';
+import {
+  COLLECTIONS,
+  META_KEYS,
+  type Migration,
+  Repository,
+  reuseUnchangedCollections,
+  SCHEMA_VERSION,
+} from './repository.js';
 
 function fixtures() {
   const now = nowIso();
@@ -1029,5 +1036,92 @@ describe('凭据墓碑只留坐标（顺序 61）', () => {
     // 标题还在：不是被清成空壳，只是盖了删除章
     expect(row?.title).toBe(room.title);
     expect(row?.deletedAt).toBeTruthy();
+  });
+});
+
+/**
+ * 顺序 62：把「没变的集合」的数组引用沿用上一份。
+ *
+ * 这一条直接决定「一轮收尾会不会把 600 条消息整体重画」——判据错了要么白重画，
+ * 要么显示旧数据。所以两个方向都要钉住。
+ */
+describe('快照的引用复用（顺序 62）', () => {
+  async function snapshotWith(messages: number) {
+    const repo = new Repository(createMemoryEntityStore());
+    const { room, scene } = fixtures();
+    await repo.saveRoom(room);
+    await repo.saveScene(scene);
+    const batch = Array.from({ length: messages }, (_, index) => message(room, scene, `第 ${String(index)} 句`));
+    if (batch.length > 0) await repo.appendMessages(room.id, batch);
+    const snapshot = await repo.loadRoom(room.id);
+    if (snapshot === null) throw new Error('测试里取不到世界快照');
+    return { repo, room, scene, snapshot };
+  }
+
+  it('同一份快照再算一次：每个集合的引用都不变', async () => {
+    const { repo, room, snapshot } = await snapshotWith(3);
+    const again = (await repo.loadRoom(room.id)) as typeof snapshot;
+
+    const reuse = reuseUnchangedCollections(snapshot, again);
+    expect(reuse.messages).toBe(snapshot.messages);
+    expect(reuse.scenes).toBe(snapshot.scenes);
+    expect(reuse.instances).toBe(snapshot.instances);
+    expect(reuse.conversations).toBe(snapshot.conversations);
+  });
+
+  it('消息变了就整条换新数组（绝不显示旧数据）', async () => {
+    const { repo, room, scene, snapshot } = await snapshotWith(3);
+    await repo.appendMessages(room.id, [message(room, scene, '新的一句')]);
+    const after = (await repo.loadRoom(room.id)) as typeof snapshot;
+
+    const reuse = reuseUnchangedCollections(snapshot, after);
+    expect(reuse.messages).not.toBe(snapshot.messages);
+    expect(reuse.messages).toHaveLength(4);
+    // 消息变了，但场景没变：场景仍然复用
+    expect(reuse.scenes).toBe(snapshot.scenes);
+  });
+
+  it('previous 为空或换了世界时不做任何复用', async () => {
+    const { snapshot } = await snapshotWith(1);
+    expect(reuseUnchangedCollections(null, snapshot)).toBe(snapshot);
+
+    const other = fixtures();
+    const otherSnapshot = { ...snapshot, room: other.room };
+    expect(reuseUnchangedCollections(snapshot, otherSnapshot)).toBe(otherSnapshot);
+  });
+
+  it('listRooms 的计数不含墓碑（顺序 62 改走 store.count 之后仍然如此）', async () => {
+    const { repo, room, scene, snapshot } = await snapshotWith(3);
+    const first = snapshot.messages[0];
+    if (first === undefined) throw new Error('测试里没有消息');
+    await repo.deleteMessage(first.id);
+
+    const [summary] = await repo.listRooms();
+    expect(summary?.messageCount).toBe(2);
+    // 场景还在，所以世界本身也还在
+    expect(await repo.getScene(scene.id)).not.toBeNull();
+    expect(room.id).toBe(summary?.id);
+  });
+
+  it('listSince 与「整表 + 逐条过滤」的结果一致（两种实现的语义必须相同）', async () => {
+    const store = createMemoryEntityStore();
+    const stamps = ['2026-09-01T00:00:00.000Z', '2026-09-02T00:00:00.000Z', '2026-09-03T00:00:00.000Z'];
+    if (store.listSince === undefined) throw new Error('内存实现必须提供 listSince');
+    for (const [index, stamp] of stamps.entries()) {
+      await store.put('demo', { id: `row-${String(index)}`, updatedAt: stamp });
+    }
+
+    for (const since of stamps) {
+      const incremental = await store.listSince<{ id: string }>('demo', since);
+      const full = (await store.list<{ id: string; updatedAt: string }>('demo')).filter((row) => row.updatedAt > since);
+      expect(incremental.map((row) => row.id)).toEqual(full.map((row) => row.id));
+    }
+    // 边界：`>` 是严格大于，等于 since 的那条不该出现
+    const firstSince = stamps[0];
+    if (firstSince === undefined) throw new Error('测试数据缺失');
+    expect((await store.listSince<{ id: string }>('demo', firstSince)).map((row) => row.id)).toEqual([
+      'row-1',
+      'row-2',
+    ]);
   });
 });

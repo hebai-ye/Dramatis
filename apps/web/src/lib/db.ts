@@ -448,8 +448,24 @@ export async function copyLocalDatabase(from: string, to: string): Promise<numbe
   }
   return copied;
 }
-const DB_VERSION = 1;
+/**
+ * 库版本（顺序 62：1 → 2）。
+ *
+ * 2 只是**加两个索引**，不改任何记录的形状——升级是幂等的，老库打开时自动建索引，
+ * 数据一条不动（`upgrade` 里不碰记录）。为什么不一次性加更多索引：每个索引都会
+ * 拖慢写入，而写入（每条消息一次）比读取频繁得多。
+ */
+const DB_VERSION = 2;
 const STORE = 'entities';
+
+/**
+ * `updatedAt` 索引上界的哨兵（顺序 62）。
+ *
+ * 复合索引的键是 `[collection, updatedAt]`，要「这个集合里时间戳大于某个值的行」
+ * 就得给上界一个比任何时间戳都大的字符串。ISO 时间戳只由 `0-9 T : . - Z` 组成，
+ * 都小于 `\uffff`，所以拿它当上界既安全又不必知道时间戳的确切形状。
+ */
+const LAST_TIMESTAMP = '\uffff';
 
 interface EntityRecord {
   collection: string;
@@ -461,7 +477,13 @@ interface DramatisSchema extends DBSchema {
   entities: {
     key: [string, string];
     value: EntityRecord;
-    indexes: { byCollection: string };
+    indexes: {
+      byCollection: string;
+      /** `['collection','value.roomId']`：按世界读消息/角色/场景（顺序 62）。 */
+      byCollectionRoom: [string, string];
+      /** `['collection','value.updatedAt']`：同步的增量读（顺序 62）。 */
+      byCollectionUpdated: [string, string];
+    };
   };
 }
 
@@ -479,13 +501,46 @@ export async function createIndexedDbEntityStore(
   databaseName = DB_NAME,
 ): Promise<{ store: EntityStore; db: IDBPDatabase<DramatisSchema> }> {
   const db = await openDB<DramatisSchema>(databaseName, DB_VERSION, {
-    upgrade(database) {
+    upgrade(database, _oldVersion, _newVersion, transaction) {
       if (!database.objectStoreNames.contains(STORE)) {
         const store = database.createObjectStore(STORE, { keyPath: ['collection', 'id'] });
         store.createIndex('byCollection', 'collection');
+        store.createIndex('byCollectionRoom', ['collection', 'value.roomId']);
+        store.createIndex('byCollectionUpdated', ['collection', 'value.updatedAt']);
+        return;
+      }
+      /*
+       * 老库（v1）升上来：只补索引，不动记录。`createIndex` 对已存在的索引会抛错，
+       * 所以逐个确认——用户可能从任意一个中间版本升上来。
+       */
+      const store = transaction.objectStore(STORE);
+      if (!store.indexNames.contains('byCollectionRoom')) {
+        store.createIndex('byCollectionRoom', ['collection', 'value.roomId']);
+      }
+      if (!store.indexNames.contains('byCollectionUpdated')) {
+        store.createIndex('byCollectionUpdated', ['collection', 'value.updatedAt']);
       }
     },
   });
+
+  /**
+   * 取这个集合里**可能相关**的那批记录（顺序 62）。
+   *
+   * 关键是 `where.roomId` 有值时走 `byCollectionRoom` 复合索引：以前无论查什么
+   * 都先把这个集合整表读出来再逐条过滤，于是「一个世界的 600 条消息」在一次
+   * `listRooms` 里要被读三遍（消息 / 角色 / 对话各一次），而同步每 20 秒还会
+   * 把 12 个集合整表读一遍。
+   *
+   * 拿到的这批仍然要过 `matchesWhere`：索引只能按 `roomId` 缩小范围，
+   * `deletedAt` 之类的条件还得逐条判——**语义与内存实现保持一字不差**。
+   */
+  const readRecords = async (collection: string, where?: Record<string, unknown>): Promise<EntityRecord[]> => {
+    const roomIdValue = where?.roomId;
+    if (typeof roomIdValue === 'string') {
+      return db.getAllFromIndex(STORE, 'byCollectionRoom', [collection, roomIdValue]);
+    }
+    return db.getAllFromIndex(STORE, 'byCollection', collection);
+  };
 
   const store: EntityStore = {
     kind: 'indexeddb',
@@ -512,14 +567,21 @@ export async function createIndexedDbEntityStore(
     },
 
     async list<T>(collection: string, query?: EntityQuery): Promise<T[]> {
-      const records = await db.getAllFromIndex(STORE, 'byCollection', collection);
+      const records = await readRecords(collection, query?.where);
       const values = records.map((record) => record.value).filter((value) => matchesWhere(value, query?.where));
       return applyQuery(values, query) as T[];
     },
 
     async count(collection: string, where?: Record<string, unknown>): Promise<number> {
-      const records = await db.getAllFromIndex(STORE, 'byCollection', collection);
+      const records = await readRecords(collection, where);
       return records.filter((record) => matchesWhere(record.value, where)).length;
+    },
+
+    /** 增量读（顺序 62）：走 `updatedAt` 索引，只把新写的那几条拿出来。 */
+    async listSince<T>(collection: string, updatedAt: string): Promise<T[]> {
+      const range = IDBKeyRange.bound([collection, updatedAt], [collection, LAST_TIMESTAMP], true, false);
+      const records = await db.getAllFromIndex(STORE, 'byCollectionUpdated', range);
+      return records.map((record) => record.value) as T[];
     },
 
     async clear(collection: string): Promise<void> {

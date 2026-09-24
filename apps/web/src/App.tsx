@@ -24,8 +24,6 @@ import {
   hasSpeech,
   historyPolicyOf,
   type InstanceId,
-  importCardFromJson,
-  importCardFromPng,
   isIntentFirst,
   type Message,
   type MessageId,
@@ -34,7 +32,6 @@ import {
   needsWebBridge,
   type PromptMemory,
   parseIntentPlan,
-  parseWorldBook,
   pickPlannedSpeaker,
   type RecalledForPrompt,
   type RoomId,
@@ -64,6 +61,7 @@ import { SideChat } from './components/SideChat';
 import { TopBar } from './components/TopBar';
 import { WorldDesigner } from './components/WorldDesigner';
 import { WorldTree } from './components/WorldTree';
+import { useImport } from './hooks/useImport';
 import { useNotices } from './hooks/useNotices';
 import { useWebBridge } from './hooks/useWebBridge';
 import { useAdminChat } from './lib/admin';
@@ -84,22 +82,11 @@ import {
   useBackgroundWorker,
 } from './lib/worker';
 
-const PNG_SIGNATURE = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
-
 /**
  * 界面上的提示条：导入警告与归档结果都走这一种形状。
  * 定义搬到 `hooks/useNotices.ts`（顺序 66 拆 App）之后在这里复用同一份。
  */
 type Notice = import('./hooks/useNotices').Notice;
-
-function looksLikePng(bytes: Uint8Array): boolean {
-  return PNG_SIGNATURE.every((byte, index) => bytes[index] === byte);
-}
-
-/** 世界书与角色卡都是 JSON，用有没有 `entries` 来区分。 */
-function looksLikeWorldBook(value: unknown): boolean {
-  return typeof value === 'object' && value !== null && 'entries' in value;
-}
 
 function toPromptMemory(recalled: RecalledForPrompt): PromptMemory {
   const event = recalled.event;
@@ -536,53 +523,14 @@ export function App() {
     worker.kick();
   }, [burned, conversation, db, worker, world]);
 
-  const handleImport = useCallback(
-    async (file: File) => {
-      setError(null);
-      try {
-        const bytes = new Uint8Array(await file.arrayBuffer());
-
-        if (!looksLikePng(bytes)) {
-          const text = new TextDecoder('utf-8').decode(bytes);
-          const parsed = JSON.parse(text) as unknown;
-
-          if (looksLikeWorldBook(parsed)) {
-            const { book, warnings: bookWarnings } = parseWorldBook(parsed, file.name.replace(/\.json$/i, ''));
-            await session.saveWorldBook(book);
-            setWarnings(bookWarnings);
-            return;
-          }
-        }
-
-        const result = looksLikePng(bytes)
-          ? await importCardFromPng(bytes, file.name)
-          : importCardFromJson(new TextDecoder('utf-8').decode(bytes), file.name);
-
-        // 先入库，再决定要不要马上用
-        await session.saveCard(result.card);
-        setWarnings(result.warnings);
-
-        // 一张卡都没有的时候，导入即开一条新世界线，省掉一步
-        if (session.world === null) {
-          await session.createWorld({ title: result.card.name, persona: activePersona, cards: [result.card] });
-        }
-        /*
-         * 手机上导入完就把左抽屉收起来：导完卡最想看的是刚开出来的那条线，
-         * 而抽屉正盖着它（实测要再点一次「收起左栏」才看得见）。
-         */
-        closeRailOnNarrow();
-
-        if (result.card.embeddedWorldBook !== null) {
-          const { book } = parseWorldBook(result.card.embeddedWorldBook, `${result.card.name} 的内嵌世界书`);
-          await session.saveWorldBook(book);
-          await session.attachWorldBook(book);
-        }
-      } catch (importError) {
-        setError(importError instanceof Error ? importError.message : String(importError));
-      }
-    },
-    [activePersona, closeRailOnNarrow, session, setWarnings, setError],
-  );
+  /* 导入素材（顺序 66 搬到 hooks/useImport）：PNG / JSON 卡与世界书，导完顺手收起手机左栏。 */
+  const { handleImport } = useImport({
+    session,
+    activePersona,
+    setError,
+    setWarnings,
+    onImported: closeRailOnNarrow,
+  });
 
   const handleSend = useCallback(
     async (text: string) => {

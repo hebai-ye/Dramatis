@@ -11,6 +11,17 @@ export interface PngTextChunk {
   compressed: boolean;
 }
 
+/**
+ * 导入警告的形状。
+ *
+ * 与 `card.ts` 的 `ImportWarning` 同形；这里刻意不 import 那一个——`card.ts` 已经
+ * import 了本模块，反向再指一次会绕成环。
+ */
+export interface PngWarning {
+  code: string;
+  message: string;
+}
+
 export class PngParseError extends Error {
   constructor(message: string) {
     super(message);
@@ -115,16 +126,22 @@ async function parseTextChunk(data: Uint8Array, type: PngTextChunkType, inflate:
 }
 
 /**
- * 读取 PNG 中所有的文本块，忽略 CRC 校验失败的块。
+ * 读取 PNG 中所有的文本块，**跳过 CRC 校验失败的块**。
  *
  * 校验失败通常意味着卡被某个工具重新压缩过，但内容仍可读；
  * 直接报错会让用户失去一张可用的卡，因此选择跳过并在结果中体现。
+ *
+ * 顺序 64 之前这里只是**写着**校验：遍历时压根没算过 CRC（`crc32` 是死代码）。
+ * 现在每块都真算一遍（CRC 覆盖「类型 + 数据」四个字节的记账），对不上就跳过，
+ * 并把原因塞进 `options.warnings`——用户拿到的只是一张「少了一块」的卡，
+ * 得有个地方说得清少了什么、为什么。
  */
 export async function readPngTextChunks(
   bytes: Uint8Array,
-  options: { inflate?: Inflate } = {},
+  options: { inflate?: Inflate; warnings?: PngWarning[] } = {},
 ): Promise<PngTextChunk[]> {
   const inflate = options.inflate ?? streamInflate;
+  const warnings = options.warnings;
 
   if (bytes.length < PNG_SIGNATURE.length) {
     throw new PngParseError('文件太短，不是有效的 PNG');
@@ -149,12 +166,33 @@ export async function readPngTextChunks(
     }
 
     const data = bytes.subarray(dataStart, dataEnd);
+    // 块尾那 4 个字节是 CRC，覆盖「类型 + 数据」（PNG 规范）
+    const storedCrc = readUint32(bytes, dataEnd);
+    const actualCrc = crc32(bytes.subarray(offset + 4, dataEnd));
+
+    offset = dataEnd + 4;
+
+    if (storedCrc !== actualCrc) {
+      /*
+       * 报错尽量长眼睛：文本块的关键字在数据最前面（NUL 之前），
+       * 就算这一块坏了也能读出来——只说「tEXt 坏了」，用户没法判断丢了什么。
+       */
+      const keywordEnd = type === 'tEXt' || type === 'zTXt' || type === 'iTXt' ? data.indexOf(0) : -1;
+      const keyword = keywordEnd > 0 ? latin1.decode(data.subarray(0, keywordEnd)) : '';
+      warnings?.push({
+        code: 'png.bad-crc',
+        message: `PNG 数据块 ${type}${
+          keyword === '' ? '' : `（关键字 ${keyword}）`
+        } 的 CRC 校验没通过（文件可能被别的工具重新压过），这一块已跳过。`,
+      });
+      if (type === 'IEND') break;
+      continue;
+    }
 
     if (type === 'tEXt' || type === 'zTXt' || type === 'iTXt') {
       chunks.push(await parseTextChunk(data, type, inflate));
     }
 
-    offset = dataEnd + 4;
     if (type === 'IEND') break;
   }
 

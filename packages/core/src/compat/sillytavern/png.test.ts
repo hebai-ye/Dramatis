@@ -24,6 +24,19 @@ function concat(parts: Uint8Array[]): Uint8Array {
   return out;
 }
 
+/**
+ * 故意把 CRC 改坏的块（顺序 64）。
+ *
+ * PNG 块的最后 4 个字节就是 CRC，翻掉最后一字节既能让校验对不上，
+ * 又不动内容——正好是「被别的工具重新压过」那种坏法。
+ */
+function corruptCrc(part: Uint8Array): Uint8Array {
+  const broken = new Uint8Array(part);
+  const last = broken.length - 1;
+  broken[last] = (broken[last] ?? 0) ^ 0xff;
+  return broken;
+}
+
 const SIGNATURE = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 
 /** 最小合法 IHDR，只为让文件结构看起来像 PNG。 */
@@ -66,6 +79,11 @@ function toBase64(text: string): string {
 }
 
 describe('readPngTextChunks', () => {
+  it('crc32 对得上标准向量（"123456789" → 0xCBF43926）', () => {
+    // 顺序 64 之前这个函数是死代码，但它一用上就是「认不认得出真卡」的判据，值得钉住
+    expect(crc32(new TextEncoder().encode('123456789'))).toBe(0xcbf43926);
+  });
+
   it('读取未压缩的 tEXt 块', async () => {
     const png = concat([SIGNATURE, ihdr(), textChunk('chara', 'hello'), end()]);
     const chunks = await readPngTextChunks(png);
@@ -104,6 +122,34 @@ describe('readPngTextChunks', () => {
     new DataView(broken.buffer).setUint32(8, 0xffffff);
 
     await expect(readPngTextChunks(broken)).rejects.toThrow(PngParseError);
+  });
+
+  it('CRC 对不上的块跳过，并留下一条 png.bad-crc 警告', async () => {
+    const warnings: Array<{ code: string; message: string }> = [];
+    const png = concat([
+      SIGNATURE,
+      ihdr(),
+      textChunk('chara', 'first'),
+      corruptCrc(textChunk('description', '被压坏的块')),
+      textChunk('ccv3', 'second'),
+      end(),
+    ]);
+
+    const chunks = await readPngTextChunks(png, { warnings });
+
+    expect(chunks.map((item) => item.keyword)).toEqual(['chara', 'ccv3']);
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]?.code).toBe('png.bad-crc');
+    expect(warnings[0]?.message).toContain('description');
+  });
+
+  it('CRC 正确时一条警告都不发', async () => {
+    const warnings: Array<{ code: string; message: string }> = [];
+    const png = concat([SIGNATURE, ihdr(), textChunk('chara', 'hello'), end()]);
+
+    await readPngTextChunks(png, { warnings });
+
+    expect(warnings).toEqual([]);
   });
 });
 
@@ -151,5 +197,31 @@ describe('importCardFromPng', () => {
     const png = concat([SIGNATURE, ihdr(), textChunk('software', 'photoshop'), end()]);
 
     await expect(importCardFromPng(png)).rejects.toThrow(/chara/);
+  });
+
+  it('坏块被跳过，但卡本身照常导入（并带着警告）', async () => {
+    const card = {
+      spec: 'chara_card_v2',
+      spec_version: '2.0',
+      data: { name: '炉边诗人', description: '常在夜里唱曲的旅人。', first_mes: '要来一杯吗？' },
+    };
+    const png = concat([
+      SIGNATURE,
+      ihdr(),
+      corruptCrc(textChunk('description', '这块坏了')),
+      textChunk('chara', toBase64(JSON.stringify(card))),
+      end(),
+    ]);
+
+    const result = await importCardFromPng(png, 'poet.png');
+
+    expect(result.card.name).toBe('炉边诗人');
+    expect(result.warnings.some((warning) => warning.code === 'png.bad-crc')).toBe(true);
+  });
+
+  it('角色卡那一块自己坏了：报错里说清「有块 CRC 没过」', async () => {
+    const png = concat([SIGNATURE, ihdr(), corruptCrc(textChunk('chara', 'whatever')), end()]);
+
+    await expect(importCardFromPng(png)).rejects.toThrow(/CRC/);
   });
 });

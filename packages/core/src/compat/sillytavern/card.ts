@@ -225,15 +225,29 @@ export async function importCardFromPng(
   fileName?: string,
   options: { inflate?: Inflate } = {},
 ): Promise<CardImportResult> {
-  const chunks = await readPngTextChunks(bytes, options);
+  /*
+   * CRC 校验失败的块会被跳过（顺序 64），跳过这事得让用户看得见：
+   * 一张「少了内嵌世界书」的卡，和一张「本来就只有角色卡」的卡，是两回事。
+   */
+  const warnings: ImportWarning[] = [];
+  const chunks = await readPngTextChunks(bytes, { ...options, warnings });
   const payload = findCardPayload(chunks);
 
   if (!payload) {
     const keywords = chunks.map((chunk) => chunk.keyword).filter((keyword) => keyword !== '');
-    throw new CardImportError(
+    const badCrc = warnings.filter((warning) => warning.code === 'png.bad-crc').length;
+    /*
+     * 三种「没找到卡」要分开说（顺序 64）：这里跳过过坏块时，就别再说
+     * 「这可能只是一张普通图片」——那张图很可能正是用户的卡，只是被改坏了。
+     */
+    const reason =
       keywords.length > 0
-        ? `PNG 中没有角色卡数据块（chara / ccv3），仅找到：${keywords.join('、')}`
-        : 'PNG 中没有角色卡数据块（chara / ccv3），这可能只是一张普通图片',
+        ? `仅找到：${keywords.join('、')}`
+        : badCrc > 0
+          ? `另有 ${String(badCrc)} 个数据块的 CRC 校验没通过、已被跳过——这张卡多半被别的工具改坏了`
+          : '这可能只是一张普通图片';
+    throw new CardImportError(
+      `PNG 中没有读到角色卡数据块（chara / ccv3）${keywords.length > 0 ? '，' : '：'}${reason}`,
     );
   }
 
@@ -243,5 +257,5 @@ export async function importCardFromPng(
     ...(fileName !== undefined ? { fileName } : {}),
   });
 
-  return result;
+  return warnings.length === 0 ? result : { card: result.card, warnings: [...warnings, ...result.warnings] };
 }

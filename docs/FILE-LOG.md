@@ -969,7 +969,16 @@ git ls-files | ForEach-Object {
 | `apps/web/src/components/CastPanel.tsx` / `MemoryPanel.tsx` | 改 | 在 `map` 里的输入框各抽小组件（`CastNameInput` / `MemoryDraftArea`）：hook 不能在循环里调 |
 | `docs/EVAL.md` / `TASKS.md` / `STATUS.md` / `FILE-LOG.md` | 改 | 第五十六节、任务 63 收口、接续点 |
 
-## 四十九、几点注意
+## 四十九、2026-09-24：顺序 66 第一步（useNotices / useWebBridge）
+
+| 文件 | 新增/修改 | 说明 |
+| --- | --- | --- |
+| `apps/web/src/hooks/useNotices.ts` | **新增** | `error` / `warnings` / 安装引导 + 存储快满提醒；`Notice` 类型也搬到这里 |
+| `apps/web/src/hooks/useWebBridge.ts` | **新增** | 网页版桥接状态 + sessionStorage 落盘 |
+| `apps/web/src/App.tsx` | 改 | 两处状态改由新 hook 提供（解构沿用原名）；依赖数组按 Biome 提示补齐；1947 → 1905 行 |
+| `docs/EVAL.md` / `TASKS.md` / `STATUS.md` / `FILE-LOG.md` | 改 | 第五十七节、任务 66 标「进行中（2/4）」、接续点 |
+
+## 五十、几点注意
 
 ---
 

@@ -3087,3 +3087,27 @@ Chromium 的 390×844 触屏模拟。
 | 落库的最终值 | **等于屏幕上打的字**（没有「防抖把最后一次丢了」） |
 
 6/6 通过。脚本 `verify-draft-hook.mjs`（工作区外）。
+
+## 五十七、顺序 66（进行中）：App.tsx 拆成四个 hook
+
+**这一步只做了两个**（`2026-09-24`，按「一次一个、每步全绿」的节奏）：
+
+| hook | 搬走了什么 |
+| --- | --- |
+| `hooks/useNotices.ts` | `error` / `warnings` / 「装到桌面」引导 + **存储快满时提醒一次**那个 effect（P2-3） |
+| `hooks/useWebBridge.ts` | 网页版桥接的状态与 sessionStorage 落盘（顺序 25） |
+
+**怎么做到不用改二十多处调用点**：hook 的返回值解构成**原来的名字**
+（`const { error, setError, warnings, setWarnings, installHint, dismissInstallHint } = useNotices(storage.ratio)`），
+所以 App 里那些 `setError(...)` / `setWarnings(...)` 一行都不用动。
+
+**Biome 帮了忙也提了醒**：`useExhaustiveDependencies` 立刻指出「`setError` / `setWarnings` / `setBridge`
+现在是 hook 的返回值，必须列进各 hook 的依赖数组」——20 处。它们本来是稳定引用，加上不改行为，
+所以用 `biome check --write --unsafe` 自动补齐（我逐条看过 diff，只动了依赖数组）。
+
+**实测**：App.tsx 1947 → 1905 行；真 Chrome 冒烟 5/5（应用起来、世界显示、安装引导关掉后消失
+并写进 localStorage、输入区草稿正常）。门禁五项全绿。
+
+**还没做**：`useImport`（导入流程：PNG / JSON 卡、世界书、导入警告）与 `useTurnRunner`
+（`runGeneration` / `runIntentPlan` / `handleSend` / `handleRegenerate` / `handleReassignMessage`，
+最大的一块）。目标 App < 600 行。

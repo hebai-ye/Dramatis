@@ -62,7 +62,7 @@
 | --- | --- | --- | --- | --- |
 | 57 | **被印象取代的原文退出常规召回，保留「提到才想起」** `[审][用]` | **P0** | 合并（27a）在召回路径上没有兑现：`recall.ts` 与 `App.tsx:708` 都不过滤 `supersededBy`，合并后池子反而多一条。一行过滤 + 一条「按关键词取回」的通路 | ✅ 2026-09-23 |
 | 58 | **提示词按「场记覆盖」收起远处原文，不按固定条数砍** `[审][用]` | **P0** | 历史上限放到 3000 后每轮 6 万 token（MEMORY.md 第八节）；用户要求质量优先，所以不定死 N，而是「场记已覆盖的才收起、提到就取回」 | ✅ 2026-09-23 |
-| 59 | **流式每个 token 整棵树重渲染** `[审]` | **P0** | `setStreamText` 在 App 顶层，且 `useSession/useProviders/useSync` 返回未 memo 的字面量，App 里 21 个 `useCallback` 全部失效；长对话会卡 | ⬜ |
+| 59 | **流式每个 token 整棵树重渲染** `[审]` | **P0** | `setStreamText` 在 App 顶层，且 `useSession/useProviders/useSync` 返回未 memo 的字面量，App 里 21 个 `useCallback` 全部失效；长对话会卡 | ✅ 2026-09-24（浏览器计数已验：600 条消息上打字与分块不再重画列表，见 EVAL 第四十八节末） |
 | 60 | **世界书插入位置语义（position / depth / scanDepth / 递归 / group）** `[审][用]` | **P1** | 解析后零消费，所有命中合成一块，违反「不静默丢弃」；用户在意 | ⬜ |
 | 61 | **同步与数据安全底线（七件小修一批收）** `[审][数]` | **P1** | 错误码丢失靠字符串判 413、PBKDF2 多跑一倍、SQLite 无 WAL、`POST /spaces` 无护栏、配额口径不一、凭据墓碑带密文、死参数 | ⬜ |
 | 62 | **存储层 O(N) 热点：索引 + 缓存 + 别每条消息都重数** `[审]` | **P1** | `listRooms` 每世界全表扫三次消息且每次 `appendMessages` 都调；同步每 20 秒全表扫 12 个集合；`stampUpdatedAt` 每写多读三次 | ⬜ |
@@ -129,6 +129,11 @@
   3. `React.memo`：`MainChat`、`LeftRail`、`WorldTree`、`CastRail`、`RuntimePanel`、`MessageBody`；`MainChat` 内把单条消息抽成 `MessageItem`（memo），`attributionOf` 按消息 id `useMemo`。
   4. 顺手：`MainChat:291/318` 的 `reduce` 与 `reverse().find` 缓存。
 - 怎么验：无头 Chrome + 假模型 `--chunk-ms 30`，一条 600 条消息的对话：用 `React.Profiler` 的 `onRender` 计数，每个 token 的 commit 只含流式气泡；流式期间在输入框打字无掉帧（`PerformanceObserver` long task 为 0）；回归顺序 39 / 41 的消息菜单与输入区测试（本机 + 线上那两套）。
+- **实现（2026-09-24）**：保留原有草稿并补全四态 store、五个 hook 的稳定返回值、`MessageList`/`MessageItem`/`StreamingBubble` 分层；消息落盘时移除流式副本，滚动仅在靠近底部时同步贴底（不做逐 token smooth 动画）。
+  收口时又补了两处：① `stream-store` 分成 `main` / `admin` 两条通道，**副对话**那条流式也搬出 App
+  （`lib/admin.ts` 的 `streamText`、`SideChat` 自己订阅、`useAdminChat` 返回值 memo 化、App 的回调稳定化）；
+  ② stream-store 单测补到 5 个（含两条通道互不干扰）。**浏览器验证已由 Codex 完成**（600 条消息的
+  本地假模型演练，结论与逐项证据见 EVAL 第四十八节末），未跑不得写已通过。
 
 **60 世界书插入位置语义**（P1，M）
 
@@ -158,6 +163,17 @@
   2. `EntityStore` 加可选 `listSince(collection, updatedAt)`，`listSyncRecords` 有它就用；内存实现同样实现，保证语义一致。
   3. `stampUpdatedAt`：逻辑时钟与推送水位线缓存在内存（写 meta 照写，省掉每次三次读）。
   4. `useSession.appendMessages` 不再 `refreshWorlds()`，改本地把该世界的 `messageCount` 加一；`listRooms` 的三次计数走索引。
+  5. **（2026-09-24 顺序 59 的浏览器验证加的一条）** 收尾时的重画：600 条消息的对话里，
+     一轮结束（落盘 + 记忆/情绪 + 章节 + 账单）会让列表**整体重画 7–10 次**、单次 commit 最长 225ms。
+     根子是「每次仓储写入都重建整份快照，`messages` 换了引用，memo 就拦不住」，所以顺带把
+     `reloadWorld` 拆细：只把真正变了的集合换引用（消息数组不变就保留原引用），
+     账单与记忆更新不该碰消息列表。验：上一条那套采样里，收尾阶段 `MessageItem` 的增量降到 0–1 次。
+  6. **（同日另一条，同一片根因）空转的 8 秒 tick**：`lib/worker.ts` 的 8 秒定时器每次
+     `drain()` 都在开头 `setRunning(true)`、`finally` 里 `setRunning(false)`，**队列空着也一样**，
+     于是 App 每 8 秒重渲染两次，610 条消息的列表跟着整体重画（实测：静置时固定 ~8.0s 一次、
+     每次 350–840ms 主线程；把 provider 去掉让定时器不挂载后，30 秒内 4 次 → **0 次**，
+     恢复 provider 又回来）。改法：`setRunning` 只在值真的变化时更新（或把「有没有活干」
+     与 React 状态分开），并让 App 的重渲染不经过消息列表。验：静置 60 秒，`MessageItem` 增量为 0。
 - 怎么验：`repository.test` 全过（内存实现语义不变）；无头：老库（v1）打开自动升级建索引，世界种子探针数据不丢；600 条消息 + 3 个世界发一轮，包一层事务计数看读次数下降；同步一轮 `listSyncRecords` 耗时对比。
 
 **63 逐键写库 → 统一草稿 hook**（P1，S）
@@ -194,6 +210,11 @@
 **74 local-bridge 加固**（P3，S）：CORS 只放行 `127.0.0.1` / `localhost` 来源；选择器可通过参数配置；「最后一条消息」要能区分用户与助手（按站点结构或按内容是否等于刚发出的提示词）。用假网页版回归 5/5 + 4/4。
 
 **75 供应商流的坏帧与空内容**（P3，S）：SSE 坏 JSON 帧计数并在 debug 日志里可见；`ProviderError` 带 body 前 200 字；assistant 消息 `content` 为空且带 `tool_calls` 时发 `null`。用假模型注入坏帧回归。
+
+> **顺带记一条 UX 议题（2026-09-24 顺序 59 的副带发现）**：副对话（世界管理员）**根本不流式**——
+> `core/admin/turn.ts` 用 `collectCompletionWithTools` 等整段拿完才 `yield` 一次文本，所以起草期间
+> 界面上只有一个忙碌状态。要不要让它也逐字可见（以及流式与工具调用怎么并存），属于「值得做但不急」，
+> 与 75 同一片代码，等 75 做的时候一起定。
 
 ### 真实处理顺序（2026-09-20 深夜那一版；历史排期，只作上下文）
 

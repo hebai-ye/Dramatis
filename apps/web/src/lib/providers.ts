@@ -7,7 +7,7 @@ import {
   nowIso,
   type ProviderProfile,
 } from '@dramatis/core';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { DramatisDb } from './db';
 import {
   browserVaultStorage,
@@ -415,27 +415,11 @@ export function useProviders(
     [activeId, db, keyMode, profiles, syncCredential, updateProfile],
   );
 
-  return {
-    profiles,
-    activeId,
-    active: profiles.find((item) => item.id === activeId) ?? null,
-    apiKey,
-    keyMode,
-    keyKind,
-    vaultExists,
-    vaultLocked: keyMode === 'encrypted' && vault === null,
-    unlockVault,
-    background: buildBackground(),
-    selectProfile,
-    addProfile,
-    updateProfile,
-    deleteProfile,
-    setApiKey,
-    setKeyMode,
-    commitConfig,
-  };
-
-  function buildBackground(): ProvidersApi['background'] {
+  /**
+   * 后台任务用的配置：有标了「只用于后台」的就用它，否则退回当前配置。
+   * 单独 memo：它是 worker 的依赖，每次渲染新造一个对象会让 worker 的 effect 反复重挂。
+   */
+  const background = useMemo<ProvidersApi['background']>(() => {
     const dedicated = profiles.find((item) => item.role === 'background');
     if (dedicated) {
       return {
@@ -456,5 +440,46 @@ export function useProviders(
       temperature: 0.2,
       price: fallback.price ?? null,
     };
-  }
+  }, [activeId, apiKey, backgroundKey, profiles]);
+
+  // 返回对象要稳定（顺序 59）：App 里一串 useCallback 拿它当依赖
+  return useMemo(
+    () => ({
+      profiles,
+      activeId,
+      active: profiles.find((item) => item.id === activeId) ?? null,
+      apiKey,
+      keyMode,
+      keyKind,
+      vaultExists,
+      vaultLocked: keyMode === 'encrypted' && vault === null,
+      unlockVault,
+      background,
+      selectProfile,
+      addProfile,
+      updateProfile,
+      deleteProfile,
+      setApiKey,
+      setKeyMode,
+      commitConfig,
+    }),
+    [
+      activeId,
+      addProfile,
+      apiKey,
+      background,
+      commitConfig,
+      deleteProfile,
+      keyKind,
+      keyMode,
+      profiles,
+      selectProfile,
+      setApiKey,
+      setKeyMode,
+      unlockVault,
+      updateProfile,
+      vault,
+      vaultExists,
+    ],
+  );
 }

@@ -840,7 +840,19 @@ git ls-files | ForEach-Object {
 | `apps/web/src/components/PromptInspector.tsx` | 改 | 历史账一行：可见 / 收起 / 取回 |
 | `docs/EVAL.md` / `docs/TASKS.md` / `docs/STATUS.md` / `docs/MEMORY.md` | 改 | 第四十七节、任务 58 与偏差、接续点；MEMORY 第八节成本按新曲线修订 |
 
-## 三十八、几点注意
+## 三十八、2026-09-24：顺序 59（流式状态隔离与消息渲染）
+
+| 文件 | 新增/修改 | 说明 |
+| --- | --- | --- |
+| `apps/web/src/lib/stream-store.ts` / `stream-store.test.ts` / `render-count.ts` | **新增** | 四态外置（`main` / `admin` 两条通道）、通知边界与通道隔离单测、开发态渲染计数 |
+| `apps/web/src/components/StreamingBubble.tsx` / `MessageItem.tsx` / `SideChat.tsx` | **新增 / 改** | 流式唯一订阅者；已落盘消息的 memo 列表和单条组件；副对话自己订阅 `admin` 通道并 memo |
+| `apps/web/src/App.tsx` / `components/MainChat.tsx` / `lib/admin.ts` | 改 | token 不触发根节点状态更新，稳定回调，流式与消息列表分开；副对话流式搬出 App、返回值 memo 化 |
+| `apps/web/src/components/CastRail.tsx` / `LeftRail.tsx` / `MessageBody.tsx` / `RuntimePanel.tsx` / `WorldTree.tsx` | 改 | memo 与开发态渲染计数 |
+| `apps/web/src/lib/session.ts` / `providers.ts` / `sync.ts` / `worker.ts` / `usage.ts` | 改 | hook 返回值稳定，消息落盘只作必要的本地更新 |
+| `apps/web/src/main.tsx` / `apps/web/package.json` / `pnpm-lock.yaml` | 改 | 开发态 Profiler 与 Web Vitest 脚本 |
+| `docs/EVAL.md` / `STATUS.md` / `TASKS.md` / `FILE-LOG.md` | 改 | 第四十八节、59 状态与文件记录 |
+
+## 三十九、几点注意
 
 ---
 

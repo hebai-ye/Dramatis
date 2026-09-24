@@ -1,4 +1,4 @@
-import { StrictMode } from 'react';
+import { Profiler, StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { App } from './App';
 import { PlanPage } from './plan/PlanPage';
@@ -10,10 +10,37 @@ if (!container) {
   throw new Error('找不到 #root 挂载点');
 }
 
+const params = new URLSearchParams(window.location.search);
 // 布局规划页挂在 ?plan=1 上：它是设计阶段的工具，不该出现在产品流程里
-const isPlanMode = new URLSearchParams(window.location.search).get('plan') === '1';
+const isPlanMode = params.get('plan') === '1';
+/*
+ * 渲染剖析挂在 ?profile=1 上（只在开发构建里有效，顺序 59 的验证用）：
+ * 根上套一层 Profiler 记每次 commit 的耗时，各关键组件各自记渲染次数（lib/render-count.ts），
+ * 验证脚本读 `window.__dramatisCommits` / `window.__dramatisRenderCounts`。
+ */
+const isProfileMode = import.meta.env.DEV && params.get('profile') === '1';
+if (isProfileMode) {
+  window.__dramatisRenderCounts = {};
+  window.__dramatisCommits = [];
+}
 
-createRoot(container).render(<StrictMode>{isPlanMode ? <PlanPage /> : <App />}</StrictMode>);
+const tree = isPlanMode ? <PlanPage /> : <App />;
+createRoot(container).render(
+  <StrictMode>
+    {isProfileMode ? (
+      <Profiler
+        id="app"
+        onRender={(_id, phase, actualDuration) => {
+          window.__dramatisCommits?.push({ phase, actualDuration, at: performance.now() });
+        }}
+      >
+        {tree}
+      </Profiler>
+    ) : (
+      tree
+    )}
+  </StrictMode>,
+);
 
 /**
  * 注册 Service Worker（P2-2）。

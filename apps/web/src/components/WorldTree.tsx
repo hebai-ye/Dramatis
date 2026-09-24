@@ -1,4 +1,6 @@
 import type { Conversation, ConversationId, RoomId, RoomSummary } from '@dramatis/core';
+import { memo } from 'react';
+import { countRender } from '../lib/render-count';
 
 interface Props {
   worlds: RoomSummary[];
@@ -23,7 +25,7 @@ interface Props {
  * 归档的入口放在每条对话上：归档的含义是「这条时间线没有发生过」，
  * 所以它必须离那条对话足够近，用户才不会误以为是在删世界。
  */
-export function WorldTree({
+function WorldTreeImpl({
   worlds,
   activeWorldId,
   conversations,
@@ -35,6 +37,7 @@ export function WorldTree({
   onDeleteConversation,
   onDeleteWorld,
 }: Props) {
+  countRender('WorldTree');
   if (worlds.length === 0) {
     return (
       <div className="rail-empty">
@@ -131,3 +134,6 @@ export function WorldTree({
     </ul>
   );
 }
+
+/** memo（顺序 59）：App 传进来的回调都是稳定引用，世界与对话没变就整块跳过。 */
+export const WorldTree = memo(WorldTreeImpl);

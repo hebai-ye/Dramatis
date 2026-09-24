@@ -1,4 +1,6 @@
 import type { Card, CharacterInstance, InstanceId, Scene } from '@dramatis/core';
+import { memo } from 'react';
+import { countRender } from '../lib/render-count';
 import { Avatar } from './MessageBody';
 
 interface Props {
@@ -23,7 +25,8 @@ interface Props {
  * 拖拽比按钮更贴合「把角色拉进来」这个动作，所以加入场景走拖拽；
  * 不在场景里的人显示成暗的，让人一眼看出谁还没上台。
  */
-export function CastRail({ instances, scene, cards, disabled, onOpenDetail, availableCards, onAddInstance }: Props) {
+function CastRailImpl({ instances, scene, cards, disabled, onOpenDetail, availableCards, onAddInstance }: Props) {
+  countRender('CastRail');
   const cardName = (instance: CharacterInstance): string =>
     cards.find((card) => card.id === instance.cardId)?.name ?? instance.displayName;
 
@@ -77,3 +80,6 @@ export function CastRail({ instances, scene, cards, disabled, onOpenDetail, avai
     </aside>
   );
 }
+
+/** memo（顺序 59）：名单、场景、卡都没变时整块跳过。 */
+export const CastRail = memo(CastRailImpl);

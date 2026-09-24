@@ -17,7 +17,8 @@ import type {
   WorldBook,
   WorldBookId,
 } from '@dramatis/core';
-import { useState } from 'react';
+import { memo, useState } from 'react';
+import { countRender } from '../lib/render-count';
 import { CastPanel } from './CastPanel';
 import { MemoryPanel } from './MemoryPanel';
 import { PromptInspector } from './PromptInspector';
@@ -85,7 +86,8 @@ const TABS: Array<{ id: Tab; label: string }> = [
  * 装的是「正在发生什么」：谁在场、发生了什么事、这一轮实际发了什么给模型。
  * 与侧边栏的「这个东西是什么」严格分开——这条界线是这次改版的核心。
  */
-export function RuntimePanel(props: Props) {
+function RuntimePanelImpl(props: Props) {
+  countRender('RuntimePanel');
   const [tab, setTab] = useState<Tab>('scene');
 
   const available = props.libraryCards.filter(
@@ -233,3 +235,9 @@ export function RuntimePanel(props: Props) {
     </aside>
   );
 }
+
+/**
+ * memo（顺序 59）。App 传给它的回调目前还是内联的，所以 App 因数据变化重渲染时它也会跟着；
+ * 真正的收益在流式与打字那两条路上——它们已经不再经过 App。回调稳定化留给顺序 66 拆 App 时一起做。
+ */
+export const RuntimePanel = memo(RuntimePanelImpl);

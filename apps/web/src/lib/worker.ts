@@ -30,7 +30,7 @@ import {
   type TokenUsage,
   type UsageCategory,
 } from '@dramatis/core';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { DramatisDb } from './db';
 
 /**
@@ -618,5 +618,6 @@ export function useBackgroundWorker(options: {
     return () => clearInterval(timer);
   }, [db, kick, provider, refreshPending]);
 
-  return { pending, running, lastError, kick };
+  // 返回对象要稳定（顺序 59）：App 把它当依赖，每次渲染新造一个就会让下游的 memo 全部失效
+  return useMemo(() => ({ pending, running, lastError, kick }), [pending, running, lastError, kick]);
 }

@@ -1,5 +1,7 @@
 import type { AdminArtifact, Conversation, Message, MessageId } from '@dramatis/core';
-import { useEffect, useRef, useState } from 'react';
+import { memo, useEffect, useRef, useState } from 'react';
+import { countRender } from '../lib/render-count';
+import { useStreamState } from '../lib/stream-store';
 import { useCoarsePointer } from '../lib/viewport';
 import { IconSend, IconStop } from './Icons';
 import { WebBridgePanel } from './WebBridgePanel';
@@ -7,7 +9,6 @@ import { WebBridgePanel } from './WebBridgePanel';
 interface Props {
   conversation: Conversation;
   messages: Message[];
-  streamText: string;
   busy: boolean;
   ready: boolean;
   archived: boolean;
@@ -148,10 +149,9 @@ function ArtifactCard({
  * 管理员产出的角色卡与世界卡由用户决定去留：草稿摆在正文下面，
  * 点「采纳」才进素材库。
  */
-export function SideChat({
+function SideChatImpl({
   conversation,
   messages,
-  streamText,
   busy,
   ready,
   archived,
@@ -166,7 +166,13 @@ export function SideChat({
   onBridgeCommit,
   onBridgeCancel,
 }: Props) {
+  countRender('SideChat');
   const coarsePointer = useCoarsePointer();
+  /**
+   * 流式正文自己订阅（顺序 59）：管理员每条分块只重画这一块，
+   * 主对话那几百条消息、左栏与面板一条都不动。
+   */
+  const streamText = useStreamState('admin').text;
   const [input, setInput] = useState('');
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
@@ -309,3 +315,9 @@ export function SideChat({
     </section>
   );
 }
+
+/**
+ * memo（顺序 59）。它的输入框草稿住在自己里面，所以打字不会牵动 App；
+ * 反过来，主对话流式或落盘时只要 props 没变，这一块也整块跳过。
+ */
+export const SideChat = memo(SideChatImpl);

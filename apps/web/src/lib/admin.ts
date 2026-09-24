@@ -17,15 +17,15 @@ import {
   renderPromptForWeb,
   runAdminTurn,
 } from '@dramatis/core';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { loadBridge, saveBridge } from './bridge-store';
 import type { DramatisDb } from './db';
 import type { ProvidersApi } from './providers';
 import type { SessionApi } from './session';
+import { resetStreamState, setStreamState } from './stream-store';
 
 export interface AdminChatApi {
   busy: boolean;
-  streamText: string;
   error: string | null;
   send: (text: string) => Promise<void>;
   stop: () => void;
@@ -112,7 +112,8 @@ export function useAdminChat(options: {
 }): AdminChatApi {
   const { db, session, providers, onChanged } = options;
   const [busy, setBusy] = useState(false);
-  const [streamText, setStreamText] = useState('');
+  // 流式正文不住在这里（顺序 59）：它写进 `lib/stream-store.ts` 的 `admin` 通道，
+  // 由 `SideChat` 自己订阅。住在这里等于每个 token 都把整个 App 重画一遍。
   const [error, setError] = useState<string | null>(null);
   const [bridge, setBridge] = useState<{ prompt: string } | null>(() => loadBridge<{ prompt: string }>('admin'));
 
@@ -170,7 +171,7 @@ export function useAdminChat(options: {
 
       setError(null);
       setBusy(true);
-      setStreamText('');
+      resetStreamState('admin');
       setBridge(null);
 
       const history = session.messages;
@@ -255,7 +256,7 @@ export function useAdminChat(options: {
           switch (event.type) {
             case 'text':
               answer += event.text;
-              setStreamText(answer);
+              setStreamState('admin', { text: answer, phase: 'writing' });
               break;
             case 'done':
               answer = event.text === '' ? answer : event.text;
@@ -294,6 +295,8 @@ export function useAdminChat(options: {
           deletedAt: null,
         };
         await session.appendMessages([message]);
+        // 落盘后立刻收掉流式副本：与主对话同一条规则，避免同一条回复显示两遍
+        resetStreamState('admin');
 
         // 记账。世界管理员不属于任何角色，所以不填 speaker（T7）
         await db.ledger.record({
@@ -311,7 +314,7 @@ export function useAdminChat(options: {
         const message = sendError instanceof Error ? sendError.message : String(sendError);
         setError(controller.signal.aborted ? `已停止生成（${message}）` : message);
       } finally {
-        setStreamText('');
+        resetStreamState('admin');
         setBusy(false);
         abortRef.current = null;
       }
@@ -399,15 +402,11 @@ export function useAdminChat(options: {
   );
 
   const stop = useCallback(() => abortRef.current?.abort(), []);
+  const cancelBridge = useCallback(() => setBridge(null), []);
 
-  return {
-    busy,
-    streamText,
-    error,
-    send,
-    stop,
-    bridge,
-    commitBridge,
-    cancelBridge: () => setBridge(null),
-  };
+  // 返回对象要稳定（顺序 59）：App 拿它当依赖，每次渲染新造一个会让下游的 memo 全部失效
+  return useMemo(
+    () => ({ busy, error, send, stop, bridge, commitBridge, cancelBridge }),
+    [busy, error, send, stop, bridge, commitBridge, cancelBridge],
+  );
 }

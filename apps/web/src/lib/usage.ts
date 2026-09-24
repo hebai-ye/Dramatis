@@ -1,5 +1,5 @@
 import type { ConversationId, RoomId, UsageSummary, UsageTotals } from '@dramatis/core';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { DramatisDb } from './db';
 
 export interface UsageApi {
@@ -41,7 +41,8 @@ export function useUsage(
     void reload();
   }, [reload]);
 
-  return { world, conversation, reload };
+  // 返回对象要稳定（顺序 59）：它是 App 里一串 useCallback 的依赖，每次渲染新造一个就等于没 memo
+  return useMemo(() => ({ world, conversation, reload }), [world, conversation, reload]);
 }
 
 /** 生成之外的所有调用（意图、后台分析、副对话的旧任务）。 */

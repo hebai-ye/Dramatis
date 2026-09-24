@@ -1,5 +1,5 @@
 import { type Message, renderMessageContent } from '@dramatis/core';
-import type { ReactNode } from 'react';
+import { memo, type ReactNode } from 'react';
 
 interface Props {
   message: Message;
@@ -50,7 +50,7 @@ export function Avatar({ name, size = 34 }: { name: string; size?: number }) {
  *
  * 切分规则住在内核（`renderMessageContent`），这里只负责把它画出来。
  */
-export function MessageBody({ message, speakerName, showSpeaker, children }: Props) {
+function MessageBodyImpl({ message, speakerName, showSpeaker, children }: Props) {
   if (message.role === 'narration' || message.role === 'system') {
     return <p className="narration-line">{message.content}</p>;
   }
@@ -82,3 +82,6 @@ export function MessageBody({ message, speakerName, showSpeaker, children }: Pro
     </>
   );
 }
+
+/** memo（顺序 59）：正文的切分只在消息本身变了才重算。 */
+export const MessageBody = memo(MessageBodyImpl);

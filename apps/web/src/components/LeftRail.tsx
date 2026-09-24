@@ -1,4 +1,5 @@
-import { type ReactNode, useRef } from 'react';
+import { memo, type ReactNode, useRef } from 'react';
+import { countRender } from '../lib/render-count';
 
 /**
  * 左栏里的三段（列表 / 世界书 / 角色卡）。
@@ -44,7 +45,7 @@ const PANES: Array<{ id: RailPane; label: string; hint: string }> = [
  * 素材管理（导入、删除、手动微调）留在顶部按钮里，**从零创建走副对话**：
  * 这是规格里刻意分开的两件事——前者是整理已有的东西，后者是让 AI 陪你起草。
  */
-export function LeftRail({
+function LeftRailImpl({
   pane,
   onPaneChange,
   onNewConversation,
@@ -56,6 +57,7 @@ export function LeftRail({
   list,
   panel,
 }: Props) {
+  countRender('LeftRail');
   const active = PANES.find((item) => item.id === pane) ?? null;
   const fileRef = useRef<HTMLInputElement | null>(null);
 
@@ -153,3 +155,9 @@ export function LeftRail({
     </aside>
   );
 }
+
+/**
+ * memo（顺序 59）。它的 `list` / `panel` 是 App 每次渲染新造的 JSX，所以 App 重渲染时它还是会跟着；
+ * 收益同 RuntimePanel：流式与打字那两条路已经不经过 App。拆 App（顺序 66）时再把两块内容做成子组件。
+ */
+export const LeftRail = memo(LeftRailImpl);

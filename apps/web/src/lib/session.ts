@@ -35,7 +35,7 @@ import {
   type WorldBook,
   type WorldBookId,
 } from '@dramatis/core';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { type DramatisDb, openDramatisDb } from './db';
 import { createInstanceFor, createSceneFor } from './world';
 
@@ -284,6 +284,8 @@ export function useSession(db: DramatisDb | null): SessionApi {
 
   // 用一个 ref 跟随快照，避免每个回调都依赖 snapshot 而频繁重建
   const snapshotRef = useRef<RoomSnapshot | null>(null);
+  // 仓储的 localSeq 是「读计数器 → 写消息 → 写计数器」；同一 session 内追加必须串行。
+  const appendQueueRef = useRef<Promise<void>>(Promise.resolve());
   const setSnapshot = useCallback((next: RoomSnapshot | null) => {
     snapshotRef.current = next;
     setSnapshotState(next);
@@ -697,13 +699,56 @@ export function useSession(db: DramatisDb | null): SessionApi {
   );
 
   const appendMessages = useCallback(
-    async (messages: readonly Message[]) => {
-      const current = snapshotRef.current;
-      if (!db || !current || messages.length === 0) return;
+    (messages: readonly Message[]): Promise<void> => {
+      const batch = [...messages];
+      const run = async (): Promise<void> => {
+        // 等前一笔真正写完后再读最新快照；两个调用不能并发读到相同的 localSeq。
+        const current = snapshotRef.current;
+        if (!db || batch.length === 0) return;
+        const roomId = batch[0]?.roomId;
+        if (roomId === undefined || batch.some((message) => message.roomId !== roomId)) {
+          throw new Error('一次只能向同一个世界追加消息');
+        }
 
-      const stamped = await db.repository.appendMessages(current.room.id, messages);
-      setSnapshot({ ...current, messages: [...current.messages, ...stamped] });
-      await refreshWorlds();
+        const stamped = await db.repository.appendMessages(roomId, batch);
+        // 写库期间同步可能已更新快照；按最新快照合并，不能覆盖它。
+        const latest = snapshotRef.current;
+        if (latest === null || latest.room.id !== roomId) {
+          // 用户恰好切换了世界：旧世界的消息已落库，不要塞进新世界快照。
+          await refreshWorlds();
+          return;
+        }
+        // 常规追加是 O(1)；同步恰在写库时换过快照，才从仓储重读它定义的总序
+        // （createdAt → deviceId → localSeq），不能把这笔消息直接排在同步消息后面。
+        let nextMessages: Message[];
+        if (latest === current) {
+          nextMessages = [...latest.messages, ...stamped];
+          setSnapshot({ ...latest, messages: nextMessages });
+        } else {
+          nextMessages = await db.repository.listMessages(roomId);
+          const fresh = snapshotRef.current;
+          if (fresh === null || fresh.room.id !== roomId) {
+            await refreshWorlds();
+            return;
+          }
+          setSnapshot({ ...fresh, messages: nextMessages });
+        }
+        // 与快照更新同批提交；并发全量刷新若已经读到这批消息，不重复加数。
+        setWorlds((previous) => {
+          let changed = false;
+          const next = previous.map((world) => {
+            if (world.id !== roomId || world.messageCount >= nextMessages.length) return world;
+            changed = true;
+            return { ...world, messageCount: nextMessages.length };
+          });
+          return changed ? next : previous;
+        });
+      };
+
+      const task = appendQueueRef.current.then(run);
+      // 调用方仍收到原始错误；队列尾巴吞掉它，让下一笔照常开始。
+      appendQueueRef.current = task.catch(() => {});
+      return task;
     },
     [db, refreshWorlds, setSnapshot],
   );
@@ -1367,93 +1412,154 @@ export function useSession(db: DramatisDb | null): SessionApi {
     };
   }, []);
 
-  const scene =
-    snapshot === null
-      ? null
-      : (snapshot.scenes.find((item) => item.id === conversation?.activeSceneId && item.endedAt === null) ??
-        snapshot.scenes.find((item) => item.id === conversation?.activeSceneId) ??
-        null);
+  const clearError = useCallback(() => setError(null), []);
 
-  // 只渲染当前对话的消息：主对话与副对话是两条独立记录
-  const messages =
-    snapshot === null || conversation === null
-      ? []
-      : snapshot.messages.filter((message) => message.conversationId === conversation.id);
+  /*
+   * 返回对象要稳定（顺序 59）：App 里二十多个 useCallback 拿 `session` 当依赖，
+   * 每次渲染新造一个字面量就等于把所有 memo 都作废。派生的几个数组（当前对话的消息、
+   * 场景线、章节）也一起算在这里，只在快照或当前对话变了才重算。
+   */
+  return useMemo(() => {
+    const scene =
+      snapshot === null
+        ? null
+        : (snapshot.scenes.find((item) => item.id === conversation?.activeSceneId && item.endedAt === null) ??
+          snapshot.scenes.find((item) => item.id === conversation?.activeSceneId) ??
+          null);
 
-  // 这条对话的场景线（含已结束的）：历史按场记覆盖收起、「前几场」场记都要看它
-  const scenes =
-    snapshot === null || conversation === null
-      ? []
-      : snapshot.scenes
-          .filter((item) => item.conversationId === conversation.id)
-          .sort((left, right) => left.createdAt.localeCompare(right.createdAt));
-
-  return {
-    ready,
-    error,
-    clearError: () => setError(null),
-    worlds,
-    world: snapshot?.room ?? null,
-    conversations: snapshot === null ? [] : snapshot.conversations.filter((item) => item.archivedAt === null),
-    archivedConversations: snapshot === null ? [] : snapshot.conversations.filter((item) => item.archivedAt !== null),
-    conversation,
-    scene,
-    scenes,
-    messages,
-    instances: snapshot?.instances ?? [],
-    cards: snapshot?.cards ?? [],
-    worldBooks: snapshot?.worldBooks ?? [],
-    memories: snapshot?.memories ?? [],
-    // 只带当前对话的章节：跨对话的前情不该串味（副对话本来也没有章节）
-    chapters:
+    // 只渲染当前对话的消息：主对话与副对话是两条独立记录
+    const messages =
       snapshot === null || conversation === null
         ? []
-        : snapshot.chapters.filter((chapter) => chapter.conversationId === conversation.id),
-    allChapters: snapshot?.chapters ?? [],
-    personas,
-    library,
-    openWorld,
-    createWorld,
-    deleteWorld,
-    renameWorld,
-    setBudget,
-    openConversation,
-    locateTurn,
-    bundleOf,
-    startConversation,
-    openSideConversation,
-    updateConversation,
-    archiveConversation,
-    deleteConversation,
+        : snapshot.messages.filter((message) => message.conversationId === conversation.id);
+
+    // 这条对话的场景线（含已结束的）：历史按场记覆盖收起、「前几场」场记都要看它
+    const scenes =
+      snapshot === null || conversation === null
+        ? []
+        : snapshot.scenes
+            .filter((item) => item.conversationId === conversation.id)
+            .sort((left, right) => left.createdAt.localeCompare(right.createdAt));
+
+    return {
+      ready,
+      error,
+      clearError,
+      worlds,
+      world: snapshot?.room ?? null,
+      conversations: snapshot === null ? [] : snapshot.conversations.filter((item) => item.archivedAt === null),
+      archivedConversations: snapshot === null ? [] : snapshot.conversations.filter((item) => item.archivedAt !== null),
+      conversation,
+      scene,
+      scenes,
+      messages,
+      instances: snapshot?.instances ?? [],
+      cards: snapshot?.cards ?? [],
+      worldBooks: snapshot?.worldBooks ?? [],
+      memories: snapshot?.memories ?? [],
+      // 只带当前对话的章节：跨对话的前情不该串味（副对话本来也没有章节）
+      chapters:
+        snapshot === null || conversation === null
+          ? []
+          : snapshot.chapters.filter((chapter) => chapter.conversationId === conversation.id),
+      allChapters: snapshot?.chapters ?? [],
+      personas,
+      library,
+      openWorld,
+      createWorld,
+      deleteWorld,
+      renameWorld,
+      setBudget,
+      openConversation,
+      locateTurn,
+      bundleOf,
+      startConversation,
+      openSideConversation,
+      updateConversation,
+      archiveConversation,
+      deleteConversation,
+      addInstance,
+      removeInstance,
+      updateInstance,
+      revertAffectChange,
+      setPresence,
+      startNewScene,
+      updateScene,
+      setWorldScene,
+      deleteMessage,
+      updateMessage,
+      reloadWorld,
+      refreshAll,
+      updateMemory,
+      deleteMemory,
+      markRecalled,
+      revertTurn,
+      attachWorldBook,
+      detachWorldBook,
+      saveCard,
+      deleteCard,
+      saveWorldBook,
+      deleteWorldBook,
+      adoptArtifact,
+      discardArtifact,
+      revokeArtifact,
+      setPersona,
+      savePersona,
+      deletePersona,
+      listPersonas,
+      appendMessages,
+    };
+  }, [
     addInstance,
-    removeInstance,
-    updateInstance,
-    revertAffectChange,
-    setPresence,
-    startNewScene,
-    updateScene,
-    setWorldScene,
-    deleteMessage,
-    updateMessage,
-    reloadWorld,
-    refreshAll,
-    updateMemory,
-    deleteMemory,
-    markRecalled,
-    revertTurn,
-    attachWorldBook,
-    detachWorldBook,
-    saveCard,
-    deleteCard,
-    saveWorldBook,
-    deleteWorldBook,
     adoptArtifact,
-    discardArtifact,
-    revokeArtifact,
-    setPersona,
-    savePersona,
-    deletePersona,
-    listPersonas,
     appendMessages,
-  };
+    archiveConversation,
+    attachWorldBook,
+    bundleOf,
+    clearError,
+    conversation,
+    createWorld,
+    deleteCard,
+    deleteConversation,
+    deleteMemory,
+    deleteMessage,
+    deletePersona,
+    deleteWorld,
+    deleteWorldBook,
+    detachWorldBook,
+    discardArtifact,
+    error,
+    library,
+    listPersonas,
+    locateTurn,
+    markRecalled,
+    openConversation,
+    openSideConversation,
+    openWorld,
+    personas,
+    ready,
+    refreshAll,
+    reloadWorld,
+    removeInstance,
+    renameWorld,
+    revertAffectChange,
+    revertTurn,
+    revokeArtifact,
+    saveCard,
+    savePersona,
+    saveWorldBook,
+    setBudget,
+    setPersona,
+    setPresence,
+    setWorldScene,
+    snapshot,
+    startConversation,
+    startNewScene,
+    updateConversation,
+    updateInstance,
+    updateMemory,
+    updateMessage,
+    updateScene,
+    worlds,
+  ]);
 }

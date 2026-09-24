@@ -1,4 +1,5 @@
 import {
+  type AdminArtifact,
   type AssembledPrompt,
   applyTurnAnalysis,
   asksAboutPast,
@@ -7,6 +8,8 @@ import {
   buildTurnAnalysisMessages,
   type Card,
   type CharacterInstance,
+  type Conversation,
+  type ConversationId,
   type ConversationModes,
   cleanPastedReply,
   collectCompletionWithTools,
@@ -33,6 +36,7 @@ import {
   parseWorldBook,
   pickPlannedSpeaker,
   type RecalledForPrompt,
+  type RoomId,
   recallForPrompt,
   renderPromptForWeb,
   runTurn,
@@ -66,6 +70,7 @@ import { loadBridge, saveBridge } from './lib/bridge-store';
 import { useProviders } from './lib/providers';
 import { useDatabase, useSession } from './lib/session';
 import { QUOTA_WARN_RATIO, useStorageStatus } from './lib/storage';
+import { resetStreamState, setStreamState } from './lib/stream-store';
 import { useSync } from './lib/sync';
 import { extraCalls, useUsage } from './lib/usage';
 import { NARROW_SCREEN_QUERY, useFullscreen, useNarrowScreen } from './lib/viewport';
@@ -250,17 +255,8 @@ export function App() {
   useEffect(() => {
     saveBridge('main', bridge);
   }, [bridge]);
-  const [streamText, setStreamText] = useState('');
-  const [streamSpeaker, setStreamSpeaker] = useState('');
-  const [reasoningText, setReasoningText] = useState('');
-  /**
-   * 一轮正在做什么。
-   *
-   * 为什么要有它：生成之前还有一次「谁开口、他想做什么」的便宜调用，加上推理模型
-   * 会先流一段推理流，用户看到的是「气泡一直空着，过一会儿整段话砸下来」。
-   * 有了这个阶段名，界面从第一毫秒就有话说（正在判断谁开口 / 正在写）。
-   */
-  const [phase, setPhase] = useState<'idle' | 'planning' | 'writing'>('idle');
+  // 流式四态（正文 / 说话人 / 推理流 / 阶段）住在 lib/stream-store.ts（顺序 59）：
+  // 每个 token 只让流式气泡重画，不再让整棵树跟着 setState。
   const [busy, setBusy] = useState(false);
   const [lastPrompt, setLastPrompt] = useState<AssembledPrompt | null>(null);
   const abortRef = useRef<AbortController | null>(null);
@@ -402,11 +398,11 @@ export function App() {
             break;
           case 'reasoning':
             reasoning += event.text;
-            setReasoningText(reasoning);
+            setStreamState('main', { reasoning });
             break;
           case 'text':
             accumulated += event.text;
-            if (options.showStream) setStreamText(accumulated);
+            if (options.showStream) setStreamState('main', { text: accumulated });
             break;
           case 'done':
             accumulated = event.text;
@@ -637,9 +633,7 @@ export function App() {
 
       setError(null);
       setBusy(true);
-      setStreamText('');
-      setStreamSpeaker('');
-      setReasoningText('');
+      setStreamState('main', { text: '', speaker: '', reasoning: '', phase: 'planning' });
       setBridge(null);
 
       const turnId = createTurnId();
@@ -698,7 +692,6 @@ export function App() {
          * 并且**只是建议**：名字不在名单里就退回规则调度，绝不让看不见的人上台。
          * 用户可以在「对话模式」里关掉它，省下这一次调用。
          */
-        setPhase('planning');
         const plan = await runIntentPlan({ text, history, scene, instances, turnId });
         const sceneCast = instances.filter(
           (instance) => instance.presence === 'onstage' && scene.cast.includes(instance.id),
@@ -747,8 +740,7 @@ export function App() {
           );
           const recalled = recall.selected;
 
-          setStreamSpeaker(speaker.displayName);
-          setPhase('writing');
+          setStreamState('main', { text: '', reasoning: '', speaker: speaker.displayName, phase: 'writing' });
           const plannedIntent = intentByInstance.get(speaker.id) ?? null;
           const generation = await runGeneration({
             speaker,
@@ -825,6 +817,9 @@ export function App() {
             };
             await session.appendMessages([line]);
             continuedHistory = [...continuedHistory, line];
+            // 落盘后立刻收掉流式副本，避免后台排队/记账期间同一条回复显示两遍。
+            // 消息快照只在 appendMessages 更新一次；finally 的 reset 此时是 no-op。
+            resetStreamState('main');
           }
         }
 
@@ -861,9 +856,7 @@ export function App() {
         const message = sendError instanceof Error ? sendError.message : String(sendError);
         setError(controller.signal.aborted ? `已停止生成（${message}）` : message);
       } finally {
-        setStreamText('');
-        setReasoningText('');
-        setPhase('idle');
+        resetStreamState('main');
         setBusy(false);
         abortRef.current = null;
         /*
@@ -927,10 +920,7 @@ export function App() {
 
       setError(null);
       setBusy(true);
-      setStreamText('');
-      setStreamSpeaker(speaker.displayName);
-      setPhase('writing');
-      setReasoningText('');
+      setStreamState('main', { text: '', reasoning: '', speaker: speaker.displayName, phase: 'writing' });
 
       // 用 clearTurn 而不是 cancelByTurn：已经跑完的任务记录会占着幂等键，
       // 不清掉的话下面重新入队会被当成重复任务
@@ -999,9 +989,7 @@ export function App() {
         const message = regenerateError instanceof Error ? regenerateError.message : String(regenerateError);
         setError(controller.signal.aborted ? `已停止生成（${message}）` : message);
       } finally {
-        setStreamText('');
-        setReasoningText('');
-        setPhase('idle');
+        resetStreamState('main');
         setBusy(false);
         abortRef.current = null;
       }
@@ -1390,6 +1378,90 @@ export function App() {
     [conversation, session],
   );
 
+  /*
+   * 传给 MainChat / CastRail / WorldTree 的回调都要是稳定引用（顺序 59）：
+   * 它们 memo 了，内联箭头函数每次渲染都是新的，等于没 memo。
+   */
+  const handleSendText = useCallback((text: string) => void handleSend(text), [handleSend]);
+  const handleStop = useCallback(() => abortRef.current?.abort(), []);
+  const handleRegenerateId = useCallback((id: MessageId) => void handleRegenerate(id), [handleRegenerate]);
+  const handleEditMessage = useCallback(
+    (id: MessageId, content: string) => void session.updateMessage(id, { content }),
+    [session],
+  );
+  const handleDeleteId = useCallback((id: MessageId) => void handleDeleteMessage(id), [handleDeleteMessage]);
+  const handleOpenScene = useCallback(() => setSceneOpen(true), []);
+  const handleDropInstance = useCallback((id: InstanceId) => void session.setPresence(id, 'onstage'), [session]);
+  const handleReassignId = useCallback(
+    (id: MessageId, instanceId: InstanceId) => void handleReassignMessage(id, instanceId),
+    [handleReassignMessage],
+  );
+  const handleBridgeReplyText = useCallback((text: string) => void handleBridgeReply(text), [handleBridgeReply]);
+  const handleBridgeAnalysisText = useCallback(
+    (text: string) => void handleBridgeAnalysis(text),
+    [handleBridgeAnalysis],
+  );
+  const handleAddInstance = useCallback((card: Card) => void session.addInstance(card), [session]);
+  const handleOpenWorld = useCallback(
+    (id: RoomId) => {
+      void session.openWorld(id);
+      closeRailOnNarrow();
+    },
+    [closeRailOnNarrow, session],
+  );
+  const handleOpenConversation = useCallback(
+    (id: ConversationId) => {
+      void session.openConversation(id);
+      closeRailOnNarrow();
+    },
+    [closeRailOnNarrow, session],
+  );
+  const handleArchiveConversation = useCallback(
+    (target: Conversation) => {
+      if (
+        window.confirm(
+          `归档「${target.title}」？情绪、关系与记忆会回滚到它开始之前，这条时间线相当于没有发生过；对话本身会保留在设置里。`,
+        )
+      ) {
+        void handleArchive(target.id);
+      }
+    },
+    [handleArchive],
+  );
+  const handleDeleteConversation = useCallback(
+    (target: Conversation) => void session.deleteConversation(target.id),
+    [session],
+  );
+  const handleDeleteWorld = useCallback((id: RoomId) => void session.deleteWorld(id), [session]);
+
+  /*
+   * 副对话（世界管理员）那一批回调同理（顺序 59）：`SideChat` 也 memo 了，
+   * 传内联箭头函数等于每次 App 渲染都让它白重画一遍。
+   */
+  const handleAdminSend = useCallback((text: string) => void admin.send(text), [admin]);
+  const handleAdminBridgeCommit = useCallback((text: string) => void admin.commitBridge(text), [admin]);
+  const handleAdoptArtifact = useCallback(
+    (id: MessageId, artifact: AdminArtifact) => void session.adoptArtifact(id, artifact.id),
+    [session],
+  );
+  const handleDiscardArtifact = useCallback(
+    (id: MessageId, artifact: AdminArtifact) => void session.discardArtifact(id, artifact.id),
+    [session],
+  );
+  const handleRevokeArtifact = useCallback(
+    (id: MessageId, artifact: AdminArtifact) => void session.revokeArtifact(id, artifact.id),
+    [session],
+  );
+  /** 素材库 id 清单：每次渲染新造一个数组会让 `SideChat` 的 memo 失效。 */
+  const adminExistingIds = useMemo(
+    () => [
+      ...session.library.cards.map((card) => card.id),
+      ...session.library.worldBooks.map((book) => book.id),
+      ...session.personas.map((persona) => persona.id),
+    ],
+    [session.library.cards, session.library.worldBooks, session.personas],
+  );
+
   const disabled = busy || !session.ready;
   const detail = detailId === null ? null : (instances.find((instance) => instance.id === detailId) ?? null);
   const worldId = world?.id ?? null;
@@ -1486,25 +1558,11 @@ export function App() {
                   conversations={session.conversations}
                   activeConversationId={conversation?.id ?? null}
                   disabled={disabled}
-                  onOpenWorld={(id) => {
-                    void session.openWorld(id);
-                    closeRailOnNarrow();
-                  }}
-                  onOpenConversation={(id) => {
-                    void session.openConversation(id);
-                    closeRailOnNarrow();
-                  }}
-                  onArchiveConversation={(target) => {
-                    if (
-                      window.confirm(
-                        `归档「${target.title}」？情绪、关系与记忆会回滚到它开始之前，这条时间线相当于没有发生过；对话本身会保留在设置里。`,
-                      )
-                    ) {
-                      void handleArchive(target.id);
-                    }
-                  }}
-                  onDeleteConversation={(target) => void session.deleteConversation(target.id)}
-                  onDeleteWorld={(id) => void session.deleteWorld(id)}
+                  onOpenWorld={handleOpenWorld}
+                  onOpenConversation={handleOpenConversation}
+                  onArchiveConversation={handleArchiveConversation}
+                  onDeleteConversation={handleDeleteConversation}
+                  onDeleteWorld={handleDeleteWorld}
                 />
               </>
             }
@@ -1588,24 +1646,19 @@ export function App() {
                 <SideChat
                   conversation={conversation}
                   messages={messages}
-                  streamText={admin.streamText}
                   busy={admin.busy}
                   ready={ready}
                   archived={archived}
                   bridge={admin.bridge}
                   manualMode={needsWebBridge(providers.apiKey)}
-                  onBridgeCommit={(text) => void admin.commitBridge(text)}
+                  onBridgeCommit={handleAdminBridgeCommit}
                   onBridgeCancel={admin.cancelBridge}
-                  onSend={(text) => void admin.send(text)}
+                  onSend={handleAdminSend}
                   onStop={admin.stop}
-                  onAdopt={(messageId, artifact) => void session.adoptArtifact(messageId, artifact.id)}
-                  onDiscard={(messageId, artifact) => void session.discardArtifact(messageId, artifact.id)}
-                  onRevoke={(messageId, artifact) => void session.revokeArtifact(messageId, artifact.id)}
-                  existingIds={[
-                    ...session.library.cards.map((card) => card.id),
-                    ...session.library.worldBooks.map((book) => book.id),
-                    ...session.personas.map((persona) => persona.id),
-                  ]}
+                  onAdopt={handleAdoptArtifact}
+                  onDiscard={handleDiscardArtifact}
+                  onRevoke={handleRevokeArtifact}
+                  existingIds={adminExistingIds}
                 />
               ) : (
                 <MainChat
@@ -1613,10 +1666,6 @@ export function App() {
                   scene={scene}
                   messages={messages}
                   cast={cast}
-                  streamText={streamText}
-                  streamSpeaker={streamSpeaker}
-                  reasoningText={reasoningText}
-                  phase={phase}
                   busy={busy}
                   ready={ready}
                   archived={archived}
@@ -1624,18 +1673,18 @@ export function App() {
                   showIntent={appearance.value.showIntent}
                   bridge={bridge}
                   manualMode={bridge !== null || needsWebBridge(providers.apiKey)}
-                  onBridgeReply={(text) => void handleBridgeReply(text)}
-                  onBridgeAnalysis={(text) => void handleBridgeAnalysis(text)}
+                  onBridgeReply={handleBridgeReplyText}
+                  onBridgeAnalysis={handleBridgeAnalysisText}
                   onBridgeSkip={handleBridgeSkip}
-                  onSend={(text) => void handleSend(text)}
-                  onStop={() => abortRef.current?.abort()}
-                  onRegenerate={(id) => void handleRegenerate(id)}
-                  onEdit={(id, content) => void session.updateMessage(id, { content })}
-                  onDelete={(id) => void handleDeleteMessage(id)}
+                  onSend={handleSendText}
+                  onStop={handleStop}
+                  onRegenerate={handleRegenerateId}
+                  onEdit={handleEditMessage}
+                  onDelete={handleDeleteId}
                   onChangeModes={handleChangeModes}
-                  onOpenScene={() => setSceneOpen(true)}
-                  onDropInstance={(id) => void session.setPresence(id, 'onstage')}
-                  onReassign={(id, instanceId) => void handleReassignMessage(id, instanceId)}
+                  onOpenScene={handleOpenScene}
+                  onDropInstance={handleDropInstance}
+                  onReassign={handleReassignId}
                 />
               )}
 
@@ -1708,7 +1757,7 @@ export function App() {
               disabled={disabled}
               onOpenDetail={setDetailId}
               availableCards={availableCards}
-              onAddInstance={(card) => void session.addInstance(card)}
+              onAddInstance={handleAddInstance}
             />
           ) : null}
         </div>

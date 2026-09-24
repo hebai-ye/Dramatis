@@ -17,7 +17,7 @@ import {
   type SyncPulledRecord,
   type SyncReport,
 } from '@dramatis/core';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { type DramatisDb, readActiveAccount } from './db';
 import { createBrowserFileIO } from './fileio';
 import { createBrowserKeyStore, type KeyStorageMode } from './keystore';
@@ -679,28 +679,55 @@ export function useSync(db: DramatisDb | null, options: { onChanged?: () => void
     await syncNow();
   }, [db, syncNow]);
 
-  return {
-    config,
-    status,
-    busy,
-    error,
-    recoveryCode,
-    dismissRecoveryCode: () => setRecoveryCode(null),
-    connect,
-    syncNow,
-    resync,
-    requestAutoSync,
-    autoSyncPending,
-    disconnect,
-    setKeyMode,
-    listDevices,
-    rotatePassword,
-    spaceFull,
-    exportSnapshot,
-    restoreSnapshot,
-    sealSecret,
-    openSecret,
-  };
+  const dismissRecoveryCode = useCallback(() => setRecoveryCode(null), []);
+
+  // 返回对象要稳定（顺序 59）：App 与 providers 都拿它当依赖
+  return useMemo(
+    () => ({
+      config,
+      status,
+      busy,
+      error,
+      recoveryCode,
+      dismissRecoveryCode,
+      connect,
+      syncNow,
+      resync,
+      requestAutoSync,
+      autoSyncPending,
+      disconnect,
+      setKeyMode,
+      listDevices,
+      rotatePassword,
+      spaceFull,
+      exportSnapshot,
+      restoreSnapshot,
+      sealSecret,
+      openSecret,
+    }),
+    [
+      autoSyncPending,
+      busy,
+      config,
+      connect,
+      disconnect,
+      dismissRecoveryCode,
+      error,
+      exportSnapshot,
+      listDevices,
+      openSecret,
+      recoveryCode,
+      requestAutoSync,
+      restoreSnapshot,
+      resync,
+      rotatePassword,
+      sealSecret,
+      setKeyMode,
+      spaceFull,
+      status,
+      syncNow,
+    ],
+  );
 }
 
 /** 给界面用：把上次同步结果写成人话。 */

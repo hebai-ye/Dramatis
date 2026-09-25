@@ -28,15 +28,20 @@ export interface EntityStore {
   list<T>(collection: string, query?: EntityQuery): Promise<T[]>;
   count(collection: string, where?: Record<string, unknown>): Promise<number>;
   /**
-   * 可选：只要 `updatedAt > since` 的那些（顺序 62）。
+   * 可选：只要 `updatedAt`（缺省**严格大于**）`since` 的那些（顺序 62 / 68）。
    *
    * 同步每 20 秒跑一次增量拉推，在此之前它只能把 12 个集合**整表读出来**再逐条比时间戳——
    * 600 条消息的对话就是每 20 秒白读 600 条。有这个口子之后，带索引的实现可以直接
    * 从 `updatedAt` 索引上取那几条。
    *
    * 不实现它也能跑：调用方会退回整表 + 逐条过滤（语义完全一致，只是慢）。
+   *
+   * `options.inclusive` 是顺序 68 加的：账单的 `since` 语义是「这个时刻（**含**）之后」，
+   * 而同步的水位线必须**不含**等于（水位线是「这一毫秒推过了」，含等于会把同毫秒的记录
+   * 反复推）。两者都要，所以做成一个可选开关，而不是把默认语义改掉——
+   * 改默认值等于悄悄改同步协议。
    */
-  listSince?<T>(collection: string, updatedAt: string): Promise<T[]>;
+  listSince?<T>(collection: string, updatedAt: string, options?: { inclusive?: boolean }): Promise<T[]>;
   clear(collection: string): Promise<void>;
 }
 

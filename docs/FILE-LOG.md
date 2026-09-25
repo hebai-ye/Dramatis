@@ -1062,7 +1062,24 @@ git ls-files | ForEach-Object {
 | `apps/web/src/components/CardDesigner.tsx`、`packages/core/src/compat/sillytavern/card.ts` | 改（格式） | 这两处是另一条会话的未提交改动；`biome check` 报格式/导入顺序错误，本批顺手格式化，语义未改 |
 | `docs/STATUS.md` / `TASKS.md` / `EVAL.md` / `FILE-LOG.md` | 改 | 本轮范围、实现与验证记录 |
 
-## 五十七、几点注意
+## 五十七、2026-09-25：顺序 68（账单 `since` 下推与汇总不排序）
+
+TASKS 第〇节顺序 68。用户裁定「A+B 推进」；原方案里的 `limit` 下推与增量汇总按实测拆开
+（前者不做，后者记成顺序 80）。做法、实测数字与未验项见 EVAL 第六十九节。
+
+| 文件 | 改 / 新增 | 说明 |
+| --- | --- | --- |
+| `packages/core/src/storage/usage.ts` | 改 | `UsageRecord.updatedAt`（与 `createdAt` 恒等、不参与同步）；内部 `read()` 把 `since` 下推到 `listSince`（`inclusive`）；`list()` 自己按 `(createdAt, id)` 定序；`summary()` 不再走 `list()`；`summarizeUsage` 分组并列按 key 定序（与输入顺序无关） |
+| `packages/core/src/platform/entity-store.ts` | 改 | `listSince` 增加 `options.inclusive`（缺省仍是严格大于，同步水位线语义未变） |
+| `packages/core/src/platform/memory-store.ts` | 改 | 内存实现支持 `inclusive`，语义与索引实现逐条对齐 |
+| `apps/web/src/lib/db.ts` | 改 | IndexedDB 实现按 `inclusive` 决定 `IDBKeyRange` 下界含不含等于（**未动 schema 版本**） |
+| `packages/core/src/storage/repository.ts` | 改 | `SCHEMA_VERSION` 10 → 11；迁移 11：把老账单的 `updatedAt` 归一到 `createdAt`（否则索引漏掉老账单、`since` 安静少算钱） |
+| `packages/core/src/storage/usage.test.ts` | 改 | 顺序 68 定点单测 +8：不变量、含等于边界、下推 vs 整表逐条对账（含 `limit`、并列同一毫秒）、汇总顺序无关、不走存储层排序、老账单被漏掉的复现、迁移 11、账单不在同步白名单 |
+| `packages/core/src/storage/repository.test.ts` | 改 | `listSince` 等价性测试扩到 `inclusive`；v10 迁移测试的 `applied` 钉成 `[10, 11]` |
+| `packages/core/src/storage/budget.test.ts` | 改 | 构造汇总入参时补上 `updatedAt`（类型新增字段） |
+| `docs/STATUS.md` / `TASKS.md` / `EVAL.md` / `FILE-LOG.md` | 改 | 本轮范围、实测数字、没做与没验的部分；新增顺序 80 |
+
+## 五十八、几点注意
 
 ---
 

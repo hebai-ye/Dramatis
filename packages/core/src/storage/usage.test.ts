@@ -1,8 +1,18 @@
 import { describe, expect, it } from 'vitest';
 import { conversationId, instanceId, newId, roomId } from '../model/ids.js';
+import type { EntityQuery, EntityStore } from '../platform/entity-store.js';
 import { createMemoryEntityStore } from '../platform/memory-store.js';
-import { Repository } from './repository.js';
-import { createUsageLedger, sanitizeTokens, summarizeUsage, type UsageRecord } from './usage.js';
+import { SYNC_COLLECTIONS } from '../sync/types.js';
+import { COLLECTIONS, Repository } from './repository.js';
+import {
+  createUsageLedger,
+  sanitizeTokens,
+  summarizeUsage,
+  USAGE_COLLECTION,
+  type UsageFilter,
+  type UsageLedger,
+  type UsageRecord,
+} from './usage.js';
 
 const PRICE = { inputPerMillion: 2, outputPerMillion: 8, currency: '¥' };
 
@@ -233,6 +243,7 @@ describe('用量账单', () => {
         speakerName: '',
         price: null,
         createdAt: '2026-09-19T00:00:00.000Z',
+        updatedAt: '2026-09-19T00:00:00.000Z',
       },
     ];
 
@@ -243,5 +254,213 @@ describe('用量账单', () => {
     expect(records[0]?.promptTokens).toBe(5);
     expect(first.firstAt).toBe('2026-09-19T00:00:00.000Z');
     expect(first.lastAt).toBe('2026-09-19T00:00:00.000Z');
+  });
+});
+
+/* ------------------------------------------------------------------ *
+ * 顺序 68：`since` 下推到 `updatedAt` 索引 + 汇总不再排序
+ * ------------------------------------------------------------------ */
+
+/** 去掉 `listSince` 的后端：用来对账「下推读」与「整表读」的结果必须逐条一致。 */
+function withoutListSince(store: EntityStore): EntityStore {
+  const { listSince: _dropped, ...rest } = store;
+  return rest;
+}
+
+/** 把每次 `list` / `listSince` 的调用记下来，用来断言下推真的发生了、且没在存储层排序。 */
+function countingStore(store: EntityStore): {
+  store: EntityStore;
+  queries: Array<EntityQuery | undefined>;
+  sinceCalls: Array<{ updatedAt: string; inclusive: boolean }>;
+} {
+  const queries: Array<EntityQuery | undefined> = [];
+  const sinceCalls: Array<{ updatedAt: string; inclusive: boolean }> = [];
+  return {
+    queries,
+    sinceCalls,
+    store: {
+      ...store,
+      async list<T>(collection: string, query?: EntityQuery): Promise<T[]> {
+        queries.push(query);
+        return store.list<T>(collection, query);
+      },
+      async listSince<T>(collection: string, updatedAt: string, options?: { inclusive?: boolean }): Promise<T[]> {
+        sinceCalls.push({ updatedAt, inclusive: options?.inclusive ?? false });
+        if (store.listSince === undefined) throw new Error('测试用的底层实现必须提供 listSince');
+        return store.listSince<T>(collection, updatedAt, options);
+      },
+    },
+  };
+}
+
+const T1 = '2026-09-25T10:00:00.000Z';
+const T2 = '2026-09-25T10:00:01.000Z';
+const T3 = '2026-09-25T10:00:02.000Z';
+const T4 = '2026-09-25T10:00:03.000Z';
+
+describe('用量账单 · 顺序 68', () => {
+  const room = roomId('room-68');
+
+  async function ledgerWithLegacyRecords(): Promise<{ usage: UsageLedger; store: EntityStore }> {
+    const store = createMemoryEntityStore();
+    const usage = createUsageLedger(store);
+    for (const [index, at] of [T1, T2, T3, T4].entries()) {
+      await usage.record({ roomId: room, category: 'generation', model: 'm', promptTokens: (index + 1) * 10, at });
+    }
+    return { usage, store };
+  }
+
+  it('每笔流水的 updatedAt 恒等于 createdAt（下推赖以成立的不变量）', async () => {
+    const usage = ledger();
+    const record = await usage.record({ category: 'generation', model: 'm', promptTokens: 7, at: T1 });
+    expect(record.createdAt).toBe(T1);
+    expect(record.updatedAt).toBe(T1);
+    expect((await usage.list())[0]?.updatedAt).toBe(T1);
+  });
+
+  it('since 是「含等于」：正好落在 since 上的那一条必须回来', async () => {
+    const { usage } = await ledgerWithLegacyRecords();
+    const records = await usage.list({ roomId: room, since: T2 });
+    expect(records.map((record) => record.createdAt)).toEqual([T2, T3, T4]);
+  });
+
+  it('下推读与整表读逐条一致（含 / 不含 since、带 limit、并列同一毫秒）', async () => {
+    const { usage, store } = await ledgerWithLegacyRecords();
+    const scanned = createUsageLedger(withoutListSince(store));
+
+    // 再来一批同一毫秒的：并列时两条路径的底层顺序不同（索引序 vs 主键序），
+    // 全靠 `(createdAt, id)` 定序把结果钉死。
+    for (let index = 0; index < 5; index += 1) {
+      await usage.record({ roomId: room, category: 'intent', model: 'm', promptTokens: index, at: T4 });
+    }
+
+    for (const filter of [
+      { roomId: room },
+      { roomId: room, since: T2 },
+      { since: T1 },
+      { category: 'intent' },
+    ] as UsageFilter[]) {
+      const pushed = await usage.list(filter);
+      const full = await scanned.list(filter);
+      expect(pushed.map((record) => record.id)).toEqual(full.map((record) => record.id));
+      expect(JSON.stringify(pushed)).toBe(JSON.stringify(full));
+
+      const pushedLimited = await usage.list(filter, 3);
+      const fullLimited = await scanned.list(filter, 3);
+      expect(pushedLimited.map((record) => record.id)).toEqual(fullLimited.map((record) => record.id));
+
+      expect(await usage.summary(filter)).toEqual(await scanned.summary(filter));
+    }
+  });
+
+  it('汇总与记录的到达顺序无关（所以不必先排序）', async () => {
+    // 两组分组各自 token 相等 → 排序并列，这时分组次序只能靠 key 兜住
+    const records = [
+      { category: 'generation' as const, model: 'm-b', promptTokens: 100, at: T1 },
+      { category: 'generation' as const, model: 'm-a', promptTokens: 100, at: T2 },
+      { category: 'intent' as const, model: 'm-b', promptTokens: 100, at: T3 },
+      { category: 'intent' as const, model: 'm-a', promptTokens: 100, at: T4 },
+    ];
+
+    const forward = createUsageLedger(createMemoryEntityStore());
+    const backward = createUsageLedger(createMemoryEntityStore());
+    for (const entry of records) await forward.record({ roomId: room, ...entry });
+    for (const entry of [...records].reverse()) await backward.record({ roomId: room, ...entry });
+
+    expect(await backward.summary({ roomId: room })).toEqual(await forward.summary({ roomId: room }));
+    expect((await forward.summary({ roomId: room })).byModel.map((group) => group.key)).toEqual(['m-a', 'm-b']);
+  });
+
+  it('summary 不向存储层要排序、也不走增量口；带 since 的读走增量口且含等于', async () => {
+    const base = createMemoryEntityStore();
+    const spy = countingStore(base);
+    const usage = createUsageLedger(spy.store);
+    await usage.record({ roomId: room, category: 'generation', model: 'm', promptTokens: 10, at: T1 });
+    await usage.record({ roomId: room, category: 'generation', model: 'm', promptTokens: 20, at: T2 });
+    spy.queries.length = 0;
+    spy.sinceCalls.length = 0;
+
+    const summary = await usage.summary({ roomId: room });
+    expect(summary.total.tokens).toBe(30);
+    expect(spy.queries).toHaveLength(1);
+    // 排序改由账单自己做（要按 id 钉死并列），存储层不该再收到 orderBy
+    expect(spy.queries.every((query) => query?.orderBy === undefined)).toBe(true);
+    expect(spy.sinceCalls).toHaveLength(0);
+
+    spy.queries.length = 0;
+    await usage.list({ roomId: room, since: T2 });
+    expect(spy.sinceCalls).toEqual([{ updatedAt: T2, inclusive: true }]);
+    expect(spy.queries).toHaveLength(0);
+  });
+
+  it('老账单缺 updatedAt 时确实会被索引漏掉（所以迁移 11 不是可选的）', async () => {
+    const store = createMemoryEntityStore();
+    // 模拟顺序 68 之前的落盘形态：有 createdAt，没有 updatedAt
+    await store.put(USAGE_COLLECTION, {
+      id: 'legacy-1',
+      roomId: room,
+      conversationId: null,
+      turnId: null,
+      category: 'generation',
+      model: 'm',
+      promptTokens: 500,
+      completionTokens: 0,
+      speakerInstanceId: null,
+      speakerName: '',
+      price: null,
+      createdAt: T1,
+    });
+
+    const usage = createUsageLedger(store);
+    expect(await usage.list({ since: T1 })).toEqual([]);
+    // 不带 since 的整表读仍然看得见它——这也是「少算钱」不会当场暴露的原因
+    expect((await usage.list()).map((record) => record.id)).toEqual(['legacy-1']);
+  });
+
+  it('迁移 11：把老账单的 updatedAt 归一到 createdAt', async () => {
+    const store = createMemoryEntityStore();
+    const legacy = {
+      roomId: room,
+      conversationId: null,
+      turnId: null,
+      category: 'generation' as const,
+      model: 'm',
+      promptTokens: 500,
+      completionTokens: 0,
+      speakerInstanceId: null,
+      speakerName: '',
+      price: null,
+    };
+    await store.put(USAGE_COLLECTION, { ...legacy, id: 'legacy-plain', createdAt: T1 });
+    // 与 createdAt 不一致的值：账单里这个字段是派生字段，迁移动到与 createdAt 相等，
+    // 否则「下推读按 updatedAt、整表读按 createdAt」会在这条记录上分叉。
+    await store.put(USAGE_COLLECTION, {
+      ...legacy,
+      id: 'legacy-odd',
+      createdAt: T2,
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    });
+
+    const repository = new Repository(store);
+    const report = await repository.migrate();
+    expect(report.applied.map((migration) => migration.version)).toContain(11);
+
+    const migrated = await store.list<UsageRecord>(USAGE_COLLECTION);
+    for (const record of migrated) expect(record.updatedAt).toBe(record.createdAt);
+    expect(migrated.map((record) => record.id)).toEqual(['legacy-plain', 'legacy-odd']);
+
+    // 迁移之后，下推读才看得见这批老账，且两条读路径逐条一致
+    const usage = createUsageLedger(store);
+    const scanned = createUsageLedger(withoutListSince(store));
+    const pushed = await usage.list({ since: T1 });
+    expect(pushed.map((record) => record.id)).toEqual(['legacy-plain', 'legacy-odd']);
+    expect(pushed.map((record) => record.id)).toEqual((await scanned.list({ since: T1 })).map((record) => record.id));
+    expect((await usage.summary({ since: T1 })).total.promptTokens).toBe(1000);
+  });
+
+  it('账单不参与同步：所以给它盖 updatedAt 不会改变任何同步行为', () => {
+    expect(SYNC_COLLECTIONS as readonly string[]).not.toContain(USAGE_COLLECTION);
+    // 顺带钉住白名单里确实没有它——上面那条断言依赖的就是这一点
+    expect(COLLECTIONS.usageRecords).toBe(USAGE_COLLECTION);
   });
 });

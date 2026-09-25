@@ -577,9 +577,14 @@ export async function createIndexedDbEntityStore(
       return records.filter((record) => matchesWhere(record.value, where)).length;
     },
 
-    /** 增量读（顺序 62）：走 `updatedAt` 索引，只把新写的那几条拿出来。 */
-    async listSince<T>(collection: string, updatedAt: string): Promise<T[]> {
-      const range = IDBKeyRange.bound([collection, updatedAt], [collection, LAST_TIMESTAMP], true, false);
+    /**
+     * 增量读（顺序 62 / 68）：走 `updatedAt` 索引，只把新写的那几条拿出来。
+     *
+     * `inclusive` 决定下界含不含等于：同步水位线不含（默认），账单的 `since` 含。
+     */
+    async listSince<T>(collection: string, updatedAt: string, options?: { inclusive?: boolean }): Promise<T[]> {
+      const lowerOpen = !(options?.inclusive ?? false);
+      const range = IDBKeyRange.bound([collection, updatedAt], [collection, LAST_TIMESTAMP], lowerOpen, false);
       const records = await db.getAllFromIndex(STORE, 'byCollectionUpdated', range);
       return records.map((record) => record.value) as T[];
     },

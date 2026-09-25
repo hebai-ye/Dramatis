@@ -20,6 +20,8 @@ function summaryOf(records: Array<Partial<UsageRecord>>) {
       speakerName: '',
       price: null,
       createdAt: '2026-09-19T00:00:00.000Z',
+      // 账单的 updatedAt 恒等于 createdAt（顺序 68）；这里只是构造汇总入参，跟着补上。
+      updatedAt: '2026-09-19T00:00:00.000Z',
       ...record,
     })),
   );

@@ -37,7 +37,7 @@ import { USAGE_COLLECTION } from './usage.js';
  * 任何会改变已落盘数据结构的改动都要 +1，并补一条 `Migration`。
  * 这是「从第一天就留好升级路径」的具体做法（ROADMAP P0-1）。
  */
-export const SCHEMA_VERSION = 10;
+export const SCHEMA_VERSION = 11;
 
 export const COLLECTIONS = {
   meta: 'meta',
@@ -521,6 +521,39 @@ export const MIGRATIONS: readonly Migration[] = [
           playerPersona: conversation.playerPersona ?? room?.playerPersona ?? '',
         });
       }
+    },
+  },
+  {
+    version: 11,
+    describe: '把老账单的 updatedAt 归一到 createdAt（顺序 68：since 要能走 updatedAt 索引）',
+    run: async (store) => {
+      /*
+       * 为什么必须做，而不是「反正新记录有」：
+       *
+       * 顺序 68 之后 `usage.list({ since })` 走 `updatedAt` 索引（`byCollectionUpdated`）。
+       * IndexedDB 的索引**不收录没有该字段的记录**——老账单没盖过这个章，就整条从索引里
+       * 消失，于是「按时间读一段」会**安静地少算钱**。这一条迁移就是那个缺口的唯一堵法。
+       *
+       * 为什么是「归一」而不是像迁移 4 那样「只补空缺」：在账单里 `updatedAt` 是**派生
+       * 字段**，定义就是 `createdAt`（流水只增不改），不是 LWW 依据、也不参与同步
+       * （`usageRecords` 不在 SYNC_COLLECTIONS 里）。既然定义如此，凡是与 `createdAt`
+       * 不相等的值都是无意义的，留着只会让「下推读按 updatedAt、整表读按 createdAt」
+       * 这两条路径分叉——那正是这次要消灭的东西。
+       *
+       * 迁移幂等、按版本号只跑一次；中途失败下次启动会重跑（版本号写在最后一步，见 migrate()）。
+       */
+      const records = await store.list<Record<string, unknown> & { id: string }>(COLLECTIONS.usageRecords);
+      const normalized: Array<Record<string, unknown> & { id: string }> = [];
+      for (const record of records) {
+        const createdAt = typeof record.createdAt === 'string' && record.createdAt !== '' ? record.createdAt : nowIso();
+        if (record.updatedAt === createdAt) continue;
+        normalized.push({ ...record, id: record.id, createdAt, updatedAt: createdAt });
+      }
+      /*
+       * 一次 bulkPut，而不是逐条 put：跑过几百轮长对话的库有上千条账单，逐条写就是上千个
+       * 事务，会把启动拖住（这开销一次安装只发生一次，但没理由让它按事务数放大）。
+       */
+      if (normalized.length > 0) await store.bulkPut(COLLECTIONS.usageRecords, normalized);
     },
   },
 ];

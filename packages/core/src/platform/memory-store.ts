@@ -54,11 +54,17 @@ export function createMemoryEntityStore(): EntityStore {
       return total;
     },
 
-    /** 增量读口（顺序 62）：内存实现直接过滤，语义与带索引的实现必须一致。 */
-    async listSince<T>(collection: string, updatedAt: string): Promise<T[]> {
+    /**
+     * 增量读口（顺序 62 / 68）：内存实现直接过滤，语义与带索引的实现必须一致。
+     *
+     * `inclusive` 只影响边界上那一条（`>=` 还是 `>`）：账单要含等于，同步水位线不能含。
+     */
+    async listSince<T>(collection: string, updatedAt: string, options?: { inclusive?: boolean }): Promise<T[]> {
+      const inclusive = options?.inclusive ?? false;
       const rows = [...table(collection).values()].filter((item) => {
         const stamp = (item as { updatedAt?: unknown }).updatedAt;
-        return typeof stamp === 'string' && stamp > updatedAt;
+        if (typeof stamp !== 'string') return false;
+        return inclusive ? stamp >= updatedAt : stamp > updatedAt;
       });
       return structuredClone(rows) as T[];
     },

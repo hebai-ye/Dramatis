@@ -230,7 +230,9 @@ describe('Repository / schema', () => {
     const report = await repo.migrate();
     const [migrated] = await repo.listConversations(room.id);
 
-    expect(report.applied.map((migration) => migration.version)).toEqual([10]);
+    // 从 v9 起步，所以 v10 与它之后的每一步都会跑；这条测试关心的是 v10 那一步。
+    // 加新迁移时这一行要跟着加——故意钉死，免得「迁移没跑」被默默放过。
+    expect(report.applied.map((migration) => migration.version)).toEqual([10, 11]);
     expect(migrated?.personaId).toBe('persona-old');
     expect(migrated?.playerName).toBe('沈砚');
     expect(migrated?.playerPersona).toBe('旧信的主人');
@@ -1123,5 +1125,20 @@ describe('快照的引用复用（顺序 62）', () => {
       'row-1',
       'row-2',
     ]);
+
+    /*
+     * `inclusive`（顺序 68）：账单的 `since` 语义是「这个时刻（含）之后」，
+     * 与同步水位线的「严格大于」刚好差在边界那一条上。两条都要能表达。
+     */
+    for (const since of stamps) {
+      const inclusive = await store.listSince<{ id: string }>('demo', since, { inclusive: true });
+      const full = (await store.list<{ id: string; updatedAt: string }>('demo')).filter(
+        (row) => row.updatedAt >= since,
+      );
+      expect(inclusive.map((row) => row.id)).toEqual(full.map((row) => row.id));
+    }
+    expect(
+      (await store.listSince<{ id: string }>('demo', firstSince, { inclusive: true })).map((row) => row.id),
+    ).toEqual(['row-0', 'row-1', 'row-2']);
   });
 });

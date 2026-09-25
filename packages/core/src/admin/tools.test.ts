@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { DEFAULT_CARD_SYSTEM_PROMPT } from '../model/card.js';
 import { newId } from '../model/ids.js';
 import { createPersona } from '../model/persona.js';
 import type { ChatToolCall } from '../prompt/types.js';
@@ -44,6 +45,7 @@ describe('upsert_character_card', () => {
     expect(result.draft.card.name).toBe('酒馆老板');
     expect(result.draft.card.tags).toEqual(['酒馆']);
     expect(result.draft.card.id).toBeTruthy();
+    expect(result.draft.card.systemPrompt).toBe(DEFAULT_CARD_SYSTEM_PROMPT);
   });
 
   it('修改已有卡时沿用传入的 id', () => {

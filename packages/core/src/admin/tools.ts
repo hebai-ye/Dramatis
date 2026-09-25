@@ -270,7 +270,7 @@ function parseCardDraft(args: Record<string, unknown>, context: AdminToolContext
     firstMessage: longText(args.firstMessage),
     alternateGreetings,
     exampleMessages: longText(args.exampleMessages),
-    systemPrompt: longText(args.systemPrompt),
+    ...(longText(args.systemPrompt) === '' ? {} : { systemPrompt: longText(args.systemPrompt) }),
     tags,
     source: { kind: 'manual', spec: 'dramatis', specVersion: '1', importedAt: new Date().toISOString() },
   };

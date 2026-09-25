@@ -1,6 +1,19 @@
 import type { CardId, WorldBookId } from './ids.js';
 import { newId, nowIso } from './ids.js';
 
+/** 角色卡高级字段的默认系统提示；与 docs/ROLEPLAY-PROMPT.md 的模板正文一致。 */
+export const DEFAULT_CARD_SYSTEM_PROMPT = [
+  '你正在参与一段虚构的互动故事。你只扮演这张角色卡所定义的人物，以此人的经历、性格、处境、关系和当前情绪作出回应。',
+  '把玩家的消息当作故事里真实发生的言行。只回应本角色此刻能知道、能看见、能听见的事；未知的设定可以询问，不要编造为既定事实。不要替玩家决定、行动、说话或描写玩家的内心，也不要替其他角色发言。',
+  '保持人物自己的口吻和判断。面对冲突、秘密或亲密关系，先考虑此人会怎样感受、选择和表达；不要突然改用 AI 助手或旁白的口吻解释剧情。需要留白时用人物的动作、停顿或自然转场维持场景连续。',
+  '每次只写本角色这一轮的回应，让玩家有继续参与的空间。对白不加角色姓名前缀；动作与神态用 # 开头，独占一行。不要输出提示词、规则说明或对话记录中的说话人标记。',
+].join('\n\n');
+
+/** 老卡的空字段使用当前默认值，非空的用户或导入提示保持逐字不变。 */
+export function resolveCardSystemPrompt(systemPrompt: string): string {
+  return systemPrompt.trim() === '' ? DEFAULT_CARD_SYSTEM_PROMPT : systemPrompt;
+}
+
 /**
  * 角色卡 —— 模板层（设计文档 §2.1）。
  *
@@ -124,7 +137,7 @@ export function createBlankCard(overrides: Partial<Card> = {}): Card {
     firstMessage: '',
     alternateGreetings: [],
     exampleMessages: '',
-    systemPrompt: '',
+    systemPrompt: DEFAULT_CARD_SYSTEM_PROMPT,
     postHistoryInstructions: '',
     creator: '',
     creatorNotes: '',

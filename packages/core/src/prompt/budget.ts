@@ -115,6 +115,18 @@ export function applyBudget(blocks: PromptBlock[], options: BudgetOptions): Budg
     }
   }
 
+  // 默认系统提示是完整的沉浸规则；极小窗口下收成原有核心规则。
+  // 自定义系统提示不带 compressed，绝不悄悄改写用户内容。
+  if (used() > maxTokens) {
+    for (const block of current) {
+      if (used() <= maxTokens) break;
+      if (block.kind !== 'system' || block.compressed === undefined) continue;
+      record('compress-system');
+      block.content = block.compressed;
+      if (!compressed.includes(block.id)) compressed.push(block.id);
+    }
+  }
+
   // 兜底：按优先级从低到高丢弃，保证一定产出
   if (used() > maxTokens) {
     const candidates = current.filter((block) => block.droppable).sort((a, b) => a.priority - b.priority);

@@ -1,4 +1,4 @@
-import type { Card, CardSource } from '../../model/card.js';
+import { type Card, type CardSource, DEFAULT_CARD_SYSTEM_PROMPT } from '../../model/card.js';
 import { cardId, nowIso } from '../../model/ids.js';
 import { asRecord, str } from '../../util/json.js';
 import type { Inflate } from './inflate.js';
@@ -178,7 +178,7 @@ export function parseCharacterCard(raw: unknown, source: Partial<CardSource> = {
     firstMessage,
     alternateGreetings: strArray(data.alternate_greetings),
     exampleMessages: str(data.mes_example),
-    systemPrompt: str(data.system_prompt),
+    systemPrompt: str(data.system_prompt).trim() === '' ? DEFAULT_CARD_SYSTEM_PROMPT : str(data.system_prompt),
     postHistoryInstructions: str(data.post_history_instructions),
     creator: str(data.creator),
     creatorNotes: str(data.creator_notes),

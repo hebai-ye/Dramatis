@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { DEFAULT_CARD_SYSTEM_PROMPT } from '../../model/card.js';
 import { CardImportError, decodeCardPayload, importCardFromJson, parseCharacterCard } from './card.js';
 
 function toBase64(text: string): string {
@@ -39,6 +40,7 @@ describe('parseCharacterCard', () => {
     expect(card.characterVersion).toBe('1.2');
     expect(card.source.spec).toBe('chara_card_v2');
     expect(card.source.specVersion).toBe('2.0');
+    expect(card.systemPrompt).toBe('保持角色。');
     expect(warnings).toHaveLength(0);
   });
 
@@ -54,6 +56,7 @@ describe('parseCharacterCard', () => {
     expect(card.name).toBe('Bob');
     expect(card.source.spec).toBe('chara_card_v1');
     expect(card.source.specVersion).toBe('');
+    expect(card.systemPrompt).toBe(DEFAULT_CARD_SYSTEM_PROMPT);
   });
 
   it('未识别字段被保留并产生提示，而不是静默丢弃', () => {

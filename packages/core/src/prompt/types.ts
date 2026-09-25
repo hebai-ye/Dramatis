@@ -110,6 +110,7 @@ export type BudgetStage =
   | 'drop-memory'
   | 'compress-relationship'
   | 'compress-persona'
+  | 'compress-system'
   | 'drop-lowest-priority';
 
 export interface DroppedBlock {

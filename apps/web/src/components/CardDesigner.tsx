@@ -1,4 +1,4 @@
-import { type Card, type CardId, createBlankCard } from '@dramatis/core';
+import { type Card, type CardId, createBlankCard, resolveCardSystemPrompt } from '@dramatis/core';
 import { useEffect, useState } from 'react';
 
 interface Props {
@@ -70,7 +70,11 @@ export function CardDesigner({ cards, disabled, onSave, onDelete }: Props) {
       setDraft(null);
       return;
     }
-    setDraft((previous) => (previous?.id === selected.id ? previous : selected));
+    setDraft((previous) =>
+      previous?.id === selected.id
+        ? previous
+        : { ...selected, systemPrompt: resolveCardSystemPrompt(selected.systemPrompt) },
+    );
   }, [selected]);
 
   const patch = (changes: Partial<Card>): void => {

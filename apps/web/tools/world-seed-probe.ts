@@ -313,6 +313,11 @@ const SIDE: Line = {
   ],
 };
 
+function must<T>(value: T | undefined | null): T {
+  if (value === undefined || value === null) throw new Error('探针数据缺失');
+  return value;
+}
+
 function cardFor(name: string, description: string, scenario: string) {
   return createBlankCard({ name, nickname: name, description, scenario, personality: '寡言，做事先看一步。' });
 }
@@ -384,7 +389,7 @@ async function main(): Promise<void> {
   ];
   for (const card of cards) await repository.saveCard(card);
 
-  const start = createWorldFromCard(cards[0]!, persona);
+  const start = createWorldFromCard(must(cards[0]), persona);
   await repository.saveRoom(start.room);
   await repository.saveConversation(start.conversation);
   await repository.saveScene(start.scene);
@@ -397,7 +402,7 @@ async function main(): Promise<void> {
   const allInstances = [start.instance, ...extra];
   const byName = new Map(allInstances.map((instance) => [instance.displayName, instance]));
 
-  let room = (await repository.getRoom(start.room.id))!;
+  let room = must(await repository.getRoom(start.room.id));
   room = { ...room, instanceIds: allInstances.map((instance) => instance.id), cardIds: cards.map((card) => card.id) };
   await repository.saveRoom(room);
 
@@ -427,8 +432,8 @@ async function main(): Promise<void> {
   }
 
   for (let index = 0; index < lines.length; index += 1) {
-    const line = lines[index]!;
-    const conversation = conversations[index]!;
+    const line = must(lines[index]);
+    const conversation = must(conversations[index]);
     let messages = 0;
     let memories = 0;
 
@@ -436,7 +441,7 @@ async function main(): Promise<void> {
       const turnId = newId();
       const audience = allInstances.map((instance) => instance.id);
       // 说话人跟着这一轮第一条视角走，读起来与抽取结果对得上
-      const speaker = byName.get(turn.observations[0]?.speaker ?? '') ?? allInstances[0]!;
+      const speaker = byName.get(turn.observations[0]?.speaker ?? '') ?? must(allInstances[0]);
       clock += TURN_MS;
       await repository.appendMessages(room.id, [
         messageOf({

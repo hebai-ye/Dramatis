@@ -20,6 +20,10 @@ server {
     ssl_certificate     /etc/ssl/dramatis/fullchain.pem;
     ssl_certificate_key /etc/ssl/dramatis/privkey.pem;
 
+    # 安全响应头（HSTS、nosniff、Referrer-Policy、防嵌套、CSP）——见 nginx-security-headers.conf，
+    # 先拷过去：sudo cp nginx-security-headers.conf /etc/nginx/snippets/dramatis-security-headers.conf
+    include /etc/nginx/snippets/dramatis-security-headers.conf;
+
     # 网页（apps/web/dist 拷到这里）
     root /var/www/dramatis;
     index index.html;
@@ -29,13 +33,18 @@ server {
         try_files $uri $uri/ /index.html;
     }
 
-    # service worker 不要缓存，否则更新发布不出去
+    # service worker 不要缓存，否则更新发布不出去。
+    # 注意：location 里一写 add_header，server 级的 add_header 就全部不继承了，
+    # 所以这里必须再 include 一次安全头。
     location = /sw.js {
+        include /etc/nginx/snippets/dramatis-security-headers.conf;
         add_header Cache-Control "no-cache";
     }
 
     # 同步 API：转发到本机服务端
     location /sync/ {
+        # 与服务端 MAX_BODY_BYTES（8MB）对齐；nginx 默认 1MB，首次同步可能 413
+        client_max_body_size 8m;
         proxy_pass http://127.0.0.1:8787/;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;

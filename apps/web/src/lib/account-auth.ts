@@ -27,6 +27,7 @@ import {
 } from '@dramatis/core';
 import { createAccount, createIndexedDbEntityStore, type LocalAccount, loadAccountRegistry } from './db';
 import { createBrowserKeyStore, type KeyStorageMode } from './keystore';
+import { assertPassword } from './password-policy';
 import { SYNC_CONFIG_META_KEY, type SyncConfig, syncPasswordKeyRef } from './sync';
 
 /** 本站自带的同步服务端（nginx 把 `/sync` 反代到本机 8787）。 */
@@ -34,14 +35,8 @@ export function selfEndpoint(): string {
   return `${window.location.origin}/sync`;
 }
 
-/** 邮箱那套「至少几位」的门槛照旧：密码要挡住猜密码的人。 */
-export const MIN_PASSWORD_LENGTH = 6;
-
-export function assertPassword(password: string): void {
-  if (password.trim().length < MIN_PASSWORD_LENGTH) {
-    throw new Error(`密码太短了，至少 ${String(MIN_PASSWORD_LENGTH)} 位（它要挡住猜密码的人）。`);
-  }
-}
+/** 密码门槛统一放在 password-policy（审计 A9：建空间、注册、换密码同一条下限）。 */
+export { assertPassword, MIN_PASSWORD_LENGTH } from './password-policy';
 
 /** 把同步配置写进**某个账户自己的库**（注册/登录时那个账户还不是当前账户）。 */
 async function writeAccountSyncConfig(dbName: string, config: SyncConfig): Promise<void> {

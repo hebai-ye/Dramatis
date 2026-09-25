@@ -2,6 +2,7 @@ import type { SyncDeviceSummary } from '@dramatis/core';
 import { useRef, useState } from 'react';
 import { formatTime } from '../lib/format';
 import type { KeyStorageMode } from '../lib/keystore';
+import { MIN_PASSWORD_LENGTH, passwordStrengthHint } from '../lib/password-policy';
 import { parseSnapshot, type ServerSnapshot, SNAPSHOT_REMIND_MS } from '../lib/snapshot';
 import { describeReport, type SyncApi } from '../lib/sync';
 
@@ -165,6 +166,9 @@ export function SyncPanel({ api, disabled }: Props) {
               placeholder={connected ? '改了密码/恢复码才需要填' : '自己设一个够长的'}
               onChange={(event) => setSecret(event.target.value)}
             />
+            {connected || passwordStrengthHint(secret) === null ? null : (
+              <span className="hint">新建空间时：{passwordStrengthHint(secret)}（加入已有空间用原来的密码即可）</span>
+            )}
           </div>
 
           <div className="field">
@@ -500,11 +504,14 @@ export function SyncPanel({ api, disabled }: Props) {
                 placeholder="新密码（至少 6 位）"
                 onChange={(event) => setNewPassword(event.target.value)}
               />
+              {passwordStrengthHint(newPassword) === null ? null : (
+                <span className="hint">{passwordStrengthHint(newPassword)}</span>
+              )}
             </div>
             <div className="save-bar">
               <button
                 type="button"
-                disabled={api.busy || newPassword.trim().length < 6}
+                disabled={api.busy || newPassword.trim().length < MIN_PASSWORD_LENGTH}
                 title="换完之后只知道旧密码的设备会同步不了；恢复码仍然有效"
                 onClick={() => {
                   if (

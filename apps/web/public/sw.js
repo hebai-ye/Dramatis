@@ -182,7 +182,7 @@ self.addEventListener('fetch', (event) => {
       }
       return fetch(request)
         .then((response) => {
-          record('network ' + String(response.status));
+          record(`network ${String(response.status)}`);
           // 只缓存成功的同源响应；opaque 与错误响应不入库
           if (response.ok && response.type === 'basic') {
             const copy = response.clone();
@@ -191,7 +191,7 @@ self.addEventListener('fetch', (event) => {
           return response;
         })
         .catch((error) => {
-          record('network 失败: ' + String(error).slice(0, 40));
+          record(`network 失败: ${String(error).slice(0, 40)}`);
           throw error;
         });
     }),

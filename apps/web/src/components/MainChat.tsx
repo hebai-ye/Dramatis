@@ -8,6 +8,8 @@ import {
   type InstanceId,
   type Message,
   type MessageId,
+  type ReplyLength,
+  replyLengthOf,
   type Scene,
 } from '@dramatis/core';
 import { type MouseEvent, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
@@ -109,6 +111,19 @@ const MODE_OPTIONS: Array<{
     read: (modes) => historyPolicyOf(modes).mode === 'recap-aware',
     write: (checked) => ({ historyMode: checked ? 'recap-aware' : 'full' }),
   },
+];
+
+/**
+ * 回答长度（顺序 67e，用户点名）。
+ *
+ * 178 轮真实模型长跑里，回复从平均 171 字涨到 325 字，而且越写越像旁白。
+ * 长度不能靠硬截断收拾（那会切掉半句话），所以给用户三个档位，
+ * 由提示词里的规则去管；缺省「标准」与老数据一致。
+ */
+const REPLY_LENGTH_OPTIONS: Array<{ value: ReplyLength; label: string; note: string }> = [
+  { value: 'short', label: '偏短', note: '两三句、60 字以内，节奏快' },
+  { value: 'normal', label: '标准', note: '三到五句、150 字以内（默认）' },
+  { value: 'long', label: '偏长', note: '可以写到 400 字，适合铺陈场景' },
 ];
 
 function shorten(text: string, max: number): string {
@@ -658,6 +673,23 @@ function MainChatImpl({
                       <span>
                         <strong>{mode.label}</strong>
                         <span className="hint">{mode.note}</span>
+                      </span>
+                    </label>
+                  ))}
+
+                  <p className="hint">回答长度</p>
+                  {REPLY_LENGTH_OPTIONS.map((option) => (
+                    <label key={option.value} className="mode-option">
+                      <input
+                        type="radio"
+                        name={`reply-length-${conversation.id}`}
+                        checked={replyLengthOf(conversation.modes) === option.value}
+                        disabled={archived}
+                        onChange={() => onChangeModes({ replyLength: option.value })}
+                      />
+                      <span>
+                        <strong>{option.label}</strong>
+                        <span className="hint">{option.note}</span>
                       </span>
                     </label>
                   ))}

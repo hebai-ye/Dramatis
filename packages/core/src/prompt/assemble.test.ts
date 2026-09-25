@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { buildMemoryAttachment, withAttachment } from '../memory/attachment.js';
-import type { Card } from '../model/card.js';
+import { type Card, DEFAULT_CARD_SYSTEM_PROMPT } from '../model/card.js';
+import { defaultConversationModes, type ReplyLength, replyLengthOf } from '../model/conversation.js';
 import { cardId, eventId, type InstanceId, instanceId, newId, nowIso, PLAYER, roomId, sceneId } from '../model/ids.js';
 import { type CharacterInstance, neutralTraits } from '../model/instance.js';
 import type { MemoryEvent } from '../model/message.js';
@@ -212,6 +213,16 @@ describe('assemblePrompt', () => {
     expect(system).toContain('信任 +0.40');
   });
 
+  it('旧卡空字段实际使用高级系统提示默认值，自定义内容保持原样', () => {
+    const { card, instance, room, scene } = fixtures();
+    const input = { card, instance, room, scene, history: [], playerInput: '继续', budget: baseBudget };
+    const defaultPrompt = assemblePrompt(input);
+    expect(defaultPrompt.blocks.find((block) => block.id === 'system')?.content).toBe(DEFAULT_CARD_SYSTEM_PROMPT);
+
+    const customPrompt = assemblePrompt({ ...input, card: { ...card, systemPrompt: '  我自己的规则。\n' } });
+    expect(customPrompt.blocks.find((block) => block.id === 'system')?.content).toBe('  我自己的规则。\n');
+  });
+
   it('对话级玩家身份覆盖世界上的旧默认身份', () => {
     const { card, instance, room, scene } = fixtures();
     const prompt = assemblePrompt({
@@ -275,6 +286,7 @@ describe('assemblePrompt', () => {
     expect(prompt.messages.at(-1)?.content).toBe('继续');
     expect(prompt.messages[0]?.role).toBe('system');
     expect(prompt.report.fits).toBe(true);
+    expect(prompt.report.compressed).toContain('system');
   });
 
   it('历史按时间顺序映射成 user / assistant', () => {
@@ -887,5 +899,89 @@ describe('assemblePrompt / 多角色场景', () => {
     // 甚至写成别人的名字（DeepSeek 网页版端到端测试里就是这样），所以要明说
     expect(system).toContain('不要在回复开头写任何角色名');
     expect(system).toContain('那是他的回合');
+  });
+});
+
+/**
+ * 顺序 67e：回答长度与反重复。
+ *
+ * 来历是 2026-09-25 的 178 轮真实模型长跑（EVAL 第六十八节）：回复从 171 字
+ * 涨到 325 字，自称名字从 0.9 次涨到 5.6 次。用户裁定「动作可以连着做几个
+ * 不同的，但不许同一个动作重复」，并要求给用户一个长度档位。
+ */
+describe('回答长度与反重复（顺序 67e）', () => {
+  it('缺省是标准档；认不出的值也退回标准', () => {
+    expect(replyLengthOf(undefined)).toBe('normal');
+    expect(replyLengthOf({ playerFirst: false, silent: false })).toBe('normal');
+    expect(replyLengthOf({ playerFirst: false, silent: false, replyLength: 'short' })).toBe('short');
+    expect(replyLengthOf({ playerFirst: false, silent: false, replyLength: 'long' })).toBe('long');
+    expect(replyLengthOf({ playerFirst: false, silent: false, replyLength: 'huge' as unknown as ReplyLength })).toBe(
+      'normal',
+    );
+  });
+
+  it('新对话的缺省模式里就带着标准档', () => {
+    expect(defaultConversationModes().replyLength).toBe('normal');
+  });
+
+  it('三档各自只出现自己那条规矩', () => {
+    const { card, instance, room, scene } = fixtures();
+    const styleOf = (replyLength: ReplyLength) =>
+      assemblePrompt({
+        card,
+        instance,
+        room,
+        scene,
+        history: [],
+        playerInput: '继续',
+        modes: { playerFirst: false, silent: false, replyLength },
+        budget: baseBudget,
+      }).blocks.find((block) => block.id === 'reply-style')?.content ?? '';
+
+    const short = styleOf('short');
+    const normal = styleOf('normal');
+    const long = styleOf('long');
+
+    expect(short).toContain('回答长度（偏短）');
+    expect(short).not.toContain('回答长度（标准）');
+    expect(normal).toContain('回答长度（标准）');
+    expect(long).toContain('回答长度（偏长）');
+    expect(long).not.toContain('回答长度（标准）');
+  });
+
+  it('反重复规矩每一档都在，且允许连续做多个不同动作', () => {
+    const { card, instance, room, scene } = fixtures();
+    const style =
+      assemblePrompt({
+        card,
+        instance,
+        room,
+        scene,
+        history: [],
+        playerInput: '继续',
+        budget: baseBudget,
+      }).blocks.find((block) => block.id === 'reply-style')?.content ?? '';
+
+    expect(style).toContain('可以连着做几个不同的动作');
+    expect(style).toContain('不要用你自己的名字当主语');
+    expect(style).toContain('已经答过的事不要复述');
+    expect(style).toContain('回答长度（标准）');
+  });
+
+  it('这一块进了 system 提示，缺省档也写进正文', () => {
+    const { card, instance, room, scene } = fixtures();
+    const prompt = assemblePrompt({
+      card,
+      instance,
+      room,
+      scene,
+      history: [],
+      playerInput: '继续',
+      budget: baseBudget,
+    });
+
+    const system = prompt.messages[0]?.content ?? '';
+    expect(system).toContain('可以连着做几个不同的动作');
+    expect(system).toContain('回答长度（标准）');
   });
 });

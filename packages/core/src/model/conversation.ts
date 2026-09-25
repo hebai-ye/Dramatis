@@ -47,9 +47,28 @@ export interface ConversationModes {
   historyMode?: HistoryMode;
   /** 近窗：就算场记已覆盖也保留原文的最近条数。缺省 40。 */
   historyNearWindow?: number;
+  /**
+   * 回答长度（顺序 67e，用户点名）：偏短 / 标准 / 偏长。
+   *
+   * 缺省 `normal`——老数据里没有这个字段，缺省即标准，不需要迁移。
+   * 规矩落在提示词里（`prompt/reply-style.ts`），不是硬截断：模型仍然写得完
+   * 一个完整的意思，只是不再把同一件事翻来覆去铺陈。
+   */
+  replyLength?: ReplyLength;
 }
 
 export type HistoryMode = 'full' | 'recap-aware';
+
+/** 回答长度档位（顺序 67e）。 */
+export type ReplyLength = 'short' | 'normal' | 'long';
+
+export const DEFAULT_REPLY_LENGTH: ReplyLength = 'normal';
+
+/** 认不出的值一律退回标准——绝不静默放大成偏长。 */
+export function replyLengthOf(modes: ConversationModes | undefined): ReplyLength {
+  const value = modes?.replyLength;
+  return value === 'short' || value === 'long' ? value : DEFAULT_REPLY_LENGTH;
+}
 
 /**
  * 装配历史时用的策略（顺序 58）。
@@ -78,7 +97,7 @@ export function historyPolicyOf(modes: ConversationModes | undefined): HistoryPo
 }
 
 export function defaultConversationModes(): ConversationModes {
-  return { playerFirst: false, silent: false, intentFirst: true };
+  return { playerFirst: false, silent: false, intentFirst: true, replyLength: DEFAULT_REPLY_LENGTH };
 }
 
 /** 意图先行默认开：只有显式关掉才算关。 */

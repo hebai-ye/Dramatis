@@ -7,8 +7,13 @@ import {
   renderAttachmentExpansion,
 } from '../memory/attachment.js';
 import type { ChapterSummary } from '../memory/summary.js';
-import type { Card, WorldBookPosition } from '../model/card.js';
-import { type ConversationModes, type HistoryPolicy, historyPolicyOf } from '../model/conversation.js';
+import {
+  type Card,
+  DEFAULT_CARD_SYSTEM_PROMPT,
+  resolveCardSystemPrompt,
+  type WorldBookPosition,
+} from '../model/card.js';
+import { type ConversationModes, type HistoryPolicy, historyPolicyOf, replyLengthOf } from '../model/conversation.js';
 import { type InstanceId, PLAYER } from '../model/ids.js';
 import type { Affect, CharacterInstance, TraitAxis } from '../model/instance.js';
 import type { Message } from '../model/message.js';
@@ -18,6 +23,7 @@ import { ACTION_FORMAT_EXAMPLES, ACTION_FORMAT_RULE, normalizeCardExample } from
 import { heuristicTokenCounter, type TokenCounter } from '../token/estimate.js';
 import { applyBudget } from './budget.js';
 import { expandHistoryOnMention, partitionHistory, selectHistoryFor } from './history.js';
+import { NO_REPEAT_RULE, REPLY_LENGTH_RULES } from './reply-style.js';
 import type { BudgetReport, ChatMessage, PromptBlock, PromptPlacement } from './types.js';
 
 /**
@@ -709,9 +715,10 @@ export function assemblePrompt(input: AssembleInput): AssembledPrompt {
   // 身份是本轮不可丢的约束，限住长度以免一张极长身份卡挤爆提示词预算。
   const playerDescription = truncate(input.player?.description ?? input.room.playerPersona, 320);
 
-  const systemContent =
-    options.systemPrompt ??
-    (input.card.systemPrompt.trim() !== '' ? input.card.systemPrompt : defaultSystemPrompt(input.card, playerName));
+  const systemContent = options.systemPrompt ?? resolveCardSystemPrompt(input.card.systemPrompt);
+  const compressDefaultSystem =
+    options.systemPrompt === undefined &&
+    (input.card.systemPrompt.trim() === '' || input.card.systemPrompt === DEFAULT_CARD_SYSTEM_PROMPT);
 
   const blocks: PromptBlock[] = [
     {
@@ -719,6 +726,7 @@ export function assemblePrompt(input: AssembleInput): AssembledPrompt {
       kind: 'system',
       label: '基本规则',
       content: systemContent,
+      ...(compressDefaultSystem ? { compressed: defaultSystemPrompt(input.card, playerName) } : {}),
       priority: PRIORITY.system,
       droppable: false,
     },
@@ -829,6 +837,26 @@ export function assemblePrompt(input: AssembleInput): AssembledPrompt {
 
   // 示范单独成块并且**可丢弃**：它是提升格式遵守率的优化项，不是必需品。
   // 预算紧张时应当先让位给记忆与关系，而不是把整条 prompt 顶出预算。
+  /*
+   * 顺序 67e：回答长度与反重复。
+   *
+   * 178 轮真实模型长跑里，回复从 171 字涨到 325 字、自称名字从 0.9 次涨到 5.6 次，
+   * 于是「她把杯子放下」写成了「（角色名）把杯子放下」。用户裁定：动作可以连着做
+   * 几个不同的，但不许同一个动作重复；长度要收紧，同时给用户三档自己选。
+   *
+   * 它**可丢弃**：这是质量规矩，不是正确性必需——预算被榨干时先让位给记忆与人设。
+   * 但优先级只比「本轮指令」低一点，正常预算下一定在，历史被丢光之前轮不到它。
+   */
+  blocks.push({
+    id: 'reply-style',
+    kind: 'format',
+    label: '回答长度与反重复',
+    content: [NO_REPEAT_RULE, REPLY_LENGTH_RULES[replyLengthOf(input.modes)]].join('\n'),
+    priority: PRIORITY.instruction - 50,
+    droppable: true,
+    compressed: REPLY_LENGTH_RULES[replyLengthOf(input.modes)],
+  });
+
   blocks.push({
     id: 'format',
     kind: 'format',

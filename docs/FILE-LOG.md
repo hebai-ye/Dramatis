@@ -1034,7 +1034,35 @@ git ls-files | ForEach-Object {
 | `docs/ROLEPLAY-PROMPT.md` | 新增 | 完整的角色沉浸模板、角色卡系统提示粘贴路径与服务商过滤边界 |
 | `docs/STATUS.md` / `FILE-LOG.md` | 改 | 加入文档入口与文件记录 |
 
-## 五十六、几点注意
+## 五十六、2026-09-25：角色卡高级系统提示默认值
+
+| 文件 | 新增/修改 | 说明 |
+| --- | --- | --- |
+| `packages/core/src/model/card.ts` / `card.test.ts` | 改 / 新增 | 默认模板与旧空字段解析；新卡默认值单测 |
+| `packages/core/src/compat/sillytavern/card.ts` / `card.test.ts` | 改 | 导入卡空字段用默认值，自定义提示不覆盖 |
+| `packages/core/src/admin/tools.ts` / `tools.test.ts` | 改 | 管理员新建卡草稿沿用默认值 |
+| `packages/core/src/prompt/assemble.ts` / `assemble.test.ts` / `budget.ts` / `types.ts` | 改 | 旧空字段运行时回退到默认模板；小预算只压缩默认提示 |
+| `apps/web/src/components/CardDesigner.tsx` | 改 | 旧卡空字段在高级编辑器中显示实际默认值 |
+| `docs/ROLEPLAY-PROMPT.md` / `STATUS.md` / `TASKS.md` / `EVAL.md` / `FILE-LOG.md` | 改 | 使用路径、范围和验证记录 |
+
+## 五十六半、2026-09-25：长对话质量（旁白腔 / 动作重复 / 回答模式）
+
+顺序 67e。来源是 2026-09-25 用真实模型在侧边浏览器跑的 178 轮质量长跑
+（实录与统计在 `%USERPROFILE%\.codex\visualizations\...\quality-run-transcript.json`，
+结论见 EVAL 第六十八节）。
+
+| 文件 | 改 / 新增 | 说明 |
+| --- | --- | --- |
+| `packages/core/src/model/conversation.ts` | 改 | `ConversationModes.replyLength` 三档（偏短 / 标准 / 偏长）与 `replyLengthOf`，缺省标准、认不出的值退回标准 |
+| `packages/core/src/prompt/reply-style.ts` | 新增 | 三档长度规矩 + 反重复规矩（允许连续多个不同动作、不重复同一动作、动作句不拿自己的名字当主语、不复述已答过的事） |
+| `packages/core/src/prompt/assemble.ts` | 改 | 新增可丢弃块 `reply-style`（优先级 850，仅低于本轮指令），进 system 提示 |
+| `packages/core/src/index.ts` | 改 | 导出 `prompt/reply-style.js` |
+| `packages/core/src/prompt/assemble.test.ts` | 改 | 缺省与非法值、三档互斥、反重复规矩进正文，共 5 条 |
+| `apps/web/src/components/MainChat.tsx` | 改 | 输入区加号菜单里加「回答长度」三个单选项，写回对话模式 |
+| `apps/web/src/components/CardDesigner.tsx`、`packages/core/src/compat/sillytavern/card.ts` | 改（格式） | 这两处是另一条会话的未提交改动；`biome check` 报格式/导入顺序错误，本批顺手格式化，语义未改 |
+| `docs/STATUS.md` / `TASKS.md` / `EVAL.md` / `FILE-LOG.md` | 改 | 本轮范围、实现与验证记录 |
+
+## 五十七、几点注意
 
 ---
 

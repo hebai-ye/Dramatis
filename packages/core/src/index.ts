@@ -27,6 +27,7 @@ export * from './platform/memory-store.js';
 export * from './prompt/assemble.js';
 export * from './prompt/budget.js';
 export * from './prompt/history.js';
+export * from './prompt/reply-style.js';
 export * from './prompt/types.js';
 export * from './prompt/web-bridge.js';
 export * from './provider/collect.js';

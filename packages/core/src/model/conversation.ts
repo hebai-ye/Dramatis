@@ -55,8 +55,28 @@ export interface ConversationModes {
    * 一个完整的意思，只是不再把同一件事翻来覆去铺陈。
    */
   replyLength?: ReplyLength;
-  /** 当前对话额外的高级系统提示；不改角色卡，也不跨对话继承。 */
+  /**
+   * 无限制模式（用户 2026-09-25 点名，替换了原来的「高级系统提示」输入框）。
+   *
+   * 打开后把 `prompt/unlimited.ts` 里那份提示词整块加进本轮系统提示；关掉什么都不加。
+   * 缺省**关**——老数据里没有这个字段，不需要迁移。
+   *
+   * 提示词正文不在这里，也不在对话数据里：它住在代码里的一个常量，全仓库一处
+   * （这样改一次就对所有对话生效，也不会随同步把一个长字符串搬来搬去）。
+   */
+  unlimited?: boolean;
+  /**
+   * 旧版「高级系统提示 · 当前对话」的文本（顺序 67e 加的，2026-09-25 被无限制模式取代）。
+   *
+   * **仍然生效**：界面上不再提供编辑入口，但已填过内容的对话照旧装配成一条系统块，
+   * 免得升级后悄悄改掉用户当初写下的要求。菜单里会显示一条提示并提供「清空」。
+   */
   advancedSystemPrompt?: string;
+}
+
+/** 无限制模式是否打开；缺省关（老数据没有这个字段）。 */
+export function unlimitedModeOf(modes: ConversationModes | undefined): boolean {
+  return modes?.unlimited === true;
 }
 
 export type HistoryMode = 'full' | 'recap-aware';
@@ -99,7 +119,14 @@ export function historyPolicyOf(modes: ConversationModes | undefined): HistoryPo
 }
 
 export function defaultConversationModes(): ConversationModes {
-  return { playerFirst: false, silent: false, intentFirst: true, replyLength: DEFAULT_REPLY_LENGTH };
+  return {
+    playerFirst: false,
+    silent: false,
+    intentFirst: true,
+    replyLength: DEFAULT_REPLY_LENGTH,
+    // 无限制模式缺省关：它是用户自己要打开的开关，不该悄悄替人打开
+    unlimited: false,
+  };
 }
 
 /** 意图先行默认开：只有显式关掉才算关。 */

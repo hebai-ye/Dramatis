@@ -13,7 +13,13 @@ import {
   resolveCardSystemPrompt,
   type WorldBookPosition,
 } from '../model/card.js';
-import { type ConversationModes, type HistoryPolicy, historyPolicyOf, replyLengthOf } from '../model/conversation.js';
+import {
+  type ConversationModes,
+  type HistoryPolicy,
+  historyPolicyOf,
+  replyLengthOf,
+  unlimitedModeOf,
+} from '../model/conversation.js';
 import { type InstanceId, PLAYER } from '../model/ids.js';
 import type { Affect, CharacterInstance, TraitAxis } from '../model/instance.js';
 import type { Message } from '../model/message.js';
@@ -25,6 +31,7 @@ import { applyBudget } from './budget.js';
 import { expandHistoryOnMention, partitionHistory, selectHistoryFor } from './history.js';
 import { NO_REPEAT_RULE, REPLY_LENGTH_RULES } from './reply-style.js';
 import type { BudgetReport, ChatMessage, PromptBlock, PromptPlacement } from './types.js';
+import { unlimitedPromptOf } from './unlimited.js';
 
 /**
  * 召回记忆的展示形态。
@@ -704,6 +711,31 @@ export function toChatMessages(blocks: PromptBlock[]): ChatMessage[] {
   return messages;
 }
 
+/** 无限制模式那一块的 id：提示词检查器、界面与测试都按它找。 */
+export const UNLIMITED_BLOCK_ID = 'unlimited';
+
+/**
+ * 无限制模式那一条 system 块（用户 2026-09-25 点名）。
+ *
+ * 传 `null`（模式关着，或提示词还没粘贴）就返回 `null` —— 调用方据此**什么都不加**。
+ *
+ * 为什么 `droppable: false`：这是用户**自己打开的**开关，预算一紧就悄悄不加，
+ * 等于告诉他「开了」却没开。要挤就挤别人（它和角色卡系统提示同一档）。
+ * 代价是提示词写太长会挤掉记忆与场记——所以长度由用户自己负责，
+ * `unlimited.ts` 的注释里写了这个账。
+ */
+export function buildUnlimitedModeBlock(prompt: string | null): PromptBlock | null {
+  if (prompt === null) return null;
+  return {
+    id: UNLIMITED_BLOCK_ID,
+    kind: 'system',
+    label: '无限制模式',
+    content: prompt,
+    priority: PRIORITY.system,
+    droppable: false,
+  };
+}
+
 /**
  * 按设计文档 §6 的顺序装配 prompt，并交给预算守卫降级。
  */
@@ -732,17 +764,32 @@ export function assemblePrompt(input: AssembleInput): AssembledPrompt {
     },
   ];
 
+  /*
+   * 旧版「高级系统提示 · 当前对话」（顺序 67e 的输入框，2026-09-25 被无限制模式取代）。
+   *
+   * 界面已经不再提供编辑入口，但**照旧装配**：用户当初写下的要求不该因为一次 UI 重构
+   * 就悄悄失效。（菜单里会显示它还在生效，并给一个「清空」按钮。）
+   */
   const advancedSystemPrompt = input.modes?.advancedSystemPrompt?.trim();
   if (advancedSystemPrompt) {
     blocks.push({
       id: 'conversation-system',
       kind: 'system',
-      label: '本对话高级系统提示',
+      label: '本对话高级系统提示（旧）',
       content: advancedSystemPrompt,
       priority: PRIORITY.system,
       droppable: false,
     });
   }
+
+  /*
+   * 无限制模式（用户 2026-09-25 点名）：把 `prompt/unlimited.ts` 里那份提示词整块放进来。
+   *
+   * 提示词正文**只在 `unlimited.ts` 一处**，这里只负责「模式开着且提示词非空」时放进去；
+   * 空提示词返回 null，于是什么都不加。
+   */
+  const unlimitedBlock = buildUnlimitedModeBlock(unlimitedModeOf(input.modes) ? unlimitedPromptOf() : null);
+  if (unlimitedBlock !== null) blocks.push(unlimitedBlock);
 
   /*
    * 世界书按位置落（顺序 60）：每条命中一块，`placement` 决定它插到哪一层。

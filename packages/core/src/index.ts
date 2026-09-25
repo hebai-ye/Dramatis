@@ -29,6 +29,7 @@ export * from './prompt/budget.js';
 export * from './prompt/history.js';
 export * from './prompt/reply-style.js';
 export * from './prompt/types.js';
+export * from './prompt/unlimited.js';
 export * from './prompt/web-bridge.js';
 export * from './provider/collect.js';
 export * from './provider/manual.js';

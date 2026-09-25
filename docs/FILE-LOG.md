@@ -1081,7 +1081,25 @@ TASKS 第〇节顺序 68。用户裁定「A+B 推进」；原方案里的 `limit
 | `packages/core/src/storage/budget.test.ts` | 改 | 构造汇总入参时补上 `updatedAt`（类型新增字段） |
 | `docs/STATUS.md` / `TASKS.md` / `EVAL.md` / `FILE-LOG.md` | 改 | 本轮范围、实测数字、没做与没验的部分；新增顺序 80 |
 
-## 五十八、几点注意
+## 五十八、2026-09-25：无限制模式（加号里的「高级系统提示」输入框改成开关）
+
+用户点名（记成顺序 68a）：把输入区「＋」里的「高级系统提示 · 当前对话」文本框换成一个
+对话级开关，提示词正文移到代码里的一处常量，方便用户自己粘贴与迭代。做法与验证见
+EVAL 第七十节，粘贴位置见 [ROLEPLAY-PROMPT.md](./ROLEPLAY-PROMPT.md)。
+
+| 文件 | 改 / 新增 | 说明 |
+| --- | --- | --- |
+| `packages/core/src/prompt/unlimited.ts` | 新增 | **提示词正文的唯一住所**：`UNLIMITED_MODE_PROMPT`（当前为空）+ `unlimitedPromptOf()`（空/全空白 → `null`）。注释里写了粘贴位置、长度代价与「只影响我们发出去的提示词」这条边界 |
+| `packages/core/src/model/conversation.ts` | 改 | `ConversationModes.unlimited` + `unlimitedModeOf()`（缺省关）；`defaultConversationModes()` 带上 `unlimited: false`；`advancedSystemPrompt` 的注释改成「旧字段、仍生效」 |
+| `packages/core/src/prompt/assemble.ts` | 改 | 新增导出 `UNLIMITED_BLOCK_ID` 与 `buildUnlimitedModeBlock()`（`droppable: false`、`PRIORITY.system`）；旧「高级系统提示」块标签加「（旧）」；接入装配 |
+| `packages/core/src/index.ts` | 改 | 导出 `prompt/unlimited.js` |
+| `packages/core/src/prompt/assemble.test.ts` | 改 | 新增 6 条：缺省关、空正文不给块、块形状、装配两条分支（常量空 / 常量非空都绿）、关着时不加块、旧字段仍装配 |
+| `apps/web/src/components/MainChat.tsx` | 改 | 加号菜单：删文本框 + 草稿 state + 同步 effect，改为 `MODE_OPTIONS` 里的「无限制模式」勾选框；常量未填时提示一句；旧字段非空时显示说明 + 「清空旧提示」 |
+| `apps/web/src/styles.css` | 改 | 删 `.mode-prompt-label` / `.mode-prompt-input`（不再使用）；`.mode-prompt-save` → `.mode-menu-button` |
+| `docs/ROLEPLAY-PROMPT.md` | 改 | 新增「当前对话的额外提示：无限制模式」：粘贴位置、生效确认方式、三条须知、旧字段的处理 |
+| `docs/STATUS.md` / `TASKS.md` / `EVAL.md` / `FILE-LOG.md` | 改 | 本轮范围、实现与验证记录；顺序 68a |
+
+## 五十九、几点注意
 
 ---
 

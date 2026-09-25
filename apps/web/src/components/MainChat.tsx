@@ -11,6 +11,8 @@ import {
   type ReplyLength,
   replyLengthOf,
   type Scene,
+  unlimitedModeOf,
+  unlimitedPromptOf,
 } from '@dramatis/core';
 import { type MouseEvent, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
@@ -110,6 +112,22 @@ const MODE_OPTIONS: Array<{
     note: `已被场记压过、又不在最近 ${String(DEFAULT_HISTORY_NEAR_WINDOW)} 条里的原文不再逐条带给模型，由场记、章节与记忆代表；你提到关键词时会取回原文。关掉就是原文全带（超出窗口才从最旧的丢）`,
     read: (modes) => historyPolicyOf(modes).mode === 'recap-aware',
     write: (checked) => ({ historyMode: checked ? 'recap-aware' : 'full' }),
+  },
+  /*
+   * 无限制模式（用户 2026-09-25 点名）。
+   *
+   * 它替换了原来那个「高级系统提示 · 当前对话」输入框：提示词不再一条对话一份地手打，
+   * 而是住在代码里的一个常量（`packages/core/src/prompt/unlimited.ts`），
+   * 这里只留一个开关。开关是**对话级**的，与其它模式一致。
+   *
+   * 提示词为空时开关照常显示，但不会改变提示词（下面会说明一句）。
+   */
+  {
+    key: 'unlimited',
+    label: '无限制模式',
+    note: '把内置的那段提示词整块加进这条对话的系统提示（不可丢弃，预算紧张时也不让位）',
+    read: (modes) => unlimitedModeOf(modes),
+    write: (checked) => ({ unlimited: checked }),
   },
 ];
 
@@ -219,15 +237,20 @@ function MainChatImpl({
   const [input, setInput] = useState('');
   const [editingId, setEditingId] = useState<MessageId | null>(null);
   const [modeMenuOpen, setModeMenuOpen] = useState(false);
-  const [advancedPromptDraft, setAdvancedPromptDraft] = useState(conversation.modes.advancedSystemPrompt ?? '');
-  const savedAdvancedPrompt = conversation.modes.advancedSystemPrompt ?? '';
-  const promptSource = useRef({ conversationId: conversation.id, text: savedAdvancedPrompt });
-  useEffect(() => {
-    if (promptSource.current.conversationId === conversation.id && promptSource.current.text === savedAdvancedPrompt)
-      return;
-    promptSource.current = { conversationId: conversation.id, text: savedAdvancedPrompt };
-    setAdvancedPromptDraft(savedAdvancedPrompt);
-  }, [conversation.id, savedAdvancedPrompt]);
+  /**
+   * 无限制模式的提示词填了没有（用户 2026-09-25）。
+   *
+   * 常量是编译期定的，读一次就够。没填时开关打开也**不会**改变提示词，
+   * 所以菜单里要说明一句，免得「开了却看不出反应」。
+   */
+  const unlimitedReady = unlimitedPromptOf() !== null;
+  /**
+   * 旧版「高级系统提示 · 当前对话」（顺序 67e 的输入框）还留着内容的证据。
+   *
+   * 界面不再提供编辑入口，但那段文字**仍然在装配**——用户当初写下的要求不该因为
+   * 一次界面重构就悄悄失效。留着就说明一句，并给一个显式的清空入口。
+   */
+  const legacyAdvancedPrompt = conversation.modes.advancedSystemPrompt?.trim() ?? '';
   const [dragOver, setDragOver] = useState(false);
   const [highlightId, setHighlightId] = useState<MessageId | null>(null);
   /**
@@ -703,28 +726,33 @@ function MainChatImpl({
                     </label>
                   ))}
 
-                  <label className="mode-prompt-label" htmlFor={`advanced-prompt-${conversation.id}`}>
-                    高级系统提示 · 当前对话
-                  </label>
-                  <p className="hint">可选。下一轮起用于当前对话；角色卡提示和其他对话保持原样。</p>
-                  <textarea
-                    id={`advanced-prompt-${conversation.id}`}
-                    className="mode-prompt-input"
-                    value={advancedPromptDraft}
-                    maxLength={4000}
-                    rows={5}
-                    disabled={archived}
-                    placeholder="填写当前对话的额外叙事要求"
-                    onChange={(event) => setAdvancedPromptDraft(event.target.value)}
-                  />
-                  <button
-                    type="button"
-                    className="ghost mode-prompt-save"
-                    disabled={archived || advancedPromptDraft === savedAdvancedPrompt}
-                    onClick={() => onChangeModes({ advancedSystemPrompt: advancedPromptDraft })}
-                  >
-                    保存高级提示
-                  </button>
+                  {/*
+                    无限制模式的提示词是代码里的常量（`packages/core/src/prompt/unlimited.ts`）。
+                    还没填时开关不会有任何效果——这里直说，不留「开了没反应」的疑问。
+                  */}
+                  {unlimitedModeOf(conversation.modes) && !unlimitedReady ? (
+                    <p className="hint">无限制模式的提示词还没填写：现在打开它不会改变提示词。</p>
+                  ) : null}
+
+                  {/*
+                    旧版「高级系统提示」还有内容：说明它仍在生效，并给一个显式的清空入口。
+                    不静默丢弃，也不静默继续生效——两样都让人摸不着头脑。
+                  */}
+                  {legacyAdvancedPrompt === '' ? null : (
+                    <>
+                      <p className="hint">
+                        这条对话还留着旧版「高级系统提示」（{legacyAdvancedPrompt.length} 字），仍在生效。
+                      </p>
+                      <button
+                        type="button"
+                        className="ghost mode-menu-button"
+                        disabled={archived}
+                        onClick={() => onChangeModes({ advancedSystemPrompt: '' })}
+                      >
+                        清空旧提示
+                      </button>
+                    </>
+                  )}
 
                   {/*
                     便捷指令（用户 2026-09-21）：把 `#` 这种写法摆到用户手边，

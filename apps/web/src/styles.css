@@ -2233,25 +2233,13 @@ details summary {
   z-index: 5;
 }
 
-.mode-prompt-label {
-  font-size: 13px;
-  font-weight: 600;
-}
-
-.mode-prompt-input {
-  background: var(--panel);
-  border: 1px solid var(--line);
-  border-radius: 6px;
-  box-sizing: border-box;
-  color: var(--text);
-  font: inherit;
-  min-height: 110px;
-  padding: 8px;
-  resize: vertical;
-  width: 100%;
-}
-
-.mode-prompt-save {
+/*
+ * 菜单里的一个动作按钮（现在是「清空旧提示」）。
+ *
+ * 原来的名字是 `.mode-prompt-save`——那会儿这里是一段 textarea + 保存按钮（顺序 67e）。
+ * 2026-09-25 那段输入框换成了「无限制模式」开关，按钮只剩清理旧字段这一处，故改名。
+ */
+.mode-menu-button {
   align-self: flex-start;
   min-height: 44px;
 }

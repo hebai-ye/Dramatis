@@ -1,13 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import { buildMemoryAttachment, withAttachment } from '../memory/attachment.js';
 import { type Card, DEFAULT_CARD_SYSTEM_PROMPT } from '../model/card.js';
-import { defaultConversationModes, type ReplyLength, replyLengthOf } from '../model/conversation.js';
+import { defaultConversationModes, type ReplyLength, replyLengthOf, unlimitedModeOf } from '../model/conversation.js';
 import { cardId, eventId, type InstanceId, instanceId, newId, nowIso, PLAYER, roomId, sceneId } from '../model/ids.js';
 import { type CharacterInstance, neutralTraits } from '../model/instance.js';
 import type { MemoryEvent } from '../model/message.js';
 import type { Room, Scene } from '../model/room.js';
 import { createCharacterMessage, createPlayerMessage } from '../session/turn.js';
-import { assemblePrompt } from './assemble.js';
+import { assemblePrompt, buildUnlimitedModeBlock, UNLIMITED_BLOCK_ID } from './assemble.js';
+import { unlimitedPromptOf } from './unlimited.js';
 
 function fixtures(castPolicy: Scene['castPolicy'] = 'locked') {
   const now = nowIso();
@@ -1012,5 +1013,100 @@ describe('回答长度与反重复（顺序 67e）', () => {
     const system = prompt.messages[0]?.content ?? '';
     expect(system).toContain('可以连着做几个不同的动作');
     expect(system).toContain('回答长度（标准）');
+  });
+});
+
+/**
+ * 无限制模式（2026-09-25，用户点名）。
+ *
+ * 它把原「高级系统提示 · 当前对话」输入框换成了一个开关：提示词正文住在
+ * `prompt/unlimited.ts` 的一个常量里，用户自己去那里粘贴。
+ *
+ * 所以这一组测试**不能**假设那个常量已经填了——填之前与填之后都得是绿的。
+ * 填之前验的是「开关打开也不改变提示词」，填之后验的是「整块进了 system 提示」。
+ */
+describe('无限制模式（2026-09-25）', () => {
+  it('缺省关：老数据里没有这个字段，不需要迁移', () => {
+    expect(unlimitedModeOf(undefined)).toBe(false);
+    expect(unlimitedModeOf({ playerFirst: false, silent: false })).toBe(false);
+    expect(unlimitedModeOf({ playerFirst: false, silent: false, unlimited: false })).toBe(false);
+    expect(unlimitedModeOf({ playerFirst: false, silent: false, unlimited: true })).toBe(true);
+    expect(defaultConversationModes().unlimited).toBe(false);
+  });
+
+  it('提示词为空时不给块——空块比没有块更糟', () => {
+    expect(unlimitedPromptOf('')).toBeNull();
+    expect(unlimitedPromptOf('   \n  ')).toBeNull();
+    expect(unlimitedPromptOf('  保持克制。 ')).toBe('保持克制。');
+    expect(buildUnlimitedModeBlock(null)).toBeNull();
+  });
+
+  it('拿到正文时：不可丢弃、与角色卡系统提示同一档优先级', () => {
+    const block = buildUnlimitedModeBlock('这一轮的额外要求。');
+    expect(block).not.toBeNull();
+    expect(block?.id).toBe(UNLIMITED_BLOCK_ID);
+    expect(block?.content).toBe('这一轮的额外要求。');
+    // 用户自己打开的开关，预算一紧就悄悄不加等于骗人
+    expect(block?.droppable).toBe(false);
+    expect(block?.kind).toBe('system');
+  });
+
+  it('打开开关后的装配结果：填了就整块进 system，没填就什么都不加', () => {
+    const { card, instance, room, scene } = fixtures();
+    const prompt = assemblePrompt({
+      card,
+      instance,
+      room,
+      scene,
+      history: [],
+      playerInput: '继续',
+      modes: { playerFirst: false, silent: false, unlimited: true },
+      budget: baseBudget,
+    });
+
+    const block = prompt.blocks.find((candidate) => candidate.id === UNLIMITED_BLOCK_ID);
+    const text = unlimitedPromptOf();
+    if (text === null) {
+      // 常量还是空的（仓库里就是这个状态）：开关打开也不该往提示词里塞东西。
+      expect(block).toBeUndefined();
+    } else {
+      // 用户粘贴了自己的提示词之后走这里——两条分支都必须绿，
+      // 否则「粘贴前」或「粘贴后」总有一边是坏的。
+      expect(block?.content).toBe(text);
+      expect(prompt.messages[0]?.content).toContain(text);
+    }
+  });
+
+  it('开关关着时，就算提示词填了也不加块', () => {
+    const { card, instance, room, scene } = fixtures();
+    const withoutMode = assemblePrompt({
+      card,
+      instance,
+      room,
+      scene,
+      history: [],
+      playerInput: '继续',
+      modes: { playerFirst: false, silent: false },
+      budget: baseBudget,
+    });
+    expect(withoutMode.blocks.some((candidate) => candidate.id === UNLIMITED_BLOCK_ID)).toBe(false);
+  });
+
+  it('旧版高级系统提示照旧装配——一次界面重构不该让用户写过的要求失效', () => {
+    const { card, instance, room, scene } = fixtures();
+    const prompt = assemblePrompt({
+      card,
+      instance,
+      room,
+      scene,
+      history: [],
+      playerInput: '继续',
+      modes: { playerFirst: false, silent: false, advancedSystemPrompt: '保持雨夜氛围。' },
+      budget: baseBudget,
+    });
+    const legacy = prompt.blocks.find((candidate) => candidate.id === 'conversation-system');
+    expect(legacy?.content).toBe('保持雨夜氛围。');
+    // 界面上不再有编辑入口，所以标签要能认出来是旧字段
+    expect(legacy?.label).toContain('旧');
   });
 });

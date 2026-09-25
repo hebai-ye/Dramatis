@@ -26,7 +26,7 @@ const META_KEY_MODE = 'provider.keyMode';
 const DEFAULT_PROFILE: CreateProviderProfileInput = {
   name: 'DeepSeek',
   baseUrl: 'https://api.deepseek.com',
-  model: 'deepseek-chat',
+  model: 'deepseek-flash',
   role: 'main',
 };
 
@@ -34,7 +34,7 @@ function isAutoCreatedDefault(profile: ProviderProfile): boolean {
   return (
     profile.name === DEFAULT_PROFILE.name &&
     profile.baseUrl === DEFAULT_PROFILE.baseUrl &&
-    profile.model === DEFAULT_PROFILE.model
+    (profile.model === DEFAULT_PROFILE.model || profile.model === 'deepseek-chat')
   );
 }
 

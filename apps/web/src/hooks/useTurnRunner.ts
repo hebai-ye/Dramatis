@@ -586,25 +586,29 @@ export function useTurnRunner({
             continue;
           }
 
-          if (reply.trim() !== '') {
-            const created = makeCharacterLine(speaker, reply, turnId, scene);
-            const line: Message = {
-              ...created,
-              // 用量挂在消息上：刷新之后仍然能看见这一轮花了多少
-              ...(generation.usage === null ? {} : { usage: generation.usage }),
-              // 导演调用给出的意图挂在消息上：用户能看到「他这一轮想做什么」
-              ...(plannedIntent === null ? {} : { intent: plannedIntent.intent, intentSource: 'planned' as const }),
-              // 没按格式声明意图时，用它自己的推理首句当盘算（有推理流的模型才有）
-              ...(plannedIntent === null && created.intent === undefined && generation.reasoning.trim() !== ''
-                ? { intent: firstSentence(generation.reasoning), intentSource: 'reasoning' as const }
-                : {}),
-            };
-            await session.appendMessages([line]);
-            continuedHistory = [...continuedHistory, line];
-            // 落盘后立刻收掉流式副本，避免后台排队/记账期间同一条回复显示两遍。
-            // 消息快照只在 appendMessages 更新一次；finally 的 reset 此时是 no-op。
-            resetStreamState('main');
+          if (reply.trim() === '') {
+            throw new Error('模型没有返回可显示的角色回复。玩家消息已保留，请检查模型设置后重试。');
           }
+          const created = makeCharacterLine(speaker, reply, turnId, scene);
+          if (created.content.trim() === '') {
+            throw new Error('模型只返回了格式标记，没有可显示的角色回复。玩家消息已保留，请重试。');
+          }
+          const line: Message = {
+            ...created,
+            // 用量挂在消息上：刷新之后仍然能看见这一轮花了多少
+            ...(generation.usage === null ? {} : { usage: generation.usage }),
+            // 导演调用给出的意图挂在消息上：用户能看到「他这一轮想做什么」
+            ...(plannedIntent === null ? {} : { intent: plannedIntent.intent, intentSource: 'planned' as const }),
+            // 没按格式声明意图时，用它自己的推理首句当盘算（有推理流的模型才有）
+            ...(plannedIntent === null && created.intent === undefined && generation.reasoning.trim() !== ''
+              ? { intent: firstSentence(generation.reasoning), intentSource: 'reasoning' as const }
+              : {}),
+          };
+          await session.appendMessages([line]);
+          continuedHistory = [...continuedHistory, line];
+          // 落盘后立刻收掉流式副本，避免后台排队/记账期间同一条回复显示两遍。
+          // 消息快照只在 appendMessages 更新一次；finally 的 reset 此时是 no-op。
+          resetStreamState('main');
         }
 
         // 一轮分析（记忆 + 状态变化）合成一次调用，不阻塞对话；负载只存 id，内容现取
@@ -708,14 +712,6 @@ export function useTurnRunner({
       setBusy(true);
       setStreamState('main', { text: '', reasoning: '', speaker: speaker.displayName, phase: 'writing' });
 
-      // 用 clearTurn 而不是 cancelByTurn：已经跑完的任务记录会占着幂等键，
-      // 不清掉的话下面重新入队会被当成重复任务
-      await db.queue.clearTurn(target.turnId);
-      for (const message of turnMessages) {
-        if (message.role === 'character') await session.deleteMessage(message.id);
-      }
-      await session.revertTurn(target.turnId);
-
       const earlierHistory = messages.filter((message) => message.turnId !== target.turnId);
       const controller = new AbortController();
       abortRef.current = controller;
@@ -743,13 +739,27 @@ export function useTurnRunner({
         });
         await usage.reload();
 
-        if (generation.text.trim() !== '') {
-          await session.appendMessages([
-            {
-              ...makeCharacterLine(speaker, generation.text, target.turnId, scene),
-              ...(generation.usage === null ? {} : { usage: generation.usage }),
-            },
-          ]);
+        if (generation.text.trim() === '') {
+          throw new Error('模型没有返回可显示的角色回复，原回复已保留。请检查模型设置后重试。');
+        }
+        const replacement = makeCharacterLine(speaker, generation.text, target.turnId, scene);
+        if (replacement.content.trim() === '') {
+          throw new Error('模型只返回了格式标记，原回复已保留。请重试。');
+        }
+
+        // 先确认完整的新回复，再撤销旧回复与后台状态。服务商过滤、截断或断流时，
+        // 不触碰旧消息、记忆和队列；它们仍是这一轮最后一次成功的结果。
+        // clearTurn 会移除已完成任务的幂等键，以便新的分析重新入队。
+        await db.queue.clearTurn(target.turnId);
+        await session.revertTurn(target.turnId);
+        await session.appendMessages([
+          {
+            ...replacement,
+            ...(generation.usage === null ? {} : { usage: generation.usage }),
+          },
+        ]);
+        for (const message of turnMessages) {
+          if (message.role === 'character') await session.deleteMessage(message.id);
         }
 
         // 重抽撤销了这一轮的后台任务，必须重新排一次队。

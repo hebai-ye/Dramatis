@@ -166,3 +166,67 @@ describe('工具调用', () => {
     }
   });
 });
+
+describe('模型完成状态', () => {
+  const chat = (response: Response) =>
+    createOpenAICompatibleProvider({
+      baseUrl: 'https://example.com/v1',
+      apiKey: 'sk-test',
+      model: 'test-model',
+      fetchImpl: async () => response,
+    });
+
+  async function collect(response: Response): Promise<string[]> {
+    const events: string[] = [];
+    for await (const event of chat(response).chat([{ role: 'user', content: '继续' }])) events.push(event.type);
+    return events;
+  }
+
+  it('正常 stop 完成可落盘', async () => {
+    expect(
+      await collect(
+        sseResponse([{ choices: [{ delta: { content: '好' } }] }, { choices: [{ delta: {}, finish_reason: 'stop' }] }]),
+      ),
+    ).toEqual(['text', 'done']);
+  });
+
+  it.each([
+    ['length', '长度上限'],
+    ['content_filter', '拦截'],
+    ['insufficient_system_resource', '中止'],
+    ['aborted', '中止'],
+  ])('流式 %s 不作为正常回复', async (reason, message) => {
+    const response = sseResponse([
+      { choices: [{ delta: { content: '未完' } }] },
+      { choices: [{ delta: {}, finish_reason: reason }] },
+    ]);
+    await expect(collect(response)).rejects.toThrow(message);
+  });
+
+  it('连接提前断开且没有完成标记时拒绝保存', async () => {
+    const response = new Response('data: {"choices":[{"delta":{"content":"未完"}}]}\n\n', {
+      headers: { 'content-type': 'text/event-stream' },
+    });
+    await expect(collect(response)).rejects.toThrow('完成标记前中断');
+  });
+
+  it('损坏的数据片段即使后续 stop 也不作为完整回复', async () => {
+    const response = new Response(
+      'data: {broken}\n\ndata: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n',
+      {
+        headers: { 'content-type': 'text/event-stream' },
+      },
+    );
+    await expect(collect(response)).rejects.toThrow('损坏的数据片段');
+  });
+
+  it('非流式 length 同样拒绝保存', async () => {
+    const response = new Response(
+      JSON.stringify({ choices: [{ message: { content: '未完' }, finish_reason: 'length' }] }),
+      {
+        headers: { 'content-type': 'application/json' },
+      },
+    );
+    await expect(collect(response)).rejects.toThrow('长度上限');
+  });
+});

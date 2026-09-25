@@ -3,7 +3,10 @@
  * 对它们不发硬上限，避免推理耗尽额度后正文为空。
  */
 export function replyTokenLimit(model: string, reserveForReply: number): number | undefined {
-  if (/(?:reason(?:er|ing)?|thinking|(?:^|[-_/])r1(?:$|[-_/])|(?:^|[-_/])o[134](?:$|[-_/]))/i.test(model)) {
+  if (
+    /(?:reason(?:er|ing)?|thinking|(?:^|[-_/])r1(?:$|[-_/])|(?:^|[-_/])o[134](?:$|[-_/]))/i.test(model) ||
+    /^deepseek-(?:flash|v4-pro|v4-flash)(?:$|[-_/])/i.test(model)
+  ) {
     return undefined;
   }
   const reserve = Number.isFinite(reserveForReply) ? Math.floor(reserveForReply) : 512;

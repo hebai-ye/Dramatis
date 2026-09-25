@@ -1017,7 +1017,17 @@ git ls-files | ForEach-Object {
 | `apps/web/src/styles.css` | 改 | 手机面板标签 13 px、全局按钮和链接的主题色键盘焦点环 |
 | `docs/EVAL.md` / `LAYOUT.md` / `STATUS.md` / `TASKS.md` / `FILE-LOG.md` | 改 | 前后测量、键盘路径与真机边界 |
 
-## 五十四、几点注意
+## 五十四、2026-09-25：DeepSeek 接入与回复完整性
+
+| 文件 | 新增/修改 | 说明 |
+| --- | --- | --- |
+| `apps/web/src/lib/providers.ts` / `components/ProviderPanel.tsx` | 改 | 新配置默认现行 DeepSeek 模型，旧模型配置提示迁移；不改已有密钥引用 |
+| `apps/web/src/lib/output-limit.ts` / `output-limit.test.ts` | 改 | 现行 DeepSeek 思考模型不发 512 token 硬上限 |
+| `packages/core/src/provider/openai-compatible.ts` / `tools.test.ts` | 改 | 识别过滤、截断、中止、坏 SSE 与提前断流；不把部分输出当作完成 |
+| `apps/web/src/hooks/useTurnRunner.ts` | 改 | 空正文报错；重抽先生成并验证再替换旧回复 |
+| `docs/STATUS.md` / `TASKS.md` / `EVAL.md` / `FILE-LOG.md` | 改 | 记录范围、假响应门禁、真实模型与上线结果 |
+
+## 五十五、几点注意
 
 ---
 

@@ -106,6 +106,7 @@ function toUsage(raw: unknown): TokenUsage | null {
 
 interface DeltaPayload {
   choices?: Array<{
+    finish_reason?: unknown;
     delta?: {
       content?: unknown;
       reasoning_content?: unknown;
@@ -170,12 +171,12 @@ function parseChunk(
   payload: string,
   raw: string,
   toolCalls: ToolCallBuffer,
-): { content: string; reasoning: string; usage: TokenUsage | null } {
+): { content: string; reasoning: string; usage: TokenUsage | null; finishReason: string | null } {
   let json: DeltaPayload;
   try {
     json = JSON.parse(payload) as DeltaPayload;
   } catch {
-    return { content: '', reasoning: '', usage: null };
+    throw new ProviderError('模型返回了损坏的数据片段，本轮未保存不完整的回复。', null, raw);
   }
 
   if (json.error) {
@@ -202,7 +203,28 @@ function parseChunk(
         ? delta.reasoning
         : '';
 
-  return { content, reasoning, usage: toUsage(json.usage) };
+  return {
+    content,
+    reasoning,
+    usage: toUsage(json.usage),
+    finishReason: typeof choice?.finish_reason === 'string' ? choice.finish_reason : null,
+  };
+}
+
+/** A partial or filtered completion must never be stored as a finished character reply. */
+function assertComplete(reason: string | null): void {
+  if (reason === 'length') {
+    throw new ProviderError('模型输出达到长度上限，本轮未保存不完整的回复。请调整模型配置后重试。', null, '');
+  }
+  if (reason === 'content_filter') {
+    throw new ProviderError('模型服务拦截了本轮内容，本轮没有生成完整回复。', null, '');
+  }
+  if (reason === 'insufficient_system_resource' || reason === 'aborted') {
+    throw new ProviderError('模型服务中止了本轮生成，请稍后重试。', null, '');
+  }
+  if (reason !== null && reason !== 'stop' && reason !== 'tool_calls') {
+    throw new ProviderError(`模型服务以未知状态结束（${reason}），本轮未保存回复。`, null, '');
+  }
 }
 
 async function* iterateSse(res: Response): AsyncIterable<string> {
@@ -312,6 +334,7 @@ export function createOpenAICompatibleProvider(config: ProviderConfig): ModelPro
       if (!contentType.includes('text/event-stream')) {
         const json = (await res.json()) as DeltaPayload;
         const choice = json.choices?.[0];
+        assertComplete(typeof choice?.finish_reason === 'string' ? choice.finish_reason : null);
         const text = typeof choice?.message?.content === 'string' ? choice.message.content : '';
         const nonStreamCalls: ToolCallBuffer = new Map();
         mergeToolCalls(nonStreamCalls, choice?.message?.tool_calls);
@@ -325,7 +348,7 @@ export function createOpenAICompatibleProvider(config: ProviderConfig): ModelPro
         return;
       }
 
-      let emittedDone = false;
+      let finishReason: string | null = null;
       const toolCallBuffer: ToolCallBuffer = new Map();
 
       for await (const event of iterateSse(res)) {
@@ -336,22 +359,26 @@ export function createOpenAICompatibleProvider(config: ProviderConfig): ModelPro
 
           const payload = trimmed.slice(5).trim();
           if (payload === '[DONE]') {
-            emittedDone = true;
+            assertComplete(finishReason);
             const calls = finishToolCalls(toolCallBuffer);
             yield { type: 'done' as const, usage, ...(calls.length > 0 ? { toolCalls: calls } : {}) };
             return;
           }
 
           const chunk = parseChunk(payload, event, toolCallBuffer);
+          if (chunk.finishReason !== null) finishReason = chunk.finishReason;
           if (chunk.usage) usage = chunk.usage;
           if (chunk.reasoning !== '') yield { type: 'reasoning' as const, text: chunk.reasoning };
           if (chunk.content !== '') yield { type: 'text' as const, text: chunk.content };
         }
       }
 
-      if (!emittedDone) {
+      if (finishReason !== null) {
+        assertComplete(finishReason);
         const calls = finishToolCalls(toolCallBuffer);
         yield { type: 'done' as const, usage, ...(calls.length > 0 ? { toolCalls: calls } : {}) };
+      } else {
+        throw new ProviderError('模型连接在完成标记前中断，本轮未保存不完整的回复。', null, '');
       }
     },
 

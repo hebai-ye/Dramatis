@@ -190,7 +190,7 @@ export function ProviderPanel({ api, disabled }: Props) {
           disabled={controlsDisabled}
           onChange={(event) => {
             if (event.target.value === '__new__') {
-              void api.addProfile({ name: '新配置', baseUrl: 'https://api.deepseek.com', model: 'deepseek-chat' });
+              void api.addProfile({ name: '新配置', baseUrl: 'https://api.deepseek.com', model: 'deepseek-flash' });
               return;
             }
             void api.selectProfile(event.target.value);
@@ -227,6 +227,13 @@ export function ProviderPanel({ api, disabled }: Props) {
               />
             </label>
           </div>
+
+          {draft.baseUrl.startsWith('https://api.deepseek.com') &&
+          (draft.model === 'deepseek-chat' || draft.model === 'deepseek-reasoner') ? (
+            <p className="hint warn">
+              DeepSeek 已公告停用这个旧模型名。建议改为 deepseek-flash 或 deepseek-v4-pro 后保存；密钥保持原样。
+            </p>
+          ) : null}
 
           <label>
             接口地址

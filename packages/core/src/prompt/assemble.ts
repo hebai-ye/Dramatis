@@ -90,6 +90,14 @@ export interface AssembleInput {
   /** 会话级对话模式：静默、是否必须等主角先开口（LAYOUT「输入区 · 加号」）。 */
   modes?: ConversationModes;
   /**
+   * 无限制模式的提示词正文（用户数据，2026-09-25）。
+   *
+   * **由调用方从用户自己的存储里读出来传进来**，不是本仓库的常量：网页是公开托管的
+   * 静态站点，写进代码就等于编译进公开可下载的 JS（`prompt/unlimited.ts` 的注释里记了
+   * 这件事的来龙去脉）。缺省 / 空串 → 模式开着也不加块。
+   */
+  unlimitedPrompt?: string;
+  /**
    * 这一轮的意图（P1-6）：由生成前的导演调用给出。
    *
    * 有了它，角色是**照着自己的打算**落笔的，而不是重新猜一遍「这轮该干嘛」；
@@ -717,12 +725,13 @@ export const UNLIMITED_BLOCK_ID = 'unlimited';
 /**
  * 无限制模式那一条 system 块（用户 2026-09-25 点名）。
  *
- * 传 `null`（模式关着，或提示词还没粘贴）就返回 `null` —— 调用方据此**什么都不加**。
+ * 传 `null`（模式关着，或正文为空）就返回 `null` —— 调用方据此**什么都不加**。
+ * 正文由调用方从用户自己的存储里读出来（`AssembleInput.unlimitedPrompt`），
+ * 仓库里没有这段文字：网页产物是公开可下载的。
  *
  * 为什么 `droppable: false`：这是用户**自己打开的**开关，预算一紧就悄悄不加，
  * 等于告诉他「开了」却没开。要挤就挤别人（它和角色卡系统提示同一档）。
- * 代价是提示词写太长会挤掉记忆与场记——所以长度由用户自己负责，
- * `unlimited.ts` 的注释里写了这个账。
+ * 代价是正文写太长会挤掉记忆与场记——所以长度由用户自己负责，界面上会显示字数。
  */
 export function buildUnlimitedModeBlock(prompt: string | null): PromptBlock | null {
   if (prompt === null) return null;
@@ -783,12 +792,12 @@ export function assemblePrompt(input: AssembleInput): AssembledPrompt {
   }
 
   /*
-   * 无限制模式（用户 2026-09-25 点名）：把 `prompt/unlimited.ts` 里那份提示词整块放进来。
-   *
-   * 提示词正文**只在 `unlimited.ts` 一处**，这里只负责「模式开着且提示词非空」时放进去；
-   * 空提示词返回 null，于是什么都不加。
+   * 无限制模式（用户 2026-09-25 点名）：正文来自**用户数据**（`input.unlimitedPrompt`），
+   * 不是仓库里的常量——理由写在 `prompt/unlimited.ts` 顶上。模式开着且正文非空才放进去。
    */
-  const unlimitedBlock = buildUnlimitedModeBlock(unlimitedModeOf(input.modes) ? unlimitedPromptOf() : null);
+  const unlimitedBlock = buildUnlimitedModeBlock(
+    unlimitedModeOf(input.modes) ? unlimitedPromptOf(input.unlimitedPrompt) : null,
+  );
   if (unlimitedBlock !== null) blocks.push(unlimitedBlock);
 
   /*

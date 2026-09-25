@@ -2234,14 +2234,34 @@ details summary {
 }
 
 /*
- * 菜单里的一个动作按钮（现在是「清空旧提示」）。
+ * 菜单里的一个动作按钮（「保存提示词」/「清空旧提示」）。
  *
- * 原来的名字是 `.mode-prompt-save`——那会儿这里是一段 textarea + 保存按钮（顺序 67e）。
- * 2026-09-25 那段输入框换成了「无限制模式」开关，按钮只剩清理旧字段这一处，故改名。
+ * 原来的名字是 `.mode-prompt-save`（顺序 67e）。2026-09-25 那段输入框一度换成
+ * 「无限制模式」开关，按钮只剩清理旧字段；随后正文改成用户数据、输入框又回来了，
+ * 所以这里是一个通用的菜单按钮样式，两个按钮共用。
  */
 .mode-menu-button {
   align-self: flex-start;
   min-height: 44px;
+}
+
+/* 无限制模式提示词的粘贴框：与旧的「高级系统提示」输入框同一个形状。 */
+.mode-menu-label {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.mode-text-input {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  box-sizing: border-box;
+  color: var(--text);
+  font: inherit;
+  min-height: 110px;
+  padding: 8px;
+  resize: vertical;
+  width: 100%;
 }
 
 .mode-option {

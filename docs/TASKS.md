@@ -77,7 +77,8 @@
 | 67d | **角色卡默认提示与对话级高级提示** `[用]` | **P1** | 已有角色沉浸模板需要逐卡手动粘贴；旧空字段不能在高级设置中看见当前有效规则；当前对话缺少单独的叙事提示入口 | ✅ 2026-09-25：新卡、空提示导入卡和旧空字段使用默认模板，自定义提示保留；加号菜单提供对话级附加提示，见 EVAL 第六十七节 |
 | 67e | **长对话质量：旁白腔 / 动作重复 / 回答模式** `[用][测]` | **P1** | 178 轮真实模型长跑：回复 171→325 字、自称名字 0.9→5.6 次、角色串线 46/178 条。用户裁定「动作可以多个，但不许同一个重复」，并要求长度收紧 + 给用户长度档位 | 🟡 已实现长度三档与反重复规矩、加号菜单可切换；真实模型复跑与真机待验，见 EVAL 第六十八节。串线检测与「一轮多角色回答」按用户意见另行排期 |
 | 68 | **账单查询下推（`since` 走索引 + 汇总不再排序）** `[审]` | **P2** | `usage.list` 的 `since` 在内存过滤、`summary` 每次白付一次整表排序；依赖 62 的索引 | ✅ 2026-09-25（`since` 下推 857→61 条；`limit` 下推与增量汇总按实测拆出，见 EVAL 第六十九节与顺序 80） |
-| 68a | **无限制模式（加号里的「高级系统提示」输入框改成模式开关）** `[用]` | **P1** | 用户 2026-09-25 点名：提示词不该一条对话一份地手打；正文移到代码里的一处常量，界面只留开关，便于自己粘贴与迭代 | ✅ 2026-09-25：开关 / 装配 / 旧字段兼容 / 单测都落地；**提示词正文留空待用户粘贴**，真实模型效果待验证，见 EVAL 第七十节 |
+| 68a | **无限制模式（加号里的「高级系统提示」输入框改成模式开关）** `[用][数]` | **P1** | 用户 2026-09-25 点名。第一版把正文做成代码常量，被查出**会编译进公开托管的网页包**（用户说那是商业机密），遂改为**用户数据**：存本机 meta、不打包 | ✅ 2026-09-25：开关 + 粘贴框 + 旧字段兼容 + 复核脚本；正文不进代码/产物（全树 0 命中、产物 0 命中），效果待 Codex 真模型验，见 EVAL 第七十节 |
+| 68b | **无限制模式提示词随账户加密同步** `[用]` | **P3** | 68a 的取舍是「不参与同步」（meta 全都不参与），所以换设备要重新粘一次。要补就得新开一个同步集合或复用既有账户级实体，属协议改动 | ⬜ |
 | 69 | **可访问性：模态框焦点与 Esc、去掉原生 confirm/prompt、aria、key** `[审]` | **P3** | 12 处 `window.confirm`、遮罩无 `aria-modal`、三个模态无焦点管理、两处用值当 key | ⬜ |
 | 70 | **打包：低频面板懒加载、PlanPage 移出生产包、SW 版本化** `[审]` | **P3** | 零代码分割；PlanPage 约 260 行样式随生产包发布；SW 缓存名从不变 | ⬜ |
 | 71 | **token 估算校准** `[审]` | **P3** | 英文按 4 字符/token 低估约 25%；账单里有真实 `promptTokens` 可以对照校准 | ⬜ |
@@ -300,20 +301,27 @@
 
 **68a 无限制模式**（P1，S，用户 2026-09-25 点名）——**✅ 已做**，做法与验证见 EVAL 第七十节。
 
-- 改哪里：`core/prompt/unlimited.ts`（新增，提示词正文就住在这儿）、`core/model/conversation.ts`
-  （`modes.unlimited` + `unlimitedModeOf`）、`core/prompt/assemble.ts`（`buildUnlimitedModeBlock`）、
-  `apps/web/src/components/MainChat.tsx`（加号菜单里的开关）。
-- 怎么改：把原来的「高级系统提示 · 当前对话」文本框删掉，换成一个对话级勾选框；
-  正文改为代码里的常量 `UNLIMITED_MODE_PROMPT`，模式打开且常量非空时整块进 system 提示
-  （`droppable: false`，与角色卡系统提示同档）。
-- **用户要粘贴的那一处**：`packages/core/src/prompt/unlimited.ts` → `UNLIMITED_MODE_PROMPT`。
-  写进 [ROLEPLAY-PROMPT.md](./ROLEPLAY-PROMPT.md) 的「当前对话的额外提示：无限制模式」一节。
-- 旧字段怎么办：`modes.advancedSystemPrompt` **照旧装配**（一次界面重构不该让用户写过的要求失效），
-  菜单里显示「还留着旧版高级提示（N 字）仍在生效」+ 一个「清空旧提示」按钮——不静默丢弃，
-  也不静默继续生效。
-- 怎么验：单测 6 条（缺省关、空提示词不给块、块形状、打开开关的装配两条分支、
-  关着时不加块、旧字段仍装配）；**并且把常量临时填上一段文字跑过一次，确认真的进了 `messages[0]`**
-  （探针跑完已还原）。真实模型上的效果必须有 Key，属未验项。
+- 改哪里：`core/model/conversation.ts`（`modes.unlimited` + `unlimitedModeOf`）、
+  `core/prompt/unlimited.ts`（只留 `unlimitedPromptOf`）、`core/prompt/assemble.ts`
+  （`AssembleInput.unlimitedPrompt` + `buildUnlimitedModeBlock`）、`core/storage/repository.ts`
+  （`META_KEYS.unlimitedPrompt`）、`apps/web/src/lib/useUnlimitedPrompt.ts`（新 hook）、
+  `apps/web/src/components/MainChat.tsx`（勾选框 + 粘贴框）、`hooks/useTurnRunner.ts`（装配前现读）。
+- 怎么改：加号菜单里原「高级系统提示 · 当前对话」文本框换成对话级勾选框 + 粘贴框；正文**存本机
+  meta**（不参与同步），装配时由调用方传进 `AssembleInput.unlimitedPrompt`；模式开着且正文非空时
+  整块进 system 提示（`droppable: false`，与角色卡系统提示同档）。
+- **为什么不是代码常量（这条最重要）**：网页是公开托管的静态站点，写进源码就等于编译进
+  `assets/*.js`，谁都能下载读到；第一版就是这么做并被查出泄露的。**任何用户正文都只能当用户数据。**
+- 旧字段怎么办：`modes.advancedSystemPrompt` **照旧装配**（标签带「旧」），菜单里显示
+  「还留着旧版高级提示（N 字）仍在生效」+「清空旧提示」按钮。
+- 怎么验：单测 7 条（缺省关、空正文不给块、块形状、开关开+有正文 → 进 `messages[0]`、
+  开关开+无正文 → 不加块、开关关+有正文 → 不加块、旧字段仍装配）；**泄露复核脚本**用 gitignore 的
+  `secrets/unlimited-prompt.txt` 当参照物，扫全树与构建产物，要求两者都是 0 命中。
+
+**68b 无限制模式提示词随账户加密同步**（P3，M，等用户点头）：现状是「不参与同步」，换设备要重粘。
+补法有两条，都要动协议，按「同步是底线」单独做：① 新开一个同步集合（要改 `SYNC_COLLECTIONS`
+白名单、写 SYNC.md、补迁移与坏记录隔离的单测）；② 复用某个已有的账户级同步实体挂一个可选字段
+（不改协议，但语义上要说得过去）。验收：设备 A 粘一次 → 设备 B 登录后能直接用；换密码/恢复码流程
+不回归。
 
 **69 可访问性**（P3，M）：`Modal` 加焦点陷阱、Esc、`aria-modal`、返回焦点；`useConfirm` 替换 12 处 `window.confirm` 与 `ScenePanel:109` 的 `window.prompt`；WorldTree 的 ✕ 加 `aria-label`；`CardDesigner:23` 与 `App:1440` 的 key 改稳定 id。键盘走一遍所有对话框。
 

@@ -12,11 +12,11 @@ import {
   replyLengthOf,
   type Scene,
   unlimitedModeOf,
-  unlimitedPromptOf,
 } from '@dramatis/core';
 import { type MouseEvent, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { countRender } from '../lib/render-count';
+import type { UnlimitedPromptApi } from '../lib/useUnlimitedPrompt';
 import { useCoarsePointer } from '../lib/viewport';
 import { Composer } from './Composer';
 import { IconPlus, IconScene } from './Icons';
@@ -64,6 +64,13 @@ interface Props {
   onDelete: (id: MessageId) => void;
   /** 改对话模式：传要改的那几个字段（对话级，落 `ConversationModes`）。 */
   onChangeModes: (patch: Partial<ConversationModes>) => void;
+  /**
+   * 无限制模式的提示词（用户数据，存在本机）。
+   *
+   * 它**不是**仓库里的常量：网页是公开托管的静态站点，写进代码就等于编译进公开可下载的
+   * JS（`packages/core/src/prompt/unlimited.ts` 的注释里记了来龙去脉）。
+   */
+  unlimitedPrompt: UnlimitedPromptApi;
   onOpenScene: () => void;
   /** 从右栏把角色拖进来：进入当前场景。 */
   onDropInstance: (id: InstanceId) => void;
@@ -215,6 +222,7 @@ function MainChatImpl({
   onEdit,
   onDelete,
   onChangeModes,
+  unlimitedPrompt,
   onOpenScene,
   onDropInstance,
   onReassign,
@@ -238,12 +246,16 @@ function MainChatImpl({
   const [editingId, setEditingId] = useState<MessageId | null>(null);
   const [modeMenuOpen, setModeMenuOpen] = useState(false);
   /**
-   * 无限制模式的提示词填了没有（用户 2026-09-25）。
+   * 无限制模式提示词的编辑草稿（2026-09-25）。
    *
-   * 常量是编译期定的，读一次就够。没填时开关打开也**不会**改变提示词，
-   * 所以菜单里要说明一句，免得「开了却看不出反应」。
+   * 与旧版「高级系统提示」的草稿同一个套路：编辑期间只动本地草稿，显式保存才写库。
+   * `unlimitedPrompt.text` 只在初次加载与保存后变化，所以这个 effect 不会打断正在输入的内容。
    */
-  const unlimitedReady = unlimitedPromptOf() !== null;
+  const [unlimitedDraft, setUnlimitedDraft] = useState(unlimitedPrompt.text);
+  useEffect(() => {
+    setUnlimitedDraft(unlimitedPrompt.text);
+  }, [unlimitedPrompt.text]);
+  const unlimitedReady = unlimitedPrompt.text.trim() !== '';
   /**
    * 旧版「高级系统提示 · 当前对话」（顺序 67e 的输入框）还留着内容的证据。
    *
@@ -727,11 +739,38 @@ function MainChatImpl({
                   ))}
 
                   {/*
-                    无限制模式的提示词是代码里的常量（`packages/core/src/prompt/unlimited.ts`）。
-                    还没填时开关不会有任何效果——这里直说，不留「开了没反应」的疑问。
+                    无限制模式的正文是**用户数据**，所以粘贴框在这儿、存在本机。
+                    它不会进代码、不会进网页包（`packages/core/src/prompt/unlimited.ts` 顶上
+                    记了为什么）；代价是不参与同步，换设备要重新粘一次。
                   */}
+                  <label className="mode-menu-label" htmlFor={`unlimited-prompt-${conversation.id}`}>
+                    无限制模式的提示词
+                  </label>
+                  <p className="hint">
+                    只存在这台设备上（不进代码、不进网页包，也不同步）。
+                    {unlimitedReady ? `当前 ${unlimitedPrompt.text.trim().length} 字。` : '还没填。'}
+                  </p>
+                  <textarea
+                    id={`unlimited-prompt-${conversation.id}`}
+                    className="mode-text-input"
+                    value={unlimitedDraft}
+                    maxLength={4000}
+                    rows={5}
+                    disabled={archived}
+                    placeholder="粘贴你自己的提示词"
+                    onChange={(event) => setUnlimitedDraft(event.target.value)}
+                  />
+                  <button
+                    type="button"
+                    className="ghost mode-menu-button"
+                    disabled={archived || unlimitedDraft === unlimitedPrompt.text}
+                    onClick={() => void unlimitedPrompt.save(unlimitedDraft)}
+                  >
+                    保存提示词
+                  </button>
+
                   {unlimitedModeOf(conversation.modes) && !unlimitedReady ? (
-                    <p className="hint">无限制模式的提示词还没填写：现在打开它不会改变提示词。</p>
+                    <p className="hint">无限制模式已经打开，但提示词还是空的：现在它不会改变提示词。</p>
                   ) : null}
 
                   {/*

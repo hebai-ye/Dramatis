@@ -50,6 +50,7 @@ import { useDatabase, useSession } from './lib/session';
 import { useStorageStatus } from './lib/storage';
 import { useSync } from './lib/sync';
 import { extraCalls, useUsage } from './lib/usage';
+import { useUnlimitedPrompt } from './lib/useUnlimitedPrompt';
 import { NARROW_SCREEN_QUERY, useNarrowScreen } from './lib/viewport';
 import { useBackgroundWorker } from './lib/worker';
 
@@ -73,6 +74,15 @@ export function App() {
     roomId: world?.id ?? null,
     conversationId: conversation?.id ?? null,
   });
+
+  /**
+   * 无限制模式的提示词（用户 2026-09-25）。
+   *
+   * 它存在本机 `meta` 里，**不进代码、不进网页包**——网页是公开托管的静态站点，
+   * 写进源码就等于公开（`core/prompt/unlimited.ts` 顶上记了来龙去脉）。
+   * 代价是不参与同步，换设备要重新粘一次（想跟着账户走要新开同步集合，见 TASKS 68b）。
+   */
+  const unlimitedPrompt = useUnlimitedPrompt(db);
 
   /**
    * 调用预算（P1-9 熔断）。
@@ -938,6 +948,7 @@ export function App() {
                   onEdit={handleEditMessage}
                   onDelete={handleDeleteId}
                   onChangeModes={handleChangeModes}
+                  unlimitedPrompt={unlimitedPrompt}
                   onOpenScene={handleOpenScene}
                   onDropInstance={handleDropInstance}
                   onReassign={handleReassignId}

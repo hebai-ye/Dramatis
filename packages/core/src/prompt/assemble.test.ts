@@ -1019,11 +1019,11 @@ describe('回答长度与反重复（顺序 67e）', () => {
 /**
  * 无限制模式（2026-09-25，用户点名）。
  *
- * 它把原「高级系统提示 · 当前对话」输入框换成了一个开关：提示词正文住在
- * `prompt/unlimited.ts` 的一个常量里，用户自己去那里粘贴。
+ * 它把原「高级系统提示 · 当前对话」输入框换成了一个开关。正文**不是仓库里的常量**：
+ * 网页是公开托管的静态站点，写进代码就等于编译进公开可下载的 JS，所以正文一律当
+ * 用户数据，由调用方通过 `AssembleInput.unlimitedPrompt` 传进来。
  *
- * 所以这一组测试**不能**假设那个常量已经填了——填之前与填之后都得是绿的。
- * 填之前验的是「开关打开也不改变提示词」，填之后验的是「整块进了 system 提示」。
+ * 这一组测试就是钉住这条契约：正文从参数来、空正文不加块、开关关着不加块。
  */
 describe('无限制模式（2026-09-25）', () => {
   it('缺省关：老数据里没有这个字段，不需要迁移', () => {
@@ -1034,9 +1034,11 @@ describe('无限制模式（2026-09-25）', () => {
     expect(defaultConversationModes().unlimited).toBe(false);
   });
 
-  it('提示词为空时不给块——空块比没有块更糟', () => {
+  it('正文为空时不给块——空块比没有块更糟', () => {
     expect(unlimitedPromptOf('')).toBeNull();
     expect(unlimitedPromptOf('   \n  ')).toBeNull();
+    expect(unlimitedPromptOf(undefined)).toBeNull();
+    expect(unlimitedPromptOf(null)).toBeNull();
     expect(unlimitedPromptOf('  保持克制。 ')).toBe('保持克制。');
     expect(buildUnlimitedModeBlock(null)).toBeNull();
   });
@@ -1051,7 +1053,27 @@ describe('无限制模式（2026-09-25）', () => {
     expect(block?.kind).toBe('system');
   });
 
-  it('打开开关后的装配结果：填了就整块进 system，没填就什么都不加', () => {
+  it('打开开关 + 传了正文：整块进 system 提示', () => {
+    const { card, instance, room, scene } = fixtures();
+    const prompt = assemblePrompt({
+      card,
+      instance,
+      room,
+      scene,
+      history: [],
+      playerInput: '继续',
+      modes: { playerFirst: false, silent: false, unlimited: true },
+      unlimitedPrompt: '这一轮按这个要求写。',
+      budget: baseBudget,
+    });
+
+    expect(prompt.blocks.find((candidate) => candidate.id === UNLIMITED_BLOCK_ID)?.content).toBe(
+      '这一轮按这个要求写。',
+    );
+    expect(prompt.messages[0]?.content).toContain('这一轮按这个要求写。');
+  });
+
+  it('开关打开但没传正文：什么都不加（正文来自用户数据，缺省就是没有）', () => {
     const { card, instance, room, scene } = fixtures();
     const prompt = assemblePrompt({
       card,
@@ -1063,21 +1085,10 @@ describe('无限制模式（2026-09-25）', () => {
       modes: { playerFirst: false, silent: false, unlimited: true },
       budget: baseBudget,
     });
-
-    const block = prompt.blocks.find((candidate) => candidate.id === UNLIMITED_BLOCK_ID);
-    const text = unlimitedPromptOf();
-    if (text === null) {
-      // 常量还是空的（仓库里就是这个状态）：开关打开也不该往提示词里塞东西。
-      expect(block).toBeUndefined();
-    } else {
-      // 用户粘贴了自己的提示词之后走这里——两条分支都必须绿，
-      // 否则「粘贴前」或「粘贴后」总有一边是坏的。
-      expect(block?.content).toBe(text);
-      expect(prompt.messages[0]?.content).toContain(text);
-    }
+    expect(prompt.blocks.some((candidate) => candidate.id === UNLIMITED_BLOCK_ID)).toBe(false);
   });
 
-  it('开关关着时，就算提示词填了也不加块', () => {
+  it('开关关着时，就算传了正文也不加块', () => {
     const { card, instance, room, scene } = fixtures();
     const withoutMode = assemblePrompt({
       card,
@@ -1087,6 +1098,7 @@ describe('无限制模式（2026-09-25）', () => {
       history: [],
       playerInput: '继续',
       modes: { playerFirst: false, silent: false },
+      unlimitedPrompt: '这一轮按这个要求写。',
       budget: baseBudget,
     });
     expect(withoutMode.blocks.some((candidate) => candidate.id === UNLIMITED_BLOCK_ID)).toBe(false);

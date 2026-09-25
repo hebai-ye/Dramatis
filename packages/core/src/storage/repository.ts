@@ -83,6 +83,17 @@ export const META_KEYS = {
    * 恰好落在同一毫秒，`updatedAt > 水位线` 就不成立——那条消息永远推不出去。
    */
   clock: 'clock.lastStamped',
+  /**
+   * 无限制模式的提示词正文（user 2026-09-25）。
+   *
+   * 放在 meta 里而不是写进代码：网页是**公开托管**的静态站点，任何写进源码的正文都会
+   * 被编译进公开可下载的 JS（`prompt/unlimited.ts` 的注释里记了这件事的来龙去脉）。
+   * 存成用户数据之后，它只在这台设备的库里。
+   *
+   * 也因此**不参与同步**（meta 全都不参与）：换一台设备要重新粘一次。想让它跟着账户走，
+   * 得新开一个同步集合，那是协议改动，按「同步是底线」单独一批做（见 TASKS 顺序 68b）。
+   */
+  unlimitedPrompt: 'modes.unlimitedPrompt',
 } as const;
 
 export interface Migration {

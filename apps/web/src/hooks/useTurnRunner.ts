@@ -17,6 +17,7 @@ import {
   type InstanceId,
   type IntentPlanEntry,
   isIntentFirst,
+  META_KEYS,
   type Message,
   type MessageId,
   type MessageUsage,
@@ -150,6 +151,14 @@ export function useTurnRunner({
   /** 这一轮生成的取消句柄（「停止」按钮按它）。 */
   const abortRef = useRef<AbortController | null>(null);
   const stop = useCallback(() => abortRef.current?.abort(), []);
+  /**
+   * 读本机 meta 的入口（顺序 68a：无限制模式的正文存在那儿）。
+   *
+   * 提到回调外存成普通标识符，而不是在回调里写 `db?.repository.getMeta`：
+   * 依赖分析对成员表达式只能给出「依赖 db?.repository.getMeta」这种没法写进依赖数组的结论，
+   * 存成 `repository` 之后依赖就是干净的单个标识符。
+   */
+  const repository = db?.repository ?? null;
 
   /** 跑一次生成，返回角色说出的完整内容。 */
   const runGeneration = useCallback(
@@ -207,6 +216,12 @@ export function useTurnRunner({
       let reasoning = '';
       let assembled: AssembledPrompt | null = null;
       const mentionText = options.mentionText ?? options.playerInput;
+      /*
+       * 无限制模式的正文是**用户数据**（本机 meta），所以在这里现读一次，而不是走 props：
+       * 用户可能刚在「＋」菜单里粘好就发消息，走 props 会慢一拍。读不到（没填过）就是空串，
+       * 模式开着也不会加块。
+       */
+      const unlimitedPrompt = (await repository?.getMeta<string>(META_KEYS.unlimitedPrompt)) ?? '';
       for await (const event of runTurn(
         {
           card: options.card,
@@ -226,6 +241,8 @@ export function useTurnRunner({
           chapters: session.chapters,
           attachmentSources: { memories: session.memories, chapters: session.allChapters },
           modes: conversation?.modes,
+          // 无限制模式的正文（用户数据，本机 meta）；空串时装配不会加块
+          unlimitedPrompt,
           /*
            * 历史按场记覆盖收起（顺序 58）：这条对话的全部场景用来判断哪些原文已被场记覆盖、
            * 带上还没进章节的前几场场记；策略落在对话模式里（缺省 recap-aware / 40）；
@@ -282,6 +299,7 @@ export function useTurnRunner({
       session.scenes,
       session.worldBooks,
       world,
+      repository,
       setLastPrompt,
     ],
   );

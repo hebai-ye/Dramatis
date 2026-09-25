@@ -119,12 +119,15 @@ function isSameDraft(left: Draft | null, right: Draft | null): boolean {
  */
 export function ProviderPanel({ api, disabled }: Props) {
   const [showKey, setShowKey] = useState(false);
+  const [clipboardBusy, setClipboardBusy] = useState(false);
+  const [saveBusy, setSaveBusy] = useState(false);
   const [draft, setDraft] = useState<Draft | null>(null);
   const [savedAt, setSavedAt] = useState<string | null>(null);
   /** 口令库的报错（口令不对 / 文件坏了）：就地显示，不弹窗。 */
   const [vaultError, setVaultError] = useState<string | null>(null);
   const active = api.active;
   const { activeId, keyMode } = api;
+  const controlsDisabled = disabled || saveBusy || clipboardBusy;
 
   /**
    * 草稿的重置时机。
@@ -148,8 +151,9 @@ export function ProviderPanel({ api, disabled }: Props) {
   };
 
   const save = async (): Promise<void> => {
-    if (draft === null || active === null) return;
+    if (draft === null || active === null || saveBusy || clipboardBusy) return;
     setVaultError(null);
+    setSaveBusy(true);
     try {
       await api.commitConfig({
         profile: {
@@ -166,25 +170,26 @@ export function ProviderPanel({ api, disabled }: Props) {
         keyMode: draft.keyMode,
         vaultPassphrase: draft.vaultPassphrase,
       });
+      // 口令用完了就从草稿里擦掉：它只在这一刻需要，留在界面上没有好处
+      setDraft((previous) => (previous === null ? previous : { ...previous, vaultPassphrase: '' }));
+      setSavedAt(new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }));
     } catch (error) {
       // 口令不对 / 库坏了：**不要**当成「保存成功」，也不要清掉用户填的 Key
       setVaultError(error instanceof Error ? error.message : String(error));
-      return;
+    } finally {
+      setSaveBusy(false);
     }
-    // 口令用完了就从草稿里擦掉：它只在这一刻需要，留在界面上没有好处
-    setDraft((previous) => (previous === null ? previous : { ...previous, vaultPassphrase: '' }));
-    setSavedAt(new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }));
   };
 
   return (
-    <section className="panel">
+    <section className="panel" aria-busy={saveBusy || clipboardBusy}>
       <h2>模型接入</h2>
 
       <label>
         当前配置
         <select
           value={api.activeId ?? ''}
-          disabled={disabled}
+          disabled={controlsDisabled}
           onChange={(event) => {
             if (event.target.value === '__new__') {
               void api.addProfile({ name: '新配置', baseUrl: 'https://api.deepseek.com', model: 'deepseek-chat' });
@@ -210,7 +215,7 @@ export function ProviderPanel({ api, disabled }: Props) {
               <input
                 type="text"
                 value={draft.name}
-                disabled={disabled}
+                disabled={controlsDisabled}
                 onChange={(event) => patch({ name: event.target.value })}
               />
             </label>
@@ -219,7 +224,7 @@ export function ProviderPanel({ api, disabled }: Props) {
               <input
                 type="text"
                 value={draft.model}
-                disabled={disabled}
+                disabled={controlsDisabled}
                 onChange={(event) => patch({ model: event.target.value })}
               />
             </label>
@@ -231,7 +236,7 @@ export function ProviderPanel({ api, disabled }: Props) {
               type="text"
               list="endpoint-presets"
               value={draft.baseUrl}
-              disabled={disabled}
+              disabled={controlsDisabled}
               onChange={(event) => patch({ baseUrl: event.target.value })}
             />
           </label>
@@ -247,7 +252,7 @@ export function ProviderPanel({ api, disabled }: Props) {
             用途
             <select
               value={draft.role}
-              disabled={disabled}
+              disabled={controlsDisabled}
               onChange={(event) => patch({ role: event.target.value as ProviderRole })}
             >
               <option value="both">对话与后台都用</option>
@@ -266,11 +271,18 @@ export function ProviderPanel({ api, disabled }: Props) {
               <input
                 type={showKey ? 'text' : 'password'}
                 value={draft.apiKey}
-                disabled={disabled}
+                disabled={controlsDisabled}
                 placeholder="sk-..."
                 onChange={(event) => patch({ apiKey: event.target.value })}
               />
-              <button type="button" className="ghost" onClick={() => setShowKey((value) => !value)}>
+              <button
+                type="button"
+                className="ghost"
+                disabled={controlsDisabled}
+                aria-label={showKey ? '隐藏 API Key' : '显示 API Key'}
+                aria-pressed={showKey}
+                onClick={() => setShowKey((value) => !value)}
+              >
                 {showKey ? '隐藏' : '显示'}
               </button>
             </span>
@@ -281,8 +293,8 @@ export function ProviderPanel({ api, disabled }: Props) {
 
             只在**还没填 Key** 时出现——已经填好的人不需要再看一遍说明。
             三步里有一步是「去注册、去充值」，那是用户以为最麻烦的部分，
-            所以把入口直连到 API keys 页，并给一个「粘贴并保存」：
-            从那边复制完回到这里，一下点完，不用手打那串 sk-。
+            所以把入口直连到 API keys 页，并给一个「粘贴 Key」入口。
+            粘贴只修改草稿，仍需点「保存」才会写入密钥库。
           */}
           {draft.apiKey.trim() === '' ? (
             <div className="key-guide">
@@ -296,16 +308,17 @@ export function ProviderPanel({ api, disabled }: Props) {
                   （注册 / 登录；充值在同一个控制台的「充值」页，最低几块钱就能聊很久）。
                 </li>
                 <li>在「API keys」里创建一个，名字随便起；它只显示这一次，当场复制。</li>
-                <li>回到这里，点下面那颗「粘贴并保存」——Key 会填进上面的输入框并直接存好。</li>
+                <li>回到这里点「粘贴 Key」，再点表单底部的「保存」。</li>
               </ol>
               <div className="save-bar">
                 <button
                   type="button"
-                  disabled={disabled}
-                  title="从剪贴板读一个 sk- 开头的 Key，填进去并保存"
+                  disabled={controlsDisabled}
+                  title="从剪贴板读取 sk- 开头的 Key，填入草稿；点保存后生效"
                   onClick={() => {
                     void (async () => {
                       setVaultError(null);
+                      setClipboardBusy(true);
                       try {
                         const text = (await navigator.clipboard.readText()).trim();
                         if (text === '') throw new Error('剪贴板是空的：先在开放平台复制那个 Key。');
@@ -315,11 +328,13 @@ export function ProviderPanel({ api, disabled }: Props) {
                         setDraft((previous) => (previous === null ? previous : { ...previous, apiKey: text }));
                       } catch (error) {
                         setVaultError(error instanceof Error ? error.message : String(error));
+                      } finally {
+                        setClipboardBusy(false);
                       }
                     })();
                   }}
                 >
-                  粘贴并保存
+                  {clipboardBusy ? '读取中…' : '粘贴 Key'}
                 </button>
                 <span className="hint">读剪贴板要浏览器许可；不让读就手动粘贴，效果一样</span>
               </div>
@@ -330,7 +345,7 @@ export function ProviderPanel({ api, disabled }: Props) {
             密钥保存方式
             <select
               value={draft.keyMode}
-              disabled={disabled}
+              disabled={controlsDisabled}
               onChange={(event) => patch({ keyMode: keyModeOf(event.target.value) })}
             >
               <option value="session">仅本次会话（最安全）</option>
@@ -357,7 +372,7 @@ export function ProviderPanel({ api, disabled }: Props) {
                 <input
                   type="password"
                   value={draft.vaultPassphrase}
-                  disabled={disabled}
+                  disabled={controlsDisabled}
                   placeholder={api.vaultExists ? '这台机器上已有口令库' : '设一句只有你知道的（忘记就只能重填 Key）'}
                   autoComplete="off"
                   onChange={(event) => patch({ vaultPassphrase: event.target.value })}
@@ -365,7 +380,7 @@ export function ProviderPanel({ api, disabled }: Props) {
                 <button
                   type="button"
                   className="ghost"
-                  disabled={disabled || draft.vaultPassphrase.trim() === ''}
+                  disabled={controlsDisabled || draft.vaultPassphrase.trim() === ''}
                   title="用这句口令打开本机的口令库（解不开就说明口令不对）"
                   onClick={() => {
                     setVaultError(null);
@@ -389,7 +404,7 @@ export function ProviderPanel({ api, disabled }: Props) {
           ) : null}
 
           {vaultError === null ? null : (
-            <div className="notice error">
+            <div className="notice error" role="alert">
               <p>{vaultError}</p>
             </div>
           )}
@@ -435,7 +450,7 @@ export function ProviderPanel({ api, disabled }: Props) {
                 min="0"
                 max="2"
                 value={draft.temperature}
-                disabled={disabled}
+                disabled={controlsDisabled}
                 onChange={(event) => patch({ temperature: Number(event.target.value) || 0 })}
               />
             </label>
@@ -446,7 +461,7 @@ export function ProviderPanel({ api, disabled }: Props) {
                 step="1024"
                 min="1024"
                 value={draft.maxTokens}
-                disabled={disabled}
+                disabled={controlsDisabled}
                 onChange={(event) => patch({ maxTokens: Number(event.target.value) || 1024 })}
               />
             </label>
@@ -457,7 +472,7 @@ export function ProviderPanel({ api, disabled }: Props) {
                 step="256"
                 min="0"
                 value={draft.reserveForReply}
-                disabled={disabled}
+                disabled={controlsDisabled}
                 onChange={(event) => patch({ reserveForReply: Number(event.target.value) || 0 })}
               />
             </label>
@@ -472,7 +487,7 @@ export function ProviderPanel({ api, disabled }: Props) {
                 min="0"
                 placeholder="留空＝不换算"
                 value={draft.priceInput}
-                disabled={disabled}
+                disabled={controlsDisabled}
                 onChange={(event) => patch({ priceInput: event.target.value })}
               />
             </label>
@@ -484,7 +499,7 @@ export function ProviderPanel({ api, disabled }: Props) {
                 min="0"
                 placeholder="留空＝不换算"
                 value={draft.priceOutput}
-                disabled={disabled}
+                disabled={controlsDisabled}
                 onChange={(event) => patch({ priceOutput: event.target.value })}
               />
             </label>
@@ -494,7 +509,7 @@ export function ProviderPanel({ api, disabled }: Props) {
                 type="text"
                 maxLength={4}
                 value={draft.priceCurrency}
-                disabled={disabled}
+                disabled={controlsDisabled}
                 onChange={(event) => patch({ priceCurrency: event.target.value })}
               />
             </label>
@@ -505,13 +520,13 @@ export function ProviderPanel({ api, disabled }: Props) {
           </p>
 
           <div className="save-bar">
-            <button type="button" disabled={disabled || !dirty} onClick={() => void save()}>
-              保存
+            <button type="button" disabled={controlsDisabled || !dirty} onClick={() => void save()}>
+              {saveBusy ? '保存中…' : '保存'}
             </button>
             <button
               type="button"
               className="ghost"
-              disabled={disabled || !dirty}
+              disabled={controlsDisabled || !dirty}
               title="放弃这次改动，恢复成已保存的值"
               onClick={() => {
                 setDraft(draftOf(api));
@@ -520,7 +535,7 @@ export function ProviderPanel({ api, disabled }: Props) {
             >
               撤销
             </button>
-            <span className="hint">
+            <span className="hint" role="status">
               {dirty ? '有未保存的改动' : savedAt === null ? '改动只在点保存后生效' : `已保存（${savedAt}）`}
             </span>
           </div>
@@ -528,7 +543,7 @@ export function ProviderPanel({ api, disabled }: Props) {
           <button
             type="button"
             className="ghost danger"
-            disabled={disabled || api.profiles.length <= 1}
+            disabled={controlsDisabled || api.profiles.length <= 1}
             onClick={() => {
               if (window.confirm(`删除配置「${active.name}」？`)) void api.deleteProfile(active.id);
             }}

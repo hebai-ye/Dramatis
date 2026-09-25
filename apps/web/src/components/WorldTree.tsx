@@ -1,6 +1,7 @@
 import type { Conversation, ConversationId, RoomId, RoomSummary } from '@dramatis/core';
 import { memo, useEffect, useRef, useState } from 'react';
 import { countRender } from '../lib/render-count';
+import { IconPlus } from './Icons';
 
 interface Props {
   worlds: RoomSummary[];
@@ -125,7 +126,8 @@ function WorldTreeImpl({
               disabled={disabled}
               onClick={() => onNewConversation(world.id)}
             >
-              ＋ 在这个世界新开一轮对话
+              <IconPlus />
+              <span>在这个世界新开一轮对话</span>
             </button>
 
             {isActive ? (

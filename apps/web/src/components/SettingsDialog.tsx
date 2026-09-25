@@ -1,5 +1,5 @@
 import type { Conversation, ConversationId } from '@dramatis/core';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { AppearanceApi } from '../lib/appearance';
 import { formatBytes, formatTime } from '../lib/format';
 import type { ProvidersApi } from '../lib/providers';
@@ -60,9 +60,47 @@ interface Props {
 
 export function SettingsDialog(props: Props) {
   const { category, onCategoryChange, onClose } = props;
+  const closeRef = useRef<HTMLButtonElement>(null);
   const [archiveNotice, setArchiveNotice] = useState<{ ok: boolean; message: string } | null>(null);
   const [archiveBusy, setArchiveBusy] = useState(false);
   const [persistNotice, setPersistNotice] = useState<string | null>(null);
+  const [storageAction, setStorageAction] = useState<'persist' | 'install' | null>(null);
+
+  useEffect(() => {
+    const previousFocus = document.activeElement;
+    closeRef.current?.focus();
+    return () => {
+      if (previousFocus instanceof HTMLElement && previousFocus.isConnected) previousFocus.focus();
+    };
+  }, []);
+
+  const handleDialogKeyDown = (event: React.KeyboardEvent<HTMLDivElement>): void => {
+    if (event.key === 'Escape') {
+      event.stopPropagation();
+      onClose();
+      return;
+    }
+    if (event.key !== 'Tab') return;
+    const focusable = Array.from(
+      event.currentTarget.querySelectorAll<HTMLElement>(
+        'button:not([disabled]), a[href], input:not([disabled]):not([type="hidden"]), select:not([disabled]), textarea:not([disabled]), summary, [tabindex]:not([tabindex="-1"])',
+      ),
+    ).filter((element) => element.getClientRects().length > 0);
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    if (first === undefined || last === undefined) {
+      event.preventDefault();
+      return;
+    }
+    const active = document.activeElement;
+    if (event.shiftKey && (active === first || !focusable.includes(active as HTMLElement))) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && (active === last || !focusable.includes(active as HTMLElement))) {
+      event.preventDefault();
+      first.focus();
+    }
+  };
 
   const runArchive = async (action: () => Promise<{ ok: boolean; message: string } | null>): Promise<void> => {
     setArchiveBusy(true);
@@ -79,34 +117,30 @@ export function SettingsDialog(props: Props) {
 
   return (
     // biome-ignore lint/a11y/noStaticElementInteractions: 遮罩点击关闭是弹窗的通用约定，键盘路径是 Esc 与「关闭」
-    <div
-      className="dialog-backdrop"
-      onClick={onClose}
-      onKeyDown={(event) => {
-        if (event.key === 'Escape') onClose();
-      }}
-    >
+    <div className="dialog-backdrop" onClick={onClose} onKeyDown={handleDialogKeyDown}>
       {/* biome-ignore lint/a11y/useKeyWithClickEvents: 同上；点击在这里只用于阻止冒泡 */}
       <section
         className="dialog settings-dialog"
         role="dialog"
         aria-label="设置"
+        aria-modal="true"
         onClick={(event) => event.stopPropagation()}
       >
         <header className="dialog-head">
           <strong>设置</strong>
-          <button type="button" className="ghost" onClick={onClose}>
+          <button ref={closeRef} type="button" className="ghost" onClick={onClose}>
             关闭
           </button>
         </header>
 
         <div className="settings-body">
-          <nav className="settings-nav">
+          <nav className="settings-nav" aria-label="设置分类">
             {CATEGORIES.map((item) => (
               <button
                 key={item.id}
                 type="button"
                 className={item.id === category ? 'ghost active' : 'ghost'}
+                aria-current={item.id === category ? 'page' : undefined}
                 onClick={() => onCategoryChange(item.id)}
               >
                 <strong>{item.label}</strong>
@@ -156,7 +190,7 @@ export function SettingsDialog(props: Props) {
                     导出的是一整个世界：对话、场景、角色与角色卡、消息、记忆、情绪关系、前情章节、世界书、账单——一个文件，
                     换台设备导进来就能接着用。导入永远是<strong>新建一条世界线</strong>，不会覆盖或改动本机已有的数据。
                   </p>
-                  <div className="save-bar">
+                  <div className="save-bar" aria-busy={archiveBusy}>
                     <button
                       type="button"
                       disabled={props.disabled || archiveBusy || props.activeConversationId === null}
@@ -174,7 +208,10 @@ export function SettingsDialog(props: Props) {
                     </button>
                   </div>
                   {archiveNotice === null ? null : (
-                    <div className={archiveNotice.ok ? 'notice' : 'notice error'}>
+                    <div
+                      className={archiveNotice.ok ? 'notice' : 'notice error'}
+                      role={archiveNotice.ok ? 'status' : 'alert'}
+                    >
                       <p>{archiveNotice.message.replace(/\*\*/g, '')}</p>
                     </div>
                   )}
@@ -210,41 +247,67 @@ export function SettingsDialog(props: Props) {
                     <button
                       type="button"
                       disabled={
-                        props.disabled || !props.storage.status.supported || props.storage.status.persisted === true
+                        props.disabled ||
+                        storageAction !== null ||
+                        !props.storage.status.supported ||
+                        props.storage.status.persisted === true
                       }
                       onClick={() => {
                         setPersistNotice(null);
-                        void props.storage.requestPersist().then((granted) => {
-                          setPersistNotice(
-                            granted
-                              ? '拿到了 ✓ 浏览器不会再因为磁盘紧张、或你很久没打开，就悄悄清掉这些数据。'
-                              : '浏览器这次没给。Chrome 不弹窗，它按「有没有把这个站点装成应用 / 来过几次」自己判断——下一步：装成应用（下面那个按钮），然后再点一次。没拿到也不影响使用，导出封存照样是最后的保险。',
-                          );
-                        });
+                        setStorageAction('persist');
+                        void props.storage
+                          .requestPersist()
+                          .then((granted) => {
+                            setPersistNotice(
+                              granted
+                                ? '拿到了 ✓ 浏览器不会再因为磁盘紧张、或你很久没打开，就悄悄清掉这些数据。'
+                                : '浏览器这次没给。Chrome 不弹窗，它按「有没有把这个站点装成应用 / 来过几次」自己判断——下一步：装成应用（下面那个按钮），然后再点一次。没拿到也不影响使用，导出封存照样是最后的保险。',
+                            );
+                          })
+                          .catch((error: unknown) =>
+                            setPersistNotice(error instanceof Error ? error.message : String(error)),
+                          )
+                          .finally(() => setStorageAction(null));
                       }}
                     >
-                      申请持久化存储
+                      {storageAction === 'persist' ? '申请中…' : '申请持久化存储'}
                     </button>
                     <button
                       type="button"
                       className="ghost"
+                      disabled={props.disabled || storageAction !== null}
                       onClick={() => {
                         setPersistNotice(null);
-                        void props.storage.installApp().then((outcome) => {
-                          setPersistNotice(
-                            outcome === 'accepted'
-                              ? '安装开始了。装完回到这里再点一次「申请持久化存储」，一般就能拿到。'
-                              : outcome === 'dismissed'
-                                ? '这次取消了。想装的话，地址栏右边或浏览器菜单里也有「安装应用 / 添加到主屏幕」。'
-                                : '这个浏览器现在没给一键安装的口子：看地址栏右边的安装图标，或者浏览器菜单里的「安装应用」「添加到主屏幕」（安卓上叫「添加到主屏幕」）。',
-                          );
-                        });
+                        setStorageAction('install');
+                        void props.storage
+                          .installApp()
+                          .then((outcome) => {
+                            setPersistNotice(
+                              outcome === 'accepted'
+                                ? '安装开始了。装完回到这里再点一次「申请持久化存储」，一般就能拿到。'
+                                : outcome === 'dismissed'
+                                  ? '这次取消了。想装的话，地址栏右边或浏览器菜单里也有「安装应用 / 添加到主屏幕」。'
+                                  : '这个浏览器现在没给一键安装的口子：看地址栏右边的安装图标，或者浏览器菜单里的「安装应用」「添加到主屏幕」（安卓上叫「添加到主屏幕」）。',
+                            );
+                          })
+                          .catch((error: unknown) =>
+                            setPersistNotice(error instanceof Error ? error.message : String(error)),
+                          )
+                          .finally(() => setStorageAction(null));
                       }}
                     >
-                      {props.storage.canInstall ? '装成应用（更容易拿到持久化）' : '怎么装成应用'}
+                      {storageAction === 'install'
+                        ? '处理中…'
+                        : props.storage.canInstall
+                          ? '装成应用（更容易拿到持久化）'
+                          : '怎么装成应用'}
                     </button>
                   </div>
-                  {persistNotice === null ? null : <p className="hint">{persistNotice}</p>}
+                  {persistNotice === null ? null : (
+                    <p className="hint" role="status">
+                      {persistNotice}
+                    </p>
+                  )}
                   <p className="hint">
                     {props.storage.status.persisted === true
                       ? '已经拿到持久化：浏览器不会因为磁盘紧张或你很久没打开就清掉这些数据。'
@@ -312,7 +375,10 @@ export function SettingsDialog(props: Props) {
                   </ul>
                 )}
                 {archiveNotice === null ? null : (
-                  <div className={archiveNotice.ok ? 'notice' : 'notice error'}>
+                  <div
+                    className={archiveNotice.ok ? 'notice' : 'notice error'}
+                    role={archiveNotice.ok ? 'status' : 'alert'}
+                  >
                     <p>{archiveNotice.message.replace(/\*\*/g, '')}</p>
                   </div>
                 )}

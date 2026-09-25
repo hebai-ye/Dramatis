@@ -1743,8 +1743,11 @@ details summary {
 }
 
 .world-new-conversation {
+  align-items: center;
   align-self: flex-start;
+  display: inline-flex;
   font-size: 12px;
+  gap: 4px;
   text-align: left;
 }
 

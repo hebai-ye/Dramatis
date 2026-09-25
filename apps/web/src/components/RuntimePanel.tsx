@@ -96,12 +96,13 @@ function RuntimePanelImpl(props: Props) {
 
   return (
     <aside className="sidebar runtime-panel">
-      <nav className="design-tabs">
+      <nav className="design-tabs" aria-label="运行时内容">
         {TABS.map((item) => (
           <button
             key={item.id}
             type="button"
             className={item.id === tab ? 'tab active' : 'tab'}
+            aria-pressed={item.id === tab}
             onClick={() => setTab(item.id)}
           >
             {item.label}

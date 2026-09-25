@@ -3,13 +3,13 @@ import type { ReactNode } from 'react';
 /**
  * 输入区用的几个内联图标（用户 2026-09-21：输入区照 Codex 的样子重做）。
  *
- * 为什么不引图标库：一共四个图形，每个十来行路径，内联进来还能直接吃
- * `currentColor`——三套色调切换时它们跟着变色，不用管。尺寸统一 16，
- * 一律 `aria-hidden`：旁边的按钮都有 `aria-label` 或可见文字。
+ * 图标共用 16×16 坐标系与 1.6 描边；工具栏用 16px，手机顶栏用 20px。
+ * `currentColor` 跟随按钮的 hover / focus / active / disabled 状态与主题色。
+ * 一律 `aria-hidden`：按钮自己提供可访问名称。
  */
 
 interface IconProps {
-  size?: number;
+  size?: 16 | 20;
 }
 
 function Frame({ size = 16, children }: IconProps & { children: ReactNode }) {
@@ -23,6 +23,7 @@ function Frame({ size = 16, children }: IconProps & { children: ReactNode }) {
       strokeLinecap="round"
       strokeLinejoin="round"
       strokeWidth="1.6"
+      style={{ display: 'block' }}
       viewBox="0 0 16 16"
       width={size}
     >

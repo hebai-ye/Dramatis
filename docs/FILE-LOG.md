@@ -998,7 +998,17 @@ git ls-files | ForEach-Object {
 | `packages/core/src/prompt/assemble.ts` / `assemble.test.ts` | 改 | 本轮提示词强调玩家身份、未知信息与只写当前角色 |
 | `docs/LAYOUT.md` / `TASKS.md` / `STATUS.md` / `EVAL.md` / `FILE-LOG.md` | 改 | 更新入口语义、用户缺陷与验证记录 |
 
-## 五十二、几点注意
+## 五十二、2026-09-25：图标与设置交互第一轮
+
+| 文件 | 新增/修改 | 说明 |
+| --- | --- | --- |
+| `apps/web/src/components/Icons.tsx` / `WorldTree.tsx` / `styles.css` | 改 | SVG 16/20 px 与统一描边；世界行续开入口改同款加号，手机触摸区 170×44 px |
+| `apps/web/src/components/RuntimePanel.tsx` | 改 | 运行时视图选中态可读 |
+| `apps/web/src/components/SettingsDialog.tsx` | 改 | 模态语义、焦点循环与回焦、异步存储反馈 |
+| `apps/web/src/components/ProviderPanel.tsx` | 改 | Key 粘贴文案与保存动作一致，保存/读取状态及错误反馈 |
+| `docs/EVAL.md` / `STATUS.md` / `TASKS.md` / `FILE-LOG.md` | 改 | 第一轮 UI/UX 评测与剩余真机清单 |
+
+## 五十三、几点注意
 
 ---
 

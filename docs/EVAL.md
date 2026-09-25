@@ -3695,3 +3695,11 @@ B = `since` 下推；原方案里的「`summary` 增量缓存」按实测拆出�
 **给以后的人一条硬提醒**：**不要**把用户的提示词、密钥、私人设定写进源码常量。这个仓库的产物是
 **公开托管**的静态文件，`assets/*.js` 谁都能下载；正文只能当用户数据（本机库或加密同步）走。
 本批为此专门留了一个复核脚本（用 gitignore 的参照文件扫描全树与产物，只输出计数）。
+
+**上线记录（2026-09-25，用户明确要求 push + 部署）**：`ac78a37..f1e0b5e` 推到 `origin/main`，
+公网换成 `assets/index-2_KP3lQJ.js` + `index-obPMknLQ.css`，旧目录备份
+`/var/www/dramatis.bak-f1e0b5e`（`bak-e140839`、`bak-b117bd3` 也在）。同步服务端本批未动
+（本机 `/health` 200、公网 `/sync/health` 200、`systemctl is-active` = active）。
+上线后**把线上那份 JS 下载回来扫过**：`live_bundle_has_secret: false`，
+而 `无限制模式` / `清空旧提示` 两个标记都在——**部署的是新包，且不含用户正文**。
+没验的：真机浏览器里的实际交互（归 Codex）。

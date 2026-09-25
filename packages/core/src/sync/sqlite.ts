@@ -12,7 +12,7 @@
  */
 
 import { CryptoError } from '../crypto/errors.js';
-import type { SyncServerStore, SyncSpaceRecord } from './server.js';
+import { newSpaceEpoch, type SyncServerStore, type SyncSpaceRecord } from './server.js';
 import type { SyncAcceptedRecord, SyncPulledRecord, SyncWireRecord } from './types.js';
 
 /** 我们用到的那几个方法（`node:sqlite` 与 better-sqlite3 都是这个形状）。 */
@@ -41,7 +41,8 @@ CREATE TABLE IF NOT EXISTS spaces (
   credential_hash TEXT NOT NULL,
   recovery_credential_hash TEXT NOT NULL,
   key_wraps TEXT NOT NULL,
-  created_at TEXT NOT NULL
+  created_at TEXT NOT NULL,
+  epoch TEXT
 );
 CREATE TABLE IF NOT EXISTS records (
   space_handle TEXT NOT NULL,
@@ -76,6 +77,17 @@ export function ensureSyncSchema(db: SqliteDatabase): void {
   if (!columns.some((column) => column.name === 'device_id')) {
     db.exec('ALTER TABLE records ADD COLUMN device_id TEXT');
   }
+
+  /*
+   * 审计 A4 加的空间纪元。老库补列之后，给每个还没有纪元的空间补一个随机值：
+   * 客户端第一次见到它时只是记下来（本地没有旧纪元可比），不会误判成重建。
+   * 每次启动都跑一遍补漏（`WHERE epoch IS NULL`），回滚到老版本再升级也能补上。
+   */
+  const spaceColumns = db.prepare('PRAGMA table_info(spaces)').all() as { name?: string }[];
+  if (!spaceColumns.some((column) => column.name === 'epoch')) {
+    db.exec('ALTER TABLE spaces ADD COLUMN epoch TEXT');
+  }
+  db.exec("UPDATE spaces SET epoch = lower(hex(randomblob(16))) WHERE epoch IS NULL OR epoch = ''");
 }
 
 /**
@@ -102,6 +114,7 @@ interface SpaceRow {
   recovery_credential_hash: string;
   key_wraps: string;
   created_at: string;
+  epoch?: string | null;
 }
 
 interface RecordRow {
@@ -123,6 +136,7 @@ function asSpace(row: unknown): SyncSpaceRecord | null {
     recoveryCredentialHash: value.recovery_credential_hash,
     keyWraps: JSON.parse(value.key_wraps) as Record<string, unknown>,
     createdAt: value.created_at,
+    ...(typeof value.epoch === 'string' && value.epoch !== '' ? { epoch: value.epoch } : {}),
   };
 }
 
@@ -166,8 +180,8 @@ export function createSqliteSyncStore(db: SqliteDatabase): SyncServerStore & { s
       // 比「先查再插」少一次往返，也不会被并发插队（SYNC §4.6 的 409 语义）
       const inserted = db
         .prepare(
-          `INSERT INTO spaces (space_handle, credential_hash, recovery_credential_hash, key_wraps, created_at)
-         VALUES (?1, ?2, ?3, ?4, ?5)
+          `INSERT INTO spaces (space_handle, credential_hash, recovery_credential_hash, key_wraps, created_at, epoch)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6)
          ON CONFLICT(space_handle) DO NOTHING`,
         )
         .run(
@@ -176,6 +190,7 @@ export function createSqliteSyncStore(db: SqliteDatabase): SyncServerStore & { s
           record.recoveryCredentialHash,
           JSON.stringify(record.keyWraps),
           record.createdAt,
+          record.epoch ?? newSpaceEpoch(),
         ) as { changes?: number };
 
       if ((inserted.changes ?? 0) === 0) return false;

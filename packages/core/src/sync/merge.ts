@@ -61,7 +61,15 @@ export async function mergeRemoteRecords(
       applied += 1;
     } else {
       skipped += 1;
-      overriddenIds.add(`${record.collection}/${record.id}`);
+      /*
+       * 同一个版本（时间戳相同、墓碑状态相同）只是「回声」，不是覆盖：
+       * 拉回来的正是本机已经有的那一份，没有谁被挡回去。
+       */
+      const identical =
+        local !== null &&
+        local.updatedAt === record.updatedAt &&
+        (local.deletedAt !== null) === (record.deletedAt !== null);
+      if (!identical) overriddenIds.add(`${record.collection}/${record.id}`);
     }
   }
 

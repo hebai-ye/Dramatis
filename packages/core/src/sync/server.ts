@@ -13,6 +13,7 @@
  * 主密钥封装。它**没有**明文，也没有密码——`keyWraps` 对它是透明的字节。
  */
 
+import { randomBytes, toBase64Url } from '../crypto/encoding.js';
 import { CryptoError } from '../crypto/errors.js';
 import { verifyCredential } from '../crypto/keys.js';
 import { type EncryptedRecord, recordSize } from '../crypto/records.js';
@@ -45,6 +46,18 @@ export interface SyncSpaceRecord {
    */
   keyWraps: Record<string, unknown>;
   createdAt: string;
+  /**
+   * 空间纪元（审计 A4）：建空间时随机生成，之后不变。
+   *
+   * 服务端库丢了重建、换了一台服务端时它必然不同，客户端据此把游标作废重来。
+   * 可选：老库里的空间没有它（SQLite 版在启动迁移时补上），老存储实现也可以不给。
+   */
+  epoch?: string;
+}
+
+/** 生成一个新的空间纪元：128 bit 随机，base64url。 */
+export function newSpaceEpoch(): string {
+  return toBase64Url(randomBytes(16));
 }
 
 /** 服务端存的一条记录（`SyncWireRecord` 加一个自己分配的号）。 */
@@ -186,7 +199,7 @@ export interface SyncServer {
 }
 
 /** 鉴权：凭证哈希对得上密码那份或恢复码那份都算过（两者等价，SYNC §3.3）。 */
-async function authorize(store: SyncServerStore, credentials: SyncCredentials): Promise<void> {
+async function authorize(store: SyncServerStore, credentials: SyncCredentials): Promise<SyncSpaceRecord> {
   const space = await store.getSpace(credentials.spaceHandle);
   if (space === null) {
     throw new SyncServerError(404, 'space-not-found', '这个空间不存在（或者账户 ID 打错了）。');
@@ -198,6 +211,7 @@ async function authorize(store: SyncServerStore, credentials: SyncCredentials): 
   if (!ok) {
     throw new SyncServerError(401, 'unauthorized', '凭证不对：检查一下同步密码（或恢复码）。');
   }
+  return space;
 }
 
 export interface CreateSyncServerOptions {
@@ -296,6 +310,7 @@ export function createSyncServer(store: SyncServerStore, options: CreateSyncServ
         recoveryCredentialHash: input.recoveryCredentialHash,
         keyWraps: input.keyWraps ?? {},
         createdAt: input.at,
+        epoch: newSpaceEpoch(),
       });
       return created ? 'created' : 'exists';
     },
@@ -305,8 +320,9 @@ export function createSyncServer(store: SyncServerStore, options: CreateSyncServ
     },
 
     async head(input: SyncHeadInput) {
-      await authorize(store, input);
-      return { head: await store.head(input.spaceHandle) };
+      const space = await authorize(store, input);
+      const head = await store.head(input.spaceHandle);
+      return space.epoch === undefined || space.epoch === '' ? { head } : { head, epoch: space.epoch };
     },
 
     async push(input: SyncPushInput) {
@@ -441,7 +457,7 @@ export function createMemorySyncStore(): MemorySyncStore {
 
     async createSpace(record) {
       if (spaces.has(record.spaceHandle)) return false;
-      spaces.set(record.spaceHandle, record);
+      spaces.set(record.spaceHandle, { ...record, epoch: record.epoch ?? newSpaceEpoch() });
       rows.set(record.spaceHandle, new Map());
       heads.set(record.spaceHandle, 0);
       return true;

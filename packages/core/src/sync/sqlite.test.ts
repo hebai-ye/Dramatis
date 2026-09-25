@@ -160,7 +160,7 @@ describe('SQLite 存储', () => {
     // 恢复码那份凭证也认（等价凭证）
     await expect(
       server.head({ spaceHandle: created.spaceHandle, credential: created.recoveryCredential }),
-    ).resolves.toEqual({ head: 0 });
+    ).resolves.toMatchObject({ head: 0, epoch: expect.any(String) });
   });
 
   it('空 push 不动号（服务端不因为一次空请求就跳号）', async () => {

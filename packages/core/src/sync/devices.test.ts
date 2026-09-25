@@ -203,7 +203,13 @@ describe('覆盖可见性（顺序 19）', () => {
       deletedAt: null,
       value: { ...roomB, title: 'B 改的（更旧）' },
     });
-    await b.repository.writeSyncState({ spaceHandle: created.spaceHandle, pulledHead: 0, pushedAt: null });
+    /*
+     * 让 B 把这条旧版本推上去：推送点拨回 2000 年之前，游标留着（不能清零——
+     * 清零会走「先拉后推」，B 会先收下 A 那条更新的，旧版本根本不会被推上去，
+     * 那正是审计 A4 要的行为）。
+     */
+    const stateB = await b.repository.readSyncState();
+    await b.repository.writeSyncState({ ...stateB, pushedAt: '1999-12-31T00:00:00.000Z' });
     await syncOf(b, server, created.spaceHandle);
 
     const report = await syncOf(a, server, created.spaceHandle);

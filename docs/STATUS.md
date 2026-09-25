@@ -11,6 +11,7 @@
 | 长期路线、优先级、风险 | [ROADMAP.md](./ROADMAP.md) |
 | 用户要的界面长什么样、怎么动 | [LAYOUT.md](./LAYOUT.md) |
 | 怎么验证它能用、真模型跑出来的结论 | [EVAL.md](./EVAL.md) |
+| 角色卡系统提示写法与粘贴位置 | [ROLEPLAY-PROMPT.md](./ROLEPLAY-PROMPT.md) |
 | 账号与同步怎么定、协议长什么样 | [SYNC.md](./SYNC.md) |
 | 服务器管理台怎么安全地管密文空间 | [ADMIN-CONSOLE.md](./ADMIN-CONSOLE.md) |
 | 架构与数据模型的原始设计 | [DESIGN.md](./DESIGN.md) |

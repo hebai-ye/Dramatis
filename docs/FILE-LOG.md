@@ -1027,7 +1027,14 @@ git ls-files | ForEach-Object {
 | `apps/web/src/hooks/useTurnRunner.ts` | 改 | 空正文报错；重抽先生成并验证再替换旧回复 |
 | `docs/STATUS.md` / `TASKS.md` / `EVAL.md` / `FILE-LOG.md` | 改 | 记录范围、假响应门禁、真实模型与上线结果 |
 
-## 五十五、几点注意
+## 五十五、2026-09-25：角色沉浸提示词文档
+
+| 文件 | 新增/修改 | 说明 |
+| --- | --- | --- |
+| `docs/ROLEPLAY-PROMPT.md` | 新增 | 完整的角色沉浸模板、角色卡系统提示粘贴路径与服务商过滤边界 |
+| `docs/STATUS.md` / `FILE-LOG.md` | 改 | 加入文档入口与文件记录 |
+
+## 五十六、几点注意
 
 ---
 

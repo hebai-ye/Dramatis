@@ -55,6 +55,8 @@ export interface ConversationModes {
    * 一个完整的意思，只是不再把同一件事翻来覆去铺陈。
    */
   replyLength?: ReplyLength;
+  /** 当前对话额外的高级系统提示；不改角色卡，也不跨对话继承。 */
+  advancedSystemPrompt?: string;
 }
 
 export type HistoryMode = 'full' | 'recap-aware';

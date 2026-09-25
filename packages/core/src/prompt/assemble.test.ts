@@ -223,6 +223,35 @@ describe('assemblePrompt', () => {
     expect(customPrompt.blocks.find((block) => block.id === 'system')?.content).toBe('  我自己的规则。\n');
   });
 
+  it('当前对话的高级系统提示独立装配，不改角色卡默认提示', () => {
+    const { card, instance, room, scene } = fixtures();
+    const prompt = assemblePrompt({
+      card,
+      instance,
+      room,
+      scene,
+      history: [],
+      playerInput: '继续',
+      modes: { playerFirst: false, silent: false, advancedSystemPrompt: '保持雨夜氛围。' },
+      budget: baseBudget,
+    });
+    expect(prompt.blocks.find((block) => block.id === 'system')?.content).toBe(DEFAULT_CARD_SYSTEM_PROMPT);
+    expect(prompt.blocks.find((block) => block.id === 'conversation-system')?.content).toBe('保持雨夜氛围。');
+    expect(card.systemPrompt).toBe('');
+
+    const withoutPrompt = assemblePrompt({
+      card,
+      instance,
+      room,
+      scene,
+      history: [],
+      playerInput: '继续',
+      modes: { playerFirst: false, silent: false, advancedSystemPrompt: '   ' },
+      budget: baseBudget,
+    });
+    expect(withoutPrompt.blocks.some((block) => block.id === 'conversation-system')).toBe(false);
+  });
+
   it('对话级玩家身份覆盖世界上的旧默认身份', () => {
     const { card, instance, room, scene } = fixtures();
     const prompt = assemblePrompt({

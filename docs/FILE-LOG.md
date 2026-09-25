@@ -1043,6 +1043,8 @@ git ls-files | ForEach-Object {
 | `packages/core/src/admin/tools.ts` / `tools.test.ts` | 改 | 管理员新建卡草稿沿用默认值 |
 | `packages/core/src/prompt/assemble.ts` / `assemble.test.ts` / `budget.ts` / `types.ts` | 改 | 旧空字段运行时回退到默认模板；小预算只压缩默认提示 |
 | `apps/web/src/components/CardDesigner.tsx` | 改 | 旧卡空字段在高级编辑器中显示实际默认值 |
+| `packages/core/src/model/conversation.ts` / `prompt/assemble.ts` / `assemble.test.ts` | 改 | 当前对话可保存并装配独立的高级系统提示 |
+| `apps/web/src/components/MainChat.tsx` / `styles.css` | 改 | 加号菜单加入高级提示编辑与显式保存，手机视口内可滚动 |
 | `docs/ROLEPLAY-PROMPT.md` / `STATUS.md` / `TASKS.md` / `EVAL.md` / `FILE-LOG.md` | 改 | 使用路径、范围和验证记录 |
 
 ## 五十六半、2026-09-25：长对话质量（旁白腔 / 动作重复 / 回答模式）

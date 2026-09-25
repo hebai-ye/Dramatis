@@ -2225,9 +2225,35 @@ details summary {
   gap: 8px;
   left: 0;
   min-width: 260px;
+  max-height: min(70vh, 620px);
+  max-width: calc(100vw - 28px);
+  overflow-y: auto;
   padding: 10px 12px;
   position: absolute;
   z-index: 5;
+}
+
+.mode-prompt-label {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.mode-prompt-input {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  box-sizing: border-box;
+  color: var(--text);
+  font: inherit;
+  min-height: 110px;
+  padding: 8px;
+  resize: vertical;
+  width: 100%;
+}
+
+.mode-prompt-save {
+  align-self: flex-start;
+  min-height: 44px;
 }
 
 .mode-option {

@@ -219,6 +219,15 @@ function MainChatImpl({
   const [input, setInput] = useState('');
   const [editingId, setEditingId] = useState<MessageId | null>(null);
   const [modeMenuOpen, setModeMenuOpen] = useState(false);
+  const [advancedPromptDraft, setAdvancedPromptDraft] = useState(conversation.modes.advancedSystemPrompt ?? '');
+  const savedAdvancedPrompt = conversation.modes.advancedSystemPrompt ?? '';
+  const promptSource = useRef({ conversationId: conversation.id, text: savedAdvancedPrompt });
+  useEffect(() => {
+    if (promptSource.current.conversationId === conversation.id && promptSource.current.text === savedAdvancedPrompt)
+      return;
+    promptSource.current = { conversationId: conversation.id, text: savedAdvancedPrompt };
+    setAdvancedPromptDraft(savedAdvancedPrompt);
+  }, [conversation.id, savedAdvancedPrompt]);
   const [dragOver, setDragOver] = useState(false);
   const [highlightId, setHighlightId] = useState<MessageId | null>(null);
   /**
@@ -693,6 +702,29 @@ function MainChatImpl({
                       </span>
                     </label>
                   ))}
+
+                  <label className="mode-prompt-label" htmlFor={`advanced-prompt-${conversation.id}`}>
+                    高级系统提示 · 当前对话
+                  </label>
+                  <p className="hint">可选。下一轮起用于当前对话；角色卡提示和其他对话保持原样。</p>
+                  <textarea
+                    id={`advanced-prompt-${conversation.id}`}
+                    className="mode-prompt-input"
+                    value={advancedPromptDraft}
+                    maxLength={4000}
+                    rows={5}
+                    disabled={archived}
+                    placeholder="填写当前对话的额外叙事要求"
+                    onChange={(event) => setAdvancedPromptDraft(event.target.value)}
+                  />
+                  <button
+                    type="button"
+                    className="ghost mode-prompt-save"
+                    disabled={archived || advancedPromptDraft === savedAdvancedPrompt}
+                    onClick={() => onChangeModes({ advancedSystemPrompt: advancedPromptDraft })}
+                  >
+                    保存高级提示
+                  </button>
 
                   {/*
                     便捷指令（用户 2026-09-21）：把 `#` 这种写法摆到用户手边，

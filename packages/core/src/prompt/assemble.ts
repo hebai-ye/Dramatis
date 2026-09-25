@@ -732,6 +732,18 @@ export function assemblePrompt(input: AssembleInput): AssembledPrompt {
     },
   ];
 
+  const advancedSystemPrompt = input.modes?.advancedSystemPrompt?.trim();
+  if (advancedSystemPrompt) {
+    blocks.push({
+      id: 'conversation-system',
+      kind: 'system',
+      label: '本对话高级系统提示',
+      content: advancedSystemPrompt,
+      priority: PRIORITY.system,
+      droppable: false,
+    });
+  }
+
   /*
    * 世界书按位置落（顺序 60）：每条命中一块，`placement` 决定它插到哪一层。
    *

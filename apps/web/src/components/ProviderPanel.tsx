@@ -183,8 +183,6 @@ export function ProviderPanel({ api, disabled }: Props) {
 
   return (
     <section className="panel" aria-busy={saveBusy || clipboardBusy}>
-      <h2>模型接入</h2>
-
       <label>
         当前配置
         <select

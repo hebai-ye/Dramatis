@@ -293,6 +293,13 @@ button:disabled {
   cursor: not-allowed;
 }
 
+button:focus-visible,
+summary:focus-visible,
+a:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
 /*
  * 次级按钮（顺序 42，用户要求统一成 Codex 那套）：**无边框**，
  * 只有悬停（或聚焦）时一层很淡的底。
@@ -2757,6 +2764,11 @@ details summary {
       transform var(--drawer-ms) ease,
       visibility 0s;
     visibility: visible;
+  }
+
+  .runtime-drawer label,
+  .settings-dialog label {
+    font-size: 13px;
   }
 
   /*

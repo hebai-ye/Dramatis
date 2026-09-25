@@ -17,7 +17,7 @@ import type {
   WorldBook,
   WorldBookId,
 } from '@dramatis/core';
-import { memo, useState } from 'react';
+import { memo, useEffect, useRef, useState } from 'react';
 import { countRender } from '../lib/render-count';
 import { CastPanel } from './CastPanel';
 import { MemoryPanel } from './MemoryPanel';
@@ -28,6 +28,9 @@ import { UsagePanel } from './UsagePanel';
 type Tab = 'scene' | 'memory' | 'usage' | 'prompt';
 
 interface Props {
+  open: boolean;
+  focusOnOpen: boolean;
+  onClose: () => void;
   scene: Scene | null;
   instances: CharacterInstance[];
   memories: MemoryEvent[];
@@ -89,17 +92,36 @@ const TABS: Array<{ id: Tab; label: string }> = [
 function RuntimePanelImpl(props: Props) {
   countRender('RuntimePanel');
   const [tab, setTab] = useState<Tab>('scene');
+  const firstTabRef = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    if (!props.open || !props.focusOnOpen) return;
+    const previousFocus = document.activeElement;
+    firstTabRef.current?.focus();
+    return () => {
+      if (previousFocus instanceof HTMLElement && previousFocus.isConnected) previousFocus.focus();
+    };
+  }, [props.open, props.focusOnOpen]);
 
   const available = props.libraryCards.filter(
     (card) => !props.instances.some((instance) => instance.cardId === card.id),
   );
 
   return (
-    <aside className="sidebar runtime-panel">
+    <aside
+      className="sidebar runtime-panel"
+      onKeyDown={(event) => {
+        if (event.key === 'Escape' && props.open && props.focusOnOpen) {
+          event.stopPropagation();
+          props.onClose();
+        }
+      }}
+    >
       <nav className="design-tabs" aria-label="运行时内容">
         {TABS.map((item) => (
           <button
             key={item.id}
+            ref={item.id === 'scene' ? firstTabRef : undefined}
             type="button"
             className={item.id === tab ? 'tab active' : 'tab'}
             aria-pressed={item.id === tab}

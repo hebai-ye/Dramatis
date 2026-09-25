@@ -1008,7 +1008,16 @@ git ls-files | ForEach-Object {
 | `apps/web/src/components/ProviderPanel.tsx` | 改 | Key 粘贴文案与保存动作一致，保存/读取状态及错误反馈 |
 | `docs/EVAL.md` / `STATUS.md` / `TASKS.md` / `FILE-LOG.md` | 改 | 第一轮 UI/UX 评测与剩余真机清单 |
 
-## 五十三、几点注意
+## 五十三、2026-09-25：手机信息层级和运行时键盘路径
+
+| 文件 | 新增/修改 | 说明 |
+| --- | --- | --- |
+| `apps/web/src/components/ProviderPanel.tsx` | 改 | 设置里只保留一处「模型接入」标题 |
+| `apps/web/src/components/RuntimePanel.tsx` / `App.tsx` | 改 | 手机上打开运行时面板先聚焦首页签，Esc 关闭并回焦顶栏 |
+| `apps/web/src/styles.css` | 改 | 手机面板标签 13 px、全局按钮和链接的主题色键盘焦点环 |
+| `docs/EVAL.md` / `LAYOUT.md` / `STATUS.md` / `TASKS.md` / `FILE-LOG.md` | 改 | 前后测量、键盘路径与真机边界 |
+
+## 五十四、几点注意
 
 ---
 

@@ -951,6 +951,9 @@ export function App() {
               <div className={panelOpen ? 'runtime-drawer open' : 'runtime-drawer'}>
                 {panelOpen || narrow ? (
                   <RuntimePanel
+                    open={panelOpen}
+                    focusOnOpen={narrow}
+                    onClose={() => setPanelOpen(false)}
                     scene={scene}
                     instances={instances}
                     memories={session.memories}

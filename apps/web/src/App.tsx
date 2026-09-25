@@ -986,6 +986,8 @@ export function App() {
                     onSaveBudget={(limits) => void session.setBudget(limits)}
                     conversationTitle={conversation?.title ?? ''}
                     workerError={worker.lastError}
+                    failedTasks={worker.failed}
+                    onRetryFailed={() => void worker.retryFailed()}
                     disabled={disabled}
                     onSceneChange={(patch) => void session.updateScene(patch)}
                     onStartNewScene={(title) => void handleStartNewScene({ title, location: '', worldTime: '' })}

@@ -21,7 +21,6 @@ import {
   parseAffectUpdates,
   parseExtraction,
   parseSummary,
-  parseTurnAnalysis,
   pendingSummary,
   planConsolidation,
   type RoomId,
@@ -32,6 +31,8 @@ import {
 } from '@dramatis/core';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { DramatisDb } from './db';
+import { withCrossTabLockIfAvailable } from './sync-queue';
+import { pickRunnable } from './task-queue';
 
 /**
  * 一轮结束后要做的分析：记录记忆 + 推演状态，**合并成一次调用**（P1-9 批量合并）。
@@ -114,7 +115,17 @@ export interface BackgroundWorkerApi {
   lastError: string | null;
   /** 立刻尝试清空队列。每轮对话结束后调用。 */
   kick: () => void;
+  /** 停在「失败」状态（重试次数用完）的任务数。 */
+  failed: number;
+  /** 把失败的任务重新排回队列并立刻跑一次（审计 B2）。 */
+  retryFailed: () => Promise<void>;
 }
+
+/**
+ * 同一时刻只让一个标签页清队列（审计 B3）：两个标签页同时认领同一任务，
+ * 模型会被调两次、账单记两笔、情绪可能叠加两次。拿不到锁的那页直接跳过这一趟。
+ */
+const DRAIN_LOCK = 'dramatis-background-drain';
 
 function makeProvider(config: BackgroundProviderConfig): ModelProvider {
   return createOpenAICompatibleProvider({
@@ -146,6 +157,7 @@ export function useBackgroundWorker(options: {
   const [pending, setPending] = useState(0);
   const [running, setRunning] = useState(false);
   const [lastError, setLastError] = useState<string | null>(null);
+  const [failed, setFailed] = useState(0);
 
   const drainingRef = useRef(false);
   /** `running` 的镜像（顺序 62）：判断「要不要 setState」时不能读渲染期的状态。 */
@@ -160,6 +172,7 @@ export function useBackgroundWorker(options: {
   const refreshPending = useCallback(async () => {
     if (!db) return;
     setPending(await db.queue.pendingCount());
+    setFailed(await db.tasks.failedCount());
   }, [db]);
 
   /** 读取一个回合的上下文：房间、消息、在场角色、场景。 */
@@ -509,21 +522,36 @@ export function useBackgroundWorker(options: {
     [db],
   );
 
-  const drain = useCallback(async () => {
-    if (!db || drainingRef.current) return;
-    drainingRef.current = true;
-    /*
-     * 只在「真的开始干活」时置忙（顺序 62）。
-     *
-     * 8 秒的兜底定时器每响一次都会调 `drain`，而队列常常是空的：
-     * 原来无论有没有活干都 `setRunning(true)` / `setRunning(false)`，React 对
-     * 「值没变」的 setState 仍会重渲染一次那个组件——而它就在 App 里，
-     * 于是**静置时每 8 秒整棵树重画两遍**（600 条消息的列表实测每次 350–840ms）。
-     */
-    try {
+  /**
+   * 清一趟队列（审计 B2）。
+   *
+   * 与原来「永远 take 最老的那条」相比多了三条规矩：
+   * - **配置类错误不消耗次数**：没有模型配置或 Key 为空时一条都不拿，等下次触发；
+   *   以前会把每条任务都记一次失败，Key 暂空几秒就能把整队任务打成永久 failed；
+   * - **指数退避**：失败过的任务要等 `nextAttemptAt` 到点才再试（15 秒起，×4，封顶 10 分钟）；
+   * - **本轮失败过的任务本轮跳过**：断网时不会几毫秒内连败三次。
+   */
+  const drainRound = useCallback(
+    async (db: DramatisDb): Promise<void> => {
+      const failedThisRound = new Set<string>();
       for (;;) {
-        const [task] = await db.queue.take(1);
-        if (!task) break;
+        const config = providerRef.current;
+        if (!config || config.apiKey.trim() === '') {
+          if ((await db.queue.pendingCount()) > 0) {
+            setLastError('后台任务缺少可用的模型配置或 API Key，已暂停，填好后会自动继续');
+          }
+          return;
+        }
+
+        const candidate = pickRunnable(await db.tasks.listPending(200), { now: Date.now(), skip: failedThisRound });
+        if (candidate === null) return;
+        const task = await db.tasks.claim(candidate.id);
+        // 被别处认领或撤销了：换下一条
+        if (task === null) {
+          failedThisRound.add(candidate.id);
+          continue;
+        }
+
         // 真拿到活了才置忙：空跑的 tick 不该惊动 React（顺序 62）
         if (!runningRef.current) {
           runningRef.current = true;
@@ -531,11 +559,6 @@ export function useBackgroundWorker(options: {
         }
 
         try {
-          const config = providerRef.current;
-          if (!config || config.apiKey.trim() === '') {
-            throw new Error('后台任务缺少可用的模型配置或 API Key');
-          }
-
           /**
            * 熔断检查（P1-9）：每次都拿**最新**的账单与这个世界的上限重算一遍，
            * 而不是用界面渲染时算出来的状态——队列可能积压，界面也可能还没刷新。
@@ -597,9 +620,36 @@ export function useBackgroundWorker(options: {
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
           setLastError(message);
+          // 计一次失败；本轮不再碰它，下一次要等退避到点（审计 B2）
+          failedThisRound.add(task.id);
           await db.queue.fail(task.id, message);
         }
       }
+    },
+    [
+      enqueueChapterIfReady,
+      runAffectUpdate,
+      runChapterSummary,
+      runMemoryExtraction,
+      runMemoryConsolidation,
+      runSceneSummary,
+      runTurnAnalysis,
+    ],
+  );
+
+  const drain = useCallback(async () => {
+    if (!db || drainingRef.current) return;
+    drainingRef.current = true;
+    /*
+     * 只在「真的开始干活」时置忙（顺序 62）。
+     *
+     * 8 秒的兜底定时器每响一次都会调 `drain`，而队列常常是空的：
+     * 原来无论有没有活干都 `setRunning(true)` / `setRunning(false)`，React 对
+     * 「值没变」的 setState 仍会重渲染一次那个组件——而它就在 App 里，
+     * 于是**静置时每 8 秒整棵树重画两遍**（600 条消息的列表实测每次 350–840ms）。
+     */
+    try {
+      await withCrossTabLockIfAvailable(DRAIN_LOCK, () => drainRound(db));
     } finally {
       drainingRef.current = false;
       if (runningRef.current) {
@@ -608,17 +658,7 @@ export function useBackgroundWorker(options: {
       }
       await refreshPending();
     }
-  }, [
-    db,
-    enqueueChapterIfReady,
-    refreshPending,
-    runAffectUpdate,
-    runChapterSummary,
-    runMemoryExtraction,
-    runMemoryConsolidation,
-    runSceneSummary,
-    runTurnAnalysis,
-  ]);
+  }, [db, drainRound, refreshPending]);
 
   const kick = useCallback(() => {
     void drain();
@@ -634,6 +674,17 @@ export function useBackgroundWorker(options: {
     return () => clearInterval(timer);
   }, [db, kick, provider, refreshPending]);
 
+  const retryFailed = useCallback(async () => {
+    if (!db) return;
+    await db.tasks.retryFailed();
+    setLastError(null);
+    await refreshPending();
+    kick();
+  }, [db, kick, refreshPending]);
+
   // 返回对象要稳定（顺序 59）：App 把它当依赖，每次渲染新造一个就会让下游的 memo 全部失效
-  return useMemo(() => ({ pending, running, lastError, kick }), [pending, running, lastError, kick]);
+  return useMemo(
+    () => ({ pending, running, lastError, kick, failed, retryFailed }),
+    [pending, running, lastError, kick, failed, retryFailed],
+  );
 }

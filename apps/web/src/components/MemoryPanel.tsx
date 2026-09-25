@@ -69,6 +69,10 @@ interface Props {
   /** 当前世界里的角色卡；附件预览从它们的 extensions 读取。 */
   cards: Card[];
   workerError: string | null;
+  /** 重试次数用完、停在失败状态的后台任务数（审计 B2）。 */
+  failedTasks?: number;
+  /** 把失败的后台任务重新排回队列。 */
+  onRetryFailed?: () => void;
   disabled: boolean;
   onUpdate: (id: EventId, patch: Partial<MemoryEvent>) => void;
   onDelete: (id: EventId) => void;
@@ -94,6 +98,8 @@ export function MemoryPanel({
   chapters,
   cards,
   workerError,
+  failedTasks = 0,
+  onRetryFailed,
   disabled,
   onUpdate,
   onDelete,
@@ -209,11 +215,19 @@ export function MemoryPanel({
         </span>
       </header>
 
-      {workerError !== null ? (
+      {workerError !== null || failedTasks > 0 ? (
         <div className="notice error">
           <strong>记忆抽取失败</strong>
-          <p>{workerError}</p>
-          <p className="hint">失败的批次会自动重试，超过上限后停在失败状态。</p>
+          {workerError === null ? null : <p>{workerError}</p>}
+          <p className="hint">
+            失败的批次会隔一会儿自动重试，超过上限后停在失败状态
+            {failedTasks > 0 ? `（现在有 ${String(failedTasks)} 条）` : ''}。
+          </p>
+          {failedTasks > 0 && onRetryFailed !== undefined ? (
+            <button type="button" className="ghost" disabled={disabled} onClick={onRetryFailed}>
+              重试失败的任务
+            </button>
+          ) : null}
         </div>
       ) : null}
 

@@ -706,6 +706,8 @@ export function assemblePrompt(input: AssembleInput): AssembledPrompt {
   const counter = options.counter ?? heuristicTokenCounter;
   const rawPlayerName = input.player?.name ?? input.room.playerName;
   const playerName = rawPlayerName.trim() === '' ? '玩家' : rawPlayerName.trim();
+  // 身份是本轮不可丢的约束，限住长度以免一张极长身份卡挤爆提示词预算。
+  const playerDescription = truncate(input.player?.description ?? input.room.playerPersona, 320);
 
   const systemContent =
     options.systemPrompt ??
@@ -799,13 +801,14 @@ export function assemblePrompt(input: AssembleInput): AssembledPrompt {
     label: '本轮指令',
     content:
       `现在轮到你发言。请以「${input.instance.displayName}」的身份回应，保持角色不跳出。` +
+      (playerDescription === '' ? '' : `玩家「${playerName}」的身份设定：${playerDescription}\n`) +
       othersClause +
       '不要代替玩家行动，也不要描写玩家的内心想法。' +
+      '未知设定先问，不编造既定事实。只写本角色这一轮的简短回应；不续演别人，那是他的回合。' +
       // 历史记录里的 assistant 消息带着「名字：」前缀（多人同场时才加），
       // 真实模型会照着这个格式往下写，甚至写成别人的名字——所以这里必须说清
       // 前缀只是给它看的标记，它自己回复时不要带。
       '直接写你的对白与动作，不要在回复开头写任何角色名（不要出现「某某：」这样的前缀）。' +
-      '即使你觉得场上别人更该接这句话，也不要替他写——那是他的回合。' +
       '历史记录里的【名字】只是给你看的说话人标记，你的回复里不要出现这种标记。' +
       describeModes(input.modes)
         .map((line) => `\n${line}`)

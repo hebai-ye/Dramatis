@@ -1742,6 +1742,12 @@ details summary {
   font-weight: 600;
 }
 
+.world-new-conversation {
+  align-self: flex-start;
+  font-size: 12px;
+  text-align: left;
+}
+
 .conversation-list {
   border-left: 1px dashed var(--line);
   margin-left: 6px;

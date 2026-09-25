@@ -37,6 +37,7 @@ import {
 import { useCallback, useRef } from 'react';
 import type { WebBridgeState } from '../components/WebBridgePanel';
 import type { DramatisDb } from '../lib/db';
+import { replyTokenLimit } from '../lib/output-limit';
 import type { ProvidersApi } from '../lib/providers';
 import type { SessionApi } from '../lib/session';
 import { resetStreamState, setStreamState } from '../lib/stream-store';
@@ -239,7 +240,15 @@ export function useTurnRunner({
           budget: { maxTokens: profile.maxTokens, reserveForReply: profile.reserveForReply },
         },
         provider,
-        { params: { temperature: profile.temperature }, signal: options.signal },
+        {
+          // reserveForReply 只为提示词腾出空间，并不会限制供应商输出；
+          // 普通聊天模型单角色最多 512 token；推理模型的额度还包含隐藏推理，不硬截断。
+          params: {
+            temperature: profile.temperature,
+            maxTokens: replyTokenLimit(profile.model, profile.reserveForReply),
+          },
+          signal: options.signal,
+        },
       )) {
         switch (event.type) {
           case 'prompt':

@@ -164,6 +164,10 @@ export interface SessionApi {
     persona: Persona | null;
     cards: Card[];
     worldBookIds?: WorldBookId[];
+    conversationTitle?: string;
+    sceneTitle?: string;
+    location?: string;
+    worldTime?: string;
   }) => Promise<RoomId | null>;
   deleteWorld: (id: RoomId) => Promise<void>;
   renameWorld: (title: string) => Promise<void>;
@@ -425,6 +429,10 @@ export function useSession(db: DramatisDb | null): SessionApi {
       persona: Persona | null;
       cards: Card[];
       worldBookIds?: WorldBookId[];
+      conversationTitle?: string;
+      sceneTitle?: string;
+      location?: string;
+      worldTime?: string;
     }): Promise<RoomId | null> => {
       if (!db) return null;
       const now = nowIso();
@@ -450,10 +458,12 @@ export function useSession(db: DramatisDb | null): SessionApi {
       const plan = planNewConversation({
         room: emptyRoom,
         existingInstances: [],
-        title: '开场',
+        title: input.conversationTitle?.trim() || '开场',
         cards,
-        sceneTitle: '开场',
+        sceneTitle: input.sceneTitle?.trim() || '开场',
         sceneSummary: cards[0]?.scenario.trim() ?? '',
+        location: input.location ?? '',
+        worldTime: input.worldTime ?? '',
       });
 
       await db.repository.saveSnapshot({

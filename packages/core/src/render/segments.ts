@@ -258,6 +258,23 @@ export function normalizeActionBreaks(content: string): string {
   return content.replace(INLINE_ACTION_BREAK, '$1\n#');
 }
 
+/**
+ * 导入卡的开场白偶尔把换行写成字面 `\\n` 或 `/n`。只在生成自动开场消息时
+ * 兼容这种写法，卡片原文、历史消息和普通回复一律不改。
+ * `/n` 仅当两侧像正文时才处理，避免改动 URL、路径或 `1/n` 之类的文本。
+ */
+export function normalizeGreetingBreaks(content: string): string {
+  return content.replace(/\\r\\n|\\n|\/n/g, (marker, offset: number, source: string) => {
+    const before = source[offset - 1] ?? '';
+    const after = source.slice(offset + marker.length).trimStart()[0] ?? '';
+    const textBoundary = /[\p{Script=Han}。！？；：」』”）.!?;:'"*)\s]/u.test(before);
+    const nextLineStart = /[\p{Script=Han}#*（【「『“"\s]/u.test(after);
+    if (marker === '/n') return textBoundary && nextLineStart ? '\n' : marker;
+    // `C:\new` 这类路径不该变成换行；正常的中文开场文本则仍可转换。
+    return (textBoundary || before === '') && nextLineStart ? '\n' : marker;
+  });
+}
+
 /** 说话人标签：`名字：` 或 `名字:`，出现在行首，最长 12 个字符。 */
 const SPEAKER_LABEL = /^\s*([^：:\n]{1,12})\s*[：:]\s*(.*)$/;
 

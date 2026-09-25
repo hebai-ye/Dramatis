@@ -148,7 +148,9 @@ export function App() {
    * （比如归档后那条提示会把「已归档」直接打开）。
    */
   const [settingsCategory, setSettingsCategory] = useState<SettingsCategory | null>(null);
-  const [newConversationOpen, setNewConversationOpen] = useState(false);
+  const [newConversationMode, setNewConversationMode] = useState<
+    { kind: 'new-world' } | { kind: 'in-world'; worldId: RoomId } | null
+  >(null);
   const [sceneOpen, setSceneOpen] = useState(false);
   const [detailId, setDetailId] = useState<InstanceId | null>(null);
 
@@ -299,20 +301,27 @@ export function App() {
 
   const handleNewConversation = useCallback(
     async (input: {
-      title: string;
+      worldTitle: string;
+      conversationTitle: string;
       cardIds: string[];
       worldBookIds: string[];
       sceneTitle: string;
       location: string;
       worldTime: string;
     }) => {
-      setNewConversationOpen(false);
+      const mode = newConversationMode;
+      if (mode === null || (mode.kind === 'in-world' && world?.id !== mode.worldId)) return;
+      setNewConversationMode(null);
       const cards = session.library.cards.filter((card) => input.cardIds.includes(card.id));
 
-      // 还没有世界时，「新对话」顺带把世界建起来：否则用户会卡在「没有世界可开线」
-      if (session.world === null) {
+      // 顶层「新对话」总是创建一个独立世界和它的首条对话。
+      if (mode.kind === 'new-world') {
         await session.createWorld({
-          title: input.title,
+          title: input.worldTitle,
+          conversationTitle: input.conversationTitle,
+          sceneTitle: input.sceneTitle,
+          location: input.location,
+          worldTime: input.worldTime,
           persona: activePersona,
           cards,
           worldBookIds: input.worldBookIds as never,
@@ -321,7 +330,7 @@ export function App() {
       }
 
       const started = await session.startConversation({
-        title: input.title,
+        title: input.conversationTitle,
         cards,
         worldBookIds: input.worldBookIds as never,
         sceneTitle: input.sceneTitle,
@@ -343,7 +352,7 @@ export function App() {
         ]);
       }
     },
-    [activePersona, session, setWarnings],
+    [activePersona, newConversationMode, session, setWarnings, world?.id],
   );
 
   /** 「创建」走副对话；还没有世界就先建一个空世界，否则管理员无处落脚。 */
@@ -619,6 +628,14 @@ export function App() {
     },
     [closeRailOnNarrow, session],
   );
+  const handleNewConversationInWorld = useCallback(
+    async (id: RoomId) => {
+      if (world?.id !== id) await session.openWorld(id);
+      setNewConversationMode({ kind: 'in-world', worldId: id });
+      closeRailOnNarrow();
+    },
+    [closeRailOnNarrow, session, world?.id],
+  );
   const handleOpenConversation = useCallback(
     (id: ConversationId) => {
       void session.openConversation(id);
@@ -736,7 +753,7 @@ export function App() {
             pane={pane}
             onPaneChange={setPane}
             onNewConversation={() => {
-              setNewConversationOpen(true);
+              setNewConversationMode({ kind: 'new-world' });
               closeRailOnNarrow();
             }}
             onCreateWithAi={() => {
@@ -794,6 +811,7 @@ export function App() {
                   activeConversationId={conversation?.id ?? null}
                   disabled={disabled}
                   onOpenWorld={handleOpenWorld}
+                  onNewConversation={(id) => void handleNewConversationInWorld(id)}
                   onOpenConversation={handleOpenConversation}
                   onArchiveConversation={handleArchiveConversation}
                   onRenameConversation={(target, title) => void session.renameConversation(target.id, title)}
@@ -1022,14 +1040,17 @@ export function App() {
         />
       ) : null}
 
-      {newConversationOpen ? (
+      {newConversationMode !== null &&
+      (newConversationMode.kind === 'new-world' || world?.id === newConversationMode.worldId) ? (
         <NewConversationDialog
+          mode={newConversationMode.kind}
+          currentWorldTitle={world?.title}
           cards={session.library.cards}
           worldBooks={session.library.worldBooks}
-          defaultCardIds={instances.map((instance) => instance.cardId)}
-          attachedBookIds={world?.worldBookIds ?? []}
+          defaultCardIds={newConversationMode.kind === 'new-world' ? [] : instances.map((instance) => instance.cardId)}
+          attachedBookIds={newConversationMode.kind === 'new-world' ? [] : (world?.worldBookIds ?? [])}
           disabled={disabled}
-          onClose={() => setNewConversationOpen(false)}
+          onClose={() => setNewConversationMode(null)}
           onSubmit={(input) => void handleNewConversation(input)}
         />
       ) : null}

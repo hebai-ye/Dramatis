@@ -986,7 +986,19 @@ git ls-files | ForEach-Object {
 | `apps/web/src/App.tsx` | 改 | 导入逻辑改调 hook；删掉搬走的两个判定函数；1905 → 1853 行 |
 | `docs/EVAL.md` / `TASKS.md` / `STATUS.md` / `FILE-LOG.md` | 改 | 第五十七节补第二步与「为什么 useTurnRunner 留到下一轮」、任务 66 状态（3/4） |
 
-## 五十一、几点注意
+## 五十一、2026-09-25：新世界入口与双角色开场修复（用户实测缺陷）
+
+| 文件 | 新增/修改 | 说明 |
+| --- | --- | --- |
+| `apps/web/src/App.tsx` / `components/LeftRail.tsx` / `components/WorldTree.tsx` / `components/NewConversationDialog.tsx` / `styles.css` | 改 | 顶部新建独立世界，世界行内续开指定世界；双名称弹窗与续开提示 |
+| `apps/web/src/lib/session.ts` | 改 | 新世界首条对话接收对话名、场景、地点和世界时间 |
+| `apps/web/src/hooks/useTurnRunner.ts` / `lib/output-limit.ts` / `lib/output-limit.test.ts` | 改 / 新增 | 每角色一轮实际传输出 token 上限，并覆盖旧配置零预留量 |
+| `packages/core/src/session/turn.ts` / `turn.test.ts` | 改 | 自动开场短化、多角色台词归属、模板展开和动作格式 |
+| `packages/core/src/render/segments.ts` / `segments.test.ts` | 改 | 自动开场兼容字面换行，保留 URL、路径等原文 |
+| `packages/core/src/prompt/assemble.ts` / `assemble.test.ts` | 改 | 本轮提示词强调玩家身份、未知信息与只写当前角色 |
+| `docs/LAYOUT.md` / `TASKS.md` / `STATUS.md` / `EVAL.md` / `FILE-LOG.md` | 改 | 更新入口语义、用户缺陷与验证记录 |
+
+## 五十二、几点注意
 
 ---
 

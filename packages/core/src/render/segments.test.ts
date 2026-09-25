@@ -2,12 +2,26 @@ import { describe, expect, it } from 'vitest';
 import {
   hasSpeech,
   normalizeCardExample,
+  normalizeGreetingBreaks,
   renderMessageContent,
   splitByQuotes,
   splitLongSpeech,
   splitMessageContent,
   thirdPersonAction,
 } from './segments.js';
+
+describe('开场白兼容换行', () => {
+  it('只把正文里的字面换行符还原，保留 URL、路径和分数', () => {
+    expect(normalizeGreetingBreaks('「来了。」/n# 她抬头。')).toBe('「来了。」\n# 她抬头。');
+    expect(normalizeGreetingBreaks(String.raw`「坐。」\n# 她落座。`)).toBe('「坐。」\n# 她落座。');
+    expect(normalizeGreetingBreaks('"Hello"/n*waves*')).toBe('"Hello"\n*waves*');
+    expect(normalizeGreetingBreaks('Hello./n*waves*')).toBe('Hello.\n*waves*');
+    expect(normalizeGreetingBreaks(String.raw`Hello.\n*waves*`)).toBe('Hello.\n*waves*');
+    expect(normalizeGreetingBreaks(String.raw`访问 https://site.test/note，路径 C:\new，概率 1/n。`)).toBe(
+      String.raw`访问 https://site.test/note，路径 C:\new，概率 1/n。`,
+    );
+  });
+});
 
 describe('splitMessageContent', () => {
   it('把 `#` 开头的段落切成动作段', () => {

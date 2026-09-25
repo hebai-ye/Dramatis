@@ -10,6 +10,8 @@ interface Props {
   activeConversationId: ConversationId | null;
   disabled: boolean;
   onOpenWorld: (id: RoomId) => void;
+  /** 在指定世界内续开一条对话。 */
+  onNewConversation: (id: RoomId) => void;
   onOpenConversation: (id: ConversationId) => void;
   onArchiveConversation: (conversation: Conversation) => void;
   /**
@@ -39,6 +41,7 @@ function WorldTreeImpl({
   activeConversationId,
   disabled,
   onOpenWorld,
+  onNewConversation,
   onOpenConversation,
   onArchiveConversation,
   onRenameConversation,
@@ -115,6 +118,15 @@ function WorldTreeImpl({
                 ✕
               </button>
             </div>
+
+            <button
+              type="button"
+              className="ghost world-new-conversation"
+              disabled={disabled}
+              onClick={() => onNewConversation(world.id)}
+            >
+              ＋ 在这个世界新开一轮对话
+            </button>
 
             {isActive ? (
               <ul className="conversation-list">

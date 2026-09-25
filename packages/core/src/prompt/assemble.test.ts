@@ -605,6 +605,46 @@ describe('assemblePrompt / 历史按场记覆盖收起（顺序 58）', () => {
 });
 
 describe('assemblePrompt / 多角色场景', () => {
+  it('自定义卡提示仍保留玩家身份与本轮边界', () => {
+    const { card, instance, room, scene } = fixtures();
+    const bob = makeInstance(room, card, 'Bob');
+    card.systemPrompt = '你可以随意续写整场戏。';
+    const prompt = assemblePrompt({
+      card,
+      instance,
+      room,
+      scene,
+      cast: [instance, bob],
+      player: { name: '旅人', description: '独自寻找失踪的兄长。' },
+      history: [],
+      playerInput: '你见过他吗？',
+      budget: baseBudget,
+    });
+    const system = prompt.messages[0]?.content ?? '';
+    expect(system).toContain('玩家「旅人」的身份设定：独自寻找失踪的兄长。');
+    expect(system).toContain('未知设定先问，不编造既定事实');
+    expect(system).toContain('只写本角色这一轮的简短回应');
+    expect(system).toContain('不要替他们发言');
+  });
+
+  it('极长玩家身份保留开头关键信息，但不把不可丢指令撑成全文', () => {
+    const { card, instance, room, scene } = fixtures();
+    const prompt = assemblePrompt({
+      card,
+      instance,
+      room,
+      scene,
+      player: { name: '旅人', description: `正在寻找兄长。${'补充身世。'.repeat(200)}` },
+      history: [],
+      playerInput: '走吧',
+      budget: baseBudget,
+    });
+    const instruction = prompt.blocks.find((block) => block.id === 'instruction')?.content ?? '';
+    expect(instruction).toContain('正在寻找兄长。');
+    expect(instruction).toContain('……');
+    expect(instruction).not.toContain('补充身世。'.repeat(100));
+  });
+
   it('场景块带上自动整理的本场场记（P1-5 的场景层）', () => {
     const { card, instance, room, scene } = fixtures();
     const withRecap: Scene = {

@@ -12,6 +12,7 @@ export type RailPane = 'list' | 'personas' | 'worldbooks' | 'cards';
 interface Props {
   pane: RailPane;
   onPaneChange: (pane: RailPane) => void;
+  /** 顶层入口：创建新世界，并在其中开启首条对话。 */
   onNewConversation: () => void;
   /** 「创建」走副对话，由 AI 帮忙起草，用户决定去留。 */
   onCreateWithAi: () => void;
@@ -38,7 +39,7 @@ const PANES: Array<{ id: RailPane; label: string; hint: string }> = [
  * 左栏（LAYOUT「左栏」）。
  *
  * 分三段：
- * - 顶部四个按钮：新对话 / 世界书 / 角色卡 / 创建
+ * - 顶部的「新对话」开启新世界；世界内续开在下方世界列表里
  * - 中部：世界与对话列表，可滚动
  * - 底部：设置（已归档的对话也从这里打开）
  *
@@ -76,7 +77,12 @@ function LeftRailImpl({
       />
 
       <div className="rail-actions">
-        <button type="button" disabled={disabled} onClick={onNewConversation}>
+        <button
+          type="button"
+          disabled={disabled}
+          title="创建新世界，并开启这个世界的首条对话"
+          onClick={onNewConversation}
+        >
           新对话
         </button>
         <button

@@ -3,6 +3,8 @@ import { useState } from 'react';
 import { Modal } from './Modal';
 
 interface Props {
+  mode: 'new-world' | 'in-world';
+  currentWorldTitle?: string;
   cards: Card[];
   worldBooks: WorldBook[];
   /** 世界里已经有实例的卡，默认勾上。 */
@@ -11,7 +13,8 @@ interface Props {
   disabled: boolean;
   onClose: () => void;
   onSubmit: (input: {
-    title: string;
+    worldTitle: string;
+    conversationTitle: string;
     cardIds: CardId[];
     worldBookIds: WorldBookId[];
     sceneTitle: string;
@@ -21,12 +24,13 @@ interface Props {
 }
 
 /**
- * 新对话（LAYOUT「输入区：开启新对话时投入世界卡与零或以上角色卡」）。
+ * 新世界的首条对话，或当前世界内的新一轮对话。
  *
- * 世界书就是世界卡，不是另一种资产——所以这里选的是「这条线用哪些世界书」
- * 与「由谁开始」，而不是先建世界再建对话。
+ * 世界书挂在世界上，角色卡决定这条对话由谁开场。
  */
 export function NewConversationDialog({
+  mode,
+  currentWorldTitle,
   cards,
   worldBooks,
   defaultCardIds,
@@ -35,7 +39,8 @@ export function NewConversationDialog({
   onClose,
   onSubmit,
 }: Props) {
-  const [title, setTitle] = useState('新对话');
+  const [worldTitle, setWorldTitle] = useState('新世界');
+  const [conversationTitle, setConversationTitle] = useState(mode === 'new-world' ? '开场' : '新对话');
   const [sceneTitle, setSceneTitle] = useState('开场');
   const [location, setLocation] = useState('');
   const [worldTime, setWorldTime] = useState('');
@@ -47,13 +52,17 @@ export function NewConversationDialog({
 
   return (
     <Modal
-      label="新对话"
+      label={mode === 'new-world' ? '新对话与新世界' : '新一轮对话'}
       closeLabel="取消"
       onClose={onClose}
       head={
         <>
-          <strong>新对话</strong>
-          <span className="hint">同一个世界下可以开多条线；角色与状态是世界共用的。</span>
+          <strong>{mode === 'new-world' ? '新对话' : '新一轮对话'}</strong>
+          <span className="hint">
+            {mode === 'new-world'
+              ? '创建一个新世界，并在其中开启首条对话。'
+              : `在「${currentWorldTitle ?? '当前世界'}」继续开一条线；角色与状态在这个世界内共用。`}
+          </span>
         </>
       }
       footer={
@@ -66,7 +75,13 @@ export function NewConversationDialog({
             disabled={disabled}
             onClick={() =>
               onSubmit({
-                title: title.trim() === '' ? '新对话' : title.trim(),
+                worldTitle: worldTitle.trim() === '' ? '新世界' : worldTitle.trim(),
+                conversationTitle:
+                  conversationTitle.trim() === ''
+                    ? mode === 'new-world'
+                      ? '开场'
+                      : '新对话'
+                    : conversationTitle.trim(),
                 cardIds,
                 worldBookIds: bookIds,
                 sceneTitle: sceneTitle.trim() === '' ? '开场' : sceneTitle.trim(),
@@ -80,9 +95,20 @@ export function NewConversationDialog({
         </>
       }
     >
+      {mode === 'new-world' ? (
+        <label>
+          世界名
+          <input value={worldTitle} onChange={(event) => setWorldTitle(event.target.value)} placeholder="例如：旧城" />
+        </label>
+      ) : null}
+
       <label>
-        对话名
-        <input value={title} onChange={(event) => setTitle(event.target.value)} placeholder="例如：雨夜之后" />
+        {mode === 'new-world' ? '首条对话名' : '对话名'}
+        <input
+          value={conversationTitle}
+          onChange={(event) => setConversationTitle(event.target.value)}
+          placeholder="例如：雨夜之后"
+        />
       </label>
 
       <label>
@@ -118,13 +144,15 @@ export function NewConversationDialog({
       </fieldset>
 
       <fieldset className="picker">
-        <legend>投入哪些世界书（世界卡）</legend>
+        <legend>{mode === 'new-world' ? '投入哪些世界书（世界卡）' : '为这个世界添加世界书'}</legend>
+        {mode === 'in-world' ? <p className="hint">已挂载的世界书会保留；解绑请到运行时面板操作。</p> : null}
         {worldBooks.length === 0 ? <p className="hint">素材库里还没有世界书。</p> : null}
         {worldBooks.map((book) => (
           <label key={book.id} className="inline-check">
             <input
               type="checkbox"
               checked={bookIds.includes(book.id)}
+              disabled={mode === 'in-world' && attachedBookIds.includes(book.id)}
               onChange={() => setBookIds((previous) => toggle(previous, book.id))}
             />
             <span>{book.name}</span>

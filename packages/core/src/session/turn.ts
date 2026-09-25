@@ -14,7 +14,7 @@ import type { Room, Scene } from '../model/room.js';
 import { type AssembledPrompt, type AssembleInput, assemblePrompt } from '../prompt/assemble.js';
 import type { ModelParams, ModelProvider } from '../provider/openai-compatible.js';
 import { splitIntent } from '../render/intent.js';
-import { normalizeActionBreaks, stripLeadingMarkers } from '../render/segments.js';
+import { normalizeActionBreaks, normalizeGreetingBreaks, stripLeadingMarkers } from '../render/segments.js';
 
 /**
  * 角色消息落库前的清洗。
@@ -128,6 +128,96 @@ export function createCharacterMessage(input: {
 }
 
 /** 用角色卡的开场白生成第一条消息，进入房间时立即可见。 */
+export const MAX_AUTOMATIC_GREETING_LENGTH = 380;
+const GREETING_FIELD_LABELS = new Set([
+  '地点',
+  '时间',
+  '场景',
+  '天气',
+  '背景',
+  '环境',
+  '旁白',
+  '动作',
+  '说明',
+  '备注',
+  'location',
+  'time',
+  'scene',
+  'setting',
+  'weather',
+  'narration',
+  'note',
+]);
+
+function normalizeGreetingLine(line: string): string[] {
+  // ST 卡常用的明确动作标记；只改自动开场，不猜无标记独白。
+  const action = /^\s*(?:\*([^*\n]+)\*|（([^（）\n]+)）)\s*(.*)$/.exec(line);
+  if (action !== null) {
+    const rest = action[3]?.trim() ?? '';
+    const body = (action[1] ?? action[2] ?? '').trim();
+    return rest === '' ? [`# ${body}`] : [`# ${body}`, rest];
+  }
+  // 对白后面的显式动作也要单独断行；要求对白以句末标点或引号收住，
+  // 避免把普通的星号表达式当成动作。
+  const trailing = /^(.*[。！？.!?」』”])\s*(?:\*([^*\n]+)\*|（([^（）\n]+)）)\s*$/.exec(line);
+  if (trailing === null) return [line];
+  return [(trailing[1] ?? '').trim(), `# ${(trailing[2] ?? trailing[3] ?? '').trim()}`];
+}
+
+/**
+ * 自动开场只取一段完整的开头；原卡保留全文，用户仍可在角色卡里阅读或编辑。
+ * 优先在句末、引号闭合处或换行截，避免把动作与对白从半句中间切断。
+ */
+export function prepareAutomaticGreeting(content: string, speakerName: string, playerName: string): string {
+  const expanded = normalizeGreetingBreaks(content.trim()).replace(/{{\s*(char|user)\s*}}/gi, (_match, name: string) =>
+    name.toLowerCase() === 'char' ? speakerName : playerName,
+  );
+  const ownLines: string[] = [];
+  let collectingOwnLines = true;
+  for (const line of expanded.split(/\r?\n/)) {
+    // 显式他人标签之后的无标签续行也归他人；遇到自身标签才恢复收集。
+    // 这样「他人先说 → 自己再说」不会整条丢失，也不会冒领他人的台词/动作。
+    const label = /^\s*(?:【([^】\n]{1,32})】|([\p{L}\p{N}_·.' -]{1,32})[:：])\s*(.*)$/u.exec(line);
+    const named = (label?.[1] ?? label?.[2] ?? '').trim();
+    const markedSpeech = label !== null && (named === speakerName || !GREETING_FIELD_LABELS.has(named.toLowerCase()));
+    if (label !== null && markedSpeech) {
+      collectingOwnLines = named === speakerName;
+      if (collectingOwnLines) ownLines.push(...normalizeGreetingLine(label[3] ?? ''));
+    } else if (collectingOwnLines) {
+      ownLines.push(...normalizeGreetingLine(line));
+    }
+  }
+  // 明确的第三人称动作后紧跟引号对白时，补出 # 给模型一个正确的历史样板。
+  // 普通无标记独白不猜，仍由既有的引号渲染规则处理。
+  const actionThenSpeech = ownLines.map((line, index) => {
+    const next =
+      ownLines
+        .slice(index + 1)
+        .find((item) => item.trim() !== '')
+        ?.trim() ?? '';
+    const trimmed = line.trim();
+    return /^(?:他|她|它)[推拉走看伸拿放坐站笑点皱回转掀抿端靠摸敲望掏接抖低起停摆]/.test(trimmed) &&
+      /^[「『“"]/.test(next)
+      ? `# ${trimmed}`
+      : line;
+  });
+  const normalized = normalizeActionBreaks(actionThenSpeech.join('\n').trim());
+  if (normalized.length <= MAX_AUTOMATIC_GREETING_LENGTH) return normalized;
+
+  const upper = Math.min(normalized.length, MAX_AUTOMATIC_GREETING_LENGTH + 80);
+  const lower = Math.floor(MAX_AUTOMATIC_GREETING_LENGTH / 2);
+  const candidates: number[] = [];
+  for (let index = lower; index < upper; index += 1) {
+    if (/[。！？；」』”\n]/.test(normalized[index] ?? '')) candidates.push(index + 1);
+  }
+  const balanced = (text: string): boolean =>
+    (text.match(/「/g)?.length ?? 0) === (text.match(/」/g)?.length ?? 0) &&
+    (text.match(/『/g)?.length ?? 0) === (text.match(/』/g)?.length ?? 0) &&
+    (text.match(/“/g)?.length ?? 0) === (text.match(/”/g)?.length ?? 0);
+  const boundary = [...candidates].reverse().find((index) => balanced(normalized.slice(0, index)));
+  return `${normalized.slice(0, boundary ?? MAX_AUTOMATIC_GREETING_LENGTH).trimEnd()}……`;
+}
+
 export function createGreetingMessage(input: {
   card: Card;
   instance: CharacterInstance;
@@ -141,6 +231,8 @@ export function createGreetingMessage(input: {
   const greetings = [input.card.firstMessage, ...input.card.alternateGreetings];
   const greeting = greetings[input.greetingIndex ?? 0] ?? input.card.firstMessage;
   if (greeting.trim() === '') return null;
+  const content = prepareAutomaticGreeting(greeting, input.instance.displayName, input.room.playerName);
+  if (content === '') return null;
 
   return createCharacterMessage({
     roomId: input.room.id,
@@ -151,7 +243,7 @@ export function createGreetingMessage(input: {
     speakerName: input.instance.displayName,
     // 把开场白里的行内动作断到行首：它是对话记录的第一条，
     // 也是模型随后模仿的样板，格式从一开始就该是对的
-    content: normalizeActionBreaks(greeting.trim()),
+    content,
     audience: input.audience ?? [input.instance.id],
   });
 }

@@ -30,6 +30,12 @@ const DEFAULT_PROFILE: CreateProviderProfileInput = {
   role: 'main',
 };
 
+/** 两份配置列表内容是否一致（审计 A10：一致就别 set，免得引用变化触发重渲染）。 */
+export function sameProfiles(a: readonly ProviderProfile[], b: readonly ProviderProfile[]): boolean {
+  if (a.length !== b.length) return false;
+  return a.every((profile, index) => JSON.stringify(profile) === JSON.stringify(b[index]));
+}
+
 function isAutoCreatedDefault(profile: ProviderProfile): boolean {
   return (
     profile.name === DEFAULT_PROFILE.name &&
@@ -163,21 +169,33 @@ export function useProviders(
     const store = createBrowserKeyStore(keyMode, vault);
     keyStoreRef.current = store;
     setKeyKind(store.kind);
+    /*
+     * 读 Key 是异步的（审计 B5）：快速切换配置时，旧请求可能后返回，把 A 的 Key
+     * 写进当前状态、随后发给 B 的服务商。cleanup 置 cancelled，旧结果一律丢弃。
+     */
+    let cancelled = false;
 
     const profile = profiles.find((item) => item.id === activeId);
     if (!profile) {
       setApiKeyState('');
-      return;
+    } else {
+      void store.get(profile.keyRef).then((secret) => {
+        if (!cancelled) setApiKeyState(secret ?? '');
+      });
     }
-
-    void store.get(profile.keyRef).then((secret) => setApiKeyState(secret ?? ''));
 
     const backgroundProfile = profiles.find((item) => item.role === 'background');
     if (!backgroundProfile) {
       setBackgroundKey('');
-      return;
+    } else {
+      void store.get(backgroundProfile.keyRef).then((secret) => {
+        if (!cancelled) setBackgroundKey(secret ?? '');
+      });
     }
-    void store.get(backgroundProfile.keyRef).then((secret) => setBackgroundKey(secret ?? ''));
+
+    return () => {
+      cancelled = true;
+    };
   }, [keyMode, vault, activeId, profiles]);
 
   const syncCredential = useCallback(
@@ -207,39 +225,75 @@ export function useProviders(
     [db, sync.config, sync.requestAutoSync, sync.sealSecret, sync.status],
   );
 
+  // effect 里要读「当前」配置与选中项，但不能把它们当依赖（审计 A10：那会读库 → set → 再触发）
+  const profilesRef = useRef(profiles);
+  profilesRef.current = profiles;
+  const activeIdRef = useRef(activeId);
+  activeIdRef.current = activeId;
+  const lastSyncAt = sync.config?.lastSyncAt ?? null;
+  const profilesLoaded = profiles.length > 0;
+  const keysReady = !(keyMode === 'encrypted' && vault === null);
+
   /**
-   * 账户同步接通后，把两边的模型 Key 对齐：
+   * 账户同步接通（或又同步了一轮）后，把库里的配置列表读回来（审计 A10 拆分之一）。
    *
-   * - 本机有 Key、账户里还没有密文：补一条加密凭据；
-   * - 账户里有密文、本机没有缓存：解开并写回当前 KeyStore；
-   * - 本机已有缓存：不回写，避免覆盖用户刚编辑的值。
+   * 以前这一步与凭据对齐写在同一个依赖 `profiles` 的 effect 里：每次从库里读出一个
+   * **新数组**再 setProfiles，引用一变 effect 又跑，根组件无休止地重渲染、反复读库。
+   * 现在只依赖「同步状态 / 最近一次同步时间」，并且内容一致时不 set。
    */
+  // biome-ignore lint/correctness/useExhaustiveDependencies: lastSyncAt 是触发器——每同步一轮就把别的设备推来的配置读回来
   useEffect(() => {
-    if (db === null || sync.status !== 'ready' || profiles.length === 0) return;
-    if (keyMode === 'encrypted' && vault === null) return;
+    if (db === null || sync.status !== 'ready' || !keysReady || !profilesLoaded) return;
     let cancelled = false;
 
     void (async () => {
+      const currentProfiles = profilesRef.current;
+      const currentActive = activeIdRef.current;
       const remoteProfiles = await db.repository.listProviderProfiles();
       const remoteIds = new Set(remoteProfiles.map((profile) => profile.id));
       let nextActiveId =
         remoteProfiles.find((profile) => profile.active === true)?.id ??
-        (activeId !== null && remoteIds.has(activeId) ? activeId : (remoteProfiles[0]?.id ?? null));
-      for (const localProfile of profiles) {
+        (currentActive !== null && remoteIds.has(currentActive) ? currentActive : (remoteProfiles[0]?.id ?? null));
+      for (const localProfile of currentProfiles) {
         if (remoteIds.has(localProfile.id) || !isAutoCreatedDefault(localProfile)) continue;
         const localSecret = await keyStoreRef.current.get(localProfile.keyRef);
         if (localSecret !== null && localSecret !== '') continue;
         await db.repository.deleteProviderProfile(localProfile.id);
         if (nextActiveId === localProfile.id) nextActiveId = remoteProfiles[0]?.id ?? null;
       }
-      if (remoteProfiles.length > 0) setProfiles(remoteProfiles);
-      if (nextActiveId !== activeId) {
+      if (cancelled) return;
+      if (remoteProfiles.length > 0 && !sameProfiles(profilesRef.current, remoteProfiles)) {
+        setProfiles(remoteProfiles);
+      }
+      if (nextActiveId !== activeIdRef.current) {
         setActiveId(nextActiveId);
         await db.repository.setMeta(META_ACTIVE_PROFILE, nextActiveId);
       }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [db, keysReady, lastSyncAt, profilesLoaded, sync.status]);
+
+  /**
+   * 凭据对齐（审计 A10 拆分之二）：
+   *
+   * - 本机有 Key、账户里还没有密文：补一条加密凭据；
+   * - 账户里有密文、本机没有缓存：解开并写回当前 KeyStore；
+   * - 本机已有缓存：不回写，避免覆盖用户刚编辑的值。
+   *
+   * 它依赖 `profiles`，但自己**从不 setProfiles**，所以不会自激。
+   */
+  // biome-ignore lint/correctness/useExhaustiveDependencies: lastSyncAt 是触发器——同步拉来新凭据后要再对齐一次
+  useEffect(() => {
+    if (db === null || sync.status !== 'ready' || profiles.length === 0 || !keysReady) return;
+    let cancelled = false;
+
+    void (async () => {
       const credentials = await db.repository.listProviderCredentials();
       const byId = new Map(credentials.map((credential) => [credential.id, credential]));
-      for (const profile of remoteProfiles) {
+      for (const profile of profiles) {
         if (cancelled) return;
         const local = await keyStoreRef.current.get(profile.keyRef);
         if (local !== null && local !== '') {
@@ -250,9 +304,11 @@ export function useProviders(
         const credential = byId.get(profile.keyRef);
         if (credential === undefined) continue;
         const opened = await sync.openSecret(profile.keyRef, credential.revision, credential.encryptedSecret);
+        if (cancelled) return;
         if (opened === null || opened === '') continue;
         await keyStoreRef.current.set(profile.keyRef, opened);
-        if (profile.id === nextActiveId) setApiKeyState(opened);
+        if (cancelled) return;
+        if (profile.id === activeIdRef.current) setApiKeyState(opened);
         if (profile.role === 'background') setBackgroundKey(opened);
       }
     })();
@@ -260,7 +316,7 @@ export function useProviders(
     return () => {
       cancelled = true;
     };
-  }, [activeId, db, keyMode, profiles, sync.openSecret, sync.status, syncCredential, vault]);
+  }, [db, keysReady, lastSyncAt, profiles, sync.openSecret, sync.status, syncCredential]);
 
   /**
    * 解开本机的口令库（顺序 10）。

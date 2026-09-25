@@ -16,6 +16,7 @@
 | 服务器管理台怎么安全地管密文空间 | [ADMIN-CONSOLE.md](./ADMIN-CONSOLE.md) |
 | 架构与数据模型的原始设计 | [DESIGN.md](./DESIGN.md) |
 | 每个文件是什么时候加的 | [FILE-LOG.md](./FILE-LOG.md) |
+| 新会话怎么接手（可直接贴的提示词） | [HANDOFF-PROMPT.md](./HANDOFF-PROMPT.md) |
 | 项目对外介绍与快速开始 | [../README.md](../README.md) |
 
 ## 新会话从这里接（2026-09-23）

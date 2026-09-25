@@ -69,6 +69,21 @@ export function createMemoryEntityStore(): EntityStore {
       return structuredClone(rows) as T[];
     },
 
+    /** 原子读-改-写：内存实现里读和写之间没有 await，天然原子。 */
+    async update<T extends { id: string }>(
+      collection: string,
+      id: string,
+      mutate: (current: T | null) => T | undefined,
+    ): Promise<T | null> {
+      const target = table(collection);
+      const raw = target.get(id);
+      const current = raw === undefined ? null : (structuredClone(raw) as T);
+      const next = mutate(current);
+      if (next === undefined) return current;
+      target.set(id, structuredClone({ ...next, id }));
+      return structuredClone(next);
+    },
+
     async clear(collection: string): Promise<void> {
       table(collection).clear();
     },

@@ -3116,3 +3116,18 @@ details summary {
 .install-hint {
   margin: 0 6px 6px;
 }
+
+/* 往上翻着看时来了新消息（审计 B17）：不拽人下去，只在底部浮一个小按钮 */
+.jump-to-latest {
+  align-self: center;
+  background: var(--accent);
+  border: none;
+  border-radius: 999px;
+  bottom: 8px;
+  box-shadow: 0 2px 8px rgb(0 0 0 / 25%);
+  color: var(--on-accent);
+  font-size: 0.85rem;
+  padding: 4px 14px;
+  position: sticky;
+  z-index: 2;
+}

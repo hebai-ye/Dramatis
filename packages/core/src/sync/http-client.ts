@@ -30,11 +30,16 @@ export interface HttpSyncTransportOptions {
   fetchImpl?: typeof fetch;
 }
 
-/** 服务端空间元数据：两份凭证哈希 + 两份主密钥封装（都解不开明文）。 */
+/**
+ * 服务端空间元数据：两份主密钥封装（解不开明文）。
+ *
+ * 两份凭证哈希是**可选**的（审计 A9）：新服务端不再公开它们（没有客户端需要），
+ * 老服务端还会发。客户端不要依赖它们。
+ */
 export interface RemoteSpaceMeta {
   spaceHandle: string;
-  credentialHash: string;
-  recoveryCredentialHash: string;
+  credentialHash?: string;
+  recoveryCredentialHash?: string;
   keyWraps: Record<string, unknown>;
   createdAt: string;
 }

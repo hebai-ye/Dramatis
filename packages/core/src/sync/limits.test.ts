@@ -67,14 +67,15 @@ describe('每空间配额与限流（顺序 16）', () => {
       server.push({ spaceHandle: created.spaceHandle, credential: created.credential, records: extra }),
     ).rejects.toMatchObject({ status: 413 });
 
-    // 覆盖同一条也被挡住：这是刻意的保守（护栏要挡的是「不许再写」，不是精确记账）
+    // 覆盖已有的一条不算新条数（审计 C11：配额在写入事务里按「写完之后」精确算）：
+    // 空间满了之后仍然能改、能删已有的记录
     await expect(
       server.push({
         spaceHandle: created.spaceHandle,
         credential: created.credential,
         records: [await wire(created.encKey, created.spaceHandle, 0)],
       }),
-    ).rejects.toMatchObject({ status: 413 });
+    ).resolves.toBeTruthy();
   });
 
   it('写入限流：一分钟内的第 N+1 次 → 429，过了一分钟又能写', async () => {
@@ -104,6 +105,7 @@ describe('每空间配额与限流（顺序 16）', () => {
       createdAt: '2026-09-21T00:00:00.000Z',
     });
     delete (bare as { spaceUsage?: unknown }).spaceUsage;
+    delete (bare as { appendWithinQuota?: unknown }).appendWithinQuota;
     const server = createSyncServer(bare, { limits: { maxRecordsPerSpace: 0 } });
 
     const one = await wire(created.encKey, created.spaceHandle, 0);

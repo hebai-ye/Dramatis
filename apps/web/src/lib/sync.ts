@@ -22,7 +22,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { type DramatisDb, readActiveAccount } from './db';
 import { createBrowserFileIO } from './fileio';
 import { createBrowserKeyStore, type KeyStorageMode } from './keystore';
-import { buildSnapshot, parseSnapshot, type ServerSnapshot, snapshotFileName } from './snapshot';
+import { assertPassword } from './password-policy';
+import { buildSnapshot, type ServerSnapshot, snapshotFileName } from './snapshot';
+import { createSerialQueue, withCrossTabLock } from './sync-queue';
 
 /**
  * 多设备同步的会话层（P2-6 第四步·界面）。
@@ -236,6 +238,17 @@ export function useSync(db: DramatisDb | null, options: { onChanged?: () => void
   const passwordRef = syncPasswordKeyRef(readActiveAccount().id);
 
   /**
+   * 所有会碰同步游标 / 推送点的操作都排进这一条队（审计 B1）：启动、连接、立即同步、
+   * 自动同步、重新拉、快照恢复。跨标签页再加一把同名 Web Lock（同一个账户只锁自己）。
+   */
+  const queueRef = useRef(createSerialQueue());
+  const lockName = `dramatis-sync:${passwordRef}`;
+  const runExclusive = useCallback(
+    <T>(task: () => Promise<T>): Promise<T> => queueRef.current.run(() => withCrossTabLock(lockName, task)),
+    [lockName],
+  );
+
+  /**
    * 统一登记一次失败：文案给人看，状态码给界面判断（顺序 61）。
    * 传 `null` = 清掉上一次的提示。
    */
@@ -268,37 +281,47 @@ export function useSync(db: DramatisDb | null, options: { onChanged?: () => void
   const doSync = useCallback(
     async (current: SyncConfig, session: SyncSession): Promise<SyncReport> => {
       if (db === null) throw new Error('数据库还没准备好。');
-      const report = await runSync({
-        repository: db.repository,
-        transport: createHttpSyncTransport({ endpoint: current.endpoint }),
-        spaceHandle: current.spaceHandle,
-        credential: session.credential,
-        encKey: session.encKey,
-      }).catch((error: unknown) => {
-        // 撞上服务端护栏：记下来，界面会一直提示到真的恢复为止
+      return runExclusive(async () => {
         /*
-         * 判据是**机器可读的 code**，不是文案（顺序 61）。
-         * 以前这里写的是 `message.includes('存满')`：服务端把那句话改一个字，
-         * 「空间满了」这个状态就静默失效，用户会以为一切正常而数据推不上去。
+         * 排队期间可能已经断开或换了空间：那就别再用旧配置跑，更不能把它写回去
+         * （否则「断开」会被排在后面的这一轮悄悄复活）。
          */
-        if (error instanceof SyncHttpError && (error.code === 'space-full' || error.status === 413)) {
-          setSpaceFull(true);
+        const latest = configRef.current;
+        if (latest === null || latest.spaceHandle !== current.spaceHandle) {
+          throw new Error('同步已断开或换了空间，这一轮跳过。');
         }
-        throw error;
+        const report = await runSync({
+          repository: db.repository,
+          transport: createHttpSyncTransport({ endpoint: current.endpoint }),
+          spaceHandle: current.spaceHandle,
+          credential: session.credential,
+          encKey: session.encKey,
+        }).catch((error: unknown) => {
+          // 撞上服务端护栏：记下来，界面会一直提示到真的恢复为止
+          /*
+           * 判据是**机器可读的 code**，不是文案（顺序 61）。
+           * 以前这里写的是 `message.includes('存满')`：服务端把那句话改一个字，
+           * 「空间满了」这个状态就静默失效，用户会以为一切正常而数据推不上去。
+           */
+          if (error instanceof SyncHttpError && (error.code === 'space-full' || error.status === 413)) {
+            setSpaceFull(true);
+          }
+          throw error;
+        });
+
+        if (report.pushed > 0) setSpaceFull(false);
+
+        const updated: SyncConfig = {
+          ...(configRef.current ?? latest),
+          lastSyncAt: new Date().toISOString(),
+          lastReport: report,
+        };
+        await remember(updated, null);
+        onChangedRef.current?.();
+        return report;
       });
-
-      if (report.pushed > 0) setSpaceFull(false);
-
-      const updated: SyncConfig = {
-        ...current,
-        lastSyncAt: new Date().toISOString(),
-        lastReport: report,
-      };
-      await remember(updated, null);
-      onChangedRef.current?.();
-      return report;
     },
-    [db, remember],
+    [db, remember, runExclusive],
   );
 
   // ---- 启动：读配置，能自动登录就自动同步一次 ----
@@ -373,9 +396,12 @@ export function useSync(db: DramatisDb | null, options: { onChanged?: () => void
 
         let session: SyncSession;
         let createdCode: string | null = null;
+        let freshSpace = false;
 
         if (meta === null) {
           // 服务端上还没有这个空间 → 建一个（并把两份钥匙封装交给服务端保管）
+          // 新建才查密码强度（审计 A9）；加入已有空间绝不拦，老密码可能比下限短
+          assertPassword(secret);
           const created = await createSpaceCredentials({ userId: input.userId, password: secret });
           const registered = await createRemoteSpace(
             { endpoint },
@@ -394,6 +420,7 @@ export function useSync(db: DramatisDb | null, options: { onChanged?: () => void
           } else {
             session = { credential: created.credential, encKey: created.encKey };
             createdCode = created.recoveryCode;
+            freshSpace = true;
           }
         } else {
           session = await openWithSecret(meta, secret);
@@ -410,6 +437,13 @@ export function useSync(db: DramatisDb | null, options: { onChanged?: () => void
           lastReport: configRef.current?.lastReport ?? null,
         };
         await remember(next, secret);
+        /*
+         * 刚新建的空间 head 从 0 开始（审计 A4）：本地若还留着上一个空间（或服务端重建前）
+         * 的游标与推送点，就会一条都不推、前 N 条永远拉不到。清零让它完整推拉一遍。
+         */
+        if (freshSpace) {
+          await runExclusive(() => db.repository.writeSyncState({ spaceHandle, pulledHead: 0, pushedAt: null }));
+        }
 
         sessionRef.current = session;
         setRecoveryCode(createdCode);
@@ -423,7 +457,7 @@ export function useSync(db: DramatisDb | null, options: { onChanged?: () => void
         setBusy(false);
       }
     },
-    [db, doSync, remember, reportError],
+    [db, doSync, remember, reportError, runExclusive],
   );
 
   const syncNow = useCallback(async (): Promise<void> => {
@@ -541,7 +575,7 @@ export function useSync(db: DramatisDb | null, options: { onChanged?: () => void
       const current = configRef.current;
       const session = sessionRef.current;
       if (db === null || current === null || session === null) throw new Error('先连上同步，才能换密码。');
-      if (newPassword.trim().length < 6) throw new Error('新密码太短了，至少 6 位（它要挡住猜密码的人）。');
+      assertPassword(newPassword);
 
       const rotated = await rotateSpacePassword({
         spaceHandle: current.spaceHandle,
@@ -621,36 +655,48 @@ export function useSync(db: DramatisDb | null, options: { onChanged?: () => void
    * ② 分批推（一次 200 条，与服务端的上限对齐）；③ 不做任何解密——
    * 密文原样搬回去，所以哪怕密码已经忘了、只要有恢复码照样能再读出来。
    */
-  const restoreSnapshot = useCallback(async (snapshot: ServerSnapshot): Promise<{ pushed: number; head: number }> => {
-    const current = configRef.current;
-    const session = sessionRef.current;
-    if (current === null || session === null) throw new Error('先连上同步，才能把快照灌回去。');
-    if (snapshot.spaceHandle !== current.spaceHandle) {
-      throw new Error('这份快照是别的空间的（句柄对不上），不能灌到这里。');
-    }
+  const restoreSnapshot = useCallback(
+    async (snapshot: ServerSnapshot): Promise<{ pushed: number; head: number }> => {
+      const current = configRef.current;
+      const session = sessionRef.current;
+      if (current === null || session === null) throw new Error('先连上同步，才能把快照灌回去。');
+      if (snapshot.spaceHandle !== current.spaceHandle) {
+        throw new Error('这份快照是别的空间的（句柄对不上），不能灌到这里。');
+      }
 
-    const transport = createHttpSyncTransport({ endpoint: current.endpoint });
-    let pushed = 0;
-    let head = 0;
-    for (let offset = 0; offset < snapshot.records.length; offset += 200) {
-      const batch = snapshot.records.slice(offset, offset + 200).map((record) => ({
-        collection: record.collection,
-        id: record.id,
-        updatedAt: record.updatedAt,
-        deletedAt: record.deletedAt,
-        sealed: record.sealed,
-        ...(record.deviceId === undefined ? {} : { deviceId: record.deviceId }),
-      }));
-      const result = await transport.push({
-        spaceHandle: current.spaceHandle,
-        credential: session.credential,
-        records: batch,
+      return runExclusive(async () => {
+        const transport = createHttpSyncTransport({ endpoint: current.endpoint });
+        let pushed = 0;
+        let head = 0;
+        for (let offset = 0; offset < snapshot.records.length; offset += 200) {
+          const batch = snapshot.records.slice(offset, offset + 200).map((record) => ({
+            collection: record.collection,
+            id: record.id,
+            updatedAt: record.updatedAt,
+            deletedAt: record.deletedAt,
+            sealed: record.sealed,
+            ...(record.deviceId === undefined ? {} : { deviceId: record.deviceId }),
+          }));
+          const result = await transport.push({
+            spaceHandle: current.spaceHandle,
+            credential: session.credential,
+            records: batch,
+          });
+          pushed += batch.length;
+          head = result.head;
+        }
+        /*
+         * 灌回去之后服务端的序号是全新的（审计 A4）：本地游标若还停在旧 head，
+         * 对端推上来的前若干条本机永远拉不到。清零，让下一轮完整推拉一遍。
+         */
+        if (db !== null) {
+          await db.repository.writeSyncState({ spaceHandle: current.spaceHandle, pulledHead: 0, pushedAt: null });
+        }
+        return { pushed, head };
       });
-      pushed += batch.length;
-      head = result.head;
-    }
-    return { pushed, head };
-  }, []);
+    },
+    [db, runExclusive],
+  );
 
   /**
    * 自动同步（每轮结束）。
@@ -717,9 +763,11 @@ export function useSync(db: DramatisDb | null, options: { onChanged?: () => void
     if (db === null || current === null) throw new Error('还没有连上同步空间。');
 
     // 只清游标与推送点：本地数据、服务端数据都不动
-    await db.repository.writeSyncState({ spaceHandle: current.spaceHandle, pulledHead: 0, pushedAt: null });
+    await runExclusive(() =>
+      db.repository.writeSyncState({ spaceHandle: current.spaceHandle, pulledHead: 0, pushedAt: null }),
+    );
     await syncNow();
-  }, [db, syncNow]);
+  }, [db, runExclusive, syncNow]);
 
   const dismissRecoveryCode = useCallback(() => setRecoveryCode(null), []);
 

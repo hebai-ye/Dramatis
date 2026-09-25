@@ -12,14 +12,18 @@ import {
   worldBookId as asWorldBookId,
   type CardId,
   type ConversationId,
+  type EventId,
   type InstanceId,
+  type MessageId,
   newId,
   nowIso,
+  type RelationshipTarget,
   type RoomId,
   type SceneId,
+  type WorldBookId,
 } from '../model/ids.js';
-import type { CharacterInstance } from '../model/instance.js';
-import { localSeqOf, type MemoryEvent, type Message } from '../model/message.js';
+import type { Affect, CharacterInstance, Relationship } from '../model/instance.js';
+import { type AdminArtifact, localSeqOf, type MemoryEvent, type Message } from '../model/message.js';
 import type { Persona } from '../model/persona.js';
 import type { Room, Scene } from '../model/room.js';
 import type { Repository } from './repository.js';
@@ -210,10 +214,143 @@ export interface ImportArchiveOptions {
 }
 
 /**
+ * 「导入中」标记的 meta 键（审计 C7）。
+ *
+ * 导入要写几十上百条记录，却不是一个事务：中途失败（配额满、页面被关）会留下半个世界。
+ * 所以开工前先记下「这一趟会造出哪些东西」，成功后清掉；失败当场回滚，页面被关掉的
+ * 那种则由下次启动时的 `recoverInterruptedImports` 收拾。
+ */
+export const IMPORT_PENDING_META_KEY = 'archive.importPending';
+
+interface PendingImport {
+  roomId: string;
+  cardIds: string[];
+  worldBookIds: string[];
+  personaId: string | null;
+  startedAt: string;
+}
+
+/** 按「导入中」标记把半个世界整个撤掉（全部软删除，与手动删世界一致）。 */
+async function rollbackImport(repository: Repository, pending: PendingImport): Promise<void> {
+  await repository.deleteRoom(asRoomId(pending.roomId));
+  for (const id of pending.cardIds) await repository.deleteCard(asCardId(id));
+  for (const id of pending.worldBookIds) await repository.deleteWorldBook(asWorldBookId(id));
+  if (pending.personaId !== null) await repository.deletePersona(pending.personaId);
+}
+
+/**
+ * 启动时调用：上一次导入被打断（页面关掉、崩溃）就把那半个世界撤掉（审计 C7）。
+ * 返回撤掉的世界 id；没有就返回 null。
+ */
+export async function recoverInterruptedImports(repository: Repository): Promise<RoomId | null> {
+  const pending = await repository.getMeta<PendingImport | null>(IMPORT_PENDING_META_KEY);
+  if (pending === null || typeof pending !== 'object' || typeof pending.roomId !== 'string') return null;
+  await rollbackImport(repository, pending);
+  await repository.setMeta(IMPORT_PENDING_META_KEY, null);
+  return asRoomId(pending.roomId);
+}
+
+/** 一趟导入里所有「旧 id → 新 id」的对照表（审计 A11：所有引用都从这里改写）。 */
+interface IdMaps {
+  cards: Map<string, CardId>;
+  worldBooks: Map<string, WorldBookId>;
+  conversations: Map<string, ConversationId>;
+  scenes: Map<string, SceneId>;
+  instances: Map<string, InstanceId>;
+  messages: Map<string, MessageId>;
+  memories: Map<string, EventId>;
+  turns: Map<string, string>;
+  persona: { from: string | null; to: string | null };
+}
+
+function buildIdMaps(archive: WorldArchive): IdMaps {
+  const fresh = <T>(items: readonly { id: string }[], make: (id: string) => T): Map<string, T> =>
+    new Map(items.map((item) => [item.id, make(newId())]));
+  return {
+    cards: fresh(archive.cards, asCardId),
+    worldBooks: fresh(archive.worldBooks, asWorldBookId),
+    conversations: fresh(archive.conversations, asConversationId),
+    scenes: fresh(archive.scenes, asSceneId),
+    instances: fresh(archive.instances, asInstanceId),
+    messages: fresh(archive.messages, asMessageId),
+    memories: fresh(archive.memories, asEventId),
+    turns: new Map(),
+    persona: { from: archive.persona?.id ?? null, to: archive.persona === null ? null : newId() },
+  };
+}
+
+function mapList<T>(ids: readonly string[] | undefined, map: Map<string, T>): T[] {
+  return (ids ?? []).map((id) => map.get(id)).filter((id): id is T => id !== undefined);
+}
+
+function mapOptional<T>(id: string | null | undefined, map: Map<string, T>): T | null {
+  return id === null || id === undefined ? null : (map.get(id) ?? null);
+}
+
+function remapTurnId(turnId: string, maps: IdMaps): string {
+  const existing = maps.turns.get(turnId);
+  if (existing !== undefined) return existing;
+  const created = newId();
+  maps.turns.set(turnId, created);
+  return created;
+}
+
+/** 关系目标：玩家（或别的非角色目标）原样保留，角色 id 换新。 */
+function remapRelationships(relationships: readonly Relationship[], maps: IdMaps): Relationship[] {
+  return relationships.map((relationship) => ({
+    ...relationship,
+    target: (maps.instances.get(relationship.target) ?? relationship.target) as RelationshipTarget,
+    history: relationship.history.map((change) => ({
+      ...change,
+      turnId: remapTurnId(change.turnId, maps),
+      sourceMemoryIds: mapList(change.sourceMemoryIds, maps.memories),
+    })),
+  }));
+}
+
+function remapAffect(affect: Affect, maps: IdMaps): Affect {
+  return {
+    ...affect,
+    history: affect.history.map((change) => ({
+      ...change,
+      turnId: remapTurnId(change.turnId, maps),
+      sourceMemoryIds: mapList(change.sourceMemoryIds, maps.memories),
+    })),
+  };
+}
+
+/**
+ * 管理员草稿的目标 id：指向封存里带着的素材就换成新 id；指向封存外的东西（原机器素材库
+ * 里的某张卡）一律清空——否则在同一台机器上导入之后「撤回采纳」会删掉用户自己的原卡。
+ */
+function remapArtifacts(artifacts: readonly AdminArtifact[], maps: IdMaps): AdminArtifact[] {
+  return artifacts.map((artifact) => {
+    const lookup = (id: string | null): string | null => {
+      if (id === null) return null;
+      if (artifact.kind === 'character-card') return maps.cards.get(id) ?? null;
+      if (artifact.kind === 'world-book') return maps.worldBooks.get(id) ?? null;
+      if (artifact.kind === 'scene') return maps.scenes.get(id) ?? null;
+      return id === maps.persona.from ? maps.persona.to : null;
+    };
+    const payload = artifact.payload;
+    let nextPayload = payload;
+    if (isRecord(payload) && typeof payload.id === 'string') {
+      const mapped = lookup(payload.id);
+      if (mapped !== null) nextPayload = { ...payload, id: mapped };
+    }
+    return { ...artifact, targetId: lookup(artifact.targetId), payload: nextPayload };
+  });
+}
+
+/**
  * 把封存写进库里，返回新世界的 id。
  *
  * 全过程只用仓储层的公开写入口：导入之后的世界与手工开出来的世界在结构上完全一样，
  * 不存在「只有导入才有的状态」。
+ *
+ * 审计 A11：id 全部先分配好，再统一改写所有交叉引用——对话的状态快照（角色 id 与关系目标）、
+ * 情绪/关系变化的来源记忆、记忆之间的合并链、场记游标、草稿目标。
+ * 审计 C7：失败时整趟回滚，不留半个世界。
  */
 export async function importWorldArchive(
   archive: WorldArchive,
@@ -221,210 +358,205 @@ export async function importWorldArchive(
   options: ImportArchiveOptions = {},
 ): Promise<ImportArchiveReport> {
   const at = options.at ?? nowIso();
-
-  // 所有 id 都换新，引用靠这几张表改写
   const roomId = asRoomId(newId());
-  const cardIds = new Map<string, CardId>();
-  const worldBookIds = new Map<string, string>();
-  const conversationIds = new Map<string, ConversationId>();
-  const sceneIds = new Map<string, SceneId>();
-  const instanceIds = new Map<string, InstanceId>();
-  const turnIds = new Map<string, string>();
+  const maps = buildIdMaps(archive);
 
-  const remapTurn = (turnId: string): string => {
-    const existing = turnIds.get(turnId);
-    if (existing !== undefined) return existing;
-    const created = newId();
-    turnIds.set(turnId, created);
-    return created;
+  const pending: PendingImport = {
+    roomId,
+    cardIds: [...maps.cards.values()],
+    worldBookIds: [...maps.worldBooks.values()],
+    personaId: maps.persona.to,
+    startedAt: at,
   };
+  await repository.setMeta(IMPORT_PENDING_META_KEY, pending);
+
+  try {
+    await writeArchive(archive, repository, options, at, roomId, maps);
+  } catch (error) {
+    try {
+      await rollbackImport(repository, pending);
+      await repository.setMeta(IMPORT_PENDING_META_KEY, null);
+    } catch {
+      // 回滚本身失败：标记留着，下次启动的 recoverInterruptedImports 会再试
+    }
+    throw error;
+  }
+  await repository.setMeta(IMPORT_PENDING_META_KEY, null);
+
+  return { roomId, title: archive.title, counts: countArchive(archive) };
+}
+
+async function writeArchive(
+  archive: WorldArchive,
+  repository: Repository,
+  options: ImportArchiveOptions,
+  at: string,
+  roomId: RoomId,
+  maps: IdMaps,
+): Promise<void> {
+  const personaId = maps.persona.to;
 
   // 1) 角色卡与世界书：复制一份，别动用户素材库里已有的那几张
   for (const card of archive.cards) {
-    const created = { ...card, id: asCardId(newId()) };
-    cardIds.set(card.id, created.id);
-    await repository.saveCard(created);
+    await repository.saveCard({ ...card, id: maps.cards.get(card.id) ?? asCardId(newId()) });
   }
   for (const book of archive.worldBooks) {
-    const created = { ...book, id: asWorldBookId(newId()) };
-    worldBookIds.set(book.id, created.id);
-    await repository.saveWorldBook(created);
+    await repository.saveWorldBook({ ...book, id: maps.worldBooks.get(book.id) ?? asWorldBookId(newId()) });
   }
 
   // 2) 玩家身份
-  let personaId: string | null = null;
-  if (archive.persona !== null) {
-    const created: Persona = { ...archive.persona, id: newId(), updatedAt: at };
+  if (archive.persona !== null && personaId !== null) {
+    const created: Persona = { ...archive.persona, id: personaId, updatedAt: at };
     await repository.savePersona(created);
-    personaId = created.id;
   }
 
-  // 3) 对话（场景与消息都挂在它下面）
-  for (const conversation of archive.conversations) {
-    const created: Conversation = {
-      ...conversation,
-      id: asConversationId(newId()),
-      roomId,
-      activeSceneId: null,
-      personaId: conversation.personaId === archive.persona?.id ? personaId : (conversation.personaId ?? personaId),
-      playerName: conversation.playerName ?? archive.persona?.name ?? '玩家',
-      playerPersona: conversation.playerPersona ?? archive.persona?.description ?? '',
-      updatedAt: at,
-    };
-    conversationIds.set(conversation.id, created.id);
-    await repository.saveConversation(created);
-  }
-
-  // 4) 角色：先建出来，场景名单与关系才有人可指
-  const instances: CharacterInstance[] = [];
-  for (const instance of archive.instances) {
-    const created: CharacterInstance = {
-      ...instance,
-      id: asInstanceId(newId()),
-      roomId,
-      cardId: cardIds.get(instance.cardId) ?? instance.cardId,
-      relationships: instance.relationships.map((relationship) => ({ ...relationship })),
-      updatedAt: at,
-    };
-    instanceIds.set(instance.id, created.id);
-    instances.push(created);
-  }
-
-  // 角色之间的关系指向的是角色 id，一起改写
-  for (const instance of instances) {
-    const relationships = instance.relationships.map((relationship) => {
-      const target = instanceIds.get(relationship.target);
-      return target === undefined ? relationship : { ...relationship, target };
-    });
-    await repository.saveInstance({ ...instance, relationships });
-  }
-
-  // 5) 场景：名单里的角色已经就位
-  for (const scene of archive.scenes) {
-    const created: Scene = {
-      ...scene,
-      id: asSceneId(newId()),
-      roomId,
-      conversationId: scene.conversationId === null ? null : (conversationIds.get(scene.conversationId) ?? null),
-      cast: scene.cast.map((id) => instanceIds.get(id)).filter((id): id is InstanceId => id !== undefined),
-    };
-    sceneIds.set(scene.id, created.id);
-    await repository.saveScene(created);
-  }
-
-  // 6) 世界本身（引用都齐了才写）
-  const room: Room = {
-    ...archive.room,
-    id: roomId,
-    personaId,
-    cardIds: archive.room.cardIds.map((id) => cardIds.get(id)).filter((id): id is CardId => id !== undefined),
-    instanceIds: instances.map((instance) => instance.id),
-    worldBookIds: archive.room.worldBookIds
-      .map((id) => worldBookIds.get(id))
-      .filter((id): id is string => id !== undefined)
-      .map((id) => asWorldBookId(id)),
-    activeConversationId: null,
+  // 3) 角色：关系目标与变化来源一起改写
+  const instances: CharacterInstance[] = archive.instances.map((instance) => ({
+    ...instance,
+    id: maps.instances.get(instance.id) ?? asInstanceId(newId()),
+    roomId,
+    cardId: maps.cards.get(instance.cardId) ?? instance.cardId,
+    affect: remapAffect(instance.affect, maps),
+    relationships: remapRelationships(instance.relationships, maps),
     updatedAt: at,
-  };
-  await repository.saveRoom(room);
+  }));
+  for (const instance of instances) await repository.saveInstance(instance);
 
-  // 7) 消息：按原顺序交给 appendMessages，localSeq 与 deviceId 由仓储层重发
-  await repository.appendMessages(
+  // 4) 对话：状态快照里的角色 id 与关系目标必须能对上新角色，否则归档回滚匹配不到任何人
+  const conversationFor = (conversation: Conversation, activeSceneId: SceneId | null): Conversation => ({
+    ...conversation,
+    id: maps.conversations.get(conversation.id) ?? asConversationId(newId()),
+    roomId,
+    activeSceneId,
+    personaId: conversation.personaId === maps.persona.from ? personaId : (conversation.personaId ?? personaId),
+    playerName: conversation.playerName ?? archive.persona?.name ?? '玩家',
+    playerPersona: conversation.playerPersona ?? archive.persona?.description ?? '',
+    stateSnapshot: (conversation.stateSnapshot ?? [])
+      .filter((item) => maps.instances.has(item.instanceId))
+      .map((item) => ({
+        ...item,
+        instanceId: maps.instances.get(item.instanceId) ?? item.instanceId,
+        affect: remapAffect(item.affect, maps),
+        relationships: remapRelationships(item.relationships, maps),
+      })),
+    updatedAt: at,
+  });
+  for (const conversation of archive.conversations) {
+    await repository.saveConversation(conversationFor(conversation, null));
+  }
+
+  // 5) 消息：按原顺序交给 appendMessages，localSeq 与 deviceId 由仓储层重发
+  const stamped = await repository.appendMessages(
     roomId,
     archive.messages.map((message) => ({
       ...message,
-      id: asMessageId(newId()),
+      id: maps.messages.get(message.id) ?? asMessageId(newId()),
       roomId,
-      conversationId: message.conversationId === null ? null : (conversationIds.get(message.conversationId) ?? null),
-      sceneId: message.sceneId === null ? null : (sceneIds.get(message.sceneId) ?? null),
-      turnId: remapTurn(message.turnId),
-      speakerInstanceId:
-        message.speakerInstanceId === null ? null : (instanceIds.get(message.speakerInstanceId) ?? null),
-      audience: message.audience.map((id) => instanceIds.get(id)).filter((id): id is InstanceId => id !== undefined),
+      conversationId: mapOptional(message.conversationId, maps.conversations),
+      sceneId: mapOptional(message.sceneId, maps.scenes),
+      turnId: remapTurnId(message.turnId, maps),
+      speakerInstanceId: mapOptional(message.speakerInstanceId, maps.instances),
+      audience: mapList(message.audience, maps.instances),
+      ...(message.artifacts === undefined ? {} : { artifacts: remapArtifacts(message.artifacts, maps) }),
     })),
   );
+  const newSeqById = new Map<string, number>(stamped.map((message) => [message.id, message.localSeq]));
 
-  // 8) 记忆与章节
-  const memories: MemoryEvent[] = archive.memories.map((memory) => {
-    const created: MemoryEvent = {
-      ...memory,
-      id: asEventId(newId()),
+  /*
+   * 6) 场景：场记游标要按**新**序号重算。
+   *
+   * 导入后序号从 1 重新发，旧的 `recapUpToSeq` 直接沿用会把没摘过的消息误判成「已覆盖」，
+   * 它们就从提示词里消失了。游标有消息 id 就按 id 找新号；只有老序号的，取这一场里
+   * 旧序号不超过它的最后一条消息，再换成那条的新号。
+   */
+  for (const scene of archive.scenes) {
+    let recapUpToMessageId: MessageId | null = mapOptional(scene.recapUpToMessageId, maps.messages);
+    const legacyCursor = scene.recapUpToSeq ?? 0;
+    if (recapUpToMessageId === null && legacyCursor > 0) {
+      const covered = archive.messages
+        .filter((message) => message.sceneId === scene.id && localSeqOf(message) <= legacyCursor)
+        .at(-1);
+      recapUpToMessageId = covered === undefined ? null : (maps.messages.get(covered.id) ?? null);
+    }
+    const hadCursor = scene.recapUpToMessageId !== undefined || scene.recapUpToSeq !== undefined;
+    const recapUpToSeq = recapUpToMessageId === null ? 0 : (newSeqById.get(recapUpToMessageId) ?? 0);
+
+    const created: Scene = {
+      ...scene,
+      id: maps.scenes.get(scene.id) ?? asSceneId(newId()),
       roomId,
-      conversationId: memory.conversationId === null ? null : (conversationIds.get(memory.conversationId) ?? null),
-      sceneId: memory.sceneId === null ? null : (sceneIds.get(memory.sceneId) ?? null),
-      participants: memory.participants
-        .map((id) => instanceIds.get(id))
-        .filter((id): id is InstanceId => id !== undefined),
-      observerId: memory.observerId === null ? null : (instanceIds.get(memory.observerId) ?? null),
-      affects: memory.affects.map((id) => instanceIds.get(id)).filter((id): id is InstanceId => id !== undefined),
-      sourceTurnIds: memory.sourceTurnIds.map((id) => turnIds.get(id) ?? id),
+      conversationId: mapOptional(scene.conversationId, maps.conversations),
+      cast: mapList(scene.cast, maps.instances),
+      ...(hadCursor ? { recapUpToSeq, recapUpToMessageId } : {}),
     };
-    return created;
-  });
+    await repository.saveScene(created);
+  }
+
+  // 7) 记忆：合并链（supersedes / supersededBy）指向的也是记忆 id
+  const memories: MemoryEvent[] = archive.memories.map((memory) => ({
+    ...memory,
+    id: maps.memories.get(memory.id) ?? asEventId(newId()),
+    roomId,
+    conversationId: mapOptional(memory.conversationId, maps.conversations),
+    sceneId: mapOptional(memory.sceneId, maps.scenes),
+    participants: mapList(memory.participants, maps.instances),
+    observerId: mapOptional(memory.observerId, maps.instances),
+    affects: mapList(memory.affects, maps.instances),
+    sourceTurnIds: memory.sourceTurnIds.map((id) => remapTurnId(id, maps)),
+    ...(memory.supersedes === undefined ? {} : { supersedes: mapList(memory.supersedes, maps.memories) }),
+    ...(memory.supersededBy === undefined ? {} : { supersededBy: mapOptional(memory.supersededBy, maps.memories) }),
+  }));
   await repository.saveMemories(memories);
 
+  // 8) 章节：保留原来的创建时间——章节按它排序，全设成同一刻顺序就乱了
   for (const chapter of archive.chapters) {
     await repository.saveChapterSummary({
       ...chapter,
       id: newId(),
       roomId,
-      conversationId: chapter.conversationId === null ? null : (conversationIds.get(chapter.conversationId) ?? null),
-      sceneIds: chapter.sceneIds.map((id) => sceneIds.get(id)).filter((id): id is SceneId => id !== undefined),
-      createdAt: at,
+      conversationId: mapOptional(chapter.conversationId, maps.conversations),
+      sceneIds: mapList(chapter.sceneIds, maps.scenes),
+      createdAt: typeof chapter.createdAt === 'string' && chapter.createdAt !== '' ? chapter.createdAt : at,
     });
   }
 
-  // 9) 世界当前的对话/场景指回来（场景 id 是第 5 步才有的）
-  const firstConversation = archive.conversations[0];
-  if (firstConversation !== undefined) {
-    const createdConversation = conversationIds.get(firstConversation.id);
-    const createdScene =
-      firstConversation.activeSceneId === null ? null : sceneIds.get(firstConversation.activeSceneId);
-    if (createdConversation !== undefined) {
-      await repository.saveConversation({
-        ...firstConversation,
-        id: createdConversation,
-        roomId,
-        activeSceneId: createdScene ?? null,
-        updatedAt: at,
-      });
-      await repository.saveRoom({ ...room, activeConversationId: createdConversation, updatedAt: at });
-    }
+  // 9) 对话的当前场景指回来（场景是第 6 步才落库的），世界本身最后写
+  for (const conversation of archive.conversations) {
+    const activeSceneId = mapOptional(conversation.activeSceneId, maps.scenes);
+    if (activeSceneId !== null) await repository.saveConversation(conversationFor(conversation, activeSceneId));
   }
+
+  const activeConversationId =
+    mapOptional(archive.room.activeConversationId, maps.conversations) ??
+    mapOptional(archive.conversations[0]?.id, maps.conversations);
+  const room: Room = {
+    ...archive.room,
+    id: roomId,
+    personaId,
+    cardIds: mapList(archive.room.cardIds, maps.cards),
+    instanceIds: instances.map((instance) => instance.id),
+    worldBookIds: mapList(archive.room.worldBookIds, maps.worldBooks),
+    activeConversationId,
+    updatedAt: at,
+  };
+  await repository.saveRoom(room);
 
   // 10) 账单：只为了把花费统计连上，缺了不影响使用
   if (options.ledger !== undefined) {
     for (const record of archive.usageRecords) {
       await options.ledger.record({
         roomId,
-        conversationId: record.conversationId === null ? null : (conversationIds.get(record.conversationId) ?? null),
-        turnId: record.turnId === null ? null : remapTurn(record.turnId),
+        conversationId: mapOptional(record.conversationId, maps.conversations),
+        turnId: record.turnId === null ? null : remapTurnId(record.turnId, maps),
         category: record.category,
         model: record.model,
         promptTokens: record.promptTokens,
         completionTokens: record.completionTokens,
-        speakerInstanceId:
-          record.speakerInstanceId === null ? null : (instanceIds.get(record.speakerInstanceId) ?? null),
+        speakerInstanceId: mapOptional(record.speakerInstanceId, maps.instances),
         speakerName: record.speakerName,
         price: record.price,
         at: record.createdAt,
       });
     }
   }
-
-  return {
-    roomId,
-    title: archive.title,
-    counts: {
-      conversations: archive.conversations.length,
-      scenes: archive.scenes.length,
-      instances: archive.instances.length,
-      messages: archive.messages.length,
-      memories: archive.memories.length,
-      chapters: archive.chapters.length,
-      cards: archive.cards.length,
-      worldBooks: archive.worldBooks.length,
-      usageRecords: archive.usageRecords.length,
-    },
-  };
 }

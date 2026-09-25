@@ -297,9 +297,10 @@ describe('封存导出 / 导入（P2-4）', () => {
     const man = loaded.instances.find((item) => item.displayName === '小满');
     expect(chen?.relationships[0]?.target).toBe(man?.id);
 
-    // 场景的场记（含游标）跟着走
+    // 场景的场记（含游标）跟着走：游标按**新**序号重算（审计 A11），并补上消息 id 游标
     expect(loaded.scenes[0]?.recap).toContain('三十箱');
-    expect(loaded.scenes[0]?.recapUpToSeq).toBe(3);
+    expect(loaded.scenes[0]?.recapUpToSeq).toBe(2);
+    expect(loaded.scenes[0]?.recapUpToMessageId).toBe(loaded.messages[1]?.id);
 
     // 账单连得上
     expect((await ledger.summary({ roomId: report.roomId })).total.calls).toBe(1);

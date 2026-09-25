@@ -224,6 +224,28 @@ export function useAdminChat(options: {
       const controller = new AbortController();
       abortRef.current = controller;
       const artifacts: AdminArtifact[] = [];
+      /** 这一轮的管理员消息是否已经落库（审计 C13：失败时要补记，但不能记两遍）。 */
+      let persisted = false;
+      const buildMessage = (content: string, usage: MessageUsage | null): Message => ({
+        id: messageId(newId()),
+        roomId: world.id,
+        conversationId: conversation.id,
+        sceneId: null,
+        turnId: createTurnId(),
+        localSeq: 0,
+        deviceId: '',
+        role: 'admin',
+        speakerInstanceId: null,
+        speakerName: '世界管理员',
+        audience: [],
+        content,
+        // 用量挂在消息上：副对话刷新之后仍能看到这一轮花了多少
+        ...(usage === null ? {} : { usage }),
+        ...(artifacts.length > 0 ? { artifacts: [...artifacts] } : {}),
+        createdAt: nowIso(),
+        updatedAt: nowIso(),
+        deletedAt: null,
+      });
 
       try {
         let answer = '';
@@ -274,27 +296,9 @@ export function useAdminChat(options: {
         }
 
         const content = answer.trim() === '' ? '（草稿已经放在下面，采纳后就能用。）' : answer.trim();
-        const message: Message = {
-          id: messageId(newId()),
-          roomId: world.id,
-          conversationId: conversation.id,
-          sceneId: null,
-          turnId: createTurnId(),
-          localSeq: 0,
-          deviceId: '',
-          role: 'admin',
-          speakerInstanceId: null,
-          speakerName: '世界管理员',
-          audience: [],
-          content,
-          // 用量挂在消息上：副对话刷新之后仍能看到这一轮花了多少
-          ...(usage === null ? {} : { usage }),
-          ...(artifacts.length > 0 ? { artifacts } : {}),
-          createdAt: nowIso(),
-          updatedAt: nowIso(),
-          deletedAt: null,
-        };
+        const message = buildMessage(content, usage);
         await session.appendMessages([message]);
+        persisted = true;
         // 落盘后立刻收掉流式副本：与主对话同一条规则，避免同一条回复显示两遍
         resetStreamState('admin');
 
@@ -313,6 +317,18 @@ export function useAdminChat(options: {
       } catch (sendError) {
         const message = sendError instanceof Error ? sendError.message : String(sendError);
         setError(controller.signal.aborted ? `已停止生成（${message}）` : message);
+        /*
+         * 中途出错或被停止时，已经执行过的工具（尤其是立即生效的 set_scene）也要留痕
+         * （审计 C13）：以前这里直接丢掉 artifacts，场景已经被改了，界面上却既没有记录
+         * 也没有撤销入口。补一条管理员消息把它们挂上，草稿照样可以采纳或丢弃。
+         */
+        if (!persisted && artifacts.length > 0) {
+          const note = controller.signal.aborted
+            ? '（这一轮被停止了，但下面这些改动 / 草稿在停止前已经产生。）'
+            : `（这一轮中途出错：${message}。下面这些改动 / 草稿在出错前已经产生。）`;
+          await session.appendMessages([buildMessage(note, null)]).catch(() => undefined);
+          onChanged();
+        }
       } finally {
         resetStreamState('admin');
         setBusy(false);

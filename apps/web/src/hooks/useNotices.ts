@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { DB_CONNECTION_EVENT, type DbConnectionIssue } from '../lib/db';
 import { QUOTA_WARN_RATIO } from '../lib/storage';
 
 /** 一条可以堆叠给用户看的提示（与 App 里原来那个 `Notice` 同一个形状）。 */
@@ -61,6 +62,33 @@ export function useNotices(quotaRatio: number | null): NoticesApi {
           ],
     );
   }, [quotaRatio]);
+
+  /*
+   * 数据库升级被挡 / 本页挡住了别处的升级（审计 B13）。
+   * blocking 时 db.ts 已经把连接关了，本页再写会失败，所以给一个「刷新」按钮。
+   */
+  useEffect(() => {
+    const onIssue = (event: Event): void => {
+      const issue = (event as CustomEvent<DbConnectionIssue>).detail;
+      const notice: Notice =
+        issue === 'blocking'
+          ? {
+              code: 'db-blocking',
+              message:
+                '应用在另一个标签页里升级了本地数据库，本页的连接已经让出。请刷新本页后继续（未保存的输入请先复制）。',
+              action: { label: '刷新', run: () => window.location.reload() },
+            }
+          : {
+              code: 'db-blocked',
+              message: '本地数据库需要升级，但其他标签页还开着旧版本。请关闭其他 Dramatis 标签页，本页会自动继续。',
+            };
+      setWarnings((previous) =>
+        previous.some((item) => item.code === notice.code) ? previous : [...previous, notice],
+      );
+    };
+    window.addEventListener(DB_CONNECTION_EVENT, onIssue);
+    return () => window.removeEventListener(DB_CONNECTION_EVENT, onIssue);
+  }, []);
 
   const dismissInstallHint = (): void => {
     window.localStorage.setItem(INSTALL_HINT_KEY, '1');

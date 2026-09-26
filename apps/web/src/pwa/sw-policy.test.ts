@@ -39,6 +39,17 @@ describe('sw.js 缓存策略（审计 A2）', () => {
     expect(get('/index.html')).toBe('cache');
   });
 
+  it('头像与立绘也在白名单里（否则装到桌面后离线全变破图）', () => {
+    expect(get('/portraits/01.webp')).toBe('cache');
+    expect(get('/portraits/thumbs/01.webp')).toBe('cache');
+    expect(get('/portraits/avatars/01.webp')).toBe('cache');
+    expect(get('/brand/logo.png')).toBe('cache');
+    // 只有带斜杠的前缀算目录；无关路径照旧不进缓存
+    expect(get('/portraits')).toBe('pass');
+    expect(get('/brand')).toBe('pass');
+    expect(get('/portraits/../secret.json')).toBe('pass');
+  });
+
   it('导航请求网络优先并以外壳兜底', () => {
     expect(get('/', 'navigate')).toBe('navigate');
     expect(get('/some/deep/link', 'navigate')).toBe('navigate');

@@ -57,4 +57,17 @@ describe('后台任务退避（审计 B2）', () => {
     expect(pending.map((item) => [item.id, item.attempts])).toEqual([[created.id, 0]]);
     expect(await extras.failedCount()).toBe(0);
   });
+
+  it('claim 是原子的：两条并发只可能有一条拿到（审计 B3）', async () => {
+    const store = createMemoryEntityStore();
+    const runner = createBackgroundRunner(store);
+    const extras = createTaskQueueExtras(store);
+    const created = await runner.enqueue({ kind: 'k', payload: {}, idempotencyKey: 'race' });
+
+    const [first, second] = await Promise.all([extras.claim(created.id), extras.claim(created.id)]);
+    expect([first, second].filter((item) => item !== null)).toHaveLength(1);
+    expect((await store.get<BackgroundTask>('backgroundTasks', created.id))?.status).toBe('running');
+    // 内核自己的 take() 与网页侧的 claim 不能互相踩：认领过之后 take 也拿不到它
+    expect(await runner.take()).toEqual([]);
+  });
 });

@@ -1,4 +1,4 @@
-import { type BackgroundTask, type EntityStore, nowIso } from '@dramatis/core';
+import { type BackgroundTask, type EntityStore, nowIso, updateEntity } from '@dramatis/core';
 
 /**
  * 后台队列在网页侧的补充操作（审计 B2）。
@@ -36,12 +36,25 @@ export function createTaskQueueExtras(store: EntityStore): TaskQueueExtras {
       });
     },
 
+    /**
+     * 认领一条任务：**必须是原子的**（审计 B3）。
+     *
+     * 走 `updateEntity`——网页侧 `apps/web/src/lib/db.ts` 实现了 `update`，那是 IndexedDB 的
+     * 一个 readwrite 事务（同一仓库上重叠的 readwrite 事务，包括别的标签页的，会被排在它后面）。
+     *
+     * 原来的 `get` → `put` 是两步：两个标签页同时 list 到同一条 pending，各自都以为自己拿到了，
+     * 同一条任务会被跑两遍（模型调两次、账单记两笔、情绪叠加两次）。main 内核的 `take()` 早就是
+     * 原子的（`packages/core/src/platform/background-runner.ts` 的 `updateEntity` + `won` 判据），
+     * 这个网页侧的补丁不能比它弱。
+     */
     async claim(id) {
-      const task = await store.get<BackgroundTask>(COLLECTION, id);
-      if (task === null || task.status !== 'pending') return null;
-      const running: BackgroundTask = { ...task, status: 'running', updatedAt: nowIso() };
-      await store.put(COLLECTION, running);
-      return running;
+      let won = false;
+      const result = await updateEntity<BackgroundTask>(store, COLLECTION, id, (current) => {
+        if (current === null || current.status !== 'pending') return undefined;
+        won = true;
+        return { ...current, status: 'running', updatedAt: nowIso() };
+      });
+      return won ? result : null;
     },
 
     async retryFailed() {

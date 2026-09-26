@@ -60,7 +60,20 @@ const HOST = '127.0.0.1';
  * 原因：IndexedDB 按「源」隔离，端口变了就是另一个源，用户会以为数据丢了。
  * 所以宁可启动失败，也不要静默换到别的端口上开一个空数据库。
  */
-const PORT = Number(process.env.DRAMATIS_PORT ?? 5273);
+const PORT = parseDramatisPort(process.env.DRAMATIS_PORT);
+
+/** 校验 DRAMATIS_PORT（审计 C20）：必须是 1-65535 的整数，否则直接报错退出。 */
+function parseDramatisPort(raw) {
+  if (raw === undefined || raw.trim() === '') return 5273;
+  const text = raw.trim();
+  const value = Number(text);
+  if (!/^\d+$/.test(text) || value < 1 || value > 65535) {
+    process.stderr.write(`DRAMATIS_PORT 必须是 1-65535 的整数，收到的是「${raw}」。
+`);
+    process.exit(1);
+  }
+  return value;
+}
 const ORIGIN = `http://${HOST}:${PORT}`;
 
 const args = new Set(process.argv.slice(2));

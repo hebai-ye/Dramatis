@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { importCardFromPng } from './card.js';
+import {
+  InflateTooLargeError,
+  InflateUnavailableError,
+  MAX_INFLATED_BYTES,
+  readAllWithLimit,
+  streamInflate,
+} from './inflate.js';
 import { crc32, findCardPayload, PngParseError, readPngTextChunks } from './png.js';
 
 function chunk(type: string, data: Uint8Array): Uint8Array {
@@ -223,5 +230,86 @@ describe('importCardFromPng', () => {
     const png = concat([SIGNATURE, ihdr(), corruptCrc(textChunk('chara', 'whatever')), end()]);
 
     await expect(importCardFromPng(png)).rejects.toThrow(/CRC/);
+  });
+});
+
+/*
+ * 审计 B15：两件事以前会让导入以最难看的方式失败——
+ * ①解压没有上限，几 KB 的块能解出几 GB（压缩炸弹），标签页直接被撑爆；
+ * ②任意一个文本块解析失败都会让整张卡导入失败，哪怕那块与角色卡毫无关系。
+ */
+describe('PNG 解压上限与坏块跳过（审计 B15）', () => {
+  it('上限就是 8 MB', () => {
+    expect(MAX_INFLATED_BYTES).toBe(8 * 1024 * 1024);
+  });
+
+  it('没超上限时按原样、按顺序拼回来', async () => {
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(Uint8Array.from([1, 2, 3]));
+        controller.enqueue(Uint8Array.from([4, 5]));
+        controller.close();
+      },
+    });
+
+    expect([...(await readAllWithLimit(stream, 5))]).toEqual([1, 2, 3, 4, 5]);
+  });
+
+  it('边读边数：超限立刻抛出并掐掉上游，不等整条流读完', async () => {
+    let cancelled = false;
+    // 永不结束的流：如果实现是「全收进内存再检查」，这个测试会一直转下去
+    const stream = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        controller.enqueue(new Uint8Array(4096));
+      },
+      cancel() {
+        cancelled = true;
+      },
+    });
+
+    await expect(readAllWithLimit(stream, 8192)).rejects.toThrow(InflateTooLargeError);
+    expect(cancelled).toBe(true);
+  });
+
+  it('压缩炸弹真的会被拦住：9 MB 的零只压出几 KB，解压时停在 8 MB', async () => {
+    const bomb = await deflate(new Uint8Array(9 * 1024 * 1024));
+    // 先确认这确实是「小文件撑出大内存」的那种输入
+    expect(bomb.byteLength).toBeLessThan(100 * 1024);
+
+    await expect(streamInflate(bomb)).rejects.toThrow(InflateTooLargeError);
+  });
+
+  it('与角色卡无关的压缩块坏掉时，卡照常导入并带上警告', async () => {
+    const card = {
+      spec: 'chara_card_v2',
+      spec_version: '2.0',
+      data: { name: '炉边诗人', description: '常在夜里唱曲的旅人。', first_mes: '要来一杯吗？' },
+    };
+    const png = concat([
+      SIGNATURE,
+      ihdr(),
+      await ztxtChunk('description', '这块解不开'),
+      textChunk('chara', toBase64(JSON.stringify(card))),
+      end(),
+    ]);
+
+    const result = await importCardFromPng(png, 'poet.png', {
+      inflate: () => Promise.reject(new InflateTooLargeError()),
+    });
+
+    expect(result.card.name).toBe('炉边诗人');
+    const failed = result.warnings.find((warning) => warning.code === 'png.chunk-failed');
+    expect(failed?.message).toContain('description');
+    expect(failed?.message).toContain('MB');
+  });
+
+  it('环境不支持解压时照样抛错：这不是坏文件，不能静默跳过', async () => {
+    const png = concat([SIGNATURE, ihdr(), await ztxtChunk('chara', '{}'), end()]);
+
+    await expect(
+      readPngTextChunks(png, {
+        inflate: () => Promise.reject(new InflateUnavailableError()),
+      }),
+    ).rejects.toThrow(InflateUnavailableError);
   });
 });

@@ -236,6 +236,8 @@ export async function importCardFromPng(
   if (!payload) {
     const keywords = chunks.map((chunk) => chunk.keyword).filter((keyword) => keyword !== '');
     const badCrc = warnings.filter((warning) => warning.code === 'png.bad-crc').length;
+    // 顺序 86（审计 B15）：解压失败/超限的块现在只记警告，这里也要把它算进「为什么没读到卡」
+    const failed = warnings.filter((warning) => warning.code === 'png.chunk-failed').length;
     /*
      * 三种「没找到卡」要分开说（顺序 64）：这里跳过过坏块时，就别再说
      * 「这可能只是一张普通图片」——那张图很可能正是用户的卡，只是被改坏了。
@@ -245,7 +247,9 @@ export async function importCardFromPng(
         ? `仅找到：${keywords.join('、')}`
         : badCrc > 0
           ? `另有 ${String(badCrc)} 个数据块的 CRC 校验没通过、已被跳过——这张卡多半被别的工具改坏了`
-          : '这可能只是一张普通图片';
+          : failed > 0
+            ? `另有 ${String(failed)} 个数据块读不出来、已被跳过（详情见警告）——角色的数据可能就在里面`
+            : '这可能只是一张普通图片';
     throw new CardImportError(
       `PNG 中没有读到角色卡数据块（chara / ccv3）${keywords.length > 0 ? '，' : '：'}${reason}`,
     );

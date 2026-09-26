@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_CARD_SYSTEM_PROMPT } from '../model/card.js';
+import {
+  type Card,
+  type CardSource,
+  createBlankCard,
+  createBlankWorldBook,
+  createWorldBookEntry,
+  DEFAULT_CARD_SYSTEM_PROMPT,
+} from '../model/card.js';
 import { newId } from '../model/ids.js';
 import { createPersona } from '../model/persona.js';
 import type { ChatToolCall } from '../prompt/types.js';
@@ -229,5 +236,159 @@ describe('未知工具', () => {
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.error).toContain('没有名为 delete_world 的工具');
+  });
+});
+
+/*
+ * 审计 B6：修改已有素材时**必须**以现有内容为底做字段级合并。
+ * 以前无论新建还是修改都从一张空白卡起，模型没提到的字段全被空值覆盖：
+ * 开场白、示例对话、标签、导入来源、创建时间……用户看不到报错，只会发现卡少了一半。
+ */
+describe('upsert_character_card · 审计 B6（改卡以现有卡为底）', () => {
+  const IMPORTED: CardSource = {
+    kind: 'png',
+    spec: 'chara_card_v2',
+    specVersion: '2.0',
+    importedAt: '2026-01-01T00:00:00.000Z',
+    fileName: 'boss.png',
+  };
+
+  function existingCard(): Card {
+    return createBlankCard({
+      name: '酒馆老板',
+      nickname: '老板',
+      description: '旧城东侧酒馆的老板',
+      personality: '豪爽',
+      scenario: '酒馆打烊后',
+      firstMessage: '欢迎光临。',
+      alternateGreetings: ['又来啦？'],
+      exampleMessages: '「喝什么？」',
+      tags: ['酒馆', '旧城'],
+      systemPrompt: '说话短一点。',
+      creator: '原作者',
+      extensions: { custom: 1 },
+      source: IMPORTED,
+      createdAt: '2026-02-02T00:00:00.000Z',
+      updatedAt: '2026-02-03T00:00:00.000Z',
+    });
+  }
+
+  function edit(args: Record<string, unknown>, card: Card) {
+    return parseAdminToolCall(call('upsert_character_card', { cardId: card.id, ...args }), { cards: [card] });
+  }
+
+  function draftCardOf(result: ReturnType<typeof parseAdminToolCall>): Card {
+    if (!result.ok) throw new Error(result.error);
+    if (result.draft.kind !== 'character-card') throw new Error('类型不对');
+    return result.draft.card;
+  }
+
+  it('只写一个字段时，其余字段（开场白、示例、标签、来源、创建时间）全都保持原样', () => {
+    const card = existingCard();
+
+    const draft = draftCardOf(edit({ personality: '沉默' }, card));
+
+    expect(draft.personality).toBe('沉默');
+    expect(draft.firstMessage).toBe('欢迎光临。');
+    expect(draft.alternateGreetings).toEqual(['又来啦？']);
+    expect(draft.exampleMessages).toBe('「喝什么？」');
+    expect(draft.tags).toEqual(['酒馆', '旧城']);
+    expect(draft.nickname).toBe('老板');
+    expect(draft.systemPrompt).toBe('说话短一点。');
+    expect(draft.creator).toBe('原作者');
+    expect(draft.extensions).toEqual({ custom: 1 });
+    expect(draft.source).toEqual(IMPORTED);
+    expect(draft.createdAt).toBe('2026-02-02T00:00:00.000Z');
+    expect(draft.id).toBe(card.id);
+  });
+
+  it('省掉 name/description 也算改；但新建时它们仍然必填', () => {
+    const card = existingCard();
+
+    const draft = draftCardOf(edit({ scenario: '雨夜' }, card));
+
+    expect(draft.scenario).toBe('雨夜');
+    expect(draft.name).toBe('酒馆老板');
+    expect(draft.description).toBe('旧城东侧酒馆的老板');
+
+    expect(parseAdminToolCall(call('upsert_character_card', { name: '只有名字' })).ok).toBe(false);
+  });
+
+  it('显式空串表示清空，null 表示「没提」', () => {
+    const card = existingCard();
+
+    const draft = draftCardOf(edit({ firstMessage: '', nickname: null }, card));
+
+    expect(draft.firstMessage).toBe('');
+    expect(draft.nickname).toBe('老板');
+  });
+
+  it('数组字段：给了就整份替换（空数组 = 清空），没给就保持原样', () => {
+    const card = existingCard();
+
+    const draft = draftCardOf(edit({ tags: [] }, card));
+
+    expect(draft.tags).toEqual([]);
+    expect(draft.alternateGreetings).toEqual(['又来啦？']);
+  });
+
+  it('草稿带上下手时的版本号，采纳路径才知道它有没有过期', () => {
+    const card = existingCard();
+
+    const edited = edit({ personality: '沉默' }, card);
+    if (!edited.ok || edited.draft.kind !== 'character-card') throw new Error('类型不对');
+    expect(edited.draft.baseUpdatedAt).toBe('2026-02-03T00:00:00.000Z');
+
+    const fresh = parseAdminToolCall(call('upsert_character_card', { name: '新人', description: 'x' }));
+    if (!fresh.ok || fresh.draft.kind !== 'character-card') throw new Error('类型不对');
+    expect(fresh.draft.baseUpdatedAt).toBeNull();
+  });
+
+  it('alternateGreetings 真的进了工具声明（以前只有参数名、schema 里没有）', () => {
+    const tool = ADMIN_TOOLS.find((item) => item.function.name === 'upsert_character_card');
+    const parameters = tool?.function.parameters as { properties?: Record<string, unknown> } | undefined;
+
+    expect(Object.keys(parameters?.properties ?? {})).toContain('alternateGreetings');
+  });
+});
+
+describe('upsert_world_book · 审计 B6（改书时保留历史与条目设置）', () => {
+  it('保留创建时间与未识别字段；同名条目沿用原 id 与用户调过的设置', () => {
+    const entry = createWorldBookEntry({ title: '旧城', keys: ['旧城'], content: '城墙是青的。' });
+    // 用户在界面上调过的两项：插到深处、只在 60% 的时候插入
+    entry.position = 'at_depth';
+    entry.probability = 60;
+
+    const book = createBlankWorldBook('旧城设定');
+    book.entries = [entry];
+    book.extensions = { custom: 'keep' };
+    book.createdAt = '2026-02-02T00:00:00.000Z';
+    book.updatedAt = '2026-02-03T00:00:00.000Z';
+
+    const result = parseAdminToolCall(
+      call('upsert_world_book', {
+        bookId: book.id,
+        name: '旧城设定',
+        entries: [
+          { title: '旧城', keys: ['旧城'], content: '城墙是青的，雨里有苔。' },
+          { keys: ['码头'], content: '码头在东门外。' },
+        ],
+      }),
+      { worldBooks: [book] },
+    );
+
+    if (!result.ok) throw new Error(result.error);
+    if (result.draft.kind !== 'world-book') throw new Error('类型不对');
+    const draft = result.draft.book;
+
+    expect(draft.createdAt).toBe('2026-02-02T00:00:00.000Z');
+    expect(draft.extensions).toEqual({ custom: 'keep' });
+    expect(draft.entries[0]?.id).toBe(entry.id);
+    expect(draft.entries[0]?.content).toBe('城墙是青的，雨里有苔。');
+    expect(draft.entries[0]?.position).toBe('at_depth');
+    expect(draft.entries[0]?.probability).toBe(60);
+    // 新条目拿新 id，不会蹭到旧条目的身份
+    expect(draft.entries[1]?.id).not.toBe(entry.id);
+    expect(result.draft.baseUpdatedAt).toBe('2026-02-03T00:00:00.000Z');
   });
 });

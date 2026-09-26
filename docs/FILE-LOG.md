@@ -1163,11 +1163,40 @@ TASKS 第〇节顺序 68。用户裁定「A+B 推进」；原方案里的 `limit
 | `docs/TASKS.md` | 改 | 83 行改 ✅；归属表三行更新；「重叠实现」补写「A9/B1 的重叠已在顺序 83 消掉」；新增「顺序 83 带出来的遗留」四条与**顺序 84 的只读复核回执**（可信 12 / 有疑 3 / 合并前 5 项） |
 | `docs/EVAL.md` | 改 | 新增**第七十三节**：分支带进来的东西、三条有疑的改法表、为什么采用 `a5ef9` 的模块、五项门禁、七条「没验的 / 已知遗留」 |
 | `docs/STATUS.md` | 改 | 新增「2026-09-26：顺序 83 落进 main」一段与下一步（84 真正只看两条、部署等 84/85 一起上） |
-| `docs/FILE-LOG.md` | 改 | 本节；「几点注意」顺延为**六十二** |
+| `docs/FILE-LOG.md` | 改 | 本节；「几点注意」顺延为**六十三**（顺序 86 之后又顺延为六十四，见下一节） |
 
 > 本批**没有 push、没有部署**（服务端那批要重新部署才生效，用户裁定等 84/85 合完一起上）。
 
-## 六十二、几点注意
+## 六十二、2026-09-26：顺序 86（审计遗留里没人修的五条）
+
+审计盘查核出**五条没有任何分支在修**的三条代码问题在本批修掉（B6/B9/B15），B18 由用户裁定不改默认，B10 留给正在改它的那条分支。
+做法、实测与遗留见 EVAL 第七十四节。
+
+| 文件 | 改 / 新增 | 说明 |
+| --- | --- | --- |
+| `packages/core/src/storage/usage.ts` | 改 | **B9**：`CurrencyCost { currency, cost, pricedCalls }`、`UsageTotals.costs`；`addInto` 按币种 find-or-push（不再累加成一个数）；`byCurrencyRank`（条数降序、并列按币种名升序）、`finalizeTotals`（最主要的那一种写回 `cost`/`currency`）；`summarizeUsage` 四处分组账都过它；`emptyTotals` 补 `costs: []` |
+| `packages/core/src/storage/usage.test.ts` | 改 | +4（→ 21）：币种各自累加、并列定序与输入顺序无关、没单价不产生币种条目、分组账各自带币种 |
+| `packages/core/src/compat/sillytavern/inflate.ts` | 改 | **B15**：`MAX_INFLATED_BYTES = 8 * 1024 * 1024`、`InflateTooLargeError`、`readAllWithLimit(stream, limit)`（边读边数；超限先 `cancel()` 再抛，`finally` 里 `releaseLock()`）；`streamInflate` 改走它 |
+| `packages/core/src/compat/sillytavern/png.ts` | 改 | **B15**：逐块 try/catch——`InflateUnavailableError` 仍上抛，其余推 `code: 'png.chunk-failed'` 警告（带 `关键字 <keyword>`）并跳过该块 |
+| `packages/core/src/compat/sillytavern/png.test.ts` | 改 | +6（→ 20）：上限、顺序拼回、永不结束的 pull 流（证明边读边数 + `cancel()`）、真压缩炸弹、坏块跳过、解压能力缺失仍上抛 |
+| `packages/core/src/compat/sillytavern/card.ts` | 改 | **B15**：`importCardFromPng` 的 `reason` 新增 `failed > 0` 分支（「另有 N 个数据块读不出来、已被跳过…」） |
+| `packages/core/src/admin/tools.ts` | 改 | **B6**：`mentioned()`（`undefined`/`null` = 没提，空串 = 清空）；`AdminToolContext.cards`/`worldBooks`；`parseCardDraft`/`parseWorldBookDraft` 以现有素材为底做字段级合并（世界书同名条目复用原 id 与设置）；`alternateGreetings` 进 schema、去掉 `required: ['name','description']`；两份 draft 带 `baseUpdatedAt` |
+| `packages/core/src/admin/tools.test.ts` | 改 | +7（→ 24）：改卡只写一个字段其余全保、省略 name/description、空串 vs null、数组整份替换、`baseUpdatedAt`（改卡=卡自身 `updatedAt`／新建=null）、`alternateGreetings` 在声明里、世界书条目 id 与设置复用 |
+| `packages/core/src/model/message.ts` | 改 | **B6**：`AdminArtifact.baseUpdatedAt?: string \| null` 与 `conflict?: string` |
+| `packages/core/src/storage/repository.ts` | 改 | **B6**：`adoptAdminArtifact` 写库前调私有 `conflictOf()`；冲突时只把 `conflict` 写到草稿上（status 仍 `pending`、`targetId` 仍 null），成功时抹掉 `conflict` |
+| `packages/core/src/storage/artifact-conflict.test.ts` | **新增** | 6 条：起草后被改 → 拒采纳且不覆盖用户改动、冲突可持久化读回、没改过正常采纳、新建永不冲突、目标被删、世界书同一条路 |
+| `apps/web/src/lib/usage.ts` | 改 | **B9**：`formatCost` 主币种后追加「另计 …」（`totals.costs.slice(1)`） |
+| `apps/web/src/lib/admin.ts` | 改 | **B6**：`draftToArtifact` 带 `baseUpdatedAt`；两处 `context` 补 `cards`/`worldBooks` |
+| `apps/web/src/components/SideChat.tsx` | 改 | **B6**：草稿卡显示 `⚠️ {conflict}`，冲突时采纳按钮禁用（未改 `styles.css`，`.hint.warn` 已存在） |
+| `docs/TASKS.md` | 改 | 86 行改 ✅ + 新增**顺序 87**（额度上限按币种比较，顺序 86 带出来的）；归属表把 B6/B9/B15（✅）、B18（裁定不改）、B10（仍待做）拆成三行；新增「顺序 86 怎么处理的」表与四条遗留 |
+| `docs/EVAL.md` | 改 | 新增**第七十四节**：B9 改法与「不做汇率」的理由、B15 的上限与坏块策略、B6 的五处落点、B18 的用户裁定原文与**如实记下的风险**、五项门禁、七条遗留 |
+| `docs/STATUS.md` | 改 | 新增「2026-09-26：顺序 86 落进 main」一段；顺序 83 那段的「下一步」里去掉已完成的 86 |
+| `docs/FILE-LOG.md` | 改 | 本节；「几点注意」顺延为**六十三** |
+
+> 本批**没有 push、没有部署**。**B10 仍未修**（别人那条分支正在改 `provider/openai-compatible.ts`）。
+> 顺带发现：这次 `pnpm build` 的产物里含**另一条会话未提交的头像/立绘改动**，所以包体数字（641.71 kB）不代表本批增量。
+
+## 六十三、几点注意
 
 ---
 

@@ -40,7 +40,9 @@ export const ADMIN_TOOLS: readonly ToolDefinition[] = [
     function: {
       name: 'upsert_character_card',
       description:
-        '起草或修改一张角色卡。改动只是草稿，用户点「采纳」之后才会进入素材库；' + '修改已有的卡时必须带上 cardId。',
+        '起草或修改一张角色卡。改动只是草稿，用户点「采纳」之后才会进入素材库；' +
+        '修改已有的卡时必须带上 cardId，而且**只需写要改的字段**：没提到的字段保持原样，' +
+        '要清空某个字段就显式传空字符串（新建时必须给 name 与 description）。',
       parameters: {
         type: 'object',
         properties: {
@@ -51,11 +53,15 @@ export const ADMIN_TOOLS: readonly ToolDefinition[] = [
           personality: { type: 'string', description: '性格' },
           scenario: { type: 'string', description: '出场场景设定' },
           firstMessage: { type: 'string', description: '开场白' },
+          alternateGreetings: {
+            type: 'array',
+            items: { type: 'string' },
+            description: '备选开场白：用户开新对话时可以挑一条',
+          },
           exampleMessages: { type: 'string', description: '对话风格示例' },
           systemPrompt: { type: 'string', description: '额外的人设指令，可留空' },
           tags: { type: 'array', items: { type: 'string' }, description: '标签' },
         },
-        required: ['name', 'description'],
       },
     },
   },
@@ -66,7 +72,8 @@ export const ADMIN_TOOLS: readonly ToolDefinition[] = [
       description:
         '起草或修改一本世界书（也就是世界卡）。关键词触发时才会插入提示词，' +
         'constant 为 true 的条目每轮都在。修改已有的书时必须带上 bookId，' +
-        '并且 entries 是**整本替换**：原有条目要一并写回，不要只交新增的那几条。',
+        '并且 entries 是**整本替换**：原有条目要一并写回，不要只交新增的那几条。' +
+        '（同名条目会保留它原有的插入位置、概率等设置，所以照原样传回来就是安全的。）',
       parameters: {
         type: 'object',
         properties: {
@@ -157,6 +164,13 @@ export interface CharacterCardDraft {
   /** 非空表示这是修改已有卡，而不是新建。 */
   cardId: CardId | null;
   card: Card;
+  /**
+   * 起草时那张卡/那本书的 `updatedAt`（顺序 86，审计 B6）；新建时为 null。
+   *
+   * 采纳发生在几分钟之后，中间用户完全可能自己改过这张卡。带着这个时刻，
+   * 采纳路径就能发现「草稿是照旧版本起的」，从而拒绝覆盖而不是默默盖掉。
+   */
+  baseUpdatedAt: string | null;
   summary: string;
 }
 
@@ -164,6 +178,8 @@ export interface WorldBookDraft {
   kind: 'world-book';
   bookId: WorldBookId | null;
   book: WorldBook;
+  /** 同 `CharacterCardDraft.baseUpdatedAt`。 */
+  baseUpdatedAt: string | null;
   summary: string;
 }
 
@@ -209,8 +225,28 @@ export interface AdminToolContext {
   /** 素材库里已有的卡与世界书，用来校验 cardId / bookId。 */
   knownCardIds?: readonly string[];
   knownBookIds?: readonly string[];
+  /**
+   * 素材库里的卡与世界书**本体**（顺序 86，审计 B6）。
+   *
+   * 只给 id 是不够的：「修改已有的卡」必须**以现有卡为底**做字段级合并，
+   * 否则模型没提到的字段（开场白、示例对话、标签、`createdAt`、导入来源）会被
+   * 空值覆盖——用户不会看到报错，只会发现自己的卡悄悄少了一半。
+   */
+  cards?: readonly Card[];
+  worldBooks?: readonly WorldBook[];
   /** 当前账户里的 Persona；删除时用 name 做二次确认。 */
   knownPersonas?: readonly Persona[];
+}
+
+/**
+ * 参数里到底有没有提这个字段。
+ *
+ * `undefined`（没写这个键）与 `null`（模型想表达「不变」）都算「没提」；
+ * 只有真的给了字符串才算改——**显式空串表示清空**。这个区分是审计 B6 的核心：
+ * 以前只要模型没写，字段就变成空值。
+ */
+function mentioned(args: Record<string, unknown>, key: string): boolean {
+  return args[key] !== undefined && args[key] !== null;
 }
 
 /**
@@ -245,39 +281,65 @@ function parseJsonArguments(raw: string): { ok: true; value: Record<string, unkn
 const CAST_POLICIES: readonly CastPolicy[] = ['open', 'locked', 'invite_only', 'triggered'];
 
 function parseCardDraft(args: Record<string, unknown>, context: AdminToolContext): AdminToolParseResult {
-  const name = text(args.name);
-  const description = longText(args.description);
-  if (name === '') return { ok: false, error: 'name 不能为空' };
-  if (description === '') return { ok: false, error: 'description 不能为空' };
-
   const rawId = text(args.cardId);
   const known = context.knownCardIds;
-  if (rawId !== '' && known !== undefined && !known.includes(rawId)) {
+  // 以现有卡为底做合并：给了本体（cards）就有底，只给 id 时至少还能校验存在性
+  const base = rawId === '' ? null : (context.cards?.find((card) => card.id === rawId) ?? null);
+  if (rawId !== '' && base === null && known !== undefined && !known.includes(rawId)) {
     return { ok: false, error: `素材库里没有 id 为 ${rawId} 的角色卡；要新建就留空 cardId` };
   }
 
+  /*
+   * 名字与描述：新建时必填，修改时省略就沿用原值。
+   * 「只改一个字段」不该要求模型把整张卡抄一遍——抄不全会丢内容，抄错了更糟。
+   */
+  const name = mentioned(args, 'name') ? text(args.name) : (base?.name ?? '');
+  if (name === '') return { ok: false, error: 'name 不能为空' };
+  const description = mentioned(args, 'description') ? longText(args.description) : (base?.description ?? '');
+  if (description === '') return { ok: false, error: 'description 不能为空' };
+
+  // 数组型字段：给了就整份替换（空数组 = 清空），没给就保持原样
   const alternateGreetings = Array.isArray(args.alternateGreetings)
     ? args.alternateGreetings.map((item) => text(item)).filter((item) => item !== '')
-    : [];
-  const tags = Array.isArray(args.tags) ? args.tags.map((item) => text(item)).filter((item) => item !== '') : [];
+    : (base?.alternateGreetings ?? []);
+  const tags = Array.isArray(args.tags)
+    ? args.tags.map((item) => text(item)).filter((item) => item !== '')
+    : (base?.tags ?? []);
 
-  const overrides: Partial<Card> = {
+  const pick = (key: string, fallback: string): string => (mentioned(args, key) ? longText(args[key]) : fallback);
+
+  const patch: Partial<Card> = {
     name,
-    nickname: longText(args.nickname),
+    nickname: pick('nickname', base?.nickname ?? ''),
     description,
-    personality: longText(args.personality),
-    scenario: longText(args.scenario),
-    firstMessage: longText(args.firstMessage),
+    personality: pick('personality', base?.personality ?? ''),
+    scenario: pick('scenario', base?.scenario ?? ''),
+    firstMessage: pick('firstMessage', base?.firstMessage ?? ''),
     alternateGreetings,
-    exampleMessages: longText(args.exampleMessages),
-    ...(longText(args.systemPrompt) === '' ? {} : { systemPrompt: longText(args.systemPrompt) }),
+    exampleMessages: pick('exampleMessages', base?.exampleMessages ?? ''),
     tags,
-    source: { kind: 'manual', spec: 'dramatis', specVersion: '1', importedAt: new Date().toISOString() },
   };
-  // 只有修改已有卡时才覆盖 id：写成 `id: undefined` 会把新生成的 id 抹掉
-  if (rawId !== '') overrides.id = asCardId(rawId);
 
-  const card = createBlankCard(overrides);
+  /*
+   * `systemPrompt` 单独处理：新建且模型没写时，让它拿 `createBlankCard` 的默认模板；
+   * 修改时显式传空串表示**清空**（一张卡不要额外指令是合理要求，这与新建的语义不同）。
+   */
+  const systemPrompt = mentioned(args, 'systemPrompt') ? longText(args.systemPrompt) : null;
+  if (systemPrompt !== null && (systemPrompt !== '' || base !== null)) patch.systemPrompt = systemPrompt;
+
+  /*
+   * 修改时整张卡**以原卡为底**合上去：没提到的字段（`createdAt`、`source`、
+   * `postHistoryInstructions`、`extensions`……）原样留着。这就是审计 B6 的修法——
+   * 以前无论新建还是修改都从一张空白卡起，模型没提到的字段会被空值覆盖。
+   */
+  const card: Card =
+    base === null
+      ? createBlankCard({
+          ...patch,
+          // 只有修改已有卡时才覆盖 id：写成 `id: undefined` 会把新生成的 id 抹掉
+          ...(rawId === '' ? {} : { id: asCardId(rawId) }),
+        })
+      : { ...base, ...patch };
 
   return {
     ok: true,
@@ -285,6 +347,7 @@ function parseCardDraft(args: Record<string, unknown>, context: AdminToolContext
       kind: 'character-card',
       cardId: rawId === '' ? null : asCardId(rawId),
       card,
+      baseUpdatedAt: base?.updatedAt ?? null,
       summary: `${rawId === '' ? '新建' : '修改'}角色卡「${name}」`,
     },
   };
@@ -296,11 +359,28 @@ function parseWorldBookDraft(args: Record<string, unknown>, context: AdminToolCo
 
   const rawId = text(args.bookId);
   const known = context.knownBookIds;
-  if (rawId !== '' && known !== undefined && !known.includes(rawId)) {
+  const base = rawId === '' ? null : (context.worldBooks?.find((book) => book.id === rawId) ?? null);
+  if (rawId !== '' && base === null && known !== undefined && !known.includes(rawId)) {
     return { ok: false, error: `素材库里没有 id 为 ${rawId} 的世界书；要新建就留空 bookId` };
   }
 
   if (!Array.isArray(args.entries)) return { ok: false, error: 'entries 必须是数组' };
+
+  /*
+   * 同名条目复用旧记录（顺序 86，审计 B6）。
+   *
+   * 模型只能给 title/keys/content/constant/order 这五个字段，而一条条目还有插入位置、
+   * 概率、分组、递归设置等十来项——那些是用户在界面上调过的。以前每次「改几个字」都会
+   * 重新生成一批条目，这些设置连同条目 id 一起消失；而条目 id 还写进提示词块 id
+   * （`worldbook:<书>:<条目>`），换一批等于把调试时的对照关系打散。
+   * 同名就当作同一条：只覆盖模型明确给出的那五个字段。
+   */
+  const reusable = new Map<string, WorldBookEntry[]>();
+  for (const entry of base?.entries ?? []) {
+    const bucket = reusable.get(entry.title);
+    if (bucket === undefined) reusable.set(entry.title, [entry]);
+    else bucket.push(entry);
+  }
 
   const entries: WorldBookEntry[] = [];
   for (const [index, item] of args.entries.entries()) {
@@ -320,24 +400,25 @@ function parseWorldBookDraft(args: Record<string, unknown>, context: AdminToolCo
     }
 
     const order = typeof record.order === 'number' && Number.isFinite(record.order) ? record.order : 100;
+    const title = text(record.title) === '' ? (keys[0] ?? name) : text(record.title);
+    // 同一个标题在旧书里出现两次时，按顺序一对一认领，不会两条都套到同一条上
+    const previous = reusable.get(title)?.shift() ?? null;
     entries.push(
-      createWorldBookEntry({
-        title: text(record.title) === '' ? (keys[0] ?? name) : text(record.title),
-        keys,
-        content,
-        constant,
-        order,
-      }),
+      previous === null
+        ? createWorldBookEntry({ title, keys, content, constant, order })
+        : { ...previous, title, keys, content, constant, order },
     );
   }
 
+  const now = nowIso();
   const book: WorldBook = {
-    id: rawId === '' ? asWorldBookId(newId()) : asWorldBookId(rawId),
+    id: base?.id ?? (rawId === '' ? asWorldBookId(newId()) : asWorldBookId(rawId)),
     name,
     entries,
-    extensions: {},
-    createdAt: nowIso(),
-    updatedAt: nowIso(),
+    // `extensions`（未识别字段）与 `createdAt` 是这本文档的历史，草稿不该把它们抹掉
+    extensions: base?.extensions ?? {},
+    createdAt: base?.createdAt ?? now,
+    updatedAt: base?.updatedAt ?? now,
     deletedAt: null,
   };
 
@@ -347,6 +428,7 @@ function parseWorldBookDraft(args: Record<string, unknown>, context: AdminToolCo
       kind: 'world-book',
       bookId: rawId === '' ? null : asWorldBookId(rawId),
       book,
+      baseUpdatedAt: base?.updatedAt ?? null,
       summary: `${rawId === '' ? '新建' : '修改'}世界书「${name}」（${String(entries.length)} 条）`,
     },
   };

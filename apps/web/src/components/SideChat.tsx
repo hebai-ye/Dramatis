@@ -112,12 +112,19 @@ function ArtifactCard({
         </p>
       ) : null}
 
+      {/*
+        顺序 86（审计 B6）：草稿过期时**不能**采纳。
+        起草之后用户自己改过这张卡/这本书，直接采纳会把那次修改盖掉——
+        以前会默默盖掉，现在把理由摆在按钮上面。
+      */}
+      {artifact.conflict === undefined ? null : <p className="hint warn">⚠️ {artifact.conflict}</p>}
+
       {artifact.status === 'pending' ? (
         <div className="inline">
           <button
             type="button"
             className={artifact.kind === 'persona-delete' ? 'ghost danger' : undefined}
-            disabled={disabled}
+            disabled={disabled || artifact.conflict !== undefined}
             onClick={onAdopt}
           >
             {artifact.kind === 'persona-delete' ? '确认删除' : '采纳'}

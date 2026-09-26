@@ -3848,3 +3848,67 @@ Core **709** 条 / 63 文件、Web **12** 条 / 4 文件全绿；build ✓（495
 6. 顺序 83 的只读复核还判了 B16 之外的若干条「可信」（A3/A6/A7/A8/C8–C12/C14/C15），逐条依据写在 TASKS 第〇节「审计遗留」小节里。
 7. 这一批**未 push、未部署**。
 
+## 七十四、顺序 86：审计遗留里没人修的五条（B6 / B9 / B15 修了，B18 裁定不动，B10 不做）
+
+**来源**：`docs/AUDIT-2026-09-26.md` 的 B6、B9、B10、B15、B18——审计盘查时核出**五条没有任何分支在修**（`git log main..<四条分支>` 里一条都没提过）。
+用户 2026-09-26 说「请继续」，B18 以「**不必写提示**」裁定收口（自定义回答）。
+本批全部改在 **main 上**；B10 故意不碰（别人在 `.claude/worktrees/agent-a6adfa051fc0cc2bd` 里有未提交的 `packages/core/src/provider/openai-compatible.ts` + 新测试，动它会撞车）。
+
+**B9 · 多币种金额不再相加**（审计原文：不同币种的金额直接相加，账单会给出一个不存在的数）
+
+| 位置 | 改法 |
+| --- | --- |
+| `packages/core/src/storage/usage.ts` | 新增 `CurrencyCost { currency, cost, pricedCalls }`；`UsageTotals.costs: CurrencyCost[]`；`addInto` 从「累加成一个数」改成**按币种 find-or-push**；`byCurrencyRank`（条数降序、并列按币种名升序）；`finalizeTotals` 在遍历结束后把**最主要的那一种**写回 `cost`/`currency`；`summarizeUsage` 的 total / byCategory / bySpeaker / byModel 四处都过 `finalizeTotals` |
+| `apps/web/src/lib/usage.ts` | `formatCost` 在主币种后面追加「，另计 ¥12.00」，保持原有「（N/M 次有单价）」与「无单价返回 null」 |
+
+- **不做汇率换算**：要联网取汇率、还要处理历史汇率，为一份本机账单不值得；宁可按币种分列，也不给一个换算出来的假数。
+- **语义变化（重要）**：`UsageTotals.cost` 以前是「所有币种之和」（错的），现在是**主币种的小计**。
+  连带发现 `packages/core/src/storage/budget.ts:43` 拿它与 `limits.maxCost` 比较，而 `maxCost` **没有币种字段** → 已登记为**顺序 87**（等拍板）。
+- 测试 4 条（`usage.test.ts` → 21 条）：不同币种各自累加（¥30/2 条 + $5/1 条，主币种 ¥、`pricedCalls` 3）、条数并列按币种名定序且**与输入顺序无关**（`JSON.stringify` 整份比对）、没单价的不产生币种条目、分组账各自带自己币种。
+
+**B15 · PNG 压缩炸弹与「一块坏了整卡失败」**
+
+- `packages/core/src/compat/sillytavern/inflate.ts`：`MAX_INFLATED_BYTES = 8 * 1024 * 1024`、`InflateTooLargeError`（消息「压缩块解压后超过 8 MB，已中止（这不像是一张正常的角色卡）」）、`readAllWithLimit(stream, limit)` **边读边数**——超限先 `await reader.cancel()` 再抛，`finally` 里 `releaseLock()`；`streamInflate` 改走它。
+- `png.ts`：`readPngTextChunks` 逐块 try/catch——`InflateUnavailableError`（环境没有解压能力）**照样上抛**，其余错误推一条 `code: 'png.chunk-failed'` 的警告（带 `关键字 <keyword>` 与原始错误文本）并**跳过该块**。
+- `card.ts`：`importCardFromPng` 的 `reason` 新增 `failed > 0` 分支（「另有 N 个数据块读不出来、已被跳过（详情见警告）——角色的数据可能就在里面」），排在 `badCrc` 之后。
+- 测试 6 条（`png.test.ts` → 20 条）：上限就是 8 MB；未超限按顺序拼回；**永不结束的 pull 流**证明「边读边数」且 `cancel()` 真被调到；真实压缩炸弹（9 MB 零 → deflate 后 < 100 KB）抛 `InflateTooLargeError`；无关块坏掉时卡照常导入且警告含 `description`；`InflateUnavailableError` 仍上抛。
+
+**B6 · 管理员改素材不再清空「没提到的字段」**（审计原文：修改已有卡/世界书是整条替换，未传字段被清空）
+
+| 位置 | 改法 |
+| --- | --- |
+| `packages/core/src/admin/tools.ts` | 新增 `mentioned(args, key)`（`undefined`/`null` 都算「没提」，**显式空串 = 清空**）；`AdminToolContext` 新增 `cards`/`worldBooks`（注释写明只给 id 不够）；`parseCardDraft` 以现有卡为底 `{ ...base, ...patch }`（`createdAt`/`source`/`extensions`/`creator` 全保留），新建时才走 `createBlankCard`；`parseWorldBookDraft` 同样以现有书为底，且**同名条目复用旧记录的 id 与用户调过的设置**（`position`/`probability`/`group`…；`entries` 仍是整份替换）；两个 schema 都能表达 `alternateGreetings`（以前只在 `KNOWN_ARGS` 里），`required: ['name','description']` 去掉——新建仍必填（代码里判），改卡不再被迫复述 |
+| `packages/core/src/model/message.ts` | `AdminArtifact.baseUpdatedAt?: string \| null`、`conflict?: string`（注释：不抛异常也不静默覆盖，把原因留在草稿上给界面看） |
+| `packages/core/src/storage/repository.ts` | `adoptAdminArtifact` 写库前调 `conflictOf(target)`：`baseUpdatedAt` 为空（新建）永不冲突；目标**已被删** → 「在采纳之前已经被删掉了…」；`updatedAt` 变了 → 「在草稿起草之后又被改过（草稿基于 X，现在是 Y）：直接采纳会盖掉你后来的修改…」。冲突时**只改草稿状态**（status 仍 `pending`、`targetId` 仍 null）并持久化 `conflict`；采纳成功时把 `conflict` 抹掉 |
+| `apps/web/src/lib/admin.ts` | `draftToArtifact` 带上 `baseUpdatedAt`；两处 `context`（API 路径与网页桥接路径）都补 `cards`/`worldBooks` |
+| `apps/web/src/components/SideChat.tsx` | 草稿卡上显示 `⚠️ {conflict}` 一句话，采纳按钮 `disabled` |
+
+- 测试：`packages/core/src/admin/tools.test.ts` +7（→ 24 条，含「只写一个字段时开场白/示例/标签/来源/创建时间全保」「显式空串 vs null」「数组给了就整份替换」「`baseUpdatedAt` 改卡=卡自身的 `updatedAt`、新建=null」「`alternateGreetings` 真在工具声明里」）；
+  新增 `packages/core/src/storage/artifact-conflict.test.ts` 6 条（起草后卡被改 → 采纳被拒且库里的用户改动没被盖掉、冲突会被持久化读得回来、没改过就正常采纳、新建草稿永远能采纳、目标被删、世界书同一条路）。
+- 写测试时踩的坑：`const draft = result.draft.book` 之后错把断言写成 `draft.baseUpdatedAt`（应是 `result.draft.baseUpdatedAt`），红了 1 条后改对。
+
+**B18 · 默认档位 Key 明文存 localStorage —— 用户裁定「保持现状」**
+
+- 现状：三档 `仅本次会话 / 本机浏览器 / 口令加密`（`apps/web/src/lib/keystore.ts`），默认 `'device'`（`apps/web/src/lib/providers.ts:102`）。
+- 审计自己也写明这是**产品决策**（「A15 的 CSP 已降低风险」），而 2026-09-21 用户反馈过「默认仅本次会话 → 刷新后要重填，像保存按钮没用」。
+- 用户 2026-09-26 裁定原话：**「不必写提示」** → 默认档位不变、**不新增**任何提示文案，三档切换与既有说明照旧。
+- **风险如实记在这里**：默认档位下 Key 以明文存在本机浏览器的 IndexedDB/localStorage 里；任何能在这台电脑上打开这个浏览器的人都能读到。想更安全要手动切「口令加密」（忘记口令 = Key 只能重填）。
+
+**五项门禁（main 上跑）**：
+
+- `pnpm typecheck` ✓（core + apps/web）；`pnpm test` = Core **67 文件 / 760 条**（+23）、Web **6 文件 / 19 条**全绿；
+- 本批 14 个文件 `pnpm exec biome check` 干净（过程中修掉 2 个 format error 与 1 个我新引入的 `noNonNullAssertion` warning）；
+- 全仓 `pnpm lint` = `Checked 267 files` / **13 error**，逐条归因不变——**全部**来自另一条会话未提交的文件（`App.tsx`、`AvatarCropper/CardDesigner/CastDetail/CastRail/StreamingBubble.tsx`）；`20 warnings / 3 infos` 与基线一致；
+- `pnpm build` ✓、`pnpm build:sync-server` ✓。**注意**：这次 `dist/assets/index-BD9vdt_0.js` 641.71 kB 里**包含另一条会话未提交的头像/立绘改动**（它把立绘/头像也编进包，`public/portraits` 还有 145 个文件 / 24.6 MB），**这个数字不代表本批的增量**。
+
+**没验的 / 已知遗留（别当成已解决）**：
+
+1. **混币种时的额度上限**（顺序 87）：`maxCost` 没有币种，混币种时比的是主币种小计。
+2. **管理员面板只显示一句话**，没有逐字段 diff；被拒后要「让管理员按现在的版本重新起草」——这个流程在界面上的可理解性**只有真机能验**（归 Codex）。
+3. **真模型当管理员时**会不会因为「没提到的就不改」而少改字段（或变得啰嗦），只能真模型验。
+4. 世界书条目**改名**会被当成新条目（id 变），当前没有东西按条目 id 引用，所以只是隐患。
+5. B15 只挡「解压后过大」，**不挡 PNG 本身很大**（`readPngTextChunks` 之前仍要整张读完）。
+6. **B10 仍未修**（`openai-compatible.ts` 的 200+error 体 / 未知 `finish_reason` / 不 cancel reader）。
+7. 这一批**未 push、未部署**（本机 main 上还有前面 81–85 若干提交一起等着上）。
+
+

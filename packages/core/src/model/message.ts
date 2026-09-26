@@ -35,6 +35,20 @@ export interface AdminArtifact {
   payload: unknown;
   /** 修改已有素材时保留旧版本，供「撤回这次采纳」恢复。 */
   previousPayload?: unknown;
+  /**
+   * 起草时目标素材的 `updatedAt`（顺序 86，审计 B6）。新建的草稿为 null。
+   *
+   * 采纳是几分钟之后的事，中间用户可能自己改过这张卡。记录起草时的版本，
+   * 采纳路径就能发现草稿已经过期，从而拒绝覆盖。
+   */
+  baseUpdatedAt?: string | null;
+  /**
+   * 采纳被拒的原因（顺序 86）。
+   *
+   * 不抛异常、不静默覆盖：把原因留在草稿上，界面照着它显示「这张卡在你采纳之前
+   * 又被改过」，用户自己决定是丢弃重来还是让管理员重新起草。
+   */
+  conflict?: string;
   /** 采纳后落库得到的 id；场景类草稿在执行时就写入，直接记目标场景。 */
   targetId: string | null;
   createdAt: string;

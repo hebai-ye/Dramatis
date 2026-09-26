@@ -93,6 +93,14 @@ export interface UsageFilter {
   since?: string;
 }
 
+/** 一种币种各自的钱。**绝不跨币种相加**（审计 B9）。 */
+export interface CurrencyCost {
+  currency: string;
+  cost: number;
+  /** 这个币种参与换算的调用条数。 */
+  pricedCalls: number;
+}
+
 export interface UsageTotals {
   calls: number;
   promptTokens: number;
@@ -100,13 +108,22 @@ export interface UsageTotals {
   tokens: number;
   /**
    * 按单价换算出的花费；**一次都没配单价时是 null**，而不是 0——
-   * 0 会被读成「不要钱」。
+   * 0 会被读成「不要钱」。**它只覆盖一种币种**（`currency`），见 `costs`。
    */
   cost: number | null;
-  /** 有单价、真正参与换算的调用条数。用它说明「这个数只覆盖了一部分调用」。 */
+  /** 有单价、真正参与换算的调用条数（**含其他币种**）。用它说明「这个数只覆盖了一部分调用」。 */
   pricedCalls: number;
-  /** 参与换算的币种；混用多种币种时不参与换算的那部分被排除，这里取最常见的一种。 */
+  /** `cost` 是哪一种币种；没有计费的调用时是 null。 */
   currency: string | null;
+  /**
+   * 每种币种各自的钱，按 **计费条数降序、并列按币种名升序**——`costs[0]` 就是
+   * `cost` / `currency` 指向的那一种，其余由界面写成「另计」。
+   *
+   * 审计 B9：以前这里把不同币种的金额**直接相加**（¥10 与 $10 变成 20），
+   * 币种还只取第一条记录碰巧用的那个；现在按币种分组累加，`cost` 只代表一种钱。
+   * **不做汇率换算**：那要引入外部汇率数据源，一个角色扮演应用的账单不值得为此联网。
+   */
+  costs: CurrencyCost[];
 }
 
 export interface UsageGroup<TKey> {
@@ -141,6 +158,7 @@ function emptyTotals(): UsageTotals {
     cost: null,
     pricedCalls: 0,
     currency: null,
+    costs: [],
   };
 }
 
@@ -161,9 +179,41 @@ function addInto(totals: UsageTotals, record: UsageRecord): void {
 
   const cost = costOf(record);
   if (cost === null || record.price === null) return;
-  totals.cost = (totals.cost ?? 0) + cost;
   totals.pricedCalls += 1;
-  totals.currency = totals.currency ?? record.price.currency;
+
+  // 按币种分开记账（审计 B9）：条数是钱的一部分，别让它跟着别的币种一起变成一个大数
+  const currency = record.price.currency;
+  let entry = totals.costs.find((item) => item.currency === currency);
+  if (entry === undefined) {
+    entry = { currency, cost: 0, pricedCalls: 0 };
+    totals.costs.push(entry);
+  }
+  entry.cost += cost;
+  entry.pricedCalls += 1;
+}
+
+/**
+ * 币种的次序：**计费条数多的在前，并列按币种名升序**。
+ *
+ * 并列必须有序（顺序 68）：分组是边遍历边累计的，谁先谁后不能跟着记录的到达顺序走，
+ * 否则「同一份账在不同读取路径上给出不同主币种」——那比数字不准更难查。
+ */
+function byCurrencyRank(left: CurrencyCost, right: CurrencyCost): number {
+  if (left.pricedCalls !== right.pricedCalls) return right.pricedCalls - left.pricedCalls;
+  return left.currency < right.currency ? -1 : left.currency > right.currency ? 1 : 0;
+}
+
+/**
+ * 一组合计的收尾：给币种定序，并让 `cost` / `currency` 指向最主要的那一种。
+ *
+ * 必须**遍历完所有记录之后**再调用：「最主要」看的是条数，边读边改会随到达顺序漂。
+ */
+function finalizeTotals(totals: UsageTotals): UsageTotals {
+  totals.costs.sort(byCurrencyRank);
+  const main = totals.costs[0];
+  totals.cost = main?.cost ?? null;
+  totals.currency = main?.currency ?? null;
+  return totals;
 }
 
 /**
@@ -223,12 +273,16 @@ export function summarizeUsage(records: readonly UsageRecord[]): UsageSummary {
   }
 
   return {
-    total,
-    byCategory: [...categories.entries()].map(([key, totals]) => ({ key, label: key, totals })).sort(byTokensDesc),
-    bySpeaker: [...speakers.entries()]
-      .map(([key, value]) => ({ key, label: value.label, totals: value.totals }))
+    total: finalizeTotals(total),
+    byCategory: [...categories.entries()]
+      .map(([key, totals]) => ({ key, label: key, totals: finalizeTotals(totals) }))
       .sort(byTokensDesc),
-    byModel: [...models.entries()].map(([key, totals]) => ({ key, label: key, totals })).sort(byTokensDesc),
+    bySpeaker: [...speakers.entries()]
+      .map(([key, value]) => ({ key, label: value.label, totals: finalizeTotals(value.totals) }))
+      .sort(byTokensDesc),
+    byModel: [...models.entries()]
+      .map(([key, totals]) => ({ key, label: key, totals: finalizeTotals(totals) }))
+      .sort(byTokensDesc),
     firstAt,
     lastAt,
   };

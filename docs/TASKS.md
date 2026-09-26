@@ -96,7 +96,8 @@
 | 83 | **审计第三批：同步/加密/上传与文档漂移（A3/A4/A6/A7/A8/A9/B1/B16/C8–C12/C14/C15）** `[审][数]` | **P1** | 主密码与密钥派生、会话过期、上传体积上限、导出遗漏、SYNC.md 与实现不一致 | ✅ 2026-09-26（分支 `a063c` 合入为 `6ce2b89`；复核判「有疑」的三条按用户裁定补齐：A4 接线 `resetSyncState`、A9 新建空间口令 ≥6、B1 入口串行化 + Web Locks。Web **19** 全绿，见 EVAL 第七十三节） |
 | 84 | **审计第四批：前端稳定与缓存（A2/A10/B2/B5/B7/B13/B17/C3/C13/C17/C18）** `[审]` | **P1** | SW 缓存名与更新、流式取消、错误处理、隐私边界 | ⬜ **必须等另一条会话提交**：分支 `a5ef9` 改了 `apps/web/src/App.tsx` 与 `styles.css`，这两个文件现在是别人的未提交改动，此刻合并会被 git 拒绝；**只读复核子代理上次中途失败、要重派** |
 | 85 | **审计第五批：CI 与部署加固（A14/A15/B19/B20/B21/C16/C21/C22）** `[审][数]` | **P2** | CI 不跑 `build:sync-server`、nginx 缺安全头、systemd 无隔离、依赖冷静期例外、`.gitignore` 漏 `.claude/` | ⬜ 等另一条会话提交后合 `audit/integration`（它也改 `styles.css`） |
-| 86 | **审计遗留补做：B6 / B9 / B10 / B15 / B18** `[审][数]` | **P2** | 五条**没有任何分支在修**：管理员草稿整条替换会清空未传字段、多币种金额直接相加、流式失败边角（200+error 体 / 未知 finish_reason / 不 cancel reader）、PNG 解压无上限（压缩炸弹）、默认档位 Key 明文存 localStorage | ⬜（B10 有人在 `a6adfa` 的 worktree 里改到一半，未提交） |
+| 86 | **审计遗留补做：B6 / B9 / B15（B10、B18 见下）** `[审][数]` | **P2** | 五条**没有任何分支在修**：管理员草稿整条替换会清空未传字段、多币种金额直接相加、PNG 解压无上限（压缩炸弹）、默认档位 Key 明文存 localStorage | ✅ 2026-09-26（B6/B9/B15 已修 + 采纳过期拒绝；B18 用户裁定「保持默认、不加提示」；**B10 留给正在改它的那条分支**，见 EVAL 第七十四节） |
+| 87 | **额度上限按币种比较（顺序 86 带出来的）** `[审][数]` | **P3** | `packages/core/src/storage/budget.ts:43` 拿 `summary.total.cost` 与 `limits.maxCost` 比，而 `maxCost` 没有币种字段；混币种时现在比的是**主币种**的小计（B9 之前是所有币种乱加）。要做严谨得给 `BudgetLimits` 加币种，或按 `summary.total.costs` 逐个比 | ⬜ 等拍板 |
 | 28 / 29 / 30 / 56 | 语音归属模型侧根治 / 平板横屏 / 备案切 443 等 / 服务器管理台 | **P4** | 原有条目，等条件或等拍板，不变 | ⬜ |
 
 依赖关系：58 复用 57 的「按关键词取回」；66 在 59 之后；65 可以插在任何两批之间；80 依赖 68 已经落下的 `updatedAt` 不变量与迁移 11。
@@ -116,7 +117,9 @@
 | A3、A4、A6、A7、A8、A9、B1、B16、C8、C9、C10、C11、C12、C14、C15（15 条） | 分支 `worktree-agent-a063c593632cf9c7c`（7 提交，Core 699 全绿） | 顺序 83 | ✅ **已在 main**（`6ce2b89` + 三条有疑的补丁，见下） |
 | A2、A4、A9、A10、B1、B2、B3、B5、B7、B13、B17、C3、C13、C17、C18（15 条） | 分支 `worktree-agent-a5ef9d3cfc346aade`（10 提交，Web 29 测试全绿） | 顺序 84 | 🟡 只读复核回执已到（见下）；**合并仍会被 git 拒**（`App.tsx`/`styles.css`/`components/*.tsx` 仍是别人的未提交改动） |
 | A14、A15、B19、B20、B21、C16、C21、C22（8 条）+ 已合入的 4 条 | 分支 `integration`（`a0ff3d8995c3dd432` + `96120d9`） | 顺序 85 | ⬜ 等脏文件提交（它改 `styles.css`） |
-| **B6、B9、B10、B15、B18（5 条）** | **没有任何分支在修** | 顺序 86 | ⬜ |
+| **B6、B9、B15（3 条）** | **已在 main**（顺序 86，本机提交） | 顺序 86 | ✅ |
+| **B18** | 用户 2026-09-26 裁定：**保持默认档位不变、不加提示**（理由见 EVAL 第七十四节） | 顺序 86 | ✅ 已裁定，不做改动 |
+| **B10** | **仍然没人修**：`a6adfa` 的 worktree 里有未提交的 `provider/openai-compatible.ts` + 新测试，本批故意不碰 | 待那批提交后单独做 | ⬜ |
 
 **重叠实现（合并时要逐条对账，不能两份都留）**：A4、A9、B1（`a063c` 与 `a5ef9` 各一份）；B3（`a6adfa` 与 `a5ef9` 各一份）。
 其余 41 条只有一条分支在修。清单是 `git log main..<分支>` 抽取提交信息里的编号核出来的，不是照报告抄的。
@@ -127,6 +130,25 @@
 所以 84 合 `a5ef9` 时这两块预期无差异，不会留下两条并行队列或两处口令下限。
 A4 的 core 侧（`packages/core/src/sync/loop.ts:153-162` 的 `serverHead < pulledHead` 自愈）来自 `a063c`，早已在 main；web 侧的显式 `resetSyncState` 由本批补上。
 **84 真正要动代码的只剩 B3 与 SW 白名单两条。**
+（两条都已在分支 `worktree-agent-a5ef9d3cfc346aade` 上补掉：`apps/web/src/lib/task-queue.ts` 的 `claim` 改成 `updateEntity` 原子 CAS、
+`apps/web/public/sw.js` 的静态白名单加上 `/portraits/` 与 `/brand/`；并把 main 预先并进了那条分支，预集成门禁全绿。）
+
+**顺序 86（审计遗留里没有任何分支在修的五条）怎么处理的**：
+
+| 编号 | 处理 | 落点 |
+| --- | --- | --- |
+| B6 管理员草稿整条替换 | **字段级合并 + 过期拒绝** | `packages/core/src/admin/tools.ts`（`mentioned()`、`parseCardDraft`/`parseWorldBookDraft` 以现有素材为底、`alternateGreetings` 进 schema、`required` 去掉）、`packages/core/src/model/message.ts`（`AdminArtifact.baseUpdatedAt`/`conflict`）、`packages/core/src/storage/repository.ts`（`adoptAdminArtifact` 调 `conflictOf()`，冲突就只改草稿状态）、`apps/web/src/lib/{admin.ts,..}`、`apps/web/src/components/SideChat.tsx`（冲突一句话 + 采纳按钮禁用） |
+| B9 多币种相加 | **按币种分别累计**，不换算汇率 | `packages/core/src/storage/usage.ts`（`CurrencyCost`、`UsageTotals.costs`、`byCurrencyRank`、`finalizeTotals`）、`apps/web/src/lib/usage.ts`（`formatCost` 主币种后面「另计 …」） |
+| B15 PNG 压缩炸弹 + 坏块连坐 | **边读边数 8 MB 上限 + 单块失败只警告** | `packages/core/src/compat/sillytavern/inflate.ts`（`MAX_INFLATED_BYTES`、`InflateTooLargeError`、`readAllWithLimit`）、`png.ts`（`InflateUnavailableError` 仍上抛，其余推 `png.chunk-failed` 警告）、`card.ts`（导入 `reason` 里如实说「另有 N 个数据块读不出来」） |
+| B18 Key 默认档位 | **不动**（用户裁定「不必写提示」） | `apps/web/src/lib/providers.ts:102` 仍是 `'device'`；三档切换与既有说明照旧 |
+| B10 流式失败边角 | **本批不做**（别人那条分支正在改，碰了会撞车） | 待那批提交后单独做 |
+
+**顺序 86 自己带出来的遗留（别当成已解决）**：
+
+- **额度上限与币种**：`packages/core/src/storage/budget.ts:43` 仍是 `summary.total.cost`，而 B9 之后它只代表**主币种**的小计 → 已登记为顺序 87。
+- **冲突拒绝后看不到两版差异**：草稿卡只显示一句话（「又被改过」+ 两个时间戳），没有逐字段 diff；管理员要按现在的版本重起草。
+- **世界书条目复用按 `title` 匹配**：改了名（同名不再）的条目会被当成新条目，id 会变 → 将来若有东西按条目 id 引用就会断（当前没有这种引用）。
+- **B15 只挡住「解压后过大」，不挡「PNG 本身很大」**：`readPngTextChunks` 之前仍要先把整张图读完（正常卡几百 KB，但 100 MB 的 PNG 仍会占内存）。
 
 **顺序 82 合并前必须先改的三处 —— 已改完（2026-09-26，随 `5014509` 落进 main）**：
 

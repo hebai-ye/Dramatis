@@ -21,6 +21,28 @@
 
 ## 新会话从这里接（2026-09-23）
 
+### 2026-09-26：顺序 86 落进 main（审计遗留里没人修的五条：B6/B9/B15 修了，B18 裁定不动，B10 不做）
+
+审计盘查时核出**五条没有任何分支在修**，本批在 main 上处理：
+
+- **B6（改素材会清空没提到的字段）**：管理员工具的 `parseCardDraft`/`parseWorldBookDraft` 改成**以现有素材为底做字段级合并**
+  （`mentioned()`：`undefined`/`null` 算「没提」、显式空串 = 清空），世界书同名条目**复用原 id 与用户调过的设置**，`alternateGreetings` 进 schema；
+  并在采纳路径加**过期拒绝**（`adoptAdminArtifact` → `conflictOf()`：目标被删或 `updatedAt` 变过就只把 `conflict` 写在草稿上，
+  不抛异常也不覆盖用户的改动），`SideChat.tsx` 草稿卡显示一句话并禁用采纳按钮。
+- **B9（多币种直接相加）**：`UsageTotals` 新增 `costs: CurrencyCost[]`，**按币种分别累计**，最主要的那种写回 `cost`/`currency`；
+  网页账单主币种后面显示「另计 …」。**不做汇率换算**。副作用：`cost` 的语义从「乱加之和」变成「主币种小计」，而 `budget.ts:43` 的额度没有币种字段 → 已登记**顺序 87**。
+- **B15（PNG 压缩炸弹 / 一块坏了整卡失败）**：解压改成 `readAllWithLimit` **边读边数 8 MB**（超限先 `cancel()` 再抛 `InflateTooLargeError`）；
+  单块读不出来只推 `png.chunk-failed` 警告并跳过（`InflateUnavailableError` 仍上抛），导入 `reason` 里如实说「另有 N 个数据块读不出来」。
+- **B18（Key 默认明文存 localStorage）**：**用户 2026-09-26 裁定「不必写提示」** → 默认档位保持 `'device'`、不新增文案（风险写在 EVAL 第七十四节）。
+- **B10（流式失败边角）**：**本批不做**——别人在 `.claude/worktrees/agent-a6adfa051fc0cc2bd` 里有未提交的 `provider/openai-compatible.ts` + 新测试，碰了会撞车。
+
+门禁：typecheck ✓、Core **760**（67 文件）+ Web **19**（6 文件）全绿、本批 14 个文件 lint 干净、build ✓、build:sync-server ✓；
+全仓 lint 仍是那 13 个 error（全部来自另一条会话未提交的文件）。做法、数字与遗留见 EVAL 第七十四节。**本批未 push、未部署。**
+
+**下一步**：84 = 合 `a5ef9`（**两条真代码已在分支上补掉**：`task-queue.ts` 的 `claim` 走 `updateEntity` 原子 CAS、`sw.js` 白名单加 `/portraits/` 与 `/brand/`；已把 main 预先并进那条分支、预集成门禁全绿 → 等脏文件提交后合并很快）。
+**84/85 仍必须等另一条会话提交 `App.tsx` / `styles.css` / `components/*.tsx`**（现在合会被 git 拒）。
+**部署：服务端那批（配额/限流/`epoch` 三列）等 84/85 合完一起上**（用户裁定）——线上仍是旧服务端。
+
 ### 2026-09-26：顺序 83 落进 main（审计第三批 + 三条「有疑」按裁定补齐）
 
 分支 `a063c`（A3/A4/A6/A7/A8/A9/B1/B16/C8–C12/C14/C15 十五条）已合入 main（合并提交 `6ce2b89`，24 文件 1991+/363-）。
@@ -32,7 +54,7 @@ A9/B1 是**故意按 `a5ef9` 那一套原样落地**的，好让顺序 84 合并
 
 **下一步**：84 = 合 `a5ef9`（**只读复核回执已到**：15 条里 A2/A10/B2/B5/B7/B13/B17/C3/C13/C17/C18 可信，A4/A9/B1 是重复且更弱的一份、已被 main 覆盖；
 **真正要动代码的只有两条**——① B3 回退：`worker.ts:548` 改调 `db.tasks.claim` 会绕开 main 的原子 CAS，需改回或走 `updateEntity` 事务；② SW 白名单要加 `/portraits/**` 与 `/brand/**`，否则装到桌面后立绘/头像离线破图）。
-**84/85 仍然必须等另一条会话提交 `App.tsx` / `styles.css` / `components/*.tsx`**（现在合会被 git 拒）。86 = 补五条没人修的（B6/B9/B10/B15/B18）。
+**下一步**：84/85 仍然必须等另一条会话提交 `App.tsx` / `styles.css` / `components/*.tsx`（现在合会被 git 拒；86 已做完，见上一节）。
 **部署：服务端那批（配额/限流/`epoch` 三列）等 84/85 合完一起上**（用户裁定）——线上仍是旧服务端；升级窗口要盯住已有库的 `ALTER TABLE` 与 `/sync/health`。**本批未 push、未部署。**
 
 ### 2026-09-26：顺序 82 落进 main（审计第二批 + 三处必修）

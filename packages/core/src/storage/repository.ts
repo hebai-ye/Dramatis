@@ -1374,6 +1374,27 @@ export class Repository {
     const target = message.artifacts.find((item) => item.id === artifactId);
     if (target?.status !== 'pending') return { message, artifact: target ?? null };
 
+    /*
+     * 过期草稿不许覆盖（顺序 86，审计 B6）。
+     *
+     * 草稿是照着起草那一刻的卡做的（`baseUpdatedAt`）。用户完全可能在这之间自己改了
+     * 那张卡——这时采纳整份草稿就等于**默默盖掉他刚做的修改**，而且不会有任何提示。
+     * 所以这里不写库：把原因留在草稿上（`conflict`），界面照着它说清楚，
+     * 用户自己决定是丢弃重来，还是让管理员按现在的版本重新起草。
+     */
+    const conflict = await this.conflictOf(target);
+    if (conflict !== null) {
+      const blocked: AdminArtifact = { ...target, conflict };
+      const updated: Message = {
+        ...message,
+        artifacts: message.artifacts.map((item) => (item.id === artifactId ? blocked : item)),
+        updatedAt: await this.stampUpdatedAt(COLLECTIONS.messages, messageId),
+        deletedAt: null,
+      };
+      await this.store.put(COLLECTIONS.messages, updated);
+      return { message: updated, artifact: blocked };
+    }
+
     let targetId: string | null = null;
     if (target.kind === 'character-card') {
       const card = target.payload as Card;
@@ -1398,7 +1419,9 @@ export class Repository {
       targetId = target.targetId;
     }
 
-    const adopted: AdminArtifact = { ...target, status: 'adopted', targetId };
+    // 采纳成功时把可能残留的 conflict 抹掉（比如冲突之后用户又把版本改回去了）
+    const { conflict: _stale, ...clean } = target;
+    const adopted: AdminArtifact = { ...clean, status: 'adopted', targetId };
     const updated: Message = {
       ...message,
       artifacts: message.artifacts.map((item) => (item.id === artifactId ? adopted : item)),
@@ -1407,6 +1430,46 @@ export class Repository {
     };
     await this.store.put(COLLECTIONS.messages, updated);
     return { message: updated, artifact: adopted };
+  }
+
+  /**
+   * 草稿是否已经过期（顺序 86，审计 B6）。
+   *
+   * 返回 null 表示「可以采纳」；返回字符串表示拒绝采纳的理由（会挂到草稿上给用户看）。
+   * 新建类草稿没有底版本，永远不算冲突。
+   *
+   * 只比 `updatedAt` 就够：素材的每次写入都会经 `stampUpdatedAt` 拿一个**单调递增**的
+   * 时刻，同一毫秒内的两次修改也不会撞上。比内容更省事，也不会因为「改回原样」而误判。
+   */
+  private async conflictOf(target: AdminArtifact): Promise<string | null> {
+    const base = target.baseUpdatedAt;
+    if (base === undefined || base === null) return null;
+
+    if (target.kind === 'character-card') {
+      const card = target.payload as Card;
+      const current = await this.getCard(card.id);
+      if (current === null) {
+        return '这张卡在采纳之前已经被删掉了，而草稿是照着它起草的——请让管理员重新起草。';
+      }
+      if (current.updatedAt !== base) {
+        return `这张卡在草稿起草之后又被改过（草稿基于 ${base}，现在是 ${current.updatedAt}）：直接采纳会盖掉你后来的修改。丢弃这份草稿，让管理员按现在的版本重新起草一次。`;
+      }
+      return null;
+    }
+
+    if (target.kind === 'world-book') {
+      const book = target.payload as WorldBook;
+      const current = await this.getWorldBook(book.id);
+      if (current === null) {
+        return '这本世界书在采纳之前已经被删掉了，而草稿是照着它起草的——请让管理员重新起草。';
+      }
+      if (current.updatedAt !== base) {
+        return `这本世界书在草稿起草之后又被改过（草稿基于 ${base}，现在是 ${current.updatedAt}）：直接采纳会盖掉你后来的修改。丢弃这份草稿，让管理员按现在的版本重新起草一次。`;
+      }
+      return null;
+    }
+
+    return null;
   }
 
   /** 丢弃一条草稿：只改状态，不删记录——用户可能过一会儿又想要它。 */

@@ -1,4 +1,4 @@
-import { type Inflate, streamInflate } from './inflate.js';
+import { type Inflate, InflateUnavailableError, streamInflate } from './inflate.js';
 
 const PNG_SIGNATURE = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 
@@ -190,7 +190,31 @@ export async function readPngTextChunks(
     }
 
     if (type === 'tEXt' || type === 'zTXt' || type === 'iTXt') {
-      chunks.push(await parseTextChunk(data, type, inflate));
+      try {
+        chunks.push(await parseTextChunk(data, type, inflate));
+      } catch (error) {
+        /*
+         * 一个文本块读不出来，不该让整张卡导入失败（审计 B15）。
+         *
+         * 一张卡里常常有好几个文本块（描述、注释、内嵌世界书），坏掉的那个经常与角色卡
+         * 无关；被解压上限拦下的（InflateTooLargeError），更可能是恶意文件里与卡无关的
+         * 填充块——为了它把整张好卡拒之门外，代价比收益大。跳过、把原因记进 warnings，
+         * 用户至少还能把卡导入进来，并且知道少了什么。
+         *
+         * 例外：「当前环境没有 DecompressionStream」不是坏文件，是环境问题。这时**任何**
+         * 压缩块都读不出来，静默跳过会让人以为这张卡里本来就没数据——必须往上抛。
+         */
+        if (error instanceof InflateUnavailableError) throw error;
+
+        const keywordEnd = data.indexOf(0);
+        const keyword = keywordEnd > 0 ? latin1.decode(data.subarray(0, keywordEnd)) : '';
+        warnings?.push({
+          code: 'png.chunk-failed',
+          message: `PNG 数据块 ${type}${
+            keyword === '' ? '' : `（关键字 ${keyword}）`
+          }读不出来（${error instanceof Error ? error.message : String(error)}），这一块已跳过。`,
+        });
+      }
     }
 
     if (type === 'IEND') break;

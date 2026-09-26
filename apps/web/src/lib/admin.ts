@@ -54,6 +54,8 @@ function draftToArtifact(draft: AdminDraft): AdminArtifact {
         // 草稿先留在消息上，用户点「采纳」才进素材库
         status: 'pending',
         payload: draft.card,
+        // 起草时那张卡的版本；采纳路径照它判断草稿是否已经过期（顺序 86，审计 B6）
+        baseUpdatedAt: draft.baseUpdatedAt,
       };
     case 'world-book':
       return {
@@ -63,6 +65,7 @@ function draftToArtifact(draft: AdminDraft): AdminArtifact {
         summary: draft.summary,
         status: 'pending',
         payload: draft.book,
+        baseUpdatedAt: draft.baseUpdatedAt,
       };
     case 'persona-upsert':
       return {
@@ -248,6 +251,9 @@ export function useAdminChat(options: {
             context: {
               knownCardIds: session.library.cards.map((card) => card.id),
               knownBookIds: session.library.worldBooks.map((book) => book.id),
+              // 改已有素材要「以现有内容为底」做字段级合并（顺序 86，审计 B6）
+              cards: session.library.cards,
+              worldBooks: session.library.worldBooks,
               knownPersonas: session.personas,
             },
             execute: (draft) => executeDraft(draft, artifacts),
@@ -340,6 +346,9 @@ export function useAdminChat(options: {
         const context = {
           knownCardIds: session.library.cards.map((card) => card.id),
           knownBookIds: session.library.worldBooks.map((book) => book.id),
+          // 改已有素材要「以现有内容为底」做字段级合并（顺序 86，审计 B6）
+          cards: session.library.cards,
+          worldBooks: session.library.worldBooks,
           knownPersonas: session.personas,
         };
 

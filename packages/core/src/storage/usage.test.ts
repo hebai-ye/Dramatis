@@ -464,3 +464,84 @@ describe('用量账单 · 顺序 68', () => {
     expect(COLLECTIONS.usageRecords).toBe(USAGE_COLLECTION);
   });
 });
+
+/** 一条用来算账的合成流水：单价 1/百万 token，于是 `promptTokens` 就是金额本身。 */
+function pricedRecord(currency: string, promptTokens: number, id: string): UsageRecord {
+  return {
+    id,
+    roomId: null,
+    conversationId: null,
+    turnId: null,
+    category: 'generation',
+    model: 'm',
+    promptTokens,
+    completionTokens: 0,
+    speakerInstanceId: null,
+    speakerName: '甲',
+    price: { inputPerMillion: 1_000_000, outputPerMillion: 0, currency },
+    createdAt: T1,
+    updatedAt: T1,
+  };
+}
+
+describe('用量账单 · 审计 B9（多币种）', () => {
+  /*
+   * 审计原话：usage.ts 把不同币种的金额**直接相加**，¥10 与 $10 会变成 20，
+   * 而且币种取的是第一条记录碰巧用的那个。修法：按币种分组累加，
+   * 主显示取最主要的一种，其余留给界面写「另计」；不做汇率换算。
+   */
+  it('不同币种各自累加，绝不加成一个数', () => {
+    const summary = summarizeUsage([pricedRecord('¥', 10, 'a'), pricedRecord('¥', 20, 'b'), pricedRecord('$', 5, 'c')]);
+
+    // 主币种是条数最多的那一种；金额只是它自己的
+    expect(summary.total.currency).toBe('¥');
+    expect(summary.total.cost).toBeCloseTo(30, 6);
+    // 计费条数是全部（含其他币种），这样「N/M 次有单价」不会漏报
+    expect(summary.total.pricedCalls).toBe(3);
+    expect(summary.total.costs).toEqual([
+      { currency: '¥', cost: 30, pricedCalls: 2 },
+      { currency: '$', cost: 5, pricedCalls: 1 },
+    ]);
+  });
+
+  it('条数并列时按币种名定序：所以主币种不随记录到达顺序变', () => {
+    const yen = pricedRecord('¥', 10, 'a');
+    const dollar = pricedRecord('$', 5, 'b');
+
+    const forward = summarizeUsage([yen, dollar]);
+    const backward = summarizeUsage([dollar, yen]);
+
+    // '$'（U+0024）排在 '¥'（U+00A5）前面，与输入顺序无关
+    expect(forward.total.currency).toBe('$');
+    expect(forward.total.cost).toBeCloseTo(5, 6);
+    expect(backward.total.currency).toBe('$');
+    expect(JSON.stringify(forward)).toBe(JSON.stringify(backward));
+  });
+
+  it('没配单价的那部分不产生币种条目，也不影响主币种', () => {
+    const unpriced = { ...pricedRecord('¥', 100, 'a'), price: null };
+    const summary = summarizeUsage([unpriced, pricedRecord('$', 7, 'b')]);
+
+    expect(summary.total.currency).toBe('$');
+    expect(summary.total.cost).toBeCloseTo(7, 6);
+    expect(summary.total.calls).toBe(2);
+    expect(summary.total.pricedCalls).toBe(1);
+    expect(summary.total.costs).toEqual([{ currency: '$', cost: 7, pricedCalls: 1 }]);
+  });
+
+  it('分组账（按类别、按模型）也各自按币种分开', () => {
+    const other = { ...pricedRecord('$', 3, 'c'), category: 'intent' as const, model: 'n' };
+    const summary = summarizeUsage([pricedRecord('¥', 40, 'a'), other]);
+
+    const generation = summary.byCategory.find((group) => group.key === 'generation');
+    expect(generation?.totals.currency).toBe('¥');
+    expect(generation?.totals.cost).toBeCloseTo(40, 6);
+
+    const intent = summary.byCategory.find((group) => group.key === 'intent');
+    expect(intent?.totals.currency).toBe('$');
+    expect(intent?.totals.cost).toBeCloseTo(3, 6);
+
+    // 两种币种都进了总计，各自记着各自的条数
+    expect(summary.total.costs.map((item) => item.currency).sort()).toEqual(['$', '¥']);
+  });
+});

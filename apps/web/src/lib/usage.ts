@@ -64,12 +64,18 @@ export function formatTokens(value: number): string {
  * 没有一条记录配过单价时是 null——界面上要写「未设单价」，而不是显示 0：
  * 0 会被读成「不要钱」。只覆盖了一部分调用时会带上分数（例如 3/5 次），
  * 让人知道这个数是不完整的。
+ *
+ * **混用多种币种时不加在一起**（审计 B9）：`cost` 只是最主要的那一种，
+ * 其余写成「另计」。相加会得出一个谁都不认识的数（¥10 + $10 = 20），
+ * 而换算汇率要联网取——为一份账单不值得。
  */
 export function formatCost(totals: UsageTotals): string | null {
   if (totals.cost === null) return null;
   const partial =
     totals.pricedCalls < totals.calls ? `（${String(totals.pricedCalls)}/${String(totals.calls)} 次有单价）` : '';
-  return `${formatMoney(totals.cost, totals.currency)}${partial}`;
+  const others = totals.costs.slice(1).map((item) => formatMoney(item.cost, item.currency));
+  const also = others.length === 0 ? '' : `，另计 ${others.join(' + ')}`;
+  return `${formatMoney(totals.cost, totals.currency)}${also}${partial}`;
 }
 
 /** 单独一个金额的写法（账单合计、预算里的「已用多少」）。 */

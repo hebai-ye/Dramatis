@@ -1376,11 +1376,21 @@ TASKS 第〇节顺序 68。用户裁定「A+B 推进」；原方案里的 `limit
 | --- | --- | --- |
 | `apps/web/src/prompt/unlimited-preset.txt` | 改 | 填入正文；`git ls-files --eol` = `i/lf w/crlf`（`.gitattributes` 是 `* text=auto eol=lf`，与仓库其它文本文件一致） |
 | `docs/ROLEPLAY-PROMPT.md` | 改 | 「留空等于没有」那条改成「2026-09-27 起已经不是空的」 |
-| `docs/TASKS.md` | 改 | 计划表 92 行补「2026-09-27 补」；处理表的正文位、遗留两条、真机那条同步成「已粘贴 / 前端已上线 / push 未成」 |
-| `docs/STATUS.md` | 改 | 新增「2026-09-27：顺序 92 补——正文粘贴完成、前端单独上线（push 未成）」一节；顺序 92 那节里的「空文件」与「本批未 push、未部署」一并改口 |
-| `docs/EVAL.md` | 改 | 第八十一节末尾追加「2026-09-27 补：正文粘贴完成 + 前端单独上线（push 未成）」，并把遗留第 1/2/6 条改口 |
+| `docs/TASKS.md` | 改 | 计划表 92 行补「2026-09-27 补」；处理表的正文位、遗留两条、真机那条同步成「已粘贴 / 前端已上线 / push 当时未成」 |
+| `docs/STATUS.md` | 改 | 新增「2026-09-27：顺序 92 补——正文粘贴完成、前端单独上线（push 当时未成）」一节；顺序 92 那节里的「空文件」与「本批未 push、未部署」一并改口 |
+| `docs/EVAL.md` | 改 | 第八十一节末尾追加「2026-09-27 补：正文粘贴完成 + 前端单独上线（push 当时未成）」，并把遗留第 1/2/6 条改口 |
 | `docs/FILE-LOG.md` | 改 | 本节这段与上面那一行 |
 | （仓库外）`deploy/LOCAL-NOTES.md` | 改 | 记了这次上线的备份目录与命令（本机私有、不提交） |
+
+**2026-09-27 补二（同一个顺序号 92，单独一个提交）**：把这批里所有「push 未成」的说法改成「push 完成」——`git push origin main` 前三次分别撞上「Clash Verge GUI 没开 / 绕代理直连被重置 / 代理开了仍被重置」，最后 `git -c http.version=HTTP/1.1 -c http.postBuffer=524288000 push origin main` 成功（`a1dc78a..1cf1eab`，`origin/main` = `1cf1eab`），并把 `http.version=HTTP/1.1` 写进本仓库本地配置。本次重跑五项门禁全绿、构建产物哈希可复现（仍是 `index-BBkcTtuN.js`），**没有重新部署**。
+
+| 文件 | 动作 | 内容 |
+| --- | --- | --- |
+| `docs/STATUS.md` | 改 | 上一节标题改成「…前端单独上线、**push 完成**（`a1dc78a..1cf1eab`）」；原「push 卡住」一条重写成「push 完成」全过程（三次失败 + 成功命令 + 本地配置） |
+| `docs/EVAL.md` | 改 | 第八十一节「补」一节标题与 push 一条改成「当时未成（已解）」，并新增「补二：push 完成 + 文档改口」一小节 |
+| `docs/TASKS.md` | 改 | 计划表 92 行的尾巴与处理表「真机没验」一条改成「push 已完成」 |
+| `docs/FILE-LOG.md` | 改 | 本节这段；上面那段里的三处「push 未成」改成「push 当时未成」 |
+| （仓库外）`deploy/LOCAL-NOTES.md` | 改 | 追加 push 成功的命令与 `http.version=HTTP/1.1` 这条经验（本机私有、不提交） |
 
 ## 七十、几点注意
 

@@ -4266,9 +4266,9 @@ v12 的三个判断都是有意的：
 3. **老库里那份旧副本不被清理**：`modes.unlimitedPrompt` 残留数据留在 IndexedDB 里没人读，不进同步、不占提示词。
 4. **顺序 89 的第一条遗留自动消失**：「换设备/清库后无法再配置无限制提示词」因为正文随应用走而不成立（那条遗留已在 `docs/TASKS.md` 的顺序 89 小节标注「顺序 92 已解」）。
 5. **文档口径已同步**：`docs/ROLEPLAY-PROMPT.md` 的无限制模式一节整节重写（原文写着「只存在你自己的浏览器里」「别人打开这个站点看不到它」，与本批事实相反）。
-6. **真机没验**（归 Codex）。**本批（`00b8f5d`）当时未 push、未部署。**
+6. **真机没验**（归 Codex）。**本批（`00b8f5d`）当时未 push、未部署；2026-09-27 已随 `14d1b96` 一起 push（见下面两节），前端已单独上线。**
 
-### 2026-09-27 补：正文粘贴完成 + 前端单独上线（push 未成）
+### 2026-09-27 补：正文粘贴完成 + 前端单独上线（push 当时未成）
 
 用户指令（原话）：「粘贴完成，请push部署」。
 
@@ -4279,6 +4279,16 @@ v12 的三个判断都是有意的：
 - **上线范围：只重新部署前端**。`git log aa4f724..HEAD -- tools/ packages/core/src/sync/` 为空 ⇒ 自上次整批上线（`aa4f724`）以来同步服务端源码没动，`/opt/dramatis-sync/dist` 与服务不重启（复查 `systemctl is-active` 与 `/sync/health` 仍 `{"ok":true}`，uptime ≈ 6 天 10 小时）。
 - **部署过程**：`ssh dramatis 'rm -rf /tmp/dist-web-new'` → `scp -r -q apps/web/dist dramatis:/tmp/dist-web-new`（25 MB）→ `ls /tmp/dist-web-new/index.html` 确认到齐 → `sudo mv /var/www/dramatis /var/www/dramatis.bak-20260927-005736 && sudo mv /tmp/dist-web-new /var/www/dramatis && sudo chown -R root:root /var/www/dramatis && sudo chmod -R a+rX /var/www/dramatis`（照 `deploy/LOCAL-NOTES.md` 的「先确认新的到 → 把旧的改名 → 再换，全程不删」）。
 - **线上自查**（本机直连站点，`:8443`）：首页 → 200 / 1342 B，且引用 `assets/index-BBkcTtuN.js`；`/assets/index-BBkcTtuN.js` → 200 / **655 347 B**（与本地构建字节数一致）且**含正文首行**；`/sync/health` → 200 `{"ok":true,"uptimeMs":23209408}`。
-- **push 未成**：`git push origin main` 报 `fatal: unable to access 'https://github.com/hebai-ye/Dramatis.git/': Failed to connect to github.com port 443 via 127.0.0.1 after 2120 ms: Could not connect to server`；`git config` 里 `http.proxy`/`https.proxy` = `http://127.0.0.1:7897`，而本机**只有 `clash-verge-service` 服务进程在跑、Clash Verge 的 GUI 没开**（7897 无监听）。绕开代理直连（`git -c http.proxy= -c https.proxy= push`）报 `Recv failure: Connection was reset`（GitHub 直连被重置；`Test-NetConnection github.com -Port 443` 虽然是 `True`，TLS 阶段还是被切）。**等用户打开 Clash Verge 后重试**；当前 `main` 领先 `origin/main` **5 个提交**（`14d1b96`、`00b8f5d`、`49804d7`、`1a4779d`、`e63baf0`）。
+- **push 当时未成（已解，见下一节）**：`git push origin main` 报 `fatal: unable to access 'https://github.com/hebai-ye/Dramatis.git/': Failed to connect to github.com port 443 via 127.0.0.1 after 2120 ms: Could not connect to server`；`git config` 里 `http.proxy`/`https.proxy` = `http://127.0.0.1:7897`，而当时本机**只有 `clash-verge-service` 服务进程在跑、Clash Verge 的 GUI 没开**（7897 无监听）。绕开代理直连（`git -c http.proxy= -c https.proxy= push`）报 `Recv failure: Connection was reset`（GitHub 直连被重置；`Test-NetConnection github.com -Port 443` 虽然是 `True`，TLS 阶段还是被切）。当时 `main` 领先 `origin/main` **5 个提交**（`14d1b96`、`00b8f5d`、`49804d7`、`1a4779d`、`e63baf0`）。
+
+### 2026-09-27 补二：push 完成（`a1dc78a..1cf1eab`）+ 文档改口
+
+用户 m04775 那句「粘贴完成，请push部署」到此**两件事都完成**。
+
+- **先做的文档对账**（提交 `1cf1eab`「顺序 92 补：前端单独上线 + 文档对账」）：只改文档 5 个文件 50+/14-（`docs/STATUS.md`、`docs/EVAL.md`、`docs/TASKS.md`、`docs/FILE-LOG.md`、`docs/ROLEPLAY-PROMPT.md`），记下粘贴核验、五项门禁与构建产物数字、只重部署前端与备份目录名；`deploy/LOCAL-NOTES.md`（gitignore，第 60 行）照例追加一份上线记录。这次重跑五项门禁全绿，构建产物哈希与部署前**可复现**（仍是 `index-BBkcTtuN.js`），所以文档提交**不需要重新部署**。
+- **push 失败的第 3 次（代理已开）**：`git push origin main` 仍报 `Recv failure: Connection was reset`——而 `curl -x http://127.0.0.1:7897 https://github.com` 返回 **200**、`git ls-remote origin` 返回 **0**（能读到 `refs/heads/main`），说明代理与远端可达，问题出在 push 的 HTTP 层。
+- **解法**：`git -c http.version=HTTP/1.1 -c http.postBuffer=524288000 push origin main` → **成功**，`a1dc78a..1cf1eab  main -> main`，`git rev-list --count origin/main..main` = **0**。随后把 `http.version=HTTP/1.1` 写进**本仓库本地配置**（`git config --local http.version HTTP/1.1`），免得下次再撞。
+- **代理怎么开的**：Clash Verge 的 GUI 没运行时我直接把它拉起来了（`Start-Process 'D:\Work\Clash Verge\clash-verge.exe'`；安装位置由注册表 uninstall 项查到），`verge-mihomo` 随之启动，`127.0.0.1:7897` 开始监听。
+- **本节的改口**：上面两节里所有「push 未成 / 等用户打开 Clash Verge」的说法**以本节为准**——到 `1cf1eab` 为止的 6 个提交都已 push；`origin/main` = `1cf1eab`。四项遗留（正文进公开产物、旧副本不清理、服务端未重部署、真机没验）不变。
 
 

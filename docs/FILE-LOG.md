@@ -1163,7 +1163,7 @@ TASKS 第〇节顺序 68。用户裁定「A+B 推进」；原方案里的 `limit
 | `docs/TASKS.md` | 改 | 83 行改 ✅；归属表三行更新；「重叠实现」补写「A9/B1 的重叠已在顺序 83 消掉」；新增「顺序 83 带出来的遗留」四条与**顺序 84 的只读复核回执**（可信 12 / 有疑 3 / 合并前 5 项） |
 | `docs/EVAL.md` | 改 | 新增**第七十三节**：分支带进来的东西、三条有疑的改法表、为什么采用 `a5ef9` 的模块、五项门禁、七条「没验的 / 已知遗留」 |
 | `docs/STATUS.md` | 改 | 新增「2026-09-26：顺序 83 落进 main」一段与下一步（84 真正只看两条、部署等 84/85 一起上） |
-| `docs/FILE-LOG.md` | 改 | 本节；「几点注意」顺延为**六十三**（顺序 86 之后又顺延为六十四，见下一节） |
+| `docs/FILE-LOG.md` | 改 | 本节；「几点注意」顺延为**六十三**（顺序 86、顺序 71 之后又两次顺延，现为**六十四**） |
 
 > 本批**没有 push、没有部署**（服务端那批要重新部署才生效，用户裁定等 84/85 合完一起上）。
 
@@ -1191,12 +1191,41 @@ TASKS 第〇节顺序 68。用户裁定「A+B 推进」；原方案里的 `limit
 | `docs/TASKS.md` | 改 | 86 行改 ✅ + 新增**顺序 87**（额度上限按币种比较，顺序 86 带出来的）；归属表把 B6/B9/B15（✅）、B18（裁定不改）、B10（仍待做）拆成三行；新增「顺序 86 怎么处理的」表与四条遗留 |
 | `docs/EVAL.md` | 改 | 新增**第七十四节**：B9 改法与「不做汇率」的理由、B15 的上限与坏块策略、B6 的五处落点、B18 的用户裁定原文与**如实记下的风险**、五项门禁、七条遗留 |
 | `docs/STATUS.md` | 改 | 新增「2026-09-26：顺序 86 落进 main」一段；顺序 83 那段的「下一步」里去掉已完成的 86 |
-| `docs/FILE-LOG.md` | 改 | 本节；「几点注意」顺延为**六十三** |
+| `docs/FILE-LOG.md` | 改 | 本节；「几点注意」顺延为**六十四**（顺序 71 之后） |
 
 > 本批**没有 push、没有部署**。**B10 仍未修**（别人那条分支正在改 `provider/openai-compatible.ts`）。
 > 顺带发现：这次 `pnpm build` 的产物里含**另一条会话未提交的头像/立绘改动**，所以包体数字（641.71 kB）不代表本批增量。
 
-## 六十三、几点注意
+## 六十三、2026-09-26：顺序 71（token 估算校准）
+
+审计 B12 报的「估算偏低」里，**结构开销与 5% 安全余量**早在顺序 82 就落进了 `assemble.ts`；
+本批只做剩下那一半：**让估算能和真实值配对**，从而在不联网、没有 tokenizer 的前提下拿到实测比例。
+不猜公式、不自动改口径——真机数字出来之前，默认除数仍是 4。做法、实测与遗留见 EVAL 第七十五节。
+
+| 文件 | 改 / 新增 | 说明 |
+| --- | --- | --- |
+| `packages/core/src/token/estimate.ts` | 改 | 字面量 4 提成 `NARROW_CHARS_PER_TOKEN`（带注释：改口径要走校准报告，别手改数字）；`estimateTokens` 行为**一字未变** |
+| `packages/core/src/token/calibrate.ts` | **新增** | `TokenPair`/`TokenSample`/`CalibrationReport`/`CalibrationOutlier`；`ratioOf`、`suggestedNarrowDivisorFor`（`4/ratio` 钳在 `[2,6]`，保留一位小数）、`calibrateCounts`（只有两个数）、`calibrateTokenCounter`（带原文，可换计数器）、`counterFromCalibration`（按比例包一层计数器，**不自动生效**）、`formatCalibration`；内部 `buildReport` **先求和再相除** |
+| `packages/core/src/token/calibrate.test.ts` | **新增** | 12 条：无样本不下结论、估准/低估/高估、除数上下界、不可用样本（0/NaN/Infinity）丢掉、求和而非逐条平均（`{10,20}+{1000,1000}`）、`worst` 排序、原文预览折行截断、自定义计数器、放大计数器命名与取整 |
+| `packages/core/src/token/estimate.test.ts` | 改 | +2（→ 8）：常量就是 4 且 `abcd`/`abcde` 的边界；`hello` 故意估成 2（保守） |
+| `packages/core/src/storage/usage.ts` | 改 | `UsageRecord.promptEstimate`、`RecordUsageInput.promptEstimate`、`UsageTotals.calibration: { calls, estimated, actual }`（**估算与真实都 > 0 才计**）、`usageCalibration(totals)`；`record()` 把缺失/负数清洗后写 null；**不存正文** |
+| `packages/core/src/storage/usage.test.ts` | 改 | +6（→ 27）：只有两半都有的才配对（`promptTokens: 0` 与没估算的不计）、从汇总读比例（1.3 → 除数 3.1）、无样本不下结论、没填存 null、分组账各带配对、老账本缺字段不炸 |
+| `packages/core/src/index.ts` | 改 | 补 `export * from './token/calibrate.js';` |
+| `apps/web/src/hooks/useTurnRunner.ts` | 改 | 主生成记账多带一行 `promptEstimate: generation.prompt?.tokenEstimate ?? null`（生产里唯一 `assemblePrompt` 调用点在 `packages/core/src/session/turn.ts:295`） |
+| `apps/web/src/lib/turn-bookkeeping.ts` | 改 | `recordModelCall` 的入参加 `promptEstimate?: number \| null` 并写进 `db.ledger.record` |
+| `apps/web/src/lib/turn-bookkeeping.test.ts` | **新增** | 3 条：估算与真实一起入账、没估算写 null（网页版桥接/后台分析那几条路）、`db` 为 null 时直接返回 |
+| `apps/web/src/lib/usage.ts` | 改 | `CALIBRATION_MIN_SAMPLES = 10`、`formatCalibrationNote(totals)`（样本不够返回 null；相差 < 5% 说「基本一致」，否则说「少/多 N%」并点明预算守卫会偏） |
+| `apps/web/src/lib/usage.test.ts` | **新增** | 7 条：B9 文案 2 条（「¥30.00，另计 $5.00」、无单价 null）+ 顺序 71 文案 5 条 |
+| `apps/web/src/components/UsagePanel.tsx` | 改 | 「用量与花费」面板底部加一行 `.hint`（`calibrationNote === null` 不渲染；未改 `styles.css`） |
+| `docs/TASKS.md` | 改 | 71 行改 ✅（写明「口径本身仍等真机样本」）+ 明细段落追加结论 |
+| `docs/EVAL.md` | 改 | 新增**第七十五节**：为什么不动公式、三条落点、测试、两个实现坑、五项门禁、遗留 |
+| `docs/STATUS.md` | 改 | 新增「2026-09-26：顺序 71 落进 main」一段 |
+| `docs/FILE-LOG.md` | 改 | 本节；「几点注意」顺延为**六十四** |
+
+> **没 push、没部署。** 校准比例本身**仍是待验证**：本机没有真实 Key、也没有服务端 `usage` 可对照，
+> 所以「低估多少」要等用户在真机上跑够 10 轮生成之后看那一行提示（或 `usageCalibration` 的返回值）。
+
+## 六十四、几点注意
 
 ---
 

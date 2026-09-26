@@ -3,6 +3,8 @@ import { conversationId, instanceId, newId, roomId } from '../model/ids.js';
 import type { EntityQuery, EntityStore } from '../platform/entity-store.js';
 import { createMemoryEntityStore } from '../platform/memory-store.js';
 import { SYNC_COLLECTIONS } from '../sync/types.js';
+import { counterFromCalibration } from '../token/calibrate.js';
+import { NARROW_CHARS_PER_TOKEN } from '../token/estimate.js';
 import { COLLECTIONS, Repository } from './repository.js';
 import {
   createUsageLedger,
@@ -12,6 +14,7 @@ import {
   type UsageFilter,
   type UsageLedger,
   type UsageRecord,
+  usageCalibration,
 } from './usage.js';
 
 const PRICE = { inputPerMillion: 2, outputPerMillion: 8, currency: '¥' };
@@ -543,5 +546,91 @@ describe('用量账单 · 审计 B9（多币种）', () => {
 
     // 两种币种都进了总计，各自记着各自的条数
     expect(summary.total.costs.map((item) => item.currency).sort()).toEqual(['$', '¥']);
+  });
+});
+
+/**
+ * 一条带估算配对的流水：`promptEstimate` 是装配时的估算，`promptTokens` 是服务端真实值。
+ * 单价清掉——这里测的是校准，不是钱。
+ */
+function estimatedRecord(estimated: number | null, actual: number, id: string): UsageRecord {
+  return { ...pricedRecord('¥', actual, id), price: null, promptEstimate: estimated };
+}
+
+describe('用量账单 · 顺序 71（估算与真实配对）', () => {
+  /*
+   * 审计 B12：启发式估算按「窄字符 4 个一 token」，真实 promptTokens 比它高。要调口径
+   * 就得先知道高多少，而那个数只能来自真实调用——于是每次生成把装配时的估算和真实值
+   * 一起记下来（**不存正文**），这里测的就是这份配对账。
+   */
+  it('只有两半都有的调用才配对：只估不真、只真不估都丢掉', async () => {
+    const usage = ledger();
+    await usage.record({ category: 'generation', model: 'm', promptTokens: 130, promptEstimate: 100 });
+    // 本地模型不回 usage：估了也没有真实值可比
+    await usage.record({ category: 'generation', model: 'm', promptTokens: 0, promptEstimate: 50 });
+    // 网页版桥接 / 后台分析：这一路没有经过 assemblePrompt，没有估算
+    await usage.record({ category: 'generation', model: 'm', promptTokens: 200 });
+
+    const summary = await usage.summary();
+    expect(summary.total.calibration).toEqual({ calls: 1, estimated: 100, actual: 130 });
+    // 但钱与 token 照旧全部计入——配对只是多记一组数，不改原有账
+    expect(summary.total.calls).toBe(3);
+    expect(summary.total.promptTokens).toBe(330);
+  });
+
+  it('从汇总里读出低估比例与建议除数', async () => {
+    const usage = ledger();
+    await usage.record({ category: 'generation', model: 'm', promptTokens: 130, promptEstimate: 100 });
+
+    const report = usageCalibration((await usage.summary()).total);
+    expect(report.samples).toBe(1);
+    expect(report.ratio).toBeCloseTo(1.3, 6);
+    expect(report.suggestedNarrowDivisor).toBe(3.1);
+    // 报告能直接变成一个计数器：估算 100 的一条，从此按 1.3 倍报
+    expect(counterFromCalibration(report)?.count('a'.repeat(100))).toBe(33);
+  });
+
+  it('没有配对样本时不下结论：ratio 为 null、除数保持默认', async () => {
+    const usage = ledger();
+    await usage.record({ category: 'analysis', model: 'm', promptTokens: 500 });
+
+    const report = usageCalibration((await usage.summary()).total);
+    expect(report.samples).toBe(0);
+    expect(report.ratio).toBeNull();
+    expect(report.suggestedNarrowDivisor).toBe(NARROW_CHARS_PER_TOKEN);
+    expect(counterFromCalibration(report)).toBeNull();
+  });
+
+  it('没填估算存成 null；脏值被清洗成 0 后也不参与配对', async () => {
+    const usage = ledger();
+    const plain = await usage.record({ category: 'analysis', model: 'm', promptTokens: 10 });
+    expect(plain.promptEstimate).toBeNull();
+
+    const dirty = await usage.record({ category: 'analysis', model: 'm', promptTokens: 10, promptEstimate: -5 });
+    expect(dirty.promptEstimate).toBe(0);
+
+    expect((await usage.summary()).total.calibration).toEqual({ calls: 0, estimated: 0, actual: 0 });
+  });
+
+  it('分组账各自带配对：能看出是哪一路估得偏', () => {
+    const summary = summarizeUsage([estimatedRecord(100, 130, 'a'), { ...estimatedRecord(200, 240, 'b'), model: 'n' }]);
+
+    expect(summary.byModel.find((group) => group.key === 'm')?.totals.calibration).toEqual({
+      calls: 1,
+      estimated: 100,
+      actual: 130,
+    });
+    expect(summary.byModel.find((group) => group.key === 'n')?.totals.calibration).toEqual({
+      calls: 1,
+      estimated: 200,
+      actual: 240,
+    });
+    expect(summary.total.calibration).toEqual({ calls: 2, estimated: 300, actual: 370 });
+  });
+
+  it('老账本没有这个字段：汇总照旧，不炸也不编一个比例出来', () => {
+    const summary = summarizeUsage([pricedRecord('¥', 100, 'a')]);
+    expect(summary.total.calibration).toEqual({ calls: 0, estimated: 0, actual: 0 });
+    expect(usageCalibration(summary.total).ratio).toBeNull();
   });
 });

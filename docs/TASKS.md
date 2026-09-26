@@ -81,7 +81,7 @@
 | 68b | **无限制模式提示词随账户加密同步** `[用]` | **P3** | 68a 的取舍是「不参与同步」（meta 全都不参与），所以换设备要重新粘一次。要补就得新开一个同步集合或复用既有账户级实体，属协议改动 | ⬜ |
 | 69 | **可访问性：模态框焦点与 Esc、去掉原生 confirm/prompt、aria、key** `[审]` | **P3** | 12 处 `window.confirm`、遮罩无 `aria-modal`、三个模态无焦点管理、两处用值当 key | ⬜ |
 | 70 | **打包：低频面板懒加载、PlanPage 移出生产包、SW 版本化** `[审]` | **P3** | 零代码分割；PlanPage 约 260 行样式随生产包发布；SW 缓存名从不变 | ⬜ |
-| 71 | **token 估算校准** `[审]` | **P3** | 英文按 4 字符/token 低估约 25%；账单里有真实 `promptTokens` 可以对照校准 | ⬜ |
+| 71 | **token 估算校准** `[审]` | **P3** | 英文按 4 字符/token 低估约 25%；账单里有真实 `promptTokens` 可以对照校准 | ✅ 2026-09-26（配对统计 + 账单攒样本 + 面板一行提示；**口径本身仍等真机样本**，见 EVAL 第七十五节） |
 | 72 | **`dedupeRecalled` 处置** `[审]` | **P3** | 只在测试里用（T22 结论是不接，换成限流）；留着会误导 | ⬜ |
 | 73 | **部署文档漂移** `[审]` | **P3** | `deploy/cloudflare/` 不存在却被引用；nginx 模板硬编码域名；systemd 单元两份且 chown 指引冲突 | ⬜ |
 | 74 | **local-bridge 加固** `[审]` | **P3** | 注释说只允许本机但 CORS 是 `*`；选择器 `[class*="message"]` 会读到用户自己的消息 | ⬜ |
@@ -457,6 +457,10 @@ A4 的 core 侧（`packages/core/src/sync/loop.ts:153-162` 的 `serverHead < pul
 **70 打包**（P3，S）：`React.lazy` 设置弹窗及四个面板、`CardDesigner / WorldDesigner / MemoryPanel / UsagePanel / PlanPage`；PlanPage 的样式与代码只在 `?plan=1` 时动态加载；SW 缓存名带构建哈希，`activate` 后向页面发「有新版本」并给一个刷新按钮。看首屏 JS 体积与 PWA 更新提示。
 
 **71 token 估算校准**（P3，S）：先用账单里的真实 `promptTokens` 与装配时的估算做一次对照统计（有现成数据）；再改 `estimate.ts`（英文约 3.5 字符/token，区间表二分）。目标：估算误差 < 10%。
+
+> **已做（2026-09-26）**：B12 里「结构开销 + 5% 余量」那一半早在**顺序 82** 就落在 `packages/core/src/prompt/assemble.ts`（`BUDGET_SAFETY_MARGIN = 0.05`，以及每块的结构开销进 `applyBudget`），本批只做**配对统计**那一半——`token/calibrate.ts`（比例、建议除数、可按比例包一层计数器）+ 账单攒样本（`UsageRecord.promptEstimate` / `UsageTotals.calibration` / `usageCalibration`）+ 生成路接线（`useTurnRunner.ts:574`）+ 「用量与花费」面板一行提示。
+> **没有改除数**：本机 `node_modules` 里没有任何 tokenizer（`tiktoken|tokenizer|gpt-token|bpe` 全空），改公式没有依据；估低了会超预算，估高了会白丢历史。默认仍是 4 字符/token，**校准结果不自动生效**——真机攒够 10 轮生成后，面板会显示实测比例，按它改常量或换 `counterFromCalibration()` 包出来的计数器。
+> 因此「误差 < 10%」这个目标**仍是待验证**：数字要等真机（归 Codex / 用户）。
 
 **72 `dedupeRecalled` 处置**（P3，XS）：从 `index.ts` 导出移除、标 `@internal` 或删除；EVAL 第五节已有结论，指过去即可。
 

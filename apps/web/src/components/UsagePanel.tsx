@@ -1,7 +1,7 @@
 import type { BudgetLimits, BudgetState, UsageGroup, UsageSummary, UsageTotals } from '@dramatis/core';
 import { useEffect, useState } from 'react';
 import { formatTime } from '../lib/format';
-import { CATEGORY_LABELS, formatCost, formatMoney, formatTokens } from '../lib/usage';
+import { CATEGORY_LABELS, formatCalibrationNote, formatCost, formatMoney, formatTokens } from '../lib/usage';
 
 interface Props {
   world: UsageSummary | null;
@@ -185,6 +185,8 @@ function GroupList({
  * 花费只在配了单价时出现：没配就只报 token，绝不用一个编出来的价格糊弄。
  */
 export function UsagePanel({ world, conversation, conversationTitle, budget, limits, onSaveBudget }: Props) {
+  const calibrationNote = world === null ? null : formatCalibrationNote(world.total);
+
   if (world === null || world.total.calls === 0) {
     return (
       <>
@@ -223,6 +225,7 @@ export function UsagePanel({ world, conversation, conversationTitle, budget, lim
             ? '还没设单价，所以只报 token。填上单价后，历史账单也会一起换算出来。'
             : `第一条记录：${formatTime(world.firstAt)}；最近一次：${formatTime(world.lastAt)}。`}
         </p>
+        {calibrationNote === null ? null : <p className="hint">{calibrationNote}</p>}
       </section>
 
       <section className="panel">

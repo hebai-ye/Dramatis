@@ -40,6 +40,13 @@ export async function recordModelCall(
     conversationId?: ConversationId | null;
     turnId?: string | null;
     usage?: TokenCounts | null;
+    /**
+     * 装配提示词时估算的 prompt token 数（顺序 71）。
+     *
+     * 与 `usage.promptTokens` 配成一对，账单就能算出启发式口径低估了多少——
+     * 这一路是唯一能拿到 `assemblePrompt` 结果的地方，所以只有这里记得上。
+     */
+    promptEstimate?: number | null;
     price?: ProviderPrice | null;
     /** 说话的那个角色；世界管理员这类不属于任何角色的调用不填。 */
     speaker?: { id: InstanceId; name: string } | null;
@@ -54,6 +61,7 @@ export async function recordModelCall(
     model: input.model,
     promptTokens: input.usage?.promptTokens ?? 0,
     completionTokens: input.usage?.completionTokens ?? 0,
+    promptEstimate: input.promptEstimate ?? null,
     speakerInstanceId: input.speaker?.id ?? null,
     speakerName: input.speaker?.name ?? '',
     price: input.price ?? null,

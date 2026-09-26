@@ -21,6 +21,21 @@
 
 ## 新会话从这里接（2026-09-23）
 
+### 2026-09-26：顺序 71 落进 main（token 估算校准：先把实测数据通路打通，口径等真机数字）
+
+审计 B12 里「结构开销 + 5% 余量」那一半**早在顺序 82** 就落在 `packages/core/src/prompt/assemble.ts`（`BUDGET_SAFETY_MARGIN = 0.05`），
+本批只做剩下那一半——**让估算能和真实值配对**，从而在不联网、没有 tokenizer 的前提下拿到实测比例：
+
+- 新增 `packages/core/src/token/calibrate.ts`：`ratioOf`（`actual/estimated`，> 1 = 低估）、`suggestedNarrowDivisorFor`（`4/ratio` 钳在 `[2,6]`）、
+  `calibrateCounts`（账单那种只有两个数的样本）/ `calibrateTokenCounter`（带原文）、`counterFromCalibration`（按比例包一层计数器，**不自动生效**）、`formatCalibration`。
+- 账单攒样本：`UsageRecord.promptEstimate`（**不存正文**）、`UsageTotals.calibration { calls, estimated, actual }`（估算与真实都 > 0 才计）、`usageCalibration(totals)`；
+  生成路接线（`useTurnRunner.ts:574` 带 `generation.prompt.tokenEstimate`），意图判断那条路不走 `assemblePrompt`，写 null。
+- 「用量与花费」面板底部多一行提示（`formatCalibrationNote`，样本 ≥ 10 才显示）：真机上跑够 10 轮就能看到「本地估算比真实少/多 N%」。
+- `estimate.ts` 的字面量 4 提成 `NARROW_CHARS_PER_TOKEN`，**行为一字未变**——本机没有任何 tokenizer（tiktoken/gpt-token/bpe 全空），凭感觉调数字会让英文侧白丢历史。
+
+门禁：typecheck ✓、Core **780**（68 文件）+ Web **29**（8 文件）全绿、全仓 lint 仍是那 13 个 error（全部来自另一条会话未提交的文件）、build ✓、build:sync-server ✓。
+做法、两个实现坑与五条遗留见 **EVAL 第七十五节**。**「误差 < 10%」这个目标仍是待验证**：实测比例要等真机（归 Codex / 用户）。**本批未 push、未部署。**
+
 ### 2026-09-26：顺序 86 落进 main（审计遗留里没人修的五条：B6/B9/B15 修了，B18 裁定不动，B10 不做）
 
 审计盘查时核出**五条没有任何分支在修**，本批在 main 上处理：

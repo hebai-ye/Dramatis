@@ -3911,4 +3911,41 @@ Core **709** 条 / 63 文件、Web **12** 条 / 4 文件全绿；build ✓（495
 6. **B10 仍未修**（`openai-compatible.ts` 的 200+error 体 / 未知 `finish_reason` / 不 cancel reader）。
 7. 这一批**未 push、未部署**（本机 main 上还有前面 81–85 若干提交一起等着上）。
 
+## 七十五、顺序 71：token 估算校准（先把实测数据通路打通，口径等真机数字）
+
+**来源**：`docs/TASKS.md` 顺序 71（P3，原话「英文按 4 字符/token 低估约 25%；账单里有真实 `promptTokens` 可以对照校准」，目标「估算误差 < 10%」）；对应审计 **B12**（`docs/AUDIT-2026-09-26.md:270-272`：每条历史加固定 3-4 token 开销、小节标题、`at_depth` 附加 system 消息与 tools 定义、预留 5% 余量）。
+
+**B12 有一半早在顺序 82 就落地了，别再重复做**：`packages/core/src/prompt/assemble.ts:160` 的 `BUDGET_SAFETY_MARGIN = 0.05`，以及 `:972-989` 把 `available` 扣掉 `reserveForReply`/`extraTokens` 后按 `(1-5%)` 收紧、再由 `applyBudget` 逐块加上 `structuralOverhead`。生产里**只有一处**装配点：`packages/core/src/session/turn.ts:295`。
+
+**为什么这批不猜公式**：本机 `node_modules` 与 `node_modules/.pnpm` 里**没有任何 tokenizer**（搜 `tiktoken|tokenizer|gpt-token|bpe` 全空），所以「英文到底该按 3.5 还是 4 字符/token」改不出来依据。估低了会超预算（截断），估高了会白丢历史——两头都有代价，凭感觉调数字是最差的选择。于是这批只做**把实测数据通路打通**，让口径可以按真机数字改。
+
+| 位置 | 改法 |
+| --- | --- |
+| `packages/core/src/token/estimate.ts` | 字面量 4 提成 `export const NARROW_CHARS_PER_TOKEN = 4`（注释：这是默认口径，要知道低估多少走校准报告）；`estimateTokens` 从 `Math.ceil(narrow / 4)` 改成 `Math.ceil(narrow / NARROW_CHARS_PER_TOKEN)`，**行为一字未变**（旧测试原样通过） |
+| `packages/core/src/token/calibrate.ts` | **新增**：`ratioOf(estimated, actual) = actual / estimated`（> 1 = 低估）；`suggestedNarrowDivisorFor(ratio)` = `4 / ratio` 钳在 `[2, 6]` 并保留一位小数；`calibrateCounts(pairs)`（账单那种只有两个数的样本）与 `calibrateTokenCounter(samples, counter)`（带原文，可换计数器）；`counterFromCalibration(report, base)` 返回按比例的计数器（`name` 带 `-calibrated-x1.3`，`count = ceil(base * factor)`），**ratio 为 null 时返回 null**；`formatCalibration(report)` 一行文本；内部 `buildReport` **先求和再相除** + 偏差最大的 N 条（|deviation| 降序、并列按下标升序、带 80 字原文预览）；无可用样本 → `ratio: null`、除数保持 4 |
+| `packages/core/src/storage/usage.ts` | `UsageRecord.promptEstimate?: number \| null`（**不存正文**——估算值就是配对需要的另一半）；`UsageTotals.calibration: { calls, estimated, actual }`，只有「本地估了 **且** 服务端回了 `promptTokens > 0`」的调用才计入；`usageCalibration(totals)` 把整份汇总折成一对喂给 `calibrateCounts` |
+| `apps/web/src/hooks/useTurnRunner.ts:574` | 主生成记账多带一行 `promptEstimate: generation.prompt?.tokenEstimate ?? null`（`AssembledPrompt.tokenEstimate` 就是 `report.usedTokens`，已含结构开销与 5% 余量） |
+| `apps/web/src/lib/turn-bookkeeping.ts` | `recordModelCall` 入参加 `promptEstimate?: number \| null`，原样写进 `db.ledger.record` |
+| `apps/web/src/lib/usage.ts` | `CALIBRATION_MIN_SAMPLES = 10`；`formatCalibrationNote(totals)`：样本不够或无配对 → null；相差 < 5% → 「基本一致」；否则「本地估算比服务端真实 prompt token 少/多 N%（N 次调用参与）」并说明预算守卫会偏 |
+| `apps/web/src/components/UsagePanel.tsx` | 「用量与花费」面板底部多一行 `.hint`（null 不渲染；未改 `styles.css`） |
+
+- **测试**：`pnpm --filter @dramatis/core exec vitest run src/token src/storage/usage.test.ts` = **3 文件 / 47 条全过**（`calibrate.test.ts` 12 条新、`estimate.test.ts` 8、`usage.test.ts` 27）；`apps/web/src/lib/turn-bookkeeping.test.ts` 3 条新、`apps/web/src/lib/usage.test.ts` 7 条新（含 B9 文案 2 条）。
+- **两个实现坑（都值得记）**：
+  1. `usageCalibration` 把整份汇总折成**一对**（Σ估算 / Σ真实），所以 `CalibrationReport.samples` **恒为 1**——界面判「样本够不够」必须看 `totals.calibration.calls`。我先写成 `report.samples < 10`，三条文案测试全部返回 null 才反应过来。
+  2. `RecordUsageInput.promptEstimate` 一开始写 `number | undefined`，`tsc` 直接报 `apps/web/src/lib/turn-bookkeeping.ts(64,5): TS2322: Type 'number | null' is not assignable to type 'number | undefined'` → 放宽成 `number | null`（与 `UsageRecord` 一致；`record()` 里 undefined/null 都写 null）。
+
+**五项门禁（main 上跑，含另一条会话未提交的脏改动）**：
+
+- `pnpm typecheck` ✓；`pnpm test` = Core **68 文件 / 780 条**（+20）、Web **8 文件 / 29 条**（+10；其中 4 条是另一条会话未提交的 `avatar-crop`/`portraits` 测试）全绿；
+- 全仓 `pnpm lint` = `Checked 271 files` / **13 error**，逐条归因**不变**——全部来自另一条会话未提交的文件（`App.tsx`、`AvatarCropper/CardDesigner/CastDetail/CastRail/StreamingBubble.tsx`）；`20 warnings / 3 infos` 与基线一致。过程中我这批有 3 个文件被报 format / organizeImports，`biome check --write` 之后归零；
+- `pnpm build` ✓（`dist/assets/index-B1Tm2QUV.js` 643.63 kB / gzip 202.35 kB）、`pnpm build:sync-server` ✓。**包体里含另一条会话未提交的头像/立绘改动**（`public/portraits` 145 文件 / 24.6 MB），不代表本批增量。
+
+**没验的 / 已知遗留（别当成已解决）**：
+
+1. **实测比例本身是待验证的**：本机没有真实 Key、也没有服务端 `usage` 可对照，「低估多少」要等真机。看数的地方：跑够 ≥10 轮生成后打开「用量与花费」面板那一行；或直接用 `usageCalibration(summary.total)`。
+2. **校准结果不自动生效**：默认口径仍是 4 字符/token，`counterFromCalibration()` 要调用方显式换。真机数字出来之后，改 `NARROW_CHARS_PER_TOKEN` 或把它接进 `assemblePrompt` 的 `counter` 是**下一批**的事（数字没出来之前做了也没法验）。
+3. **配对样本只覆盖生成这一路**：意图判断那条路用 `buildIntentPlanMessages` 自己拼消息（`useTurnRunner.ts:358`），不经过 `assemblePrompt`，没有本地估算可配；后台分析/网页版桥接同理（写 null）。对比例的影响应该不大（生成路才是预算守卫最大的消费者），但**覆盖度上确实是偏的**。
+4. **`extraTokens`（工具定义等）仍没有生产调用方**——B12 的结构开销那一半已覆盖，但「按 tools 数量加 token」这条口子还没接（顺序 82 已记为待办）。
+5. 这一批**未 push、未部署**。
+
 

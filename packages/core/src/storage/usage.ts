@@ -3,6 +3,7 @@ import { newId, nowIso } from '../model/ids.js';
 import type { ProviderPrice } from '../model/provider.js';
 import type { EntityStore } from '../platform/entity-store.js';
 import { matchesWhere } from '../platform/entity-store.js';
+import { type CalibrationReport, calibrateCounts } from '../token/calibrate.js';
 
 /**
  * 用量账单（ROADMAP P3-7 / T7）。
@@ -47,6 +48,15 @@ export interface UsageRecord {
   model: string;
   promptTokens: number;
   completionTokens: number;
+  /**
+   * 装配提示词时**本地估算**出来的 prompt token 数（顺序 71），没有估算是 null。
+   *
+   * 存在的唯一理由是校准：真实 `promptTokens` 是服务商数的，估算值是同一次调用里
+   * `assemblePrompt` 给出的 `tokenEstimate`，两者配成一对就能算出启发式口径低估了多少。
+   * **不存正文**——估算值本身就是那对样本里需要的那一半，账单不该多背一份提示词副本。
+   * 老记录没有这个字段（undefined），与 null 一样按「没估算」处理。
+   */
+  promptEstimate?: number | null;
   /** 生成类调用才有：这一轮是谁在说话，按角色统计要用。 */
   speakerInstanceId: InstanceId | null;
   speakerName: string;
@@ -77,6 +87,11 @@ export interface RecordUsageInput {
   model: string;
   promptTokens?: number | undefined;
   completionTokens?: number | undefined;
+  /**
+   * 装配时估算的 prompt token 数（顺序 71）。只在国内部生成路径上有值——
+   * 网页版桥接、后台分析那几条路的提示词不经过 `assemblePrompt`，填 null 即可。
+   */
+  promptEstimate?: number | null;
   speakerInstanceId?: InstanceId | null;
   speakerName?: string;
   price?: ProviderPrice | null;
@@ -124,6 +139,24 @@ export interface UsageTotals {
    * **不做汇率换算**：那要引入外部汇率数据源，一个角色扮演应用的账单不值得为此联网。
    */
   costs: CurrencyCost[];
+  /**
+   * 「本地估算 vs 服务端真实」的配对样本（顺序 71）。
+   *
+   * 只有**两个数都有**的调用才计入：估了但服务商没回 usage（本地模型常见），
+   * 或者回了 usage 但那条路没估算（网页版桥接、后台分析），都会让比例失真。
+   * 用它算 `usageCalibration`，就能知道启发式口径到底低估了多少。
+   */
+  calibration: CalibrationSamples;
+}
+
+/** 估算与真实的配对合计。 */
+export interface CalibrationSamples {
+  /** 既有估算、又有真实 prompt token 的调用条数。 */
+  calls: number;
+  /** 这些调用的估算值之和。 */
+  estimated: number;
+  /** 这些调用的真实 promptTokens 之和（**不是**全部调用的 promptTokens）。 */
+  actual: number;
 }
 
 export interface UsageGroup<TKey> {
@@ -159,6 +192,7 @@ function emptyTotals(): UsageTotals {
     pricedCalls: 0,
     currency: null,
     costs: [],
+    calibration: { calls: 0, estimated: 0, actual: 0 },
   };
 }
 
@@ -176,6 +210,18 @@ function addInto(totals: UsageTotals, record: UsageRecord): void {
   totals.promptTokens += record.promptTokens;
   totals.completionTokens += record.completionTokens;
   totals.tokens = totals.promptTokens + totals.completionTokens;
+
+  /*
+   * 配对样本（顺序 71）：估算了、服务商也回了真实值，这一对才能用来校准。
+   * 只估不真（本地模型不回 usage）或只真不估（网页版桥接、后台分析）都会让比例偏，
+   * 所以两半缺一就不计入——宁可比对样本少，也不要一个被污染的倍数。
+   */
+  const estimate = record.promptEstimate ?? null;
+  if (estimate !== null && estimate > 0 && record.promptTokens > 0) {
+    totals.calibration.calls += 1;
+    totals.calibration.estimated += estimate;
+    totals.calibration.actual += record.promptTokens;
+  }
 
   const cost = costOf(record);
   if (cost === null || record.price === null) return;
@@ -288,6 +334,22 @@ export function summarizeUsage(records: readonly UsageRecord[]): UsageSummary {
   };
 }
 
+/**
+ * 从一份汇总里读出校准结果（顺序 71）。
+ *
+ * 为什么走汇总而不是逐条：真机上要看的比例是「这个世界的账一共低估了多少」，
+ * 而求和之后的比例才是对的——一条两万 token 的提示词与一条二十 token 的标签
+ * 不该等权（逐条平均会给短样本过高的话语权）。
+ *
+ * 返回的是 `token/calibrate.ts` 的 `CalibrationReport`：没有配对样本时 `ratio` 为 null、
+ * 除数建议保持默认 4，调用方应当照旧用启发式计数器。
+ */
+export function usageCalibration(totals: UsageTotals): CalibrationReport {
+  const { calls, estimated, actual } = totals.calibration;
+  if (calls === 0) return calibrateCounts([]);
+  return calibrateCounts([{ estimated, actual }]);
+}
+
 export interface UsageLedger {
   /** 记一笔。tokens 会被清洗成非负整数；两者都是 0 也照样记（调用发生过）。 */
   record(input: RecordUsageInput): Promise<UsageRecord>;
@@ -370,6 +432,10 @@ export function createUsageLedger(store: EntityStore): UsageLedger {
         model: input.model,
         promptTokens: sanitizeTokens(input.promptTokens),
         completionTokens: sanitizeTokens(input.completionTokens),
+        promptEstimate:
+          input.promptEstimate === undefined || input.promptEstimate === null
+            ? null
+            : sanitizeTokens(input.promptEstimate),
         speakerInstanceId: input.speakerInstanceId ?? null,
         speakerName: input.speakerName ?? '',
         price: input.price ?? null,

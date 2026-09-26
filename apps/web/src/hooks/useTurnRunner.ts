@@ -570,6 +570,8 @@ export function useTurnRunner({
               conversationId: conversation.id,
               turnId,
               usage: generation.usage,
+              // 顺序 71：把装配时的估算一起记下来，账单才能自己校准口径
+              promptEstimate: generation.prompt?.tokenEstimate ?? null,
               price: profile.price ?? null,
               speaker: { id: speaker.id, name: speaker.displayName },
             });

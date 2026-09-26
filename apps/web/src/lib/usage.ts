@@ -1,4 +1,10 @@
-import type { ConversationId, RoomId, UsageSummary, UsageTotals } from '@dramatis/core';
+import {
+  type ConversationId,
+  type RoomId,
+  type UsageSummary,
+  type UsageTotals,
+  usageCalibration,
+} from '@dramatis/core';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { DramatisDb } from './db';
 
@@ -83,6 +89,36 @@ export function formatMoney(amount: number, currency: string | null): string {
   const symbol = currency ?? '';
   const value = amount < 0.01 ? amount.toFixed(4) : amount.toFixed(2);
   return `${symbol}${value}`;
+}
+
+/**
+ * 配对样本少于这个条数就不下结论（顺序 71）。
+ *
+ * 三两条调用算出来的比例会被「这一轮提示词特别长」这种偶然因素主导，
+ * 写出来只会让人以为口径已经测准了。攒够十轮再说。
+ */
+export const CALIBRATION_MIN_SAMPLES = 10;
+
+/**
+ * 本地估算 vs 服务端真实 prompt token 的一句话（顺序 71）。
+ *
+ * 为什么要把这个数摆给用户看：估算口径决定预算守卫留多少余量，而它**从没跟真实
+ * 分词器对齐过**（离线装不了 tokenizer）。真机上跑起来之后，这份账单就是唯一的实测
+ * 数据来源——用户看到偏差可以直接反馈，我们按实测把除数调准，而不是凭感觉改公式。
+ *
+ * 返回 null 表示还不够格下结论（样本太少或没有配对），界面上不显示这一行。
+ */
+export function formatCalibrationNote(totals: UsageTotals): string | null {
+  const report = usageCalibration(totals);
+  const paired = totals.calibration.calls;
+  if (report.ratio === null || paired < CALIBRATION_MIN_SAMPLES) return null;
+
+  const percent = Math.round((report.ratio - 1) * 100);
+  if (Math.abs(percent) < 5) {
+    return `口径核对：本地估算与服务端真实 prompt token 基本一致（相差不到 5%，${String(paired)} 次调用）。`;
+  }
+  const direction = percent > 0 ? '少' : '多';
+  return `口径核对：本地估算比服务端真实 prompt token ${direction} ${String(Math.abs(percent))}%（${String(paired)} 次调用参与）。预算守卫按估算留余量，偏差大时它算出来的可用量会偏。`;
 }
 
 export const CATEGORY_LABELS: Record<string, string> = {

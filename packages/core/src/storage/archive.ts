@@ -214,13 +214,33 @@ export interface ImportArchiveOptions {
 }
 
 /**
- * 「导入中」标记的 meta 键（审计 C7）。
+ * 「导入中」标记的 meta 键前缀（审计 C7）。
  *
  * 导入要写几十上百条记录，却不是一个事务：中途失败（配额满、页面被关）会留下半个世界。
  * 所以开工前先记下「这一趟会造出哪些东西」，成功后清掉；失败当场回滚，页面被关掉的
  * 那种则由下次启动时的 `recoverInterruptedImports` 收拾。
+ *
+ * 一次导入一把钥匙（`前缀 + 导入实例 id`）：两个标签页同时导入时，先成功的那一趟
+ * 清自己的标记，不会把另一趟的待回滚信息一起擦掉。
  */
-export const IMPORT_PENDING_META_KEY = 'archive.importPending';
+export const IMPORT_PENDING_KEY_PREFIX = 'archive.importPending:';
+
+/**
+ * 分键之前的那把旧钥匙（`archive.importPending`）。
+ *
+ * 老版本崩在导入中间时会在库里留下它；新版本不再写它，但启动时仍要认：
+ * 不认就永远没人收拾那半个世界。同样按「多久算死」判断，免得误伤还在跑的老版本标签页。
+ */
+const LEGACY_IMPORT_PENDING_KEY = 'archive.importPending';
+
+/**
+ * 标记比这还新就不动它（审计 C7）。
+ *
+ * 打开两个标签页时，A 正在导入而 B 刚启动：B 若照着 A 的标记回滚，等于把人家正在写的
+ * 世界删掉。导入本身只要几秒到几十秒，所以「五分钟没动过」足以断定那一趟已经死了。
+ * 代价是崩溃后立刻重开会看到半个世界，得等下一次启动才清掉——宁可晚清，不可误删。
+ */
+export const IMPORT_PENDING_STALE_MS = 5 * 60_000;
 
 interface PendingImport {
   roomId: string;
@@ -238,16 +258,52 @@ async function rollbackImport(repository: Repository, pending: PendingImport): P
   if (pending.personaId !== null) await repository.deletePersona(pending.personaId);
 }
 
+export interface RecoverInterruptedImportsOptions {
+  /** 覆盖「多久算死」（默认 `IMPORT_PENDING_STALE_MS`）；测试用。 */
+  staleAfterMs?: number;
+  /** 覆盖「现在」（毫秒时间戳）；测试用。 */
+  now?: number;
+}
+
+export interface InterruptedImportRecovery {
+  /** 这次被撤掉的世界。 */
+  rooms: RoomId[];
+  /** 还太新、这次没动的标记数（可能另有标签页正在导入）。 */
+  stillPending: number;
+}
+
 /**
  * 启动时调用：上一次导入被打断（页面关掉、崩溃）就把那半个世界撤掉（审计 C7）。
- * 返回撤掉的世界 id；没有就返回 null。
+ *
+ * 认不出来的标记（值被写坏、`startedAt` 解析不出来）直接删掉：留着只会每次启动都翻一遍，
+ * 而它记的东西已经没法用来回滚任何东西了。
  */
-export async function recoverInterruptedImports(repository: Repository): Promise<RoomId | null> {
-  const pending = await repository.getMeta<PendingImport | null>(IMPORT_PENDING_META_KEY);
-  if (pending === null || typeof pending !== 'object' || typeof pending.roomId !== 'string') return null;
-  await rollbackImport(repository, pending);
-  await repository.setMeta(IMPORT_PENDING_META_KEY, null);
-  return asRoomId(pending.roomId);
+export async function recoverInterruptedImports(
+  repository: Repository,
+  options: RecoverInterruptedImportsOptions = {},
+): Promise<InterruptedImportRecovery> {
+  const staleAfterMs = options.staleAfterMs ?? IMPORT_PENDING_STALE_MS;
+  const now = options.now ?? Date.now();
+  const rooms: RoomId[] = [];
+  let stillPending = 0;
+
+  for (const key of [...(await repository.listMetaKeys(IMPORT_PENDING_KEY_PREFIX)), LEGACY_IMPORT_PENDING_KEY]) {
+    const pending = await repository.getMeta<PendingImport | null>(key);
+    if (pending === null || typeof pending !== 'object' || typeof pending.roomId !== 'string') {
+      await repository.deleteMeta(key);
+      continue;
+    }
+    const startedAt = Date.parse(pending.startedAt);
+    if (Number.isFinite(startedAt) && now - startedAt < staleAfterMs) {
+      stillPending += 1;
+      continue;
+    }
+    await rollbackImport(repository, pending);
+    await repository.deleteMeta(key);
+    rooms.push(asRoomId(pending.roomId));
+  }
+
+  return { rooms, stillPending };
 }
 
 /** 一趟导入里所有「旧 id → 新 id」的对照表（审计 A11：所有引用都从这里改写）。 */
@@ -360,6 +416,7 @@ export async function importWorldArchive(
   const at = options.at ?? nowIso();
   const roomId = asRoomId(newId());
   const maps = buildIdMaps(archive);
+  const pendingKey = `${IMPORT_PENDING_KEY_PREFIX}${newId()}`;
 
   const pending: PendingImport = {
     roomId,
@@ -368,20 +425,20 @@ export async function importWorldArchive(
     personaId: maps.persona.to,
     startedAt: at,
   };
-  await repository.setMeta(IMPORT_PENDING_META_KEY, pending);
+  await repository.setMeta(pendingKey, pending);
 
   try {
     await writeArchive(archive, repository, options, at, roomId, maps);
   } catch (error) {
     try {
       await rollbackImport(repository, pending);
-      await repository.setMeta(IMPORT_PENDING_META_KEY, null);
+      await repository.deleteMeta(pendingKey);
     } catch {
       // 回滚本身失败：标记留着，下次启动的 recoverInterruptedImports 会再试
     }
     throw error;
   }
-  await repository.setMeta(IMPORT_PENDING_META_KEY, null);
+  await repository.deleteMeta(pendingKey);
 
   return { roomId, title: archive.title, counts: countArchive(archive) };
 }

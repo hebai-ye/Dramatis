@@ -3755,3 +3755,46 @@ C1、C6、A11、B11、B12、C7 **有疑**。其中三处必须在合并前改、
 **一条协作事实（写下来避免以后重复踩）**：`docs/AUDIT-2026-09-26.md`（`71a26be`）**没有 push**，
 58 条也从未登记进 TASKS——`grep` 全 `docs/` 只命中报告自身。所以「审计过」这件事在清单上曾经等于不存在。
 本批把它归了账：五条分支的覆盖、4 条重复实现、**5 条没人修**（B6/B9/B10/B15/B18）、**2 条只接了一半**（B11/B12）。
+
+---
+
+## 七十二、顺序 82：审计第二批（同步正确性与存储原子性）落进 main，外加三处必修
+
+**来源**：`docs/AUDIT-2026-09-26.md` 的 A5/A11/A12/B3/B4/B8/B11/B12/B14/C1/C2/C4/C5/C6/C7 十五条，由分支
+`worktree-agent-a6adfa051fc0cc2bd`（3 提交）实现；合并提交 **`5014509`**（19 文件 1695+/266-，无冲突）。
+合并前的只读复核判出**三处必须先改**——本批把三处改在 **main 上**（改的是合并后的代码，不是分支）。
+
+**三处必修（问题 → 改法 → 证据）**：
+
+| # | 复核判出的问题 | 改法 | 证据 |
+| --- | --- | --- | --- |
+| ① | `recoverInterruptedImports`（`packages/core/src/storage/archive.ts`）**没有任何生产调用方**（`apps/web/src/lib/archive.ts` 只 import 了 `importWorldArchive`）→ 导入中途崩了，标记永远留着、半个世界不回滚、还污染下一次判断 | `apps/web/src/lib/session.ts` 的 `useDatabase` 在 `migrate()` / `queue.recoverInterrupted()` 之后调用它；`BootReport` 新增 `recoveredImports` | 启动路径已接线（**界面提示没做**，见下） |
+| ② | `IMPORT_PENDING_META_KEY` 是**模块级单键**：两个标签页同时导入，A 成功清标记会把 B 的待回滚信息一起擦掉 | 改成**一次导入一把钥匙**：`IMPORT_PENDING_KEY_PREFIX = 'archive.importPending:'` + `newId()`，成功/失败各删自己那把；另加 `IMPORT_PENDING_STALE_MS = 5 * 60_000`，启动时只回滚**超过 5 分钟**的标记；还认老版本留下的单键 `archive.importPending`（同样按 5 分钟判） | `archive-roundtrip.test.ts` 新增 2 条：另一个标签页还活着时不动它；老版本单键「太新不动 / 死透才收拾」 |
+| ③ | C1 的守卫判据是 `room.activeConversationId`，而那个字段**在迁移最后一步才写** → 「conversation 已建、assign 途中失败」重跑仍会再建一条空主线 | v3 迁移判据改成「该 room 是否已存在 `kind === 'main'` 且未删的 conversation」，命中就接着用那条主线（`assign(id)` + `pointRoomAt(id)`） | `audit-repository.test.ts` 新增 1 条：包装 `store.put` 在写 messages 时抛「断电」，重跑 v3 后断言只有 1 条主线 |
+
+**意义校验（新测试不是摆设）**：把新守卫的判据临时改回 `&& false` → 该测试立刻变红
+`AssertionError: expected [ { …(14) }, { …(14) } ] to have a length of 1 but got 2`；随后已复原。
+
+**这一批顺带加的两个仓储 API**：`packages/core/src/storage/repository.ts` 的 `listMetaKeys(prefix)` 与 `deleteMeta(key)`
+（前者就是给「一次导入一把钥匙」用的）。
+
+**五项门禁**：typecheck ✓（中途一条 `packages/core/src/storage/audit-repository.test.ts(245,37): error TS2345:
+Argument of type 'unknown' is not assignable to parameter of type '{ id: string; }'`，把包装器签名写实后消失）；
+Core **709** 条 / 63 文件、Web **12** 条 / 4 文件全绿；build ✓（495 ms）；build:sync-server ✓；
+本批路径 `pnpm exec biome check packages/core/src/storage apps/web/src/lib/session.ts` → `Checked 19 files. No fixes applied.`；
+全仓 `pnpm lint` 仍是 13 error，逐条归因不变——**全部**来自另一条会话未提交的 `apps/web/src/App.tsx` 与
+`components/{AvatarCropper,CardDesigner,CastDetail,CastRail,StreamingBubble}.tsx`。
+
+**测试数对账**：分支 worktree 上量到 64 文件 / 717 条，合入 main 之后是 63 文件 / 709 条。差数来自那条 worktree 里
+**别人未提交**的文件（有人在那边改 B10），没有随合并进来。**以 main 的 709 / 12 为准。**
+
+**没验的 / 已知遗留（别当成已解决）**：
+
+1. 「已经帮你回滚了未完成的导入」**没有任何界面提示**，只写进 `console.warn`（`apps/web/src/App.tsx` 还被另一条会话占着，改不了）。
+2. 崩了之后**立刻**重开：标记还太新（< 5 分钟）→ 那半个世界要等到下一次启动才会被收拾。这是刻意选的：宁可晚清，不可误删另一个标签页正在导入的东西。
+3. `migrate()` 之前就崩、或标记损坏被删的那些半成品世界**仍然没人收拾**（只靠标记，不做全库扫描）。
+4. 复核判「有疑」但本批**没有逐条消解**的两条：**C6**（`packages/core/src/prompt/assemble.ts` 的 `escapeSectionHeadings` 只覆盖世界书与卡片的 description/personality/examples，scene/memory/chapter 未转义）、
+   **A11**（映射表 `buildIdMaps` 与往返测试都在，残余引用字段没逐条复查）。
+5. **B11 / B12 仍然只接了一半**：B11 的 `loadRoom(roomId, { conversationId })` 生产调用方一个都没改；B12 的 `AssembleInput.budget.extraTokens` 无人传。
+6. **真机层**：这一批全是存储/装配层，没有需要真机才能定性的行为变更；但「中断的导入在**真实 IndexedDB** 上被回滚」只跑过内存后端的等价测试，真机上重跑一次仍属 Codex 范畴。
+7. 这一批**未 push、未部署**（用户没要求）。

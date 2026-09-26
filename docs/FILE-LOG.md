@@ -1106,7 +1106,7 @@ TASKS 第〇节顺序 68。用户裁定「A+B 推进」；原方案里的 `limit
 > 本批还有一个**不进仓库**的产物：`secrets/unlimited-prompt.txt`（`.gitignore` 已挡住）——
 > 用户粘贴的正文从代码里取出来存这儿，用作泄露复核的参照物。**不要提交它。**
 
-## 六十、2026-09-26：审计第一批（顺序 81，本机助手加固）+ 审计 58 条归账
+## 五十九、2026-09-26：审计第一批（顺序 81，本机助手加固）+ 审计 58 条归账
 
 审计报告 `docs/AUDIT-2026-09-26.md`（提交 `71a26be`）里的 A1/A13/C19/C20 四条 P0 写在分支提交 `96120d9` 上，
 本批**合入 main**（合并提交 `acb93dd`，无冲突），另补 `.gitignore` 两行与四处文档。做法与验证见 EVAL 第七十一节。
@@ -1125,6 +1125,26 @@ TASKS 第〇节顺序 68。用户裁定「A+B 推进」；原方案里的 `limit
 | `docs/STATUS.md` | 改 | 新增「2026-09-26：审计遗留归账 + 顺序 81 落地」一段与下一步（82–86，其中 84/85 必须等脏文件提交） |
 
 > 本批**没有 push、没有部署**（用户只说了做主集成）。合并进来的 `96120d9` 是别人写的，本批只做集成 + 补漏 + 文档。
+
+## 六十、2026-09-26：顺序 82（审计第二批合入 main + 三处必修）
+
+分支 `worktree-agent-a6adfa051fc0cc2bd`（A5/A11/A12/B3/B4/B8/B11/B12/B14/C1/C2/C4/C5/C6/C7 十五条）合入 main
+（合并提交 `5014509`），随后在 main 上改掉只读复核判出的**三处必须先改**。做法与验证见 EVAL 第七十二节。
+
+| 文件 | 改 / 新增 | 说明 |
+| --- | --- | --- |
+| `packages/core/src/storage/repository.ts` | 改（合入 + 本批） | 合入：v3 迁移、`updateEntity` 单事务、`stampUpdatedAt`、`deleteMemory` 软删 + `undoConsolidation` 等；本批新增 `listMetaKeys(prefix)` / `deleteMeta(key)`，并把 v3 守卫判据换成「该 room 是否已有 `kind === 'main'` 且未删的 conversation」，命中就接着用那条主线 |
+| `packages/core/src/storage/archive.ts` | 改（合入 + 本批） | 合入：`buildIdMaps` / `remap*` 一整套引用改写 + 导入回滚；本批把标记改成 `IMPORT_PENDING_KEY_PREFIX = 'archive.importPending:'` + `newId()` 分键，加 `IMPORT_PENDING_STALE_MS = 5 * 60_000`，认老版本单键 `archive.importPending`，`recoverInterruptedImports` 返回 `{ rooms, stillPending }` |
+| `apps/web/src/lib/session.ts` | 改（本批） | `useDatabase` 在 `migrate()` 之后调用 `recoverInterruptedImports`；`BootReport` 新增 `recoveredImports`，回滚结果只进 `console.warn`（界面提示没做，`App.tsx` 被另一条会话占着） |
+| `packages/core/src/storage/archive-roundtrip.test.ts` | 新增（合入）/ 改（本批） | 322 行往返测试；本批把 C7 那组扩到 6 条：中途失败不留标记、页面被关掉留下的标记、另一个标签页还活着时不动它、认不出来的标记直接删、**老版本单键**（太新不动 / 死透才收拾）、正常导入不留标记 |
+| `packages/core/src/storage/audit-repository.test.ts` | 新增（合入）/ 改（本批） | 本批新增「断在『主线已建、归属没改完』之间：重跑接着用那条主线」——包装 `store.put` 在写 messages 时抛「断电」；把守卫改回旧判据该测试会变红 |
+| 其余合入文件（`a6adfa`） | 改 | `apps/web/src/lib/{db.ts,worker.ts}`、`compat/sillytavern/worldbook.ts`、`memory/{summary.ts,summary-cursor.test.ts}`、`platform/{background-runner.ts,background-runner.test.ts,entity-store.ts,memory-store.ts}`、`prompt/{assemble.ts,assemble.test.ts,audit-prompt.test.ts,budget.ts,budget-equivalence.test.ts}`、`storage/{archive.ts,archive.test.ts}`（合计 19 文件 1695+/266-） |
+| `docs/TASKS.md` | 改 | 82 行改成 ✅；「顺序 82 合并前必须先改的三处」改成办完记录；新增「顺序 82 自己带出来的遗留」四条与**顺序 83 的只读复核回执**（可信 12 条 / 有疑 3 条 / 合并前要拍板 3 处） |
+| `docs/EVAL.md` | 改 | 新增**第七十二节**：三处必修的做法与证据、意义校验（守卫改回旧判据测试变红）、五项门禁、六条「没验的 / 已知遗留」 |
+| `docs/STATUS.md` | 改 | 新增「2026-09-26：顺序 82 落进 main」一段与下一步（83–86），并把上一节的「下一步」标注为当时状态 |
+| `docs/FILE-LOG.md` | 改 | 本节；顺手把上一节编号从「六十」改成**五十九**（`422782d` 里写成了六十、把「几点注意」写成六十一，五十九空着） |
+
+> 本批**没有 push、没有部署**。合并进来的 15 条是别人写的，本批只做集成 + 三处必修 + 文档。
 
 ## 六十一、几点注意
 

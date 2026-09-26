@@ -28,6 +28,7 @@ import {
   type RoomId,
   type RoomSnapshot,
   type RoomSummary,
+  recoverInterruptedImports,
   reuseUnchangedCollections,
   revertAffectChange as revertAffectChangeForInstance,
   revertAffectForTurn,
@@ -44,6 +45,13 @@ export interface BootReport {
   backendKind: string;
   degraded: boolean;
   recoveredTasks: number;
+  /**
+   * 上次导入崩在半路、这次启动撤掉的世界数（审计 C7）。
+   *
+   * 界面暂时没显示它（`BootReport` 只有降级提示在用），先在控制台里留一行；
+   * 等 `App.tsx` 不再被别的会话占着，再加到顶部提示里。
+   */
+  recoveredImports: number;
   migrationsApplied: number;
 }
 
@@ -80,12 +88,23 @@ export function useDatabase(): {
 
         const migration = await opened.repository.migrate();
         const recoveredTasks = await opened.queue.recoverInterrupted();
+        /*
+         * 上次导入崩在半路（页面被关、崩溃）：把那半个世界撤掉（审计 C7）。
+         * 太新的标记不动——可能另一个标签页正在导入，撤掉等于删掉人家正在写的东西。
+         */
+        const interrupted = await recoverInterruptedImports(opened.repository);
+        if (interrupted.rooms.length > 0 || interrupted.stillPending > 0) {
+          console.warn(
+            `[dramatis] 未完成的导入：撤掉 ${interrupted.rooms.length} 个世界，另有 ${interrupted.stillPending} 个标记还太新没动`,
+          );
+        }
 
         setDb(opened);
         setBoot({
           backendKind: opened.backendKind,
           degraded: opened.backendKind === 'memory',
           recoveredTasks,
+          recoveredImports: interrupted.rooms.length,
           migrationsApplied: migration.applied.length,
         });
       } catch (openError) {

@@ -224,6 +224,38 @@ describe('审计 C1：v3 迁移幂等', () => {
     expect(room?.activeConversationId).toBe(conversations[0]?.id);
     expect(message?.conversationId).toBe(conversations[0]?.id);
   });
+
+  it('断在「主线已建、归属没改完」之间：重跑接着用那条主线', async () => {
+    const store = createMemoryEntityStore();
+    const legacyRoom = { id: 'r1', title: '老世界', activeSceneId: null, createdAt: nowIso(), updatedAt: nowIso() };
+    await store.put(COLLECTIONS.rooms, legacyRoom);
+    await store.put(COLLECTIONS.messages, { id: 'm1', roomId: 'r1', content: '老消息' });
+    const v3 = MIGRATIONS.find((migration) => migration.version === 3);
+    if (v3 === undefined) throw new Error('缺 v3');
+
+    // 第一次跑：把消息改挂到主线的那一步弄坏，等价于这时断电（conversation 已建、归属没写完、
+    // room.activeConversationId 还是空的——老判据正好漏掉的就是这个窗口）
+    const originalPut = store.put.bind(store);
+    let armed = true;
+    store.put = async (collection: string, record: { id: string }): Promise<void> => {
+      if (armed && collection === COLLECTIONS.messages) {
+        armed = false;
+        throw new Error('断电');
+      }
+      await originalPut(collection, record);
+    };
+    await expect(v3.run(store)).rejects.toThrow('断电');
+    store.put = originalPut;
+
+    await v3.run(store);
+
+    const conversations = await store.list<{ id: string }>(COLLECTIONS.conversations);
+    expect(conversations).toHaveLength(1);
+    const room = await store.get<{ activeConversationId: string }>(COLLECTIONS.rooms, 'r1');
+    const message = await store.get<{ conversationId: string }>(COLLECTIONS.messages, 'm1');
+    expect(room?.activeConversationId).toBe(conversations[0]?.id);
+    expect(message?.conversationId).toBe(conversations[0]?.id);
+  });
 });
 
 describe('审计 C2：读单条老消息时补本机设备号', () => {

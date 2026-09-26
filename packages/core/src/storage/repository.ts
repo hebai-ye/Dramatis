@@ -224,11 +224,55 @@ export const MIGRATIONS: readonly Migration[] = [
         /*
          * 幂等（审计 C1）：迁移不是原子的，中途断掉下次启动会整条重跑。已经拿到主线的
          * 世界不能再造一条空「主线」——那样消息会留在旧主线上，而世界指向新的空主线。
+         *
+         * 判据只看 activeConversationId 是不够的：那个字段是最后一步才写的，断在
+         * 「主线已建、归属还没改完」之间时它还是空的。所以下面还要看库里有没有主线。
          */
         if (typeof room.activeConversationId === 'string' && room.activeConversationId !== '') continue;
 
         const now = typeof room.updatedAt === 'string' ? room.updatedAt : nowIso();
         const activeScene = typeof room.activeSceneId === 'string' ? asSceneId(room.activeSceneId) : null;
+
+        /** 把还没有归属的场景/消息/记忆挂到这条主线上（可重入：已有归属的不动）。 */
+        const assign = async (conversationId: string): Promise<void> => {
+          const attach = async (collection: string): Promise<void> => {
+            const records = await store.list<Record<string, unknown> & { id: string }>(collection, {
+              where: { roomId: id },
+            });
+            for (const record of records) {
+              if (typeof record.conversationId === 'string') continue;
+              await store.put(collection, { ...record, id: record.id, conversationId });
+            }
+          };
+          await attach(COLLECTIONS.scenes);
+          await attach(COLLECTIONS.messages);
+          await attach(COLLECTIONS.memories);
+        };
+
+        /** 最后一步：把世界指向它的主线（v3 之后 activeSceneId 归对话管）。 */
+        const pointRoomAt = async (conversationId: string): Promise<void> => {
+          const { activeSceneId: _dropped, ...rest } = room;
+          await store.put(COLLECTIONS.rooms, { ...rest, id, activeConversationId: conversationId });
+        };
+
+        /*
+         * 断在「主线已建、归属还没改完」之间的那一趟：认领库里已有的主线接着做完，
+         * 不要再造第二条（审计 C1）。软删掉的主线不算数——挂上去等于把消息藏起来。
+         */
+        const existing = await store.list<Record<string, unknown>>(COLLECTIONS.conversations, {
+          where: { roomId: id },
+        });
+        const interrupted = existing.find(
+          (item) =>
+            item.kind === 'main' &&
+            typeof item.id === 'string' &&
+            (item.deletedAt === null || item.deletedAt === undefined),
+        );
+        if (interrupted !== undefined && typeof interrupted.id === 'string') {
+          await assign(interrupted.id);
+          await pointRoomAt(interrupted.id);
+          continue;
+        }
 
         const conversation: Conversation = {
           id: asConversationId(newId()),
@@ -249,23 +293,8 @@ export const MIGRATIONS: readonly Migration[] = [
           deletedAt: null,
         };
         await store.put(COLLECTIONS.conversations, conversation);
-
-        const assign = async (collection: string): Promise<void> => {
-          const records = await store.list<Record<string, unknown> & { id: string }>(collection, {
-            where: { roomId: id },
-          });
-          for (const record of records) {
-            if (typeof record.conversationId === 'string') continue;
-            await store.put(collection, { ...record, id: record.id, conversationId: conversation.id });
-          }
-        };
-
-        await assign(COLLECTIONS.scenes);
-        await assign(COLLECTIONS.messages);
-        await assign(COLLECTIONS.memories);
-
-        const { activeSceneId: _dropped, ...rest } = room;
-        await store.put(COLLECTIONS.rooms, { ...rest, id, activeConversationId: conversation.id });
+        await assign(conversation.id);
+        await pointRoomAt(conversation.id);
       }
     },
   },
@@ -905,6 +934,25 @@ export class Repository {
 
   async setMeta<T>(key: string, value: T): Promise<void> {
     await this.store.put<MetaRecord>(COLLECTIONS.meta, { id: key, value, updatedAt: nowIso() });
+  }
+
+  /**
+   * 列出 meta 里以 `prefix` 开头的键（审计 C7）。
+   *
+   * 只给「一次操作一把钥匙」的标记用：导入中断的标记按导入实例分键，
+   * 启动时要能把它们全找出来；单键的写法会让两个标签页互相擦掉对方的待回滚信息。
+   */
+  async listMetaKeys(prefix: string): Promise<string[]> {
+    const records = await this.store.list<MetaRecord>(COLLECTIONS.meta);
+    return records
+      .map((record) => record.id)
+      .filter((id): id is string => typeof id === 'string' && id.startsWith(prefix))
+      .sort();
+  }
+
+  /** 删掉一个 meta 键（写 null 会留下一个空壳，列表会越攒越长）。 */
+  async deleteMeta(key: string): Promise<void> {
+    await this.store.remove(COLLECTIONS.meta, key);
   }
 
   async schemaVersion(): Promise<number> {

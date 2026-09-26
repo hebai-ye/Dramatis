@@ -16,7 +16,8 @@ import { createInstanceFor, createSceneFor } from '../session/setup.js';
 import { createPlayerMessage } from '../session/turn.js';
 import {
   buildWorldArchive,
-  IMPORT_PENDING_META_KEY,
+  IMPORT_PENDING_KEY_PREFIX,
+  IMPORT_PENDING_STALE_MS,
   importWorldArchive,
   recoverInterruptedImports,
   type WorldArchive,
@@ -292,31 +293,97 @@ describe('导入失败回滚（审计 C7）', () => {
 
     expect(await target.listRooms()).toEqual([]);
     expect(await target.listCards()).toEqual([]);
-    expect(await target.getMeta(IMPORT_PENDING_META_KEY)).toBeNull();
+    expect(await target.listMetaKeys(IMPORT_PENDING_KEY_PREFIX)).toEqual([]);
   });
 
   it('页面被关掉留下的标记：下次启动撤掉那半个世界', async () => {
     const archive = await seedWorld({ legacyCursorOnly: false });
     const target = new Repository(createMemoryEntityStore());
     const report = await importWorldArchive(archive, target);
-    // 模拟：写完了但标记没来得及清（等价于中途被打断）
-    await target.setMeta(IMPORT_PENDING_META_KEY, {
+    // 模拟：写完了但标记没来得及清（等价于中途被打断），而且那一趟早就没了
+    await target.setMeta(`${IMPORT_PENDING_KEY_PREFIX}${newId()}`, {
       roomId: report.roomId,
       cardIds: (await target.listCards()).map((item) => item.id),
       worldBookIds: [],
       personaId: null,
+      startedAt: new Date(Date.now() - IMPORT_PENDING_STALE_MS - 1000).toISOString(),
+    });
+
+    const recovery = await recoverInterruptedImports(target);
+    expect(recovery.rooms).toEqual([report.roomId]);
+    expect(await target.listRooms()).toEqual([]);
+    expect(await target.listMetaKeys(IMPORT_PENDING_KEY_PREFIX)).toEqual([]);
+    expect(await recoverInterruptedImports(target)).toEqual({ rooms: [], stillPending: 0 });
+  });
+
+  it('另一个标签页的导入还活着时不动它的标记（审计 C7：一次导入一把钥匙）', async () => {
+    const archive = await seedWorld({ legacyCursorOnly: false });
+    const target = new Repository(createMemoryEntityStore());
+    const otherKey = `${IMPORT_PENDING_KEY_PREFIX}${newId()}`;
+    await target.setMeta(otherKey, {
+      roomId: 'room-other-tab',
+      cardIds: [],
+      worldBookIds: [],
+      personaId: null,
       startedAt: nowIso(),
     });
-    expect(await recoverInterruptedImports(target)).toBe(report.roomId);
-    expect(await target.listRooms()).toEqual([]);
-    expect(await recoverInterruptedImports(target)).toBeNull();
+
+    // 这一趟走完了：只清自己的标记，不碰别人的
+    const report = await importWorldArchive(archive, target);
+    expect(await target.getMeta(otherKey)).not.toBeNull();
+
+    // 还太新：这一轮启动不动它（动了就等于删掉人家正在写的世界）
+    const fresh = await recoverInterruptedImports(target);
+    expect(fresh).toEqual({ rooms: [], stillPending: 1 });
+    expect(await target.getMeta(otherKey)).not.toBeNull();
+    expect((await target.listRooms()).map((item) => item.id)).toEqual([report.roomId]);
+
+    // 等它「死透」再收拾：撤掉那一趟，本机刚导入的世界不受影响
+    const stale = await recoverInterruptedImports(target, { now: Date.now() + IMPORT_PENDING_STALE_MS + 1000 });
+    expect(stale).toEqual({ rooms: [roomId('room-other-tab')], stillPending: 0 });
+    expect((await target.listRooms()).map((item) => item.id)).toEqual([report.roomId]);
+    expect(await target.listMetaKeys(IMPORT_PENDING_KEY_PREFIX)).toEqual([]);
+  });
+
+  it('认不出来的标记直接删掉，不留在库里每次启动翻一遍', async () => {
+    const target = new Repository(createMemoryEntityStore());
+    const key = `${IMPORT_PENDING_KEY_PREFIX}${newId()}`;
+    await target.setMeta(key, { roomId: 42 });
+
+    expect(await recoverInterruptedImports(target)).toEqual({ rooms: [], stillPending: 0 });
+    expect(await target.listMetaKeys(IMPORT_PENDING_KEY_PREFIX)).toEqual([]);
+  });
+
+  it('老版本留下的单键标记也认（不然那半个世界永远没人收拾）', async () => {
+    const archive = await seedWorld({ legacyCursorOnly: false });
+    const target = new Repository(createMemoryEntityStore());
+    const report = await importWorldArchive(archive, target);
+    const legacy = {
+      roomId: report.roomId,
+      cardIds: [],
+      worldBookIds: [],
+      personaId: null,
+    };
+
+    // 还太新：老版本的标签页可能正在导入，先不动它
+    await target.setMeta('archive.importPending', { ...legacy, startedAt: nowIso() });
+    expect(await recoverInterruptedImports(target)).toEqual({ rooms: [], stillPending: 1 });
+
+    // 死透了：照样撤掉，并把旧钥匙清掉
+    await target.setMeta('archive.importPending', {
+      ...legacy,
+      startedAt: new Date(Date.now() - IMPORT_PENDING_STALE_MS - 1000).toISOString(),
+    });
+    expect((await recoverInterruptedImports(target)).rooms).toEqual([report.roomId]);
+    expect(await target.getMeta('archive.importPending')).toBeNull();
+    expect((await target.listRooms()).map((item) => item.id)).toEqual([]);
   });
 
   it('正常导入不留标记', async () => {
     const archive = await seedWorld({ legacyCursorOnly: false });
     const target = new Repository(createMemoryEntityStore());
     await importWorldArchive(archive, target);
-    expect(await target.getMeta(IMPORT_PENDING_META_KEY)).toBeNull();
-    expect(await recoverInterruptedImports(target)).toBeNull();
+    expect(await target.listMetaKeys(IMPORT_PENDING_KEY_PREFIX)).toEqual([]);
+    expect(await recoverInterruptedImports(target)).toEqual({ rooms: [], stillPending: 0 });
   });
 });

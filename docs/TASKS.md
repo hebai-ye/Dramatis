@@ -92,9 +92,9 @@
 | 79 | **跨角色串线检测（同一段身世/同一件道具出现在第二个角色名下）** `[用][测]` | **P3** | 178 轮长跑里 46/178 条非掌柜角色用了掌柜道具；秦娘还复用了陈九的「八岁雷砸船」。用户 2026-09-25 决定暂缓 | ⬜ 暂缓 |
 | 80 | **账单汇总增量缓存（顺序 68 拆出来的那一半）** `[审][数]` | **P2** | 68 实测：`since` 下推能少读 93% 的行，但**不带 `since` 的 `summary({roomId})` 仍要把该世界账单全读一遍**——而后台队列每取一条任务就调一次（`worker.ts:548`），长对话里一轮好几次。前置：把「删世界绕开 ledger 直接删账单」收口，否则缓存会漏掉删除路径 | ⬜ |
 | 81 | **审计第一批：本地助手公网暴露面（A1/A13/C19/C20）** `[审][数]` | **P0** | `tools/local-bridge` 的 CORS 回 `*`、不校验 Host/Origin、请求体无上限；假模型同样回 `*`；桌面启动器不校验端口 | ✅ 2026-09-26（`96120d9` 合入为 `acb93dd`；手动 `node --test` 15 条全过，见 EVAL 第七十一节） |
-| 82 | **审计第二批：同步正确性与存储原子性（A5/A11/A12/B3/B4/B8/B11/B12/B14/C1/C2/C4/C5/C6/C7）** `[审][数]` | **P1** | 归档与同步水位线互卡、后台任务非事务 CAS、IDB 读改写不原子、导入中断无回滚、预算守卫 O(n²)、世界书块 id 撞名 | 🟡 分支 `a6adfa` 就绪（Core 717 全绿），**只读复核判出 3 处必须先改 + 1 处不许宣称已完成**，见「审计遗留」小节 |
-| 83 | **审计第三批：同步/加密/上传与文档漂移（A3/A4/A6/A7/A8/A9/B1/B16/C8–C12/C14/C15）** `[审][数]` | **P1** | 主密码与密钥派生、会话过期、上传体积上限、导出遗漏、SYNC.md 与实现不一致 | 🟡 分支 `a063c` 就绪待只读复核（复核子代理在跑） |
-| 84 | **审计第四批：前端稳定与缓存（A2/A10/B2/B5/B7/B13/B17/C3/C13/C17/C18）** `[审]` | **P1** | SW 缓存名与更新、流式取消、错误处理、隐私边界 | ⬜ **必须等另一条会话提交**：分支 `a5ef9` 改了 `apps/web/src/App.tsx` 与 `styles.css`，这两个文件现在是别人的未提交改动，此刻合并会被 git 拒绝 |
+| 82 | **审计第二批：同步正确性与存储原子性（A5/A11/A12/B3/B4/B8/B11/B12/B14/C1/C2/C4/C5/C6/C7）** `[审][数]` | **P1** | 归档与同步水位线互卡、后台任务非事务 CAS、IDB 读改写不原子、导入中断无回滚、预算守卫 O(n²)、世界书块 id 撞名 | ✅ **已在 main**（合并提交 `5014509` + 三处必修）——Core **709** 全绿（63 文件）、Web 12 全绿，见 EVAL 第七十二节 |
+| 83 | **审计第三批：同步/加密/上传与文档漂移（A3/A4/A6/A7/A8/A9/B1/B16/C8–C12/C14/C15）** `[审][数]` | **P1** | 主密码与密钥派生、会话过期、上传体积上限、导出遗漏、SYNC.md 与实现不一致 | 🟡 分支 `a063c` 就绪；**只读复核回执已到，合并前要拍板 3 处**（见「审计遗留」小节） |
+| 84 | **审计第四批：前端稳定与缓存（A2/A10/B2/B5/B7/B13/B17/C3/C13/C17/C18）** `[审]` | **P1** | SW 缓存名与更新、流式取消、错误处理、隐私边界 | ⬜ **必须等另一条会话提交**：分支 `a5ef9` 改了 `apps/web/src/App.tsx` 与 `styles.css`，这两个文件现在是别人的未提交改动，此刻合并会被 git 拒绝；**只读复核子代理上次中途失败、要重派** |
 | 85 | **审计第五批：CI 与部署加固（A14/A15/B19/B20/B21/C16/C21/C22）** `[审][数]` | **P2** | CI 不跑 `build:sync-server`、nginx 缺安全头、systemd 无隔离、依赖冷静期例外、`.gitignore` 漏 `.claude/` | ⬜ 等另一条会话提交后合 `audit/integration`（它也改 `styles.css`） |
 | 86 | **审计遗留补做：B6 / B9 / B10 / B15 / B18** `[审][数]` | **P2** | 五条**没有任何分支在修**：管理员草稿整条替换会清空未传字段、多币种金额直接相加、流式失败边角（200+error 体 / 未知 finish_reason / 不 cancel reader）、PNG 解压无上限（压缩炸弹）、默认档位 Key 明文存 localStorage | ⬜（B10 有人在 `a6adfa` 的 worktree 里改到一半，未提交） |
 | 28 / 29 / 30 / 56 | 语音归属模型侧根治 / 平板横屏 / 备案切 443 等 / 服务器管理台 | **P4** | 原有条目，等条件或等拍板，不变 | ⬜ |
@@ -112,7 +112,7 @@
 | 编号 | 现在在哪 | 谁修 | 可合状态 |
 | --- | --- | --- | --- |
 | A1、A13、C19、C20 | **已在 main**（顺序 81，`acb93dd`） | 分支 `96120d9` | ✅ |
-| A5、A11、A12、B3、B4、B8、B11、B12、B14、C1、C2、C4、C5、C6、C7（15 条） | 分支 `worktree-agent-a6adfa051fc0cc2bd`（3 提交，Core 717 全绿） | 顺序 82 | 🟡 **先改 3 处再合** |
+| A5、A11、A12、B3、B4、B8、B11、B12、B14、C1、C2、C4、C5、C6、C7（15 条） | 分支 `worktree-agent-a6adfa051fc0cc2bd`（3 提交） | 顺序 82 | ✅ **已在 main**（`5014509` + 三处必修）——其中 B11/B12 只接了一半，见下 |
 | A3、A4、A6、A7、A8、A9、B1、B16、C8、C9、C10、C11、C12、C14、C15（15 条） | 分支 `worktree-agent-a063c593632cf9c7c`（7 提交，Core 699 全绿） | 顺序 83 | 🟡 待只读复核回执 |
 | A2、A4、A9、A10、B1、B2、B3、B5、B7、B13、B17、C3、C13、C17、C18（15 条） | 分支 `worktree-agent-a5ef9d3cfc346aade`（10 提交，Web 29 测试全绿） | 顺序 84 | ⬜ 等脏文件提交 |
 | A14、A15、B19、B20、B21、C16、C21、C22（8 条）+ 已合入的 4 条 | 分支 `integration`（`a0ff3d8995c3dd432` + `96120d9`） | 顺序 85 | ⬜ 等脏文件提交（它改 `styles.css`） |
@@ -121,14 +121,30 @@
 **重叠实现（合并时要逐条对账，不能两份都留）**：A4、A9、B1（`a063c` 与 `a5ef9` 各一份）；B3（`a6adfa` 与 `a5ef9` 各一份）。
 其余 41 条只有一条分支在修。清单是 `git log main..<分支>` 抽取提交信息里的编号核出来的，不是照报告抄的。
 
-**顺序 82 合并前必须先改的三处（只读复核的结论，2026-09-26）**：
+**顺序 82 合并前必须先改的三处 —— 已改完（2026-09-26，随 `5014509` 落进 main）**：
 
-1. `recoverInterruptedImports`（`packages/core/src/storage/archive.ts`）**没有任何生产调用方**——`apps/web/src/lib/archive.ts` 只 import 了 `importWorldArchive`。
-   后果：导入中途崩了，标记永远留着、半个世界不会回滚，还会污染下一次导入的判断。要在 web 启动路径（`apps/web/src/lib/session.ts` 那一串初始化）调用。
-2. `IMPORT_PENDING_META_KEY` 是**模块级单键**：两个标签页同时导入，A 成功清标记会把 B 的待回滚信息一起擦掉。要按导入实例分键。
-3. C1 的守卫（`packages/core/src/storage/repository.ts:228`）判据是 `room.activeConversationId`，而那个字段**在最后一步（`repository.ts:268`）才写**；
-   顺序是 251 建 conversation → 263–265 把 scenes/messages/memories 改挂新线 → 268 写 room。所以「conversation 已建、assign 途中失败」重跑仍会再建一条空主线。
-   守则应改成「该 room 是否已存在 `kind === 'main'` 的 conversation」。现有测试只覆盖「成功连跑两次」，覆盖不到中断窗口。
+1. `recoverInterruptedImports`（`packages/core/src/storage/archive.ts`）现在由 `apps/web/src/lib/session.ts` 的 `useDatabase` 在 `migrate()` / `queue.recoverInterrupted()` 之后调用；
+   `BootReport` 新增 `recoveredImports`，回滚了几个世界 / 几条标记「还太新没动」只进 `console.warn`（**界面提示没做**，见下）。
+2. 标记改成**一次导入一把钥匙**：`IMPORT_PENDING_KEY_PREFIX = 'archive.importPending:'` + `newId()`，成功/失败各删自己那把；
+   另加 `IMPORT_PENDING_STALE_MS = 5 * 60_000`：启动时只回滚**超过 5 分钟**的标记（另一标签页正在导入的不动，宁可晚清不可误删）；
+   还认老版本留下的单键 `archive.importPending`（同样按 5 分钟判）。
+3. C1 的守卫（`packages/core/src/storage/repository.ts` 的 v3 迁移）判据改成「该 room 是否已存在 `kind === 'main'` 且未删的 conversation」，
+   命中就接着用那条主线（`assign(id)` + `pointRoomAt(id)`）而不再造第二条。
+   新增测试用包装 `store.put` 在写 messages 时抛「断电」，重跑 v3 后断言只有 1 条主线；把守卫改回旧判据该测试会变红（意义校验做过）。
+
+**顺序 82 自己带出来的遗留（别当成已解决）**：
+
+- 「已经帮你回滚了未完成导入」**没有任何界面提示**，只写进 `console.warn`（等 `apps/web/src/App.tsx` 可动时补到顶部提示）。
+- 崩了之后**立刻**重开：标记还太新（< 5 分钟）→ 那半个世界要等到下一次启动才会被收拾。
+- `migrate()` 之前就崩、或标记损坏被删的那些半成品世界**仍然没人收拾**（只靠标记，不做全库扫描）。
+- 复核判「有疑」但本批**没有逐条消解**的两条：**C6**（`escapeSectionHeadings`（`packages/core/src/prompt/assemble.ts`）只覆盖世界书与卡片的 description/personality/examples，scene/memory/chapter 未转义）、
+  **A11**（映射表 `buildIdMaps` 与往返测试 `archive-roundtrip.test.ts` 都在，残余引用字段没逐条复查）。建议并进顺序 86 或单开 87。
+
+**顺序 83 的只读复核回执（2026-09-26，子代理只读复核）**：
+
+- **可信**：A3（`pushedVersions` 取代 pushedAt 递增、轮末按 updatedAt 分组结算；残余：同毫秒同坐标的墓碑可能被当回声过滤、每轮多一次 head 请求）、A6、A7（请求体 8MB 上限是刻意偏离、时间戳不做严格 ISO）、A8（`client-key.ts` 的 `hops === 0 || !LOOPBACK.has(socket)` 直连取 socket 地址）、C8、C9、C10、C11、C12、C14、C15；B16 文档部分可信（界面仍未写清）。
+- **有疑（只做了一半）**：A4（epoch 全链路可用，但 `resetSyncState`（`loop.ts:125`）在 `apps/web` 无调用者，与 `docs/SYNC.md` §4.12.2「必须调用」不符）、A9（哈希不回 credentialHash、30/min 限流都做了，但**新建空间不强制密码最小长度**：`apps/web/src/lib/sync.ts:369` 仍只查非空，`SyncPanel.tsx:500` 的 ≥6 只作用于换密码）、B1（core 的 auto-sync flush 修好了，但入口串行化没做：`syncNow:429` / `connect:417` / 启动:348 / `resync:715` 都直接 `doSync`，全仓无 `navigator.locks`；后果只是重复拉推，幂等无死锁）。
+- **顺序 83 合并前需拍板三处**：① SYNC.md §4.12.2 的措辞 vs 补接线；② 新建空间要不要强制密码最小长度；③ B1 入口串行化／Web Locks 做不做。均为「改文档或补跟进提交」级，不是数据损坏级。
 
 **不许宣称已完成的两条**（功能在、接线只接了一半，文档别写成已解决）：
 

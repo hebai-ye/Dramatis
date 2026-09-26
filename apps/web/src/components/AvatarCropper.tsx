@@ -87,7 +87,7 @@ export function AvatarCropper({ source, disabled, onCancel, onConfirm }: Props) 
     <div className="avatar-crop-editor">
       <strong>选取圆形头像</strong>
       <p className="hint">拖动图片对准面部，再用滑块缩放。圆圈内就是对话头像。</p>
-      <div
+      <section
         className="avatar-crop-window"
         aria-label="拖动图片调整圆形头像区域"
         onPointerDown={(event) => {
@@ -106,8 +106,12 @@ export function AvatarCropper({ source, disabled, onCancel, onConfirm }: Props) 
           );
           setOffset({ x: next.offsetX, y: next.offsetY });
         }}
-        onPointerUp={() => { drag.current = null; }}
-        onPointerCancel={() => { drag.current = null; }}
+        onPointerUp={() => {
+          drag.current = null;
+        }}
+        onPointerCancel={() => {
+          drag.current = null;
+        }}
       >
         {layout && previewUrl ? (
           <img
@@ -118,7 +122,7 @@ export function AvatarCropper({ source, disabled, onCancel, onConfirm }: Props) 
           />
         ) : null}
         <div className="avatar-crop-circle" />
-      </div>
+      </section>
       <label>
         缩放
         <input
@@ -140,8 +144,12 @@ export function AvatarCropper({ source, disabled, onCancel, onConfirm }: Props) 
       </label>
       {error ? <p className="notice error">{error}</p> : null}
       <div className="inline">
-        <button type="button" disabled={disabled || !image} onClick={confirm}>保存图片与头像</button>
-        <button type="button" className="ghost" onClick={onCancel}>取消</button>
+        <button type="button" disabled={disabled || !image} onClick={confirm}>
+          保存图片与头像
+        </button>
+        <button type="button" className="ghost" onClick={onCancel}>
+          取消
+        </button>
       </div>
     </div>
   );

@@ -1,7 +1,7 @@
 import type { Card, CharacterInstance, InstanceId, MemoryEvent, Presence } from '@dramatis/core';
 import { PRESENCE_OPTIONS, signed } from '../lib/labels';
-import { useDraftField } from '../lib/useDraftField';
 import { avatarOf, portraitOf } from '../lib/portraits';
+import { useDraftField } from '../lib/useDraftField';
 import { Avatar } from './MessageBody';
 import { Modal } from './Modal';
 
@@ -85,7 +85,9 @@ export function CastDetail({
         </>
       }
     >
-      {portraitOf(card) ? <img className="cast-portrait" src={portraitOf(card) ?? ''} alt={`${instance.displayName}的立绘`} /> : null}
+      {portraitOf(card) ? (
+        <img className="cast-portrait" src={portraitOf(card) ?? ''} alt={`${instance.displayName}的立绘`} />
+      ) : null}
       <section className="panel">
         <h2>在场状态</h2>
         <select

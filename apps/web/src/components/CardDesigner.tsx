@@ -1,6 +1,6 @@
 import { type Card, type CardId, createBlankCard, resolveCardSystemPrompt } from '@dramatis/core';
 import { useEffect, useRef, useState } from 'react';
-import { PORTRAITS, avatarOf, portraitOf } from '../lib/portraits';
+import { avatarOf, PORTRAITS, portraitOf } from '../lib/portraits';
 import { AvatarCropper } from './AvatarCropper';
 import { Avatar } from './MessageBody';
 
@@ -84,6 +84,7 @@ export function CardDesigner({ cards, disabled, onSave, onDelete }: Props) {
     );
   }, [selected]);
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: selectedId 是触发器——换一张卡就把上一张的裁切草稿与错误清掉，代码里不需要读它的值
   useEffect(() => {
     setCropSource(null);
     setImageError(null);
@@ -261,7 +262,7 @@ export function CardDesigner({ cards, disabled, onSave, onDelete }: Props) {
               />
             ) : null}
             {showPortraits ? (
-              <div className="portrait-grid" aria-label="可选角色立绘">
+              <section className="portrait-grid" aria-label="可选角色立绘">
                 {PORTRAITS.map((portrait) => (
                   <button
                     type="button"
@@ -285,10 +286,12 @@ export function CardDesigner({ cards, disabled, onSave, onDelete }: Props) {
                     }}
                   >
                     <img src={portrait.thumbnail} alt="" loading="lazy" />
-                    <span>{String(portrait.number).padStart(2, '0')} · {portrait.name}</span>
+                    <span>
+                      {String(portrait.number).padStart(2, '0')} · {portrait.name}
+                    </span>
                   </button>
                 ))}
-              </div>
+              </section>
             ) : null}
           </section>
 

@@ -45,8 +45,8 @@ import { useWebBridge } from './hooks/useWebBridge';
 import { useAdminChat } from './lib/admin';
 import { useAppearance } from './lib/appearance';
 import { useArchive } from './lib/archive';
-import { useProviders } from './lib/providers';
 import { avatarOf } from './lib/portraits';
+import { useProviders } from './lib/providers';
 import { useDatabase, useSession } from './lib/session';
 import { useStorageStatus } from './lib/storage';
 import { useSync } from './lib/sync';
@@ -220,10 +220,13 @@ export function App() {
     .join('|');
   // biome-ignore lint/correctness/useExhaustiveDependencies: 仅头像相关的角色卡版本变化时才更新旧消息
   const avatars = useMemo<Record<string, string | null>>(
-    () => Object.fromEntries(instances.map((instance) => [
-      instance.id,
-      avatarOf(session.library.cards.find((card) => card.id === instance.cardId)),
-    ])),
+    () =>
+      Object.fromEntries(
+        instances.map((instance) => [
+          instance.id,
+          avatarOf(session.library.cards.find((card) => card.id === instance.cardId)),
+        ]),
+      ),
     [avatarKey],
   );
   const [castAsk, setCastAsk] = useState<{ text: string; seq: number } | null>(null);

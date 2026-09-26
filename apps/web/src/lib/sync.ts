@@ -24,7 +24,7 @@ import { type DramatisDb, readActiveAccount } from './db';
 import { createBrowserFileIO } from './fileio';
 import { createBrowserKeyStore, type KeyStorageMode } from './keystore';
 import { assertPassword } from './password-policy';
-import { buildSnapshot, parseSnapshot, type ServerSnapshot, snapshotFileName } from './snapshot';
+import { buildSnapshot, type ServerSnapshot, snapshotFileName } from './snapshot';
 import { createSerialQueue, withCrossTabLock } from './sync-queue';
 
 /**

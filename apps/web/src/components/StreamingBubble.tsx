@@ -1,4 +1,4 @@
-import { renderMessageContent, type CastName } from '@dramatis/core';
+import { type CastName, renderMessageContent } from '@dramatis/core';
 import { type RefObject, useLayoutEffect, useRef } from 'react';
 import { countRender } from '../lib/render-count';
 import { useStreamState } from '../lib/stream-store';

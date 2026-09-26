@@ -23,14 +23,7 @@ function fixtures(castPolicy: Scene['castPolicy'] = 'locked') {
     nickname: '',
     description: '酒馆的老板',
     personality: '爽朗健谈',
-    scenario: '雨夜的酒馆',
-    firstMessage: '欢迎光临。',
-    alternateGreetings: [],
-    exampleMessages: '',
-    systemPrompt: '',
-    postHistoryInstructions: '',
     creator: '',
-    creatorNotes: '',
     characterVersion: '',
     tags: [],
     embeddedWorldBook: null,
@@ -215,17 +208,17 @@ describe('assemblePrompt', () => {
     expect(system).toContain('信任 +0.40');
   });
 
-  it('旧卡空字段实际使用高级系统提示默认值，自定义内容保持原样', () => {
+  it('默认系统提示就是内置的那份；调用方可以用 options.systemPrompt 覆盖', () => {
     const { card, instance, room, scene } = fixtures();
     const input = { card, instance, room, scene, history: [], playerInput: '继续', budget: baseBudget };
     const defaultPrompt = assemblePrompt(input);
     expect(defaultPrompt.blocks.find((block) => block.id === 'system')?.content).toBe(DEFAULT_CARD_SYSTEM_PROMPT);
 
-    const customPrompt = assemblePrompt({ ...input, card: { ...card, systemPrompt: '  我自己的规则。\n' } });
+    const customPrompt = assemblePrompt({ ...input, options: { systemPrompt: '  我自己的规则。\n' } });
     expect(customPrompt.blocks.find((block) => block.id === 'system')?.content).toBe('  我自己的规则。\n');
   });
 
-  it('当前对话的高级系统提示独立装配，不改角色卡默认提示', () => {
+  it('当前对话的高级系统提示独立装配，不改默认系统提示', () => {
     const { card, instance, room, scene } = fixtures();
     const prompt = assemblePrompt({
       card,
@@ -239,7 +232,6 @@ describe('assemblePrompt', () => {
     });
     expect(prompt.blocks.find((block) => block.id === 'system')?.content).toBe(DEFAULT_CARD_SYSTEM_PROMPT);
     expect(prompt.blocks.find((block) => block.id === 'conversation-system')?.content).toBe('保持雨夜氛围。');
-    expect(card.systemPrompt).toBe('');
 
     const withoutPrompt = assemblePrompt({
       card,
@@ -649,10 +641,9 @@ describe('assemblePrompt / 历史按场记覆盖收起（顺序 58）', () => {
 });
 
 describe('assemblePrompt / 多角色场景', () => {
-  it('自定义卡提示仍保留玩家身份与本轮边界', () => {
+  it('自定义系统提示仍保留玩家身份与本轮边界', () => {
     const { card, instance, room, scene } = fixtures();
     const bob = makeInstance(room, card, 'Bob');
-    card.systemPrompt = '你可以随意续写整场戏。';
     const prompt = assemblePrompt({
       card,
       instance,
@@ -662,6 +653,7 @@ describe('assemblePrompt / 多角色场景', () => {
       player: { name: '旅人', description: '独自寻找失踪的兄长。' },
       history: [],
       playerInput: '你见过他吗？',
+      options: { systemPrompt: '你可以随意续写整场戏。' },
       budget: baseBudget,
     });
     const system = prompt.messages[0]?.content ?? '';

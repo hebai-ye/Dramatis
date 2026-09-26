@@ -1,5 +1,4 @@
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_CARD_SYSTEM_PROMPT } from '../../model/card.js';
 import { CardImportError, decodeCardPayload, importCardFromJson, parseCharacterCard } from './card.js';
 
 function toBase64(text: string): string {
@@ -33,14 +32,11 @@ describe('parseCharacterCard', () => {
     });
 
     expect(card.name).toBe('Alice');
-    expect(card.firstMessage).toBe('欢迎光临。');
-    expect(card.alternateGreetings).toEqual(['你来得正好。', '又是你。']);
     expect(card.tags).toEqual(['酒馆', '日常']);
     expect(card.embeddedWorldBook).toEqual({ name: 'book' });
     expect(card.characterVersion).toBe('1.2');
     expect(card.source.spec).toBe('chara_card_v2');
     expect(card.source.specVersion).toBe('2.0');
-    expect(card.systemPrompt).toBe('保持角色。');
     expect(warnings).toHaveLength(0);
   });
 
@@ -56,7 +52,39 @@ describe('parseCharacterCard', () => {
     expect(card.name).toBe('Bob');
     expect(card.source.spec).toBe('chara_card_v1');
     expect(card.source.specVersion).toBe('');
-    expect(card.systemPrompt).toBe(DEFAULT_CARD_SYSTEM_PROMPT);
+  });
+
+  it('顺序 90：开场白、场景设定、示例与高级字段即使卡里有也不落进卡、更不落进 extensions', () => {
+    const { card } = parseCharacterCard({
+      spec: 'chara_card_v2',
+      spec_version: '2.0',
+      data: {
+        name: 'Dave',
+        description: '新来的。',
+        scenario: '雨夜的酒馆',
+        first_mes: '欢迎光临。',
+        alternate_greetings: ['你来得正好。'],
+        mes_example: '{{char}}: 坐吧。',
+        system_prompt: '保持角色。',
+        post_history_instructions: '不要跳戏。',
+        creator_notes: '测试用卡',
+      },
+    });
+
+    // 这七个键必须继续算「已知」，否则会被当成未识别字段扫进 extensions 复活
+    expect(card.extensions).toEqual({});
+    const record = card as unknown as Record<string, unknown>;
+    for (const key of [
+      'scenario',
+      'firstMessage',
+      'alternateGreetings',
+      'exampleMessages',
+      'systemPrompt',
+      'postHistoryInstructions',
+      'creatorNotes',
+    ]) {
+      expect(key in record).toBe(false);
+    }
   });
 
   it('未识别字段被保留并产生提示，而不是静默丢弃', () => {
@@ -74,12 +102,11 @@ describe('parseCharacterCard', () => {
     expect(warnings.some((warning) => warning.code === 'unknown-fields')).toBe(true);
   });
 
-  it('缺少名字与开场白时给出提示并继续', () => {
+  it('缺少名字时给出提示并继续', () => {
     const { card, warnings } = parseCharacterCard({ spec: 'chara_card_v2', data: {} });
 
     expect(card.name).toBe('未命名角色');
     expect(warnings.map((warning) => warning.code)).toContain('missing-name');
-    expect(warnings.map((warning) => warning.code)).toContain('missing-greeting');
   });
 
   it('空 extensions 字段不产生噪声', () => {

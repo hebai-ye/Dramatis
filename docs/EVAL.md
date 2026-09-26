@@ -4146,4 +4146,71 @@ v12 的三个判断都是有意的：
 5. **顺序 88 的两条遗留仍在**：`onWarning` 没接到 `useNotices`；各家网关 `finish_reason` 的真实取值待验。
 6. **本批未 push、未部署**：内核 + 界面改动，已部署的旧产物不受影响，跟着下次上线一起走。
 
+## 八十、顺序 90：删掉卡上的场景设定 / 开场白 / 对话示例 / 高级字段，撤下「本场场记」，编辑区不再滑动
+
+**来源**：用户 2026-09-26 体验反馈第二批。原话要点：「请将开场白删除，将场景设定删除，高级字段(角色卡中的)以及对话示例删除。并且玩家可编辑的各区域(如角色卡的各种可编辑区域，不止角色卡)不可滑动」「面板中的本场场记如果展现出来过于繁杂请不显示」。三条裁定（`ask_user_question`）：字段裁剪 = **「彻底删除已有数据」**；不可滑动 = **「两个都要」**（随内容自动长高 **+** 拖动隔离）；本场场记 = **「整块不显示」**。世界书与各模式的高级字段**不在**清单里（用户明确写「角色卡中的」）。
+
+### 删了什么（`Card` 少 7 个字段）
+
+`packages/core/src/model/card.ts` 的 `Card` 删掉 `scenario`、`firstMessage`、`alternateGreetings`、`exampleMessages`、`systemPrompt`、`postHistoryInstructions`、`creatorNotes`，`resolveCardSystemPrompt()` 一并删（顺序 89 之后默认系统提示只认 `DEFAULT_CARD_SYSTEM_PROMPT`，卡不再各带一份）。`createBlankCard` 的默认值同步删。留下的字段：`id`/`name`/`nickname`/`description`/`personality`/`creator`/`characterVersion`/`tags`/`embeddedWorldBook`/`extensions`/`source`/时间戳。
+
+| 文件 | 改动 |
+| --- | --- |
+| `packages/core/src/model/card.ts` | 删 7 字段 + `resolveCardSystemPrompt`；新增 `REMOVED_CARD_FIELDS` 与 `stripRemovedCardFields(record)`（返回 `null` 表示「本来就没有这些键」，调用方据此跳过写库） |
+| `packages/core/src/render/segments.ts` | 删 `normalizeCardExample()`、`SPEAKER_LABEL`、`normalizeGreetingBreaks()`（只因被删字段而存在） |
+| `packages/core/src/session/turn.ts` | 删整段自动开场：`MAX_AUTOMATIC_GREETING_LENGTH = 380`、`GREETING_FIELD_LABELS`、`normalizeGreetingLine`、`prepareAutomaticGreeting`、`createGreetingMessage`（文件 290+ 行 → 205 行） |
+| `packages/core/src/session/setup.ts` | 新世界的场景摘要 `card.scenario.trim()` → `''` |
+| `packages/core/src/prompt/assemble.ts` | 人物块不再拼「对话风格示例」；基本规则的正文改成 `options.systemPrompt ?? DEFAULT_CARD_SYSTEM_PROMPT`，压缩口径跟着 `options.systemPrompt === undefined` 走 |
+| `packages/core/src/compat/sillytavern/card.ts` | 映射里删 7 个字段、删 `missing-greeting` 警告；**`KNOWN_DATA_KEYS` 的 7 个 key 全部保留**并加注释 |
+| `packages/core/src/admin/tools.ts` | `upsert_character_card` 的 schema 删 5 个 property；`parseCardDraft` 不再解析它们；`KNOWN_ARGS` 只留 `name`/`cardId`/`description`/`nickname`/`personality`/`tags` |
+| `packages/core/src/admin/prompt.ts` | 管理员预览里删掉「开场白」那一行 |
+| `apps/web/src/lib/session.ts` | 删 `buildGreetings` 与两处调用；新世界的场景摘要留空 |
+| `apps/web/src/components/CardDesigner.tsx` | 删场景设定 / 开场白 / 备选开场白 / 对话示例 / 系统提示 / 后置指令与整个「展开高级字段」折叠块；作者 / 版本 / 标签 / 来源改为直接可见 |
+| `apps/web/src/components/CastDetail.tsx` | 删「场景：」一行 |
+| `apps/web/src/components/SideChat.tsx` | 草稿预览从「开场白」改成看「设定」（`description`） |
+| `apps/web/src/components/ScenePanel.tsx` | 「本场场记」整块撤下（场记仍照常整理、仍进提示词） |
+| `apps/web/src/styles.css` | 全局 `textarea` 自动长高 + 拖动隔离；删掉 `.recap`/`.recap-text`；聊天输入框退回 `field-sizing: fixed` |
+| `docs/ROLEPLAY-PROMPT.md` | 整篇重写（它整篇是为被删字段写的）：默认系统提示只有代码一处来源、无限制模式只有开关、补一节「删掉的 7 个字段去哪了」 |
+| `docs/{ADMIN-CONSOLE,DESIGN,LAYOUT,ROADMAP}.md` | 各加一处「顺序 90 起……」的注释，避免这几份「当前规格」文档继续描述已经被删的字段 |
+| `docs/STATUS.md` | 文档地图里 `ROLEPLAY-PROMPT.md` 那一行的说明改成「默认系统提示（「基本规则」）的正文与改法」 |
+| `apps/web/tools/world-seed-probe.ts` | `cardFor()` 不再收 `scenario` 参数（`tsconfig.tools.json` 也在这个 typecheck 范围内，不改就红） |
+
+### 「彻底删除已有数据」= 迁移 v13 + 三条复活通路
+
+- `SCHEMA_VERSION` 12 → **13**，`MIGRATIONS` 末尾新增 v13：遍历 `cards`，`stripRemovedCardFields` 剥掉 7 个键，`bulkPut` 写回（`store.put` 是整条覆盖，所以显式带上 `id`）。**有意不盖 `updatedAt`**——这不是「用户改过这张卡」，盖上本机时间会让 LWW 把一份废弃数据当成新改动推给别的设备，而对方手里可能还有用户刚改的内容。幂等：剥不出东西的记录返回 `null` 直接跳过。
+- 三条写入通路各自剥一次（不能只靠迁移，否则老数据会回来）：
+  1. **`repository.saveCard`**——写卡的唯一通道（界面编辑、管理员草稿采纳、封存导入都过它）；
+  2. **`repository.putSyncRecord`**——远端记录是**原样**落库的，对面那台没升级的设备推来的老卡要在这里剥；
+  3. **`repository.listSyncRecords`**——出口也剥，保证含废弃字段的卡不再被推到服务端（迁移与本机写入之后理论上没有可剥的，但「先同步、后迁移」的时序会漏）。
+- **导入层不能删 key**：`compat/sillytavern/card.ts` 的 `KNOWN_DATA_KEYS` 里那 7 个名字留着，是为了让解析器**认得**它们并把值丢掉；把 key 删掉，`:134-146` 那段就会把未知键原样扫进 `extensions`——字段反而在库里活下来。
+
+### 编辑区不再滑动（两个都要）
+
+- **随内容自动长高**：全局 `textarea { field-sizing: content; overflow: hidden; }`。支持的浏览器（Chrome 123+）跟着内容长；不支持的只是「不自动长高」，同样不会出现内滚动条。
+- **拖动隔离**：`overscroll-behavior: contain`（在编辑区里拖选文字不会把滚动传给父容器）+ `touch-action: pan-y`；`resize: none` 去掉手动拉角（自动长高之后也不需要）。
+- **唯一例外**：聊天输入框高度由组件按 `scrollHeight` 量（到 200px 上限要能内滚），所以在 `.composer-box textarea` 里显式退回 `field-sizing: fixed; overflow-y: auto`，避免两套机制打架。
+
+### 测试（新增 16 条，实跑）
+
+- `packages/core/src/model/card.test.ts`：新增 `describe('顺序 90：卡上已删掉的四类字段')`——类型层已删属性，所以用 `createBlankCard() as unknown as Record<string, unknown>` 后 `expect(key in card).toBe(false)` 逐个断言 7 个字段。
+- `packages/core/src/compat/sillytavern/card.test.ts`：带全部 7 个 `data` 键的卡解析后，7 个 key 都不在卡上、`card.extensions` 仍等于 `{}`；「缺少名字与开场白」那条改名成「缺少名字时给出提示并继续」（不再断言 `missing-greeting`）。
+- `packages/core/src/admin/tools.test.ts`：`ADMIN_TOOLS` 的 `parameters.properties` 不含 5 个键；`edit({ scenario: '雨夜' }, card)` 的 `unknownArgs` 等于 `['scenario']`（B6 的「不认得的参数」机制顺手把这条也管了）。
+- `packages/core/src/storage/repository.test.ts` +5（`describe('顺序 90：把卡上已删的字段从库里清掉')`）：① v13 迁移剥字段且 name/description/tags/`updatedAt` 原样；② `saveCard` 剥（老草稿 / 老封存过不去）；③ `putSyncRecord` 剥；④ `listSyncRecords` 剥；⑤ 干净新卡 `saveCard` → `migrate()` 后 `updatedAt` 不变（不无谓重写）。
+- 另有 9 个测试文件的夹具删掉被删字段的行：`session/turn.test.ts`（截到 157 行，删掉整个自动开场 `describe`）、`render/segments.test.ts`、`prompt/assemble.test.ts`（`system` 块改成断言 `DEFAULT_CARD_SYSTEM_PROMPT`，自定义提示改走 `options: { systemPrompt }`）、`prompt/worldbook-placement.test.ts`、`storage/conversation.test.ts`、`storage/artifact-conflict.test.ts`（冲突探针改用 personality/nickname）、`storage/artifact-revoke.test.ts`、`eval/baseline.test.ts`、`eval/extraction-prompt.test.ts`、`eval/prompt-samples.test.ts`、`admin/turn.test.ts`。
+- 钉死迁移清单的断言 `[10, 11, 12]` 补成 `[10, 11, 12, 13]`（`repository.test.ts:239`）；「迁移条数 == `SCHEMA_VERSION` - 1」那条是用 `Array.from({ length: SCHEMA_VERSION - 1 }, …)` 推导的，加迁移后自动通过。
+
+**五项门禁（实跑）**：`pnpm typecheck` ✓、`pnpm lint` ✓（`Checked 281 files`，0 error / 0 warning）、`pnpm test` ✓（Core **70 文件 / 809 条**、Web 13 文件 / 45 条）、`pnpm build` ✓（`dist/assets/index-D2eEP_2v.js` 646.62 kB / gzip 204.15 kB、`dist/assets/index-CmI7ar9V.css` 38.28 kB，500 kB chunk 警告是既有项）、`pnpm build:sync-server` ✓。
+
+（门禁第一次跑出 5 个 format error + 4 个 warning：format 全在本批改过的行上，`biome check --write` 就地修好；4 个 warning 是本批删代码后留下的未用 import（`session/turn.ts` 的 `Card`/`CharacterInstance`/`Room`/`Scene`、`compat/sillytavern/card.ts` 的 import type 写法），手动清掉后 0 error / 0 warning。Core 测试第一次跑红 1 条——就是上面那条钉死迁移清单的断言，补上 `13` 后全过。）
+
+### 没验的 / 已知遗留
+
+1. **`extensions` 里可能还留着同名副本**：v13 只剥顶层键。更早版本导入的卡若已把同名值存进 `extensions`，那部分仍在；要不要一起清等有实际数据再定。
+2. **管理员工具不再收这 5 个字段**：模型还在传就会被回填成「不认得的参数」并在提示里点名（顺序 86/B6 的机制）；旧草稿里存着这些字段的，采纳时被 `saveCard` 顺手剥掉、不报错。
+3. **导入老卡后新对话是空白的**：没有开场消息，要由用户先开口。这正是「删掉开场白」要的效果，不是缺陷。
+4. **自动长高只在 CSS 层**：`field-sizing: content` 需要 Chrome 123+；不支持的浏览器只是不自动长高。
+5. **顺序 89 的四条遗留仍在**（无限制提示词换设备后无法重配、负好感不能拖、迁移只提「未动过」的关系边、真机没验）。
+6. **真机与真输入法没验（归 Codex）**：笔画输入法逐笔落库那条属顺序 91；编辑区新行为在手机浏览器上的实际手感也待验。
+7. **本批未 push、未部署**：内核 + 界面改动，已部署的旧产物不受影响，跟着下次上线一起走。
+
 

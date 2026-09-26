@@ -1163,7 +1163,7 @@ TASKS 第〇节顺序 68。用户裁定「A+B 推进」；原方案里的 `limit
 | `docs/TASKS.md` | 改 | 83 行改 ✅；归属表三行更新；「重叠实现」补写「A9/B1 的重叠已在顺序 83 消掉」；新增「顺序 83 带出来的遗留」四条与**顺序 84 的只读复核回执**（可信 12 / 有疑 3 / 合并前 5 项） |
 | `docs/EVAL.md` | 改 | 新增**第七十三节**：分支带进来的东西、三条有疑的改法表、为什么采用 `a5ef9` 的模块、五项门禁、七条「没验的 / 已知遗留」 |
 | `docs/STATUS.md` | 改 | 新增「2026-09-26：顺序 83 落进 main」一段与下一步（84 真正只看两条、部署等 84/85 一起上） |
-| `docs/FILE-LOG.md` | 改 | 本节；「几点注意」顺延为**六十三**（顺序 86、顺序 71 之后又两次顺延，顺序 84/85 收尾后现为**六十五**，整批上线后现为**六十六**，顺序 88 后现为**六十七**，顺序 89 后现为**六十八**） |
+| `docs/FILE-LOG.md` | 改 | 本节；「几点注意」顺延为**六十三**（顺序 86、顺序 71 之后又两次顺延，顺序 84/85 收尾后现为**六十五**，整批上线后现为**六十六**，顺序 88 后现为**六十七**，顺序 89 后现为**六十八**，顺序 90 后现为**六十九**） |
 
 > 本批**没有 push、没有部署**（服务端那批要重新部署才生效，用户裁定等 84/85 合完一起上）。
 
@@ -1220,7 +1220,7 @@ TASKS 第〇节顺序 68。用户裁定「A+B 推进」；原方案里的 `limit
 | `docs/TASKS.md` | 改 | 71 行改 ✅（写明「口径本身仍等真机样本」）+ 明细段落追加结论 |
 | `docs/EVAL.md` | 改 | 新增**第七十五节**：为什么不动公式、三条落点、测试、两个实现坑、五项门禁、遗留 |
 | `docs/STATUS.md` | 改 | 新增「2026-09-26：顺序 71 落进 main」一段 |
-| `docs/FILE-LOG.md` | 改 | 本节；「几点注意」顺延为**六十四**（顺序 84/85 收尾后现为**六十五**，整批上线后现为**六十六**，顺序 88 后现为**六十七**，顺序 89 后现为**六十八**） |
+| `docs/FILE-LOG.md` | 改 | 本节；「几点注意」顺延为**六十四**（顺序 84/85 收尾后现为**六十五**，整批上线后现为**六十六**，顺序 88 后现为**六十七**，顺序 89 后现为**六十八**，顺序 90 后现为**六十九**） |
 
 > **没 push、没部署。** 校准比例本身**仍是待验证**：本机没有真实 Key、也没有服务端 `usage` 可对照，
 > 所以「低估多少」要等用户在真机上跑够 10 轮生成之后看那一行提示（或 `usageCalibration` 的返回值）。
@@ -1249,7 +1249,7 @@ TASKS 第〇节顺序 68。用户裁定「A+B 推进」；原方案里的 `limit
 | `docs/TASKS.md` | 改 | 84 / 85 两行改 ✅；新增「当天那批脏改动怎么处理的」段；两条结构性缺口更新（lint 已全绿、`tools/*` 仍未补） |
 | `docs/EVAL.md` | 改 | 新增**第七十六节**：四条 commit、代提交的两道检查、合并与 `.gitignore` 冲突解法、依赖插曲、lint 三处修法、五项门禁、六条遗留 |
 | `docs/STATUS.md` | 改 | 新增「2026-09-26：顺序 84 / 85 合入 main」一段 |
-| `docs/FILE-LOG.md` | 改 | 本节；「几点注意」顺延为**六十五**（整批上线后现为**六十六**，顺序 88 后现为**六十七**，顺序 89 后现为**六十八**） |
+| `docs/FILE-LOG.md` | 改 | 本节；「几点注意」顺延为**六十五**（整批上线后现为**六十六**，顺序 88 后现为**六十七**，顺序 89 后现为**六十八**，顺序 90 后现为**六十九**） |
 
 > 四个提交当时**未 push、未部署**，已在 **2026-09-26 整批上线**（见下一节）。审计那 58 条至此全部在 main；但 `tools/*` 仍不在 `pnpm-workspace.yaml`、B10 未做、B11/B12 只接一半，
 > 服务端那批（配额 / 限流 / `spaces.epoch`）已在下一节记录的部署中生效。
@@ -1273,7 +1273,7 @@ TASKS 第〇节顺序 68。用户裁定「A+B 推进」；原方案里的 `limit
 | `docs/STATUS.md` | 改 | 顶部新增「整批上线」一节，并把它下面各节的「未 push、未部署」改正 |
 | `docs/TASKS.md` | 改 | 84 / 85 两行改 ✅；审计报告「尚未 push」改正；服务端那批「要重新部署才生效」改成已部署 |
 | `docs/EVAL.md` | 改 | 新增**第七十七节**（push、服务端、nginx、网页、备份、三个坑、没验的五条）；第七十六节第 1/6 条改正 |
-| `docs/FILE-LOG.md` | 改 | 本节；「几点注意」顺延为**六十六**（顺序 88 后现为**六十七**，顺序 89 后现为**六十八**） |
+| `docs/FILE-LOG.md` | 改 | 本节；「几点注意」顺延为**六十六**（顺序 88 后现为**六十七**，顺序 89 后现为**六十八**，顺序 90 后现为**六十九**） |
 
 ## 六十六、2026-09-26：顺序 88（审计 B10 流式失败边角）
 
@@ -1312,9 +1312,43 @@ TASKS 第〇节顺序 68。用户裁定「A+B 推进」；原方案里的 `limit
 | `docs/TASKS.md` | 改 | 计划表新增**顺序 89 / 90 / 91** 三行（89 ✅）；新增「顺序 89 怎么处理的」表与四条遗留 |
 | `docs/STATUS.md` | 改 | 顶部新增顺序 89 一节（在顺序 88 之后） |
 | `docs/EVAL.md` | 改 | 新增**第七十九节**（来源与三条裁定、0.4 的三处口径与 v12 三条判断、手动调整、`describeModes`、系统预设、测试清单、五项门禁、六条遗留） |
-| `docs/FILE-LOG.md` | 改 | 本节；「几点注意」顺延为**六十八**（1166 / 1223 / 1252 / 1276 四处的交叉引用补上「顺序 89 后现为**六十八**」） |
+| `docs/FILE-LOG.md` | 改 | 本节；「几点注意」顺延为**六十八**（1166 / 1223 / 1252 / 1276 四处的交叉引用补上「顺序 89 后现为**六十八**」，顺序 90 后现为**六十九**） |
 
-## 六十八、几点注意
+## 六十八、2026-09-26：顺序 90（删掉卡上的场景设定 / 开场白 / 对话示例 / 高级字段，撤下「本场场记」，编辑区不再滑动）
+
+用户当天体验反馈第二批，三条裁定：「彻底删除已有数据」「两个都要（自动长高 + 拖动隔离）」「本场场记整块不显示」。`Card` 一次少 7 个字段，靠迁移 v13 + 三条写入通道上的 `stripRemovedCardFields` 把老数据也清掉。
+
+| 文件 | 动作 | 内容 |
+| --- | --- | --- |
+| `packages/core/src/model/card.ts` | 改 | `Card` 删 `scenario`/`firstMessage`/`alternateGreetings`/`exampleMessages`/`systemPrompt`/`postHistoryInstructions`/`creatorNotes`，删 `resolveCardSystemPrompt()`；新增 `REMOVED_CARD_FIELDS` 与 `stripRemovedCardFields(record)`（无该字段时返回 `null`） |
+| `packages/core/src/storage/repository.ts` | 改 | `SCHEMA_VERSION` 12 → **13**；迁移 v13 剥卡上遗留字段（**不盖 `updatedAt`**、幂等）；`saveCard`/`putSyncRecord`/`listSyncRecords` 三处各剥一次 |
+| `packages/core/src/render/segments.ts` | 改 | 删 `normalizeCardExample()`、`SPEAKER_LABEL`、`normalizeGreetingBreaks()` |
+| `packages/core/src/session/turn.ts` | 改 | 删整段自动开场（`MAX_AUTOMATIC_GREETING_LENGTH`、`GREETING_FIELD_LABELS`、`normalizeGreetingLine`、`prepareAutomaticGreeting`、`createGreetingMessage`）与随之无用的 import |
+| `packages/core/src/session/setup.ts` | 改 | 新世界的场景摘要改成空串 |
+| `packages/core/src/prompt/assemble.ts` | 改 | 人物块不再拼对话示例；基本规则正文走 `options.systemPrompt ?? DEFAULT_CARD_SYSTEM_PROMPT` |
+| `packages/core/src/compat/sillytavern/card.ts` | 改 | 映射删 7 字段、删 `missing-greeting` 警告；**`KNOWN_DATA_KEYS` 七个 key 保留**（删了会被扫进 `extensions` 复活） |
+| `packages/core/src/admin/tools.ts` | 改 | `upsert_character_card` schema 删 5 个 property、`parseCardDraft` 不再解析、`KNOWN_ARGS` 只留六个 |
+| `packages/core/src/admin/prompt.ts` | 改 | 删掉预览里的「开场白」一行 |
+| `apps/web/src/lib/session.ts` | 改 | 删 `buildGreetings` 与两处调用；新对话场景摘要留空 |
+| `apps/web/src/components/CardDesigner.tsx` | 改 | 删场景设定 / 开场白 / 备选开场白 / 对话示例 / 系统提示 / 后置指令与「展开高级字段」折叠块；作者 / 版本 / 标签 / 来源改为直接可见 |
+| `apps/web/src/components/CastDetail.tsx` | 改 | 删「场景：」一行 |
+| `apps/web/src/components/SideChat.tsx` | 改 | 草稿预览从「开场白」改成看「设定」（`description`） |
+| `apps/web/src/components/ScenePanel.tsx` | 改 | 「本场场记」整块撤下（后台整理与提示词注入不变） |
+| `apps/web/src/styles.css` | 改 | 全局 `textarea` 用 `field-sizing: content` + `overflow: hidden` + `overscroll-behavior: contain` + `touch-action: pan-y` + `resize: none`；聊天输入框退回 `field-sizing: fixed`；删 `.recap`/`.recap-text` |
+| `apps/web/tools/world-seed-probe.ts` | 改 | `cardFor()` 不再收 `scenario`（它在 `tsconfig.tools.json` 的 typecheck 范围内） |
+| `packages/core/src/model/card.test.ts` | 改 | +1 条（7 个字段都不在卡上，用 `key in card`） |
+| `packages/core/src/compat/sillytavern/card.test.ts` | 改 | +1 条（带全部 7 键的卡解析后字段不在卡上、`extensions` 仍为 `{}`） |
+| `packages/core/src/admin/tools.test.ts` | 改 | +1 条（5 个字段不再进 schema；再传会被点名为不认得的参数） |
+| `packages/core/src/storage/repository.test.ts` | 改 | +5 条（v13 迁移剥字段且其余原样 / `saveCard` 剥 / `putSyncRecord` 剥 / `listSyncRecords` 剥 / 干净新卡不被无谓重写）；钉死迁移清单的断言补成 `[10, 11, 12, 13]` |
+| 另 9 个 core 测试文件 | 改 | 夹具删掉被删字段的行：`session/turn.test.ts`（截到 157 行，删整个自动开场 `describe`）、`render/segments.test.ts`、`prompt/assemble.test.ts`、`prompt/worldbook-placement.test.ts`、`storage/conversation.test.ts`、`storage/artifact-conflict.test.ts`、`storage/artifact-revoke.test.ts`、`eval/baseline.test.ts`、`eval/extraction-prompt.test.ts`、`eval/prompt-samples.test.ts`、`admin/turn.test.ts` |
+| `docs/ROLEPLAY-PROMPT.md` | 改 | 整篇重写：默认系统提示改成「只有代码一处来源」（`DEFAULT_CARD_SYSTEM_PROMPT`，正文不在文档里重复）、删掉「展开高级字段 → 系统提示」的改法、无限制模式改成「只有开关、无正文」；补一节说明顺序 90 删掉的那 7 个字段去哪了 |
+| `docs/{ADMIN-CONSOLE,DESIGN,LAYOUT,ROADMAP}.md` | 改 | 只加「顺序 90 起……」的注释：管理员看不到卡内容这条边界照旧（开场白已无此字段）、Card 概念行去掉开场白、场记块不再显示 + 场景简介不再来自卡、草稿预览改看 `description`、`scene.summary` 来源改写 |
+| `docs/TASKS.md` | 改 | 计划表第 90 行改 ✅；新增「顺序 90 怎么处理的」表与五条遗留 |
+| `docs/STATUS.md` | 改 | 顶部新增顺序 90 一节（在顺序 89 之前） |
+| `docs/EVAL.md` | 改 | 新增**第八十节**（来源与三条裁定、删了什么、迁移 v13 与三条复活通路、两个都要的落法、测试清单、五项门禁、七条遗留） |
+| `docs/FILE-LOG.md` | 改 | 本节；「几点注意」顺延为**六十九**（1166 / 1223 / 1252 / 1276 四处的交叉引用补上「顺序 90 后现为**六十九**」） |
+
+## 六十九、几点注意
 
 ---
 

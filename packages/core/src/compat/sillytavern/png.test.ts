@@ -194,7 +194,7 @@ describe('importCardFromPng', () => {
     const result = await importCardFromPng(png, 'poet.png');
 
     expect(result.card.name).toBe('炉边诗人');
-    expect(result.card.firstMessage).toBe('要来一杯吗？');
+    expect(result.card.personality).toBe('温和而健谈');
     expect(result.card.tags).toEqual(['酒馆']);
     expect(result.card.source.kind).toBe('png');
     expect(result.card.source.fileName).toBe('poet.png');

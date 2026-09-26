@@ -16,7 +16,7 @@ import { Repository } from './repository.js';
 
 async function repoWithDraft() {
   const repo = new Repository(createMemoryEntityStore());
-  const card = createBlankCard({ name: '酒馆老板', firstMessage: '「进来坐，门我给你留着。」' });
+  const card = createBlankCard({ name: '酒馆老板', description: '话不多，记性好。' });
   const artifact: AdminArtifact = {
     id: 'art-1',
     kind: 'character-card',

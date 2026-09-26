@@ -1,5 +1,5 @@
 import type { ChapterSummary } from '../memory/summary.js';
-import type { Card, WorldBook } from '../model/card.js';
+import { type Card, stripRemovedCardFields, type WorldBook } from '../model/card.js';
 import { type Conversation, defaultConversationModes, restoreInstancesFromSnapshot } from '../model/conversation.js';
 import {
   conversationId as asConversationId,
@@ -43,7 +43,7 @@ import { USAGE_COLLECTION } from './usage.js';
  * 任何会改变已落盘数据结构的改动都要 +1，并补一条 `Migration`。
  * 这是「从第一天就留好升级路径」的具体做法（ROADMAP P0-1）。
  */
-export const SCHEMA_VERSION = 12;
+export const SCHEMA_VERSION = 13;
 
 export const COLLECTIONS = {
   meta: 'meta',
@@ -660,6 +660,35 @@ export const MIGRATIONS: readonly Migration[] = [
       if (migrated.length > 0) await store.bulkPut(COLLECTIONS.instances, migrated);
     },
   },
+  {
+    version: 13,
+    describe: '删掉角色卡上的开场白、场景设定、对话示例与高级字段（顺序 90：用户裁定「彻底删除已有数据」）',
+    run: async (store) => {
+      /*
+       * 用户要的是**彻底删除已有数据**，不是「界面上不再显示」。
+       *
+       * 这些字段一旦留在库里就还有三次复活机会：封存（导出/导入）、同步（远端把老卡推回来）、
+       * 管理员草稿（整卡覆盖）。这三条写入通道已由 `saveCard` / `putSyncRecord` 上的
+       * `stripRemovedCardFields` 堵住，这一条迁移负责把**已经在库里的**清掉。
+       *
+       * 幂等：剥不出东西的记录直接跳过（`stripRemovedCardFields` 返回 null），
+       * 所以中途失败重跑也不会重复写。
+       *
+       * 为什么不盖 `updatedAt`：这不是「用户改过这张卡」，而是把一份已经不该存在的数据
+       * 抹掉。盖上本机时间会让 LWW 把这条卡当成新改动推给别的设备，而对方手里可能还有
+       * 用户刚改的内容。不盖章时两端的记录只在「有没有这些废弃字段」上不同，
+       * 合并时谁都不该因为这件事赢——真要有人同时改了同一张卡，仍按用户那次的更新判定。
+       */
+      const cards = await store.list<Card & { id: string }>(COLLECTIONS.cards);
+      const stripped: Array<Card & { id: string }> = [];
+      for (const card of cards) {
+        const next = stripRemovedCardFields(card);
+        if (next === null) continue;
+        stripped.push({ ...next, id: card.id });
+      }
+      if (stripped.length > 0) await store.bulkPut(COLLECTIONS.cards, stripped);
+    },
+  },
 ];
 
 interface MetaRecord {
@@ -807,7 +836,14 @@ export class Repository {
           ? await this.store.listSince<Record<string, unknown> & { id: string }>(COLLECTIONS[collection], since)
           : await this.store.list<Record<string, unknown> & { id: string }>(COLLECTIONS[collection]);
       for (const row of rows) {
-        const value = collection === 'messages' ? reviveMessage(row as unknown as StoredMessage, deviceId) : row;
+        /*
+         * 顺序 90：出口也剥一次。迁移与本机写入已经把库里的清掉了，理论上这里没有可剥的；
+         * 但换一台还没跑迁移的设备、或「先同步、后迁移」的时序，都可能让老字段从这里
+         * 被推到服务端并长期留在那。剥掉它对正确性没有任何代价（这些字段已无人读），
+         * 却能保证服务端不再新增含废弃字段的卡。
+         */
+        const normalized = collection === 'cards' ? (stripRemovedCardFields(row) ?? row) : row;
+        const value = collection === 'messages' ? reviveMessage(row as unknown as StoredMessage, deviceId) : normalized;
         const updatedAt = typeof value.updatedAt === 'string' ? value.updatedAt : '';
         // 没有时间戳的记录先不参与同步：迁移会补上，硬推出去反而会让对面写进坏数据
         if (updatedAt === '') continue;
@@ -854,8 +890,15 @@ export class Repository {
     if (value === null || typeof value !== 'object' || Array.isArray(value)) {
       throw new Error(`同步记录 ${record.collection}/${record.id} 的内容不是一个对象，拒绝落库。`);
     }
+    /*
+     * 顺序 90：对面那台设备可能还没升级，手里那张卡仍带着已删字段。
+     * 远端记录是**原样**落库的，所以这道门得自己剥一次；否则删掉的字段
+     * 会跟着下一次同步回到这台机器的库里。
+     */
+    const source = value as Record<string, unknown>;
+    const clean = record.collection === 'cards' ? (stripRemovedCardFields(source) ?? source) : source;
     await this.store.put(COLLECTIONS[record.collection], {
-      ...(value as Record<string, unknown>),
+      ...clean,
       id: record.id,
       updatedAt: record.updatedAt,
       deletedAt: record.deletedAt,
@@ -1261,8 +1304,13 @@ export class Repository {
   // ---- 角色卡与世界书（跨房间共用） ----
 
   async saveCard(card: Card): Promise<void> {
+    /*
+     * 顺序 90：所有写卡的通道都从这里过（界面编辑、管理员草稿采纳、封存导入），
+     * 所以剥掉已删字段这一步放在这一处就够 —— 别让老数据从任何一条路复活。
+     */
+    const clean = stripRemovedCardFields(card) ?? card;
     const updatedAt = await this.stampUpdatedAt(COLLECTIONS.cards, card.id);
-    await this.store.put(COLLECTIONS.cards, { ...card, updatedAt, deletedAt: null });
+    await this.store.put(COLLECTIONS.cards, { ...clean, id: card.id, updatedAt, deletedAt: null });
   }
 
   async getCard(id: CardId): Promise<Card | null> {

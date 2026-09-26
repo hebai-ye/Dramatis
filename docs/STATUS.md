@@ -11,7 +11,7 @@
 | 长期路线、优先级、风险 | [ROADMAP.md](./ROADMAP.md) |
 | 用户要的界面长什么样、怎么动 | [LAYOUT.md](./LAYOUT.md) |
 | 怎么验证它能用、真模型跑出来的结论 | [EVAL.md](./EVAL.md) |
-| 角色卡默认系统提示与修改位置 | [ROLEPLAY-PROMPT.md](./ROLEPLAY-PROMPT.md) |
+| 默认系统提示（「基本规则」）的正文与改法 | [ROLEPLAY-PROMPT.md](./ROLEPLAY-PROMPT.md) |
 | 账号与同步怎么定、协议长什么样 | [SYNC.md](./SYNC.md) |
 | 服务器管理台怎么安全地管密文空间 | [ADMIN-CONSOLE.md](./ADMIN-CONSOLE.md) |
 | 架构与数据模型的原始设计 | [DESIGN.md](./DESIGN.md) |
@@ -38,6 +38,19 @@
 - **备份**：部署前手动快照 `/var/backups/dramatis/sync.db.2026-09-26T10-29-24-733Z.bak`（1 814 528 B）；nginx 站点配置留了 `dramatis.bak-20260926-182924`（部署前）与 `dramatis.bak-headers-20260926-183113`（加安全头前）；每 6 小时的 cron 备份（`/etc/cron.d/dramatis-sync`，以 `dramatis` 用户跑）照旧。
 - **没验的**：真机 / 真模型一律没动（归 Codex）；`manifest.webmanifest` 的 MIME 仍是 `application/octet-stream`（nginx 的 `mime.types` 里没有 `webmanifest`，本轮没改）；CSP 仍是 Report-Only，要灰度几天再切正式。
 - **教训**：**别把 `deploy/` 整个 `scp` 上服务器**——本轮把 `deploy/LOCAL-NOTES.md`（本地私有、含敏感内容）一起拷上去了，发现后已从服务器删除，并把旧的 `deploy.old-*` 备份目录一并清掉。
+
+### 2026-09-26：顺序 90 落进 main（体验反馈第二批：删掉卡上的场景设定 / 开场白 / 高级字段 / 对话示例，「本场场记」整块撤下，编辑区不再滑动）
+
+- **来源**：用户当天体验反馈第二批。原话要点：「请将开场白删除，将场景设定删除，高级字段(角色卡中的)以及对话示例删除。并且玩家可编辑的各区域(如角色卡的各种可编辑区域，不止角色卡)不可滑动」「面板中的本场场记如果展现出来过于繁杂请不显示」。三条裁定：字段裁剪 = **「彻底删除已有数据」**；不可滑动 = **「两个都要」**（编辑区随内容自动长高 **+** 拖动隔离）；本场场记 = **「整块不显示」**。世界书与各模式的高级字段**不在**删除清单里（用户明确写「角色卡中的」）。
+- **卡上删掉 7 个字段**（`packages/core/src/model/card.ts`）：`scenario`、`firstMessage`、`alternateGreetings`、`exampleMessages`、`systemPrompt`、`postHistoryInstructions`、`creatorNotes`；`resolveCardSystemPrompt()` 一并删掉。剩下的名字 / 昵称 / 描述 / 性格 / 作者 / 版本 / 标签 / 世界书 / 来源照旧。「基本规则」那一块固定由 `DEFAULT_CARD_SYSTEM_PROMPT` 提供（顺序 89 换上的那套用户预设），**卡不再各带一份系统提示**——这正是「所有对话都强制用同一套预设」的落地方式。
+- **消费端全部断开**：`session/turn.ts` 删掉整段自动开场（`MAX_AUTOMATIC_GREETING_LENGTH = 380`、`GREETING_FIELD_LABELS`、`normalizeGreetingLine`、`prepareAutomaticGreeting`、`createGreetingMessage`，文件从 ~290 行缩到 205 行），`apps/web/src/lib/session.ts` 删掉 `buildGreetings` 与两处调用——新对话不再自动生成角色开场消息，白纸由用户先开口；`render/segments.ts` 删掉 `normalizeCardExample()`、`SPEAKER_LABEL`、`normalizeGreetingBreaks()`；`prompt/assemble.ts` 的人物块不再拼「对话风格示例」；`session/setup.ts` 的世界场景摘要改成空串。
+- **彻底删除已有数据**：`SCHEMA_VERSION` 12 → **13**，迁移遍历 `cards` 用 `stripRemovedCardFields`（新增在 `model/card.ts`，配 `REMOVED_CARD_FIELDS`）剥掉 7 个键，**有意不盖 `updatedAt`**——那不是「用户改过这张卡」，盖上本机时间会让 LWW 把一份废弃数据当成新改动推给别的设备；`stripRemovedCardFields` 对「本来就没有这些键」的记录返回 `null`，迁移据此跳过写入（幂等）。
+- **三条复活通路一起堵**：① 写卡唯一通道 `repository.saveCard`（界面编辑、管理员草稿采纳、封存导入都走它）；② 同步落库口 `putSyncRecord`（对面那台没升级的设备推来的老卡）；③ 同步出口 `listSyncRecords`（保证含废弃字段的卡不再被推到服务端）。导入层 `compat/sillytavern/card.ts` 的 `KNOWN_DATA_KEYS` 里那 7 个 key **必须留着**——删了反而会把原值扫进 `extensions`「复活」。
+- **界面**：`CardDesigner.tsx` 删掉场景设定 / 开场白 / 备选开场白 / 对话示例 / 系统提示 / 后置指令与整个「展开高级字段」折叠块（作者 / 版本 / 标签 / 来源改为直接可见）；`CastDetail.tsx` 删「场景：」一行；`SideChat.tsx` 草稿预览从「开场白」改成看「设定」（`description`）；`ScenePanel.tsx` 把「本场场记」整块撤下（`.recap`/`.recap-text` 样式一并删）——**场记仍在后台照常整理、仍进提示词**，「场记覆盖后收起远处原文」那个模式开关也照旧。
+- **可编辑区域不再滑动（两个都要）**：`apps/web/src/styles.css` 的全局 `textarea` 改成 `field-sizing: content`（随内容长高）+ `overflow: hidden`（不出现内滚动条）+ `resize: none`，拖动隔离用 `overscroll-behavior: contain` + `touch-action: pan-y`；聊天输入框是唯一例外（高度由组件按 `scrollHeight` 量、到 200px 上限要能内滚），在那条规则里退回 `field-sizing: fixed`。
+- **测试**：core 侧改了 21 个文件（12 个新增/改写用例文件 + 9 个夹具删行）；新增 16 条：`model/card.test.ts` 断言 7 个字段都不在卡上、`compat/sillytavern/card.test.ts`（带全部 7 键的卡解析后 `extensions` 仍是 `{}`）、`admin/tools.test.ts`（5 个字段不再进工具声明、模型还在传会被点名为「不认得的参数」）、`storage/repository.test.ts` +5（v13 迁移剥字段且其余原样、`saveCard` 剥、`putSyncRecord` 剥、`listSyncRecords` 剥、干净新卡不被无谓重写）。
+- **五项门禁全绿**：typecheck ✓、lint ✓（281 文件，0 error / 0 warning）、test ✓（Core **70 文件 / 809 条**、Web 13 文件 / 45 条；比顺序 89 少 11 条是删掉了开场白相关用例、多 5 条是 v13）、build ✓（`dist/assets/index-D2eEP_2v.js` 646.62 kB / gzip 204.15 kB、css `index-CmI7ar9V.css` 38.28 kB）、build:sync-server ✓。（第一轮 lint 出 5 个 format error + 4 个 warning，全在本批改过的行上，`biome check --write` 就地修好。）
+- **遗留**：① 更早版本导入的卡可能把同名副本留在 `extensions` 里，v13 只剥顶层键、没动 `extensions` 内部；② 管理员工具不再收这 5 个字段，模型再传会被回显为「不认得的参数」（旧草稿里的字段在采纳时被 `saveCard` 顺手剥掉、不报错）；③ 导入老卡后新对话是空白的（用户要的正是删开场白，属预期）；④ `field-sizing: content` 需要 Chrome 123+，不支持的浏览器只是「不自动长高」；⑤ 顺序 89 的四条遗留仍在（无限制提示词换设备后无法重配、负好感不能拖、迁移只提「未动过」的关系边、真机没验）。**本批未 push、未部署**（内核 + 界面改动，已部署的旧产物不受影响，跟着下次上线走）。
 
 ### 2026-09-26：顺序 89 落进 main（用户体验反馈第一批：初始好感 40% + 手动滑杆 + 各模式真的落到提示词 + 默认系统提示换成用户的系统预设）
 

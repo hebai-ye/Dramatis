@@ -96,7 +96,8 @@ export function createWorldFromCard(card: Card, persona: Persona): World {
   });
   const scene = createSceneFor(roomIdValue, conversation.id, [instance.id], {
     title: '开场',
-    summary: card.scenario.trim(),
+    // 顺序 90：卡级「场景设定」已删，场景摘要开成空串，由用户在手场面板里写。
+    summary: '',
   });
   const now = nowIso();
 

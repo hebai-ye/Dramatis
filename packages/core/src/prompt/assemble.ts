@@ -7,12 +7,7 @@ import {
   renderAttachmentExpansion,
 } from '../memory/attachment.js';
 import type { ChapterSummary } from '../memory/summary.js';
-import {
-  type Card,
-  DEFAULT_CARD_SYSTEM_PROMPT,
-  resolveCardSystemPrompt,
-  type WorldBookPosition,
-} from '../model/card.js';
+import { type Card, DEFAULT_CARD_SYSTEM_PROMPT, type WorldBookPosition } from '../model/card.js';
 import {
   type ConversationModes,
   type HistoryPolicy,
@@ -25,7 +20,7 @@ import type { Affect, CharacterInstance, TraitAxis } from '../model/instance.js'
 import type { Message } from '../model/message.js';
 import type { Room, Scene } from '../model/room.js';
 import { INTENT_FORMAT_RULE } from '../render/intent.js';
-import { ACTION_FORMAT_EXAMPLES, ACTION_FORMAT_RULE, normalizeCardExample } from '../render/segments.js';
+import { ACTION_FORMAT_EXAMPLES, ACTION_FORMAT_RULE } from '../render/segments.js';
 import { heuristicTokenCounter, type TokenCounter } from '../token/estimate.js';
 import { applyBudget, MESSAGE_OVERHEAD_TOKENS, structuralOverhead } from './budget.js';
 import { expandHistoryOnMention, partitionHistory, selectHistoryFor } from './history.js';
@@ -310,14 +305,6 @@ function buildPersonaBlock(card: Card, instance: CharacterInstance): PromptBlock
 
   const traits = describeTraits(instance.traits);
   if (traits !== '') parts.push(`性格倾向：${traits}`);
-
-  // 卡里的示例要先归一化成我们自己的写法：它是模型最愿意模仿的示范，
-  // 而老卡片的写法（动作挤在对白后、回复开头挂名字）正好与约定相反
-  const examples = truncate(
-    normalizeCardExample(card.exampleMessages, [card.name, card.nickname, instance.displayName]),
-    1200,
-  );
-  if (examples !== '') parts.push(`对话风格示例：\n${escapeSectionHeadings(examples)}`);
 
   const compressed = [
     `你现在扮演的是「${instance.displayName}」。`,
@@ -802,10 +789,13 @@ export function assemblePrompt(input: AssembleInput): AssembledPrompt {
   // 身份是本轮不可丢的约束，限住长度以免一张极长身份卡挤爆提示词预算。
   const playerDescription = truncate(input.player?.description ?? input.room.playerPersona, 320);
 
-  const systemContent = options.systemPrompt ?? resolveCardSystemPrompt(input.card.systemPrompt);
-  const compressDefaultSystem =
-    options.systemPrompt === undefined &&
-    (input.card.systemPrompt.trim() === '' || input.card.systemPrompt === DEFAULT_CARD_SYSTEM_PROMPT);
+  /*
+   * 顺序 90：角色卡不再自带系统提示，这一段固定由 `DEFAULT_CARD_SYSTEM_PROMPT` 提供
+   * （用户裁定「所有对话都强制用新预设」）。`options.systemPrompt` 仍留给调用方覆盖，
+   * 但目前生产路径没人传。
+   */
+  const systemContent = options.systemPrompt ?? DEFAULT_CARD_SYSTEM_PROMPT;
+  const compressDefaultSystem = options.systemPrompt === undefined;
 
   const blocks: PromptBlock[] = [
     {

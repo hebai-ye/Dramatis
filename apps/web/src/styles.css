@@ -266,7 +266,25 @@ textarea {
 }
 
 textarea {
-  resize: vertical;
+  /*
+   * 顺序 90（用户裁定「两个都要」）：可编辑区域不许滑动。
+   *
+   * 一、随内容自动长高。`field-sizing: content` 让 textarea 跟着内容长，
+   *     而不是在内部出现一条滚动条；不认这个属性的浏览器仍按 `rows` 显示，
+   *     下面的 `overflow: hidden` 保证「长出来的部分被裁掉」而不是给一条内滚条。
+   *     两个都写上：支持的浏览器（Chrome 123+）拿到自动长高，其余至少不出现内滚动。
+   */
+  field-sizing: content;
+  overflow: hidden;
+  /*
+   * 二、拖动隔离。在编辑区里拖选文字时，滚动不该顺着父容器往下传
+   *     （`overscroll-behavior`），也不该把父容器一起拖走（`touch-action`）。
+   *     鼠标拖选仍是浏览器原生行为，不受影响。
+   */
+  overscroll-behavior: contain;
+  touch-action: pan-y;
+  /* 手动拉角改高度会把人拽进「拖到一半高度变了」的状态；自动长高之后它也不需要了 */
+  resize: none;
 }
 
 input:focus,
@@ -566,25 +584,14 @@ button.ghost:focus-visible {
 
 /* ---------- 分层摘要（P1-5） ---------- */
 
-.recap {
-  border-top: 1px dashed var(--line);
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  padding-top: 10px;
-}
+/*
+ * 顺序 90：`.recap` / `.recap-text` 的样式随「本场场记」那一块一起删掉了
+ * （用户裁定整块不显示）。场记本身照旧在后台生成、照旧进提示词。
+ */
 
-.recap h3,
 .chapter-block h3 {
   font-size: 12px;
   margin: 0;
-}
-
-.recap-text {
-  background: var(--surface-2, transparent);
-  line-height: 1.6;
-  margin: 0;
-  white-space: pre-wrap;
 }
 
 .chapter-block {
@@ -1372,10 +1379,15 @@ button.ghost:focus-visible {
 /*
  * 输入框自己不画边框：盒子里再套一个方框就回到了改之前的样子。
  * 高度由组件按内容量出来（scrollHeight，最多 200px），所以这里禁掉手动拖拽。
+ *
+ * 顺序 90：全局的 `textarea` 现在是「随内容自动长高 + 不出现内滚动条」，
+ * 但这条输入框的高度由组件自己按 `scrollHeight` 算（到 200px 上限后**要**能内滚），
+ * 所以在这里把它退回固定尺寸模式——否则两套机制会互相打架。
  */
 .composer-box textarea {
   background: transparent;
   border: none;
+  field-sizing: fixed;
   font-size: 14px;
   line-height: 1.55;
   min-height: 44px;

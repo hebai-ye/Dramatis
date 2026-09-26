@@ -51,15 +51,6 @@ export const ADMIN_TOOLS: readonly ToolDefinition[] = [
           nickname: { type: 'string', description: '角色对玩家的自称，可留空' },
           description: { type: 'string', description: '外貌、身份、来头' },
           personality: { type: 'string', description: '性格' },
-          scenario: { type: 'string', description: '出场场景设定' },
-          firstMessage: { type: 'string', description: '开场白' },
-          alternateGreetings: {
-            type: 'array',
-            items: { type: 'string' },
-            description: '备选开场白：用户开新对话时可以挑一条',
-          },
-          exampleMessages: { type: 'string', description: '对话风格示例' },
-          systemPrompt: { type: 'string', description: '额外的人设指令，可留空' },
           tags: { type: 'array', items: { type: 'string' }, description: '标签' },
         },
       },
@@ -252,7 +243,7 @@ function mentioned(args: Record<string, unknown>, key: string): boolean {
 /**
  * 取一段自由文本，容忍模型把多行内容写成数组。
  *
- * 真实模型验证里 `exampleMessages` 就被写成了字符串数组（其实是它更自然的表达）。
+ * 模型把多行内容写成数组是很自然的表达（真实模型验证里出现过）。
  * 严格只认字符串的话，这段内容会被**静默丢掉**——用户看不到，也不会报错，
  * 这是最坏的一种失败方式。所以这里把数组按行拼回来，而不是挑剔它的形状。
  */
@@ -299,9 +290,6 @@ function parseCardDraft(args: Record<string, unknown>, context: AdminToolContext
   if (description === '') return { ok: false, error: 'description 不能为空' };
 
   // 数组型字段：给了就整份替换（空数组 = 清空），没给就保持原样
-  const alternateGreetings = Array.isArray(args.alternateGreetings)
-    ? args.alternateGreetings.map((item) => text(item)).filter((item) => item !== '')
-    : (base?.alternateGreetings ?? []);
   const tags = Array.isArray(args.tags)
     ? args.tags.map((item) => text(item)).filter((item) => item !== '')
     : (base?.tags ?? []);
@@ -313,23 +301,12 @@ function parseCardDraft(args: Record<string, unknown>, context: AdminToolContext
     nickname: pick('nickname', base?.nickname ?? ''),
     description,
     personality: pick('personality', base?.personality ?? ''),
-    scenario: pick('scenario', base?.scenario ?? ''),
-    firstMessage: pick('firstMessage', base?.firstMessage ?? ''),
-    alternateGreetings,
-    exampleMessages: pick('exampleMessages', base?.exampleMessages ?? ''),
     tags,
   };
 
   /*
-   * `systemPrompt` 单独处理：新建且模型没写时，让它拿 `createBlankCard` 的默认模板；
-   * 修改时显式传空串表示**清空**（一张卡不要额外指令是合理要求，这与新建的语义不同）。
-   */
-  const systemPrompt = mentioned(args, 'systemPrompt') ? longText(args.systemPrompt) : null;
-  if (systemPrompt !== null && (systemPrompt !== '' || base !== null)) patch.systemPrompt = systemPrompt;
-
-  /*
    * 修改时整张卡**以原卡为底**合上去：没提到的字段（`createdAt`、`source`、
-   * `postHistoryInstructions`、`extensions`……）原样留着。这就是审计 B6 的修法——
+   * `extensions`……）原样留着。这就是审计 B6 的修法——
    * 以前无论新建还是修改都从一张空白卡起，模型没提到的字段会被空值覆盖。
    */
   const card: Card =
@@ -529,21 +506,15 @@ function parseSceneDraft(args: Record<string, unknown>): AdminToolParseResult {
  * 返回的是结果而不是抛异常：**校验失败也是一条要回填给模型的工具结果**。
  * 模型看到「cardId 不存在」就会改用新建，这比在界面上弹一个错误有用得多。
  */
-/** 每件工具认得的参数（多出来的会在结果里回填给模型；顺序 67）。 */
+/**
+ * 每件工具认得的参数（多出来的会在结果里回填给模型；顺序 67）。
+ *
+ * 顺序 90：`scenario` / `firstMessage` / `alternateGreetings` / `exampleMessages` /
+ * `systemPrompt` 已从卡上删掉，这里也一并移出——模型若还在传，会作为「不认得的参数」
+ * 回填给它，让它改掉；列在这里反而会让它以为这些字段仍然有效。
+ */
 const KNOWN_ARGS: Record<AdminToolName, readonly string[]> = {
-  upsert_character_card: [
-    'name',
-    'cardId',
-    'description',
-    'nickname',
-    'personality',
-    'scenario',
-    'firstMessage',
-    'alternateGreetings',
-    'exampleMessages',
-    'systemPrompt',
-    'tags',
-  ],
+  upsert_character_card: ['name', 'cardId', 'description', 'nickname', 'personality', 'tags'],
   upsert_world_book: ['name', 'bookId', 'entries'],
   upsert_persona: ['name', 'description', 'personaId'],
   delete_persona: ['personaId', 'confirmName'],

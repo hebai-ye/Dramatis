@@ -79,11 +79,8 @@ describe('过期草稿（审计 B6）', () => {
     const baseUpdatedAt = stored?.updatedAt ?? null;
     expect(baseUpdatedAt).not.toBeNull();
 
-    // 管理员按这一版起草：加一句开场白、改性格
-    const artifact = cardArtifact(
-      { ...(stored as Card), personality: '爽朗', firstMessage: '欢迎光临。' },
-      baseUpdatedAt,
-    );
+    // 管理员按这一版起草：加一句性格描述、换个自称
+    const artifact = cardArtifact({ ...(stored as Card), personality: '爽朗', nickname: '掌柜' }, baseUpdatedAt);
     const message = await adminMessage(repository, [artifact]);
 
     // 用户在采纳之前自己改了一次（改了自称）
@@ -95,10 +92,9 @@ describe('过期草稿（审计 B6）', () => {
     expect(result?.artifact?.conflict).toContain('又被改过');
     expect(result?.artifact?.targetId).toBeNull();
 
-    // 库里还是用户改后的样子：草稿里的开场白与性格没有盖上去
+    // 库里还是用户改后的样子：草稿里的性格与自称没有盖上去
     const current = await repository.getCard(base.id);
     expect(current?.nickname).toBe('老板');
-    expect(current?.firstMessage).toBe('');
     expect(current?.personality).toBe('');
   });
 
@@ -108,7 +104,7 @@ describe('过期草稿（审计 B6）', () => {
     await repository.saveCard(base);
     const stored = (await repository.getCard(base.id)) as Card;
 
-    const artifact = cardArtifact({ ...stored, firstMessage: '欢迎光临。' }, stored.updatedAt);
+    const artifact = cardArtifact({ ...stored, personality: '爽朗' }, stored.updatedAt);
     const message = await adminMessage(repository, [artifact]);
     await repository.saveCard({ ...stored, nickname: '老板' });
 
@@ -125,14 +121,14 @@ describe('过期草稿（审计 B6）', () => {
     await repository.saveCard(base);
     const stored = (await repository.getCard(base.id)) as Card;
 
-    const artifact = cardArtifact({ ...stored, firstMessage: '欢迎光临。' }, stored.updatedAt);
+    const artifact = cardArtifact({ ...stored, nickname: '老板' }, stored.updatedAt);
     const message = await adminMessage(repository, [artifact]);
 
     const result = await repository.adoptAdminArtifact(message.id, artifact.id);
 
     expect(result?.artifact?.status).toBe('adopted');
     expect(result?.artifact?.conflict).toBeUndefined();
-    expect((await repository.getCard(base.id))?.firstMessage).toBe('欢迎光临。');
+    expect((await repository.getCard(base.id))?.nickname).toBe('老板');
   });
 
   it('新建类草稿没有底版本，永远算「不冲突」', async () => {
@@ -153,7 +149,7 @@ describe('过期草稿（审计 B6）', () => {
     await repository.saveCard(base);
     const stored = (await repository.getCard(base.id)) as Card;
 
-    const artifact = cardArtifact({ ...stored, firstMessage: '欢迎光临。' }, stored.updatedAt);
+    const artifact = cardArtifact({ ...stored, personality: '爽朗' }, stored.updatedAt);
     const message = await adminMessage(repository, [artifact]);
     await repository.deleteCard(base.id);
 

@@ -10,7 +10,6 @@ import {
   type CharacterInstance,
   type Conversation,
   type ConversationId,
-  createGreetingMessage,
   createPersona,
   defaultTravelCast,
   type EventId,
@@ -348,34 +347,6 @@ export function useSession(db: DramatisDb | null): SessionApi {
     setPersonas(await db.repository.listPersonas());
   }, [db]);
 
-  /**
-   * 开一条新对话时，让场上的角色先开口。
-   *
-   * 卡从仓储层现取而不是从 React 状态取：刚导入的卡可能还没进 state，
-   * 而开场白写不写得起取决于能不能拿到那张卡。
-   */
-  const buildGreetings = useCallback(
-    async (room: Room, scene: Scene | null, instances: readonly CharacterInstance[]): Promise<Message[]> => {
-      if (!db) return [];
-
-      const greetings: Message[] = [];
-      for (const instance of instances) {
-        const card = await db.repository.getCard(instance.cardId);
-        if (!card) continue;
-        const greeting = createGreetingMessage({
-          card,
-          instance,
-          room,
-          scene,
-          audience: scene?.cast ?? [instance.id],
-        });
-        if (greeting) greetings.push(greeting);
-      }
-      return greetings;
-    },
-    [db],
-  );
-
   const reloadWorld = useCallback(async () => {
     const current = snapshotRef.current;
     if (!db || !current) return;
@@ -489,7 +460,8 @@ export function useSession(db: DramatisDb | null): SessionApi {
         title: input.conversationTitle?.trim() || '开场',
         cards,
         sceneTitle: input.sceneTitle?.trim() || '开场',
-        sceneSummary: cards[0]?.scenario.trim() ?? '',
+        // 顺序 90：卡上的「场景设定」已删，新对话的场景摘要留空由用户自己写
+        sceneSummary: '',
         location: input.location ?? '',
         worldTime: input.worldTime ?? '',
       });
@@ -503,17 +475,13 @@ export function useSession(db: DramatisDb | null): SessionApi {
       });
       await db.repository.setMeta(META_KEYS.lastRoomId, plan.room.id);
 
-      for (const greeting of await buildGreetings(plan.room, plan.scene, plan.createdInstances)) {
-        await db.repository.appendMessages(plan.room.id, [greeting]);
-      }
-
       const loaded = await db.repository.loadRoom(plan.room.id);
       setSnapshot(loaded);
       await refreshWorlds();
       await refreshLibrary();
       return plan.room.id;
     },
-    [buildGreetings, db, refreshLibrary, refreshWorlds, setSnapshot],
+    [db, refreshLibrary, refreshWorlds, setSnapshot],
   );
 
   const deleteWorld = useCallback(
@@ -650,14 +618,7 @@ export function useSession(db: DramatisDb | null): SessionApi {
         await db.repository.saveInstance(instance);
       }
 
-      // 开幕由场上的角色开场：新对话是一片空白的白纸，什么都不摆会更让人无措
-      const openingCast = [...current.instances, ...plan.createdInstances].filter((instance) =>
-        plan.scene.cast.includes(instance.id),
-      );
-      const greetings = await buildGreetings(room, plan.scene, openingCast);
-      for (const greeting of greetings) {
-        await db.repository.appendMessages(room.id, [greeting]);
-      }
+      // 顺序 90：开场白已从卡上删掉，新对话不再自动生成角色开场消息
 
       const loaded = await db.repository.loadRoom(room.id);
       setSnapshot(loaded);
@@ -665,7 +626,7 @@ export function useSession(db: DramatisDb | null): SessionApi {
       await refreshLibrary();
       return { conversation: plan.conversation, attachments };
     },
-    [buildGreetings, db, refreshLibrary, refreshWorlds, setSnapshot],
+    [db, refreshLibrary, refreshWorlds, setSnapshot],
   );
 
   const openSideConversation = useCallback(async (): Promise<Conversation | null> => {

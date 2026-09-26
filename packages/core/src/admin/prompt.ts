@@ -62,7 +62,6 @@ function describeLibrary(
               card.nickname.trim() === '' ? '' : `自称 ${card.nickname.trim()}`,
               preview(card.description),
               card.personality.trim() === '' ? '' : `性格 ${preview(card.personality)}`,
-              card.firstMessage.trim() === '' ? '' : `开场白 ${preview(card.firstMessage)}`,
             ].filter((item) => item !== '');
             return `- ${card.name}（id: ${card.id}）：${fields.join('；')}`;
           })

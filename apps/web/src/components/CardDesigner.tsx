@@ -1,4 +1,4 @@
-import { type Card, type CardId, createBlankCard, resolveCardSystemPrompt } from '@dramatis/core';
+import { type Card, type CardId, createBlankCard } from '@dramatis/core';
 import { useEffect, useRef, useState } from 'react';
 import { avatarOf, PORTRAITS, portraitOf } from '../lib/portraits';
 import { AvatarCropper } from './AvatarCropper';
@@ -9,46 +9,6 @@ interface Props {
   disabled: boolean;
   onSave: (card: Card) => void;
   onDelete: (id: CardId) => void;
-}
-
-function ListEditor({
-  values,
-  onChange,
-  disabled,
-}: {
-  values: string[];
-  onChange: (next: string[]) => void;
-  disabled: boolean;
-}) {
-  return (
-    <div className="list-editor">
-      {values.map((value, index) => (
-        <div className="inline" key={`${String(index)}-${value.slice(0, 8)}`}>
-          <textarea
-            rows={2}
-            value={value}
-            disabled={disabled}
-            onChange={(event) => {
-              const next = [...values];
-              next[index] = event.target.value;
-              onChange(next);
-            }}
-          />
-          <button
-            type="button"
-            className="ghost danger"
-            disabled={disabled}
-            onClick={() => onChange(values.filter((_, position) => position !== index))}
-          >
-            删
-          </button>
-        </div>
-      ))}
-      <button type="button" className="ghost" disabled={disabled} onClick={() => onChange([...values, ''])}>
-        ＋ 添加一条
-      </button>
-    </div>
-  );
 }
 
 /**
@@ -63,7 +23,6 @@ function ListEditor({
 export function CardDesigner({ cards, disabled, onSave, onDelete }: Props) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [draft, setDraft] = useState<Card | null>(null);
-  const [showAdvanced, setShowAdvanced] = useState(false);
   const [showPortraits, setShowPortraits] = useState(false);
   const [cropSource, setCropSource] = useState<File | string | null>(null);
   const [imageError, setImageError] = useState<string | null>(null);
@@ -77,11 +36,7 @@ export function CardDesigner({ cards, disabled, onSave, onDelete }: Props) {
       setDraft(null);
       return;
     }
-    setDraft((previous) =>
-      previous?.id === selected.id
-        ? previous
-        : { ...selected, systemPrompt: resolveCardSystemPrompt(selected.systemPrompt) },
-    );
+    setDraft((previous) => (previous?.id === selected.id ? previous : { ...selected }));
   }, [selected]);
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: selectedId 是触发器——换一张卡就把上一张的裁切草稿与错误清掉，代码里不需要读它的值
@@ -307,126 +262,54 @@ export function CardDesigner({ cards, disabled, onSave, onDelete }: Props) {
             />
           </label>
 
-          <label>
-            场景设定
-            <textarea
-              rows={3}
-              value={draft.scenario}
-              disabled={disabled}
-              placeholder="开新世界时会填进场景"
-              onChange={(event) => patch({ scenario: event.target.value })}
-              onBlur={commit}
-            />
-          </label>
-
-          <label>
-            开场白
-            <textarea
-              rows={3}
-              value={draft.firstMessage}
-              disabled={disabled}
-              onChange={(event) => patch({ firstMessage: event.target.value })}
-              onBlur={commit}
-            />
-          </label>
-
-          <div>
-            <p className="hint">备选开场白（每次开新世界会随机遇到不同的开场）</p>
-            <ListEditor
-              values={draft.alternateGreetings}
-              disabled={disabled}
-              onChange={(next) => {
-                // 列表的增删是离散操作，直接落盘；
-                // patch 之后再 commit 会读到旧草稿，所以这里显式传新值
-                const updated = { ...draft, alternateGreetings: next };
-                setDraft(updated);
-                onSave(updated);
-              }}
-            />
+          {/*
+            顺序 90：场景设定、开场白、备选开场白、对话示例、系统提示与后置指令都被删了
+            （用户裁定「彻底删除已有数据」）。下面这些是卡上还剩的元信息——它们不再藏在
+            「展开高级字段」后面：能被编辑的字段本来就都该看得见。
+          */}
+          <div className="grid-2">
+            <label>
+              作者
+              <input
+                type="text"
+                value={draft.creator}
+                disabled={disabled}
+                onChange={(event) => patch({ creator: event.target.value })}
+                onBlur={commit}
+              />
+            </label>
+            <label>
+              版本
+              <input
+                type="text"
+                value={draft.characterVersion}
+                disabled={disabled}
+                onChange={(event) => patch({ characterVersion: event.target.value })}
+                onBlur={commit}
+              />
+            </label>
           </div>
-
-          <button type="button" className="ghost" onClick={() => setShowAdvanced((value) => !value)}>
-            {showAdvanced ? '收起高级字段' : '展开高级字段'}
-          </button>
-
-          {showAdvanced ? (
-            <>
-              <label>
-                对话示例
-                <textarea
-                  rows={4}
-                  value={draft.exampleMessages}
-                  disabled={disabled}
-                  placeholder="用来固定说话方式的样例对话"
-                  onChange={(event) => patch({ exampleMessages: event.target.value })}
-                  onBlur={commit}
-                />
-              </label>
-              <label>
-                系统提示（覆盖默认规则）
-                <textarea
-                  rows={3}
-                  value={draft.systemPrompt}
-                  disabled={disabled}
-                  onChange={(event) => patch({ systemPrompt: event.target.value })}
-                  onBlur={commit}
-                />
-              </label>
-              <label>
-                后置指令
-                <textarea
-                  rows={2}
-                  value={draft.postHistoryInstructions}
-                  disabled={disabled}
-                  onChange={(event) => patch({ postHistoryInstructions: event.target.value })}
-                  onBlur={commit}
-                />
-              </label>
-              <div className="grid-2">
-                <label>
-                  作者
-                  <input
-                    type="text"
-                    value={draft.creator}
-                    disabled={disabled}
-                    onChange={(event) => patch({ creator: event.target.value })}
-                    onBlur={commit}
-                  />
-                </label>
-                <label>
-                  版本
-                  <input
-                    type="text"
-                    value={draft.characterVersion}
-                    disabled={disabled}
-                    onChange={(event) => patch({ characterVersion: event.target.value })}
-                    onBlur={commit}
-                  />
-                </label>
-              </div>
-              <label>
-                标签（用逗号分隔）
-                <input
-                  type="text"
-                  value={draft.tags.join('、')}
-                  disabled={disabled}
-                  onChange={(event) =>
-                    patch({
-                      tags: event.target.value
-                        .split(/[,，、]/)
-                        .map((tag) => tag.trim())
-                        .filter((tag) => tag !== ''),
-                    })
-                  }
-                  onBlur={commit}
-                />
-              </label>
-              <p className="hint">
-                来源：{draft.source.spec}
-                {draft.source.specVersion !== '' ? ` v${draft.source.specVersion}` : ''}
-              </p>
-            </>
-          ) : null}
+          <label>
+            标签（用逗号分隔）
+            <input
+              type="text"
+              value={draft.tags.join('、')}
+              disabled={disabled}
+              onChange={(event) =>
+                patch({
+                  tags: event.target.value
+                    .split(/[,，、]/)
+                    .map((tag) => tag.trim())
+                    .filter((tag) => tag !== ''),
+                })
+              }
+              onBlur={commit}
+            />
+          </label>
+          <p className="hint">
+            来源：{draft.source.spec}
+            {draft.source.specVersion !== '' ? ` v${draft.source.specVersion}` : ''}
+          </p>
 
           <div className="inline">
             <button type="button" disabled={disabled} onClick={commit}>

@@ -318,8 +318,9 @@ function must<T>(value: T | undefined | null): T {
   return value;
 }
 
-function cardFor(name: string, description: string, scenario: string) {
-  return createBlankCard({ name, nickname: name, description, scenario, personality: '寡言，做事先看一步。' });
+// 顺序 90：卡上的「场景设定」已删，所以这里不再收 scenario 参数
+function cardFor(name: string, description: string) {
+  return createBlankCard({ name, nickname: name, description, personality: '寡言，做事先看一步。' });
 }
 
 function messageOf(input: {
@@ -383,9 +384,9 @@ async function main(): Promise<void> {
   await repository.savePersona(persona);
 
   const cards = [
-    cardFor('秦娘', '货栈掌柜，四十上下，管着半个码头的账。', '雨夜，货栈里只剩下三个人。'),
-    cardFor('小满', '船家女，十七八岁，眼睛比记性好。', '雨夜，货栈里只剩下三个人。'),
-    cardFor('陈九', '账房先生，三十出头，手稳，话少。', '雨夜，货栈里只剩下三个人。'),
+    cardFor('秦娘', '货栈掌柜，四十上下，管着半个码头的账。'),
+    cardFor('小满', '船家女，十七八岁，眼睛比记性好。'),
+    cardFor('陈九', '账房先生，三十出头，手稳，话少。'),
   ];
   for (const card of cards) await repository.saveCard(card);
 

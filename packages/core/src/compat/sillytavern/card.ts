@@ -1,4 +1,4 @@
-import { type Card, type CardSource, DEFAULT_CARD_SYSTEM_PROMPT } from '../../model/card.js';
+import type { Card, CardSource } from '../../model/card.js';
 import { cardId, nowIso } from '../../model/ids.js';
 import { asRecord, str } from '../../util/json.js';
 import type { Inflate } from './inflate.js';
@@ -21,7 +21,13 @@ export class CardImportError extends Error {
   }
 }
 
-/** V2 / V3 规范中 `data` 字段下的已知键；V1 是平铺的同名字段。 */
+/**
+ * V2 / V3 规范中 `data` 字段下的已知键；V1 是平铺的同名字段。
+ *
+ * 顺序 90 删掉了卡上的开场白、场景设定、对话示例与高级字段，但**这些键必须继续留在这里**：
+ * 不在集合里的键会被当作「未识别字段」原样扫进 `card.extensions`（见下面的 unknown-fields），
+ * 那就等于让导入的卡把这些内容复活在 `extensions` 里——删掉的字段会从后门回来。
+ */
 const KNOWN_DATA_KEYS = new Set([
   'name',
   'description',
@@ -150,11 +156,6 @@ export function parseCharacterCard(raw: unknown, source: Partial<CardSource> = {
     warnings.push({ code: 'missing-name', message: '角色卡没有名字，已命名为「未命名角色」' });
   }
 
-  const firstMessage = str(data.first_mes);
-  if (firstMessage === '') {
-    warnings.push({ code: 'missing-greeting', message: '角色卡没有开场白，进入场景时不会自动发言' });
-  }
-
   if (spec === 'chara_card_v1') {
     const shellUnknown = Object.keys(record).filter((key) => !KNOWN_SHELL_KEYS.has(key) && !KNOWN_DATA_KEYS.has(key));
     if (shellUnknown.length > 0) {
@@ -174,14 +175,7 @@ export function parseCharacterCard(raw: unknown, source: Partial<CardSource> = {
     nickname: '',
     description: str(data.description),
     personality: str(data.personality),
-    scenario: str(data.scenario),
-    firstMessage,
-    alternateGreetings: strArray(data.alternate_greetings),
-    exampleMessages: str(data.mes_example),
-    systemPrompt: str(data.system_prompt).trim() === '' ? DEFAULT_CARD_SYSTEM_PROMPT : str(data.system_prompt),
-    postHistoryInstructions: str(data.post_history_instructions),
     creator: str(data.creator),
-    creatorNotes: str(data.creator_notes),
     characterVersion: str(data.character_version),
     tags: strArray(data.tags),
     embeddedWorldBook: data.character_book ?? null,

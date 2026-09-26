@@ -101,7 +101,7 @@
 | 88 | **审计 B10：流式失败边角（200+error 体 / 未知 finish_reason / 不 cancel reader）** `[审][数]` | **P2** | 非流式回退不看 `json.error`、非 JSON 抛 SyntaxError 而非 `ProviderError`、`eos`/`end_turn`/大写 `STOP` 等正常结束被当失败（丢回复）、上层提前退出只 `releaseLock` 不 `cancel()`（服务端继续生成照样计费）、多行 `data:` 逐行解析不合规范 | ✅ 2026-09-26（取回 `a6adfa` worktree 里那份未提交的改动 + 逐条审校 + 4 条新测试；见 EVAL 第七十八节） |
 | 28 / 29 / 30 / 56 | 语音归属模型侧根治 / 平板横屏 / 备案切 443 等 / 服务器管理台 | **P4** | 原有条目，等条件或等拍板，不变 | ⬜ |
 | 89 | **用户 2026-09-26 体验反馈第一批：初始好感 / 各模式生效 / 默认系统预设** `[体]` | **P2** | ① 角色一出场好感为 0 → 交流充满敌意（用户要初始 40% 且可手动调）；② 「＋」里几种模式实际只有两条落到提示词，`historyMode`/无限制模式模型看不见；③ 无限制模式正文在界面上可编辑、还显示字数（用户：不可更改、不可阅读） | ✅ 2026-09-26（`INITIAL_PLAYER_AFFINITY = 0.4` + 迁移 v12；`describeModes` 补齐；无限制模式只留开关；见 EVAL 第七十九节） |
-| 90 | **用户 2026-09-26 体验反馈第二批：界面裁剪与「本场场记」** `[体]` | **P2** | 删卡级场景设定 / 开场白 / 高级字段 / 对话示例（用户裁定「彻底删除已有数据」）；「本场场记」整块不显示；玩家可编辑区域不可滑动（裁定「随内容自动长高 + 拖动隔离」两个都要） | ⬜ 下一批 |
+| 90 | **用户 2026-09-26 体验反馈第二批：界面裁剪与「本场场记」** `[体]` | **P2** | 删卡级场景设定 / 开场白 / 高级字段 / 对话示例（用户裁定「彻底删除已有数据」）；「本场场记」整块不显示；玩家可编辑区域不可滑动（裁定「随内容自动长高 + 拖动隔离」两个都要） | ✅ 2026-09-26（`Card` 删 7 字段 + 迁移 v13 + 三条复活通路堵住；场记整块撤下；编辑区 `field-sizing: content`；见 EVAL 第八十节） |
 | 91 | **用户 2026-09-26 体验反馈第三批：两个 bug** `[体]` | **P2** | ① 场景设定输入区在笔画输入法下逐笔落库（`SceneDialog.tsx` 漏了 `useDraftField`）；② 流式结束到消息出现之间「先消失、过一会儿整条出现」+ 卡顿 | ⬜ 下一批 |
 
 依赖关系：58 复用 57 的「按关键词取回」；66 在 59 之后；65 可以插在任何两批之间；80 依赖 68 已经落下的 `updatedAt` 不变量与迁移 11。
@@ -200,6 +200,25 @@ A4 的 core 侧（`packages/core/src/sync/loop.ts:153-162` 的 `serverHead < pul
 - **负好感只能看、不能拖**：滑杆是 0–100%（按百分比显示），被剧情推到负数时标签显示负数、滑杆停在 0；要双向调整得把范围改成 -100 ~ 100。
 - **迁移只提「从未动过」的关系边**：这是对用户裁定「也要」的最稳解释；若想连已经动过的也一起提，要另开一条批量迁移。
 - **真机没验**：新预设与 0.4 起点在真实模型下的效果（角色是否还不那么敌对、是否照引擎格式写）归 Codex。顺序 88 的两条遗留（`onWarning` 没接界面、真机 `finish_reason`）也仍在。
+
+**顺序 90（用户 2026-09-26 体验反馈第二批：界面裁剪与场记）怎么处理的**：
+
+| 用户要的 | 处理 | 落点 |
+| --- | --- | --- |
+| 删掉卡上的场景设定 | `Card` 删 `scenario`；新世界的场景摘要改成空串（由用户自己在场景面板写） | `packages/core/src/model/card.ts`、`session/setup.ts`、`apps/web/src/lib/session.ts`、`apps/web/src/components/{CardDesigner,CastDetail}.tsx` |
+| 删掉开场白与备选开场白 | `Card` 删 `firstMessage`/`alternateGreetings`；`createGreetingMessage`/`prepareAutomaticGreeting` 整段删除，新对话不再自动生成角色开场消息（含 `buildGreetings`） | `packages/core/src/model/card.ts`、`session/turn.ts`、`apps/web/src/lib/session.ts`、`apps/web/src/components/CardDesigner.tsx` |
+| 删掉对话示例与高级字段 | `Card` 删 `exampleMessages`/`systemPrompt`/`postHistoryInstructions`/`creatorNotes`；「基本规则」固定由 `DEFAULT_CARD_SYSTEM_PROMPT` 提供（顺序 89 换的那套预设），卡不再各带一份；界面上的「展开高级字段」整块撤掉，作者/版本/标签/来源直接可见 | `packages/core/src/model/card.ts`、`render/segments.ts`、`prompt/assemble.ts`、`apps/web/src/components/CardDesigner.tsx` |
+| 「彻底删除已有数据」（裁定） | 迁移 **v13** 遍历 `cards` 剥掉 7 个字段（幂等、**不盖 `updatedAt`**——那不是用户改动，盖上会让 LWW 把废弃数据当新改动推走）；**三条复活通路一起堵**：写卡唯一通道 `saveCard`、同步落库 `putSyncRecord`、同步出口 `listSyncRecords`；导入层 `KNOWN_DATA_KEYS` 的 7 个 key **保留**（否则解析时会被扫进 `extensions` 复活） | `packages/core/src/storage/repository.ts`（`SCHEMA_VERSION` 12 → **13**、`stripRemovedCardFields` 调用点）、`packages/core/src/model/card.ts`（`REMOVED_CARD_FIELDS`、`stripRemovedCardFields`）、`packages/core/src/compat/sillytavern/card.ts` |
+| 「本场场记」整块不显示（裁定） | 面板里那一块整段撤掉（样式 `.recap`/`.recap-text` 一并删）；**场记照旧在后台整理、照旧进提示词**（「场记覆盖后收起远处原文」那个模式开关也照旧） | `apps/web/src/components/ScenePanel.tsx`、`apps/web/src/styles.css` |
+| 可编辑区域不可滑动（裁定「两个都要」） | ① 随内容自动长高：全局 `textarea` 用 `field-sizing: content` + `overflow: hidden`（不出现内滚动条）；② 拖动隔离：`overscroll-behavior: contain` + `touch-action: pan-y`，`resize: none`。聊天输入框是例外——它的高度由组件按 `scrollHeight` 量（到 200px 上限要能内滚），所以在那条规则里退回 `field-sizing: fixed` | `apps/web/src/styles.css` |
+
+**顺序 90 自己带出来的遗留（别当成已解决）**：
+
+- **卡上的 `extensions` 仍可能留着这几个字段的名称**：`KNOWN_DATA_KEYS` 保留 7 个 key 是为了「别让解析把它们扫进 `extensions`」，但**更早版本导入的卡**里可能已经有同名副本躺在 `extensions` 里，v13 只剥顶层键、没动 `extensions` 内部。要不要连 `extensions` 里的同名键一起清，等有实际数据再定。
+- **管理员工具不再收这 5 个字段**：模型还在传就会回填成「不认得的参数」，提示里会点名（顺序 86/B6 的机制）；旧草稿里存着这些字段的，采纳时被 `saveCard` 顺手剥掉（不报错）。
+- **老世界若原本靠卡的开场白起头**：导入老卡后新对话是空白的，得由用户先开口（用户要的正是「删掉开场白」，所以这是预期行为，不再是缺陷）。
+- **滚动隔离只在 CSS 层做**：`field-sizing: content` 需要 Chrome 123+；不支持的浏览器只是「不自动长高」，仍不会有内滚动条（`overflow: hidden`）。真机/真输入法（笔画输入法逐笔落库那条属顺序 91）归 Codex。
+- **顺序 89 的四条遗留仍在**（无限制提示词换设备后无法重配、负好感不能拖、迁移只提「未动过」的关系边、真机没验）。
 
 **顺序 82 合并前必须先改的三处 —— 已改完（2026-09-26，随 `5014509` 落进 main）**：
 

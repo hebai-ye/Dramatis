@@ -67,16 +67,16 @@ function ArtifactCard({
 }) {
   /*
    * 草稿预览（顺序 26）：卡片在采纳之前要能看出「它到底长什么样」。
-   * 角色卡给开场白（`firstMes`）——那是最能判断「这个角色合不合世界」的一句；
    * 世界书给前几条词条，让人看得到粒度。
+   *
+   * 顺序 90：角色卡的开场白已被删掉（用户裁定「彻底删除已有数据」），
+   * 于是这里改看「设定」（`description`）——那是卡上还剩的、最能判断
+   * 「这个角色合不合世界」的一段。
    */
-  // 字段名跟着 `Card` 走：开场白叫 `firstMessage`（不是 firstMes），别自己造一个
   const payload = artifact.payload as {
-    firstMessage?: unknown;
     description?: unknown;
     entries?: unknown;
   } | null;
-  const firstMes = typeof payload?.firstMessage === 'string' ? payload.firstMessage.trim() : '';
   const description = typeof payload?.description === 'string' ? payload.description.trim() : '';
   const entryCount = Array.isArray(payload?.entries) ? payload.entries.length : 0;
 
@@ -89,12 +89,6 @@ function ArtifactCard({
       </div>
       <p className="hint">{artifact.summary}</p>
 
-      {firstMes === '' ? null : (
-        <p className="artifact-preview">
-          <span className="hint">开场白：</span>
-          {firstMes.length > 64 ? `${firstMes.slice(0, 64)}…` : firstMes}
-        </p>
-      )}
       {description === '' ? null : (
         <p className="hint artifact-preview">
           设定：{description.length > 56 ? `${description.slice(0, 56)}…` : description}

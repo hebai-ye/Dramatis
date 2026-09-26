@@ -69,30 +69,11 @@ export function ScenePanel({ scene, onChange, onStartNewScene, disabled }: Props
       {/*
         场记（P1-5 的场景层）：后台自动整理，只读。
         它不是「场景设定」——那是人写的简介，这是这一段实际发生了什么。
+
+        顺序 90（用户裁定「整块不显示」）：场记仍在后台照常整理、仍在提示词里
+        代表较早的经过，只是**不在面板上展开**了——面板太繁杂，而它本身不需要人管。
+        要回看原文随时可以在消息列表里往上翻。
       */}
-      <div className="recap">
-        <h3>本场场记</h3>
-        {scene.recap === undefined || scene.recap.trim() === '' ? (
-          <p className="hint">
-            还没整理过。这一场攒够 8 轮（或内容够多）后会自动压成一段场记；原文不会被删， 随时都能回看。
-          </p>
-        ) : (
-          <>
-            <p className="recap-text">{scene.recap}</p>
-            <p className="hint">
-              覆盖到第 {scene.recapUpToSeq ?? 0} 条消息
-              {scene.recapUpdatedAt === undefined
-                ? ''
-                : ` · 整理于 ${new Date(scene.recapUpdatedAt).toLocaleString('zh-CN', {
-                    month: 'numeric',
-                    day: 'numeric',
-                    hour: '2-digit',
-                    minute: '2-digit',
-                  })}`}
-            </p>
-          </>
-        )}
-      </div>
 
       <button
         type="button"

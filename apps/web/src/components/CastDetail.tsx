@@ -197,7 +197,6 @@ export function CastDetail({
             <p className="hint">模板：{card.name}</p>
             {card.description.trim() !== '' ? <p>{card.description}</p> : null}
             {card.personality.trim() !== '' ? <p className="hint">性格：{card.personality}</p> : null}
-            {card.scenario.trim() !== '' ? <p className="hint">场景：{card.scenario}</p> : null}
           </>
         )}
       </section>

@@ -88,14 +88,7 @@ function fixtures() {
     nickname: '',
     description: '酒馆老板',
     personality: '爽朗',
-    scenario: '',
-    firstMessage: '欢迎光临。',
-    alternateGreetings: [],
-    exampleMessages: '',
-    systemPrompt: '',
-    postHistoryInstructions: '',
     creator: '',
-    creatorNotes: '',
     characterVersion: '',
     tags: [],
     embeddedWorldBook: null,
@@ -243,7 +236,7 @@ describe('Repository / schema', () => {
 
     // 从 v9 起步，所以 v10 与它之后的每一步都会跑；这条测试关心的是 v10 那一步。
     // 加新迁移时这一行要跟着加——故意钉死，免得「迁移没跑」被默默放过。
-    expect(report.applied.map((migration) => migration.version)).toEqual([10, 11, 12]);
+    expect(report.applied.map((migration) => migration.version)).toEqual([10, 11, 12, 13]);
     expect(migrated?.personaId).toBe('persona-old');
     expect(migrated?.playerName).toBe('沈砚');
     expect(migrated?.playerPersona).toBe('旧信的主人');
@@ -1255,5 +1248,111 @@ describe('顺序 89：迁移把从未变动过的好感提到 40%', () => {
 
     expect(second?.relationships[0]?.affinity).toBe(INITIAL_PLAYER_AFFINITY);
     expect(second?.relationships[0]?.history).toHaveLength(first?.relationships[0]?.history.length ?? 0);
+  });
+});
+
+describe('顺序 90：把卡上已删的字段从库里清掉', () => {
+  /** 老版本的卡：七个已删字段都在，另外还带着正常的名字/描述/标签。 */
+  function legacyCard(id: string) {
+    return {
+      ...fixtures().card,
+      id,
+      scenario: '雨夜的酒馆',
+      firstMessage: '欢迎光临。',
+      alternateGreetings: ['又来啦？'],
+      exampleMessages: '「喝什么？」',
+      systemPrompt: '保持角色。',
+      postHistoryInstructions: '不要跳戏。',
+      creatorNotes: '作者的话',
+    };
+  }
+
+  it('迁移剥掉遗留字段，其余一切原样保留', async () => {
+    const store = createMemoryEntityStore();
+    const id = cardId(newId());
+    const card = legacyCard(id);
+    await store.put(COLLECTIONS.cards, card as never);
+
+    const repo = new Repository(store);
+    const report = await repo.migrate();
+    expect(report.to).toBe(SCHEMA_VERSION);
+
+    const stored = (await store.get<Record<string, unknown>>(COLLECTIONS.cards, id)) as Record<string, unknown>;
+    for (const key of [
+      'scenario',
+      'firstMessage',
+      'alternateGreetings',
+      'exampleMessages',
+      'systemPrompt',
+      'postHistoryInstructions',
+      'creatorNotes',
+    ]) {
+      expect(key in stored).toBe(false);
+    }
+    expect(stored.name).toBe(card.name);
+    expect(stored.description).toBe(card.description);
+    expect(stored.tags).toEqual(card.tags);
+    expect(stored.updatedAt).toBe(card.updatedAt);
+  });
+
+  it('saveCard 这条写入通道也会剥：老草稿/老封存都过不去', async () => {
+    const repo = new Repository(createMemoryEntityStore());
+    const id = cardId(newId());
+
+    await repo.saveCard(legacyCard(id) as never);
+
+    const stored = (await repo.getCard(id)) as unknown as Record<string, unknown>;
+    expect('firstMessage' in stored).toBe(false);
+    expect('systemPrompt' in stored).toBe(false);
+    expect(stored.name).toBe('Alice');
+  });
+
+  it('同步落库口也会剥：对面那台没升级的设备推来的老卡不会让字段复活', async () => {
+    const repo = new Repository(createMemoryEntityStore());
+    const id = cardId(newId());
+
+    await repo.putSyncRecord({
+      collection: 'cards',
+      id,
+      updatedAt: '2026-03-03T00:00:00.000Z',
+      deletedAt: null,
+      value: legacyCard(id),
+    });
+
+    const stored = (await repo.getCard(id)) as unknown as Record<string, unknown>;
+    expect('scenario' in stored).toBe(false);
+    expect('postHistoryInstructions' in stored).toBe(false);
+    expect(stored.id).toBe(id);
+  });
+
+  it('同步读口也会剥：老字段不会被推到服务端', async () => {
+    const repo = new Repository(createMemoryEntityStore());
+    const id = cardId(newId());
+    // 直接写进库里，模拟「迁移还没跑完就被读出去」
+    await repo.putSyncRecord({
+      collection: 'cards',
+      id,
+      updatedAt: '2026-03-04T00:00:00.000Z',
+      deletedAt: null,
+      value: legacyCard(id),
+    });
+
+    const records = await repo.listSyncRecords();
+    const record = records.find((item) => item.collection === 'cards' && item.id === id);
+    const value = record?.value as Record<string, unknown>;
+    expect('firstMessage' in value).toBe(false);
+    expect('exampleMessages' in value).toBe(false);
+  });
+
+  it('干净的新卡不会被无谓地重写', async () => {
+    const repo = new Repository(createMemoryEntityStore());
+    const card = fixtures().card;
+    await repo.saveCard(card);
+    const before = await repo.getCard(card.id);
+
+    await repo.migrate();
+
+    const after = await repo.getCard(card.id);
+    expect(after?.updatedAt).toBe(before?.updatedAt);
   });
 });

@@ -1,27 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import {
   hasSpeech,
-  normalizeCardExample,
-  normalizeGreetingBreaks,
   renderMessageContent,
   splitByQuotes,
   splitLongSpeech,
   splitMessageContent,
   thirdPersonAction,
 } from './segments.js';
-
-describe('开场白兼容换行', () => {
-  it('只把正文里的字面换行符还原，保留 URL、路径和分数', () => {
-    expect(normalizeGreetingBreaks('「来了。」/n# 她抬头。')).toBe('「来了。」\n# 她抬头。');
-    expect(normalizeGreetingBreaks(String.raw`「坐。」\n# 她落座。`)).toBe('「坐。」\n# 她落座。');
-    expect(normalizeGreetingBreaks('"Hello"/n*waves*')).toBe('"Hello"\n*waves*');
-    expect(normalizeGreetingBreaks('Hello./n*waves*')).toBe('Hello.\n*waves*');
-    expect(normalizeGreetingBreaks(String.raw`Hello.\n*waves*`)).toBe('Hello.\n*waves*');
-    expect(normalizeGreetingBreaks(String.raw`访问 https://site.test/note，路径 C:\new，概率 1/n。`)).toBe(
-      String.raw`访问 https://site.test/note，路径 C:\new，概率 1/n。`,
-    );
-  });
-});
 
 describe('splitMessageContent', () => {
   it('把 `#` 开头的段落切成动作段', () => {
@@ -149,30 +134,6 @@ describe('renderMessageContent', () => {
   it('连着抄了多个标记也全部剥掉（长跑里真的长到五个）', () => {
     const pieces = renderMessageContent('【秦娘】【秦娘】【秦娘】「打烊了。」', { speakerName: '秦娘' });
     expect(pieces).toEqual([{ kind: 'speech', text: '「打烊了。」' }]);
-  });
-});
-
-describe('normalizeCardExample', () => {
-  it('把卡里的行内动作断到行首、把名字标签换成【】', () => {
-    const raw = [
-      '玩家：北边那支商队的事你听说了吗？',
-      '陈九：听说？# 他压低声音，指节敲了两下桌子。「我的货找谁要去。」',
-    ].join('\n');
-
-    const normalized = normalizeCardExample(raw, ['陈九', '老周']);
-
-    expect(normalized).toBe(
-      [
-        '【玩家】北边那支商队的事你听说了吗？',
-        '【陈九】听说？',
-        '# 他压低声音，指节敲了两下桌子。「我的货找谁要去。」',
-      ].join('\n'),
-    );
-  });
-
-  it('不认识的名字标签不动：那不是说话人标记', () => {
-    const raw = '备注：这段是给作者看的。';
-    expect(normalizeCardExample(raw, ['陈九'])).toBe('备注：这段是给作者看的。');
   });
 });
 

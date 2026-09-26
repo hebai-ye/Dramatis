@@ -67,15 +67,17 @@ export const DEFAULT_CARD_SYSTEM_PROMPT = [
   '特殊事项：玩家持续回复「好」「走」「是」这类短句时，总是大胆推进剧情。',
 ].join('\n\n');
 
-/** 老卡的空字段使用当前默认值，非空的用户或导入提示保持逐字不变。 */
-export function resolveCardSystemPrompt(systemPrompt: string): string {
-  return systemPrompt.trim() === '' ? DEFAULT_CARD_SYSTEM_PROMPT : systemPrompt;
-}
-
 /**
  * 角色卡 —— 模板层（设计文档 §2.1）。
  *
  * 一张卡可以派生出任意多个角色实例；实例的记忆与关系不随卡变动。
+ *
+ * 顺序 90（用户裁定「彻底删除已有数据」）删掉了七个人设为「高级字段」的成员：
+ * `scenario`、`firstMessage`、`alternateGreetings`、`exampleMessages`、
+ * `systemPrompt`、`postHistoryInstructions`、`creatorNotes`。
+ * 卡里只剩「这一轮该怎么演这个角色」真正需要的东西：名字、昵称、描述、性格、
+ * 元信息与世界书；「基本规则」那段固定提示词由 `DEFAULT_CARD_SYSTEM_PROMPT` 提供，
+ * 不再由每张卡各带一份——用户要的是「所有对话都强制用同一套预设」。
  */
 export interface Card {
   id: CardId;
@@ -84,14 +86,7 @@ export interface Card {
   nickname: string;
   description: string;
   personality: string;
-  scenario: string;
-  firstMessage: string;
-  alternateGreetings: string[];
-  exampleMessages: string;
-  systemPrompt: string;
-  postHistoryInstructions: string;
   creator: string;
-  creatorNotes: string;
   characterVersion: string;
   tags: string[];
   /** 卡内嵌的世界书（SillyTavern 的 character_book）。M0 仅原样保留。 */
@@ -109,6 +104,40 @@ export interface Card {
   createdAt: string;
   updatedAt: string;
   deletedAt: string | null;
+}
+
+/**
+ * 顺序 90 从卡上删掉的字段名。
+ *
+ * 载体是遗留数据：老库里、同步推来的记录里、封存文件里都还带着它们。
+ * 只要有一处把它们原样写回库，删掉的字段就会「复活」——所以任何写卡的通道
+ * 以及数据库迁移都要用 `stripRemovedCardFields` 过一遍。
+ */
+export const REMOVED_CARD_FIELDS = [
+  'scenario',
+  'firstMessage',
+  'alternateGreetings',
+  'exampleMessages',
+  'systemPrompt',
+  'postHistoryInstructions',
+  'creatorNotes',
+] as const;
+
+/**
+ * 剥掉卡上已删字段的遗留值。
+ *
+ * 返回 `null` 表示「这条记录本来就没有这些字段」——调用方据此跳过写库：
+ * 迁移里对整表逐条 put 是没必要的开销，而没有这些字段的卡本来也不该被改动。
+ * 返回值保留了输入里的其他一切（含 `id`、`updatedAt`、`deletedAt`），
+ * 因为 `EntityStore.put` 是整条覆盖。
+ */
+export function stripRemovedCardFields<T extends object>(record: T): T | null {
+  const source = record as Record<string, unknown>;
+  const present = REMOVED_CARD_FIELDS.filter((key) => key in source);
+  if (present.length === 0) return null;
+  const stripped: Record<string, unknown> = { ...source };
+  for (const key of present) delete stripped[key];
+  return stripped as T;
 }
 
 export interface CardSource {
@@ -191,14 +220,7 @@ export function createBlankCard(overrides: Partial<Card> = {}): Card {
     nickname: '',
     description: '',
     personality: '',
-    scenario: '',
-    firstMessage: '',
-    alternateGreetings: [],
-    exampleMessages: '',
-    systemPrompt: DEFAULT_CARD_SYSTEM_PROMPT,
-    postHistoryInstructions: '',
     creator: '',
-    creatorNotes: '',
     characterVersion: '',
     tags: [],
     embeddedWorldBook: null,

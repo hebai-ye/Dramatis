@@ -19,7 +19,6 @@ function fixtures() {
     name: '秦娘',
     description: '客栈老板娘，记账一绝。',
     personality: '爽利，嘴上不饶人，心里有数。',
-    scenario: '码头边的老客栈。',
   });
   // 沿用产品里的同一套建世界逻辑，避免手写字段形状漂移
   const world = createWorldFromCard(card, persona);

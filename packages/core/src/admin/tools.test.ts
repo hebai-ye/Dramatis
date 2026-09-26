@@ -5,7 +5,6 @@ import {
   createBlankCard,
   createBlankWorldBook,
   createWorldBookEntry,
-  DEFAULT_CARD_SYSTEM_PROMPT,
 } from '../model/card.js';
 import { newId } from '../model/ids.js';
 import { createPersona } from '../model/persona.js';
@@ -52,7 +51,8 @@ describe('upsert_character_card', () => {
     expect(result.draft.card.name).toBe('酒馆老板');
     expect(result.draft.card.tags).toEqual(['酒馆']);
     expect(result.draft.card.id).toBeTruthy();
-    expect(result.draft.card.systemPrompt).toBe(DEFAULT_CARD_SYSTEM_PROMPT);
+    // 顺序 90：卡上不再有 systemPrompt，卡的系统提示固定由 DEFAULT_CARD_SYSTEM_PROMPT 提供
+    expect('systemPrompt' in result.draft.card).toBe(false);
   });
 
   it('修改已有卡时沿用传入的 id', () => {
@@ -90,19 +90,18 @@ describe('upsert_character_card', () => {
   });
 
   it('多行字段被写成数组时按行拼回来，而不是静默丢掉', () => {
-    // 真实模型验证里 exampleMessages 就是数组形态，丢掉它用户是看不见的
     const result = parseAdminToolCall(
       call('upsert_character_card', {
         name: '老周',
         description: ['摆渡人，五十多岁。', '白天撑船，天黑后停在东岸。'],
-        exampleMessages: ['「河上今晚没人。」他慢慢说。', '「你要过河，等天亮。」'],
+        personality: ['话少。', '认人。'],
       }),
     );
 
     if (!result.ok) throw new Error(result.error);
     if (result.draft.kind !== 'character-card') throw new Error('类型不对');
     expect(result.draft.card.description).toBe('摆渡人，五十多岁。\n白天撑船，天黑后停在东岸。');
-    expect(result.draft.card.exampleMessages).toBe('「河上今晚没人。」他慢慢说。\n「你要过河，等天亮。」');
+    expect(result.draft.card.personality).toBe('话少。\n认人。');
   });
 
   it('多写的参数不再静默丢掉（顺序 67）', () => {
@@ -242,7 +241,8 @@ describe('未知工具', () => {
 /*
  * 审计 B6：修改已有素材时**必须**以现有内容为底做字段级合并。
  * 以前无论新建还是修改都从一张空白卡起，模型没提到的字段全被空值覆盖：
- * 开场白、示例对话、标签、导入来源、创建时间……用户看不到报错，只会发现卡少了一半。
+ * 标签、导入来源、创建时间……用户看不到报错，只会发现卡少了一半。
+ * （顺序 90 之后卡上只剩名字/自称/描述/性格/标签这些字段，B6 的语义不变。）
  */
 describe('upsert_character_card · 审计 B6（改卡以现有卡为底）', () => {
   const IMPORTED: CardSource = {
@@ -259,12 +259,7 @@ describe('upsert_character_card · 审计 B6（改卡以现有卡为底）', () 
       nickname: '老板',
       description: '旧城东侧酒馆的老板',
       personality: '豪爽',
-      scenario: '酒馆打烊后',
-      firstMessage: '欢迎光临。',
-      alternateGreetings: ['又来啦？'],
-      exampleMessages: '「喝什么？」',
       tags: ['酒馆', '旧城'],
-      systemPrompt: '说话短一点。',
       creator: '原作者',
       extensions: { custom: 1 },
       source: IMPORTED,
@@ -283,18 +278,14 @@ describe('upsert_character_card · 审计 B6（改卡以现有卡为底）', () 
     return result.draft.card;
   }
 
-  it('只写一个字段时，其余字段（开场白、示例、标签、来源、创建时间）全都保持原样', () => {
+  it('只写一个字段时，其余字段（标签、来源、创建时间）全都保持原样', () => {
     const card = existingCard();
 
     const draft = draftCardOf(edit({ personality: '沉默' }, card));
 
     expect(draft.personality).toBe('沉默');
-    expect(draft.firstMessage).toBe('欢迎光临。');
-    expect(draft.alternateGreetings).toEqual(['又来啦？']);
-    expect(draft.exampleMessages).toBe('「喝什么？」');
     expect(draft.tags).toEqual(['酒馆', '旧城']);
     expect(draft.nickname).toBe('老板');
-    expect(draft.systemPrompt).toBe('说话短一点。');
     expect(draft.creator).toBe('原作者');
     expect(draft.extensions).toEqual({ custom: 1 });
     expect(draft.source).toEqual(IMPORTED);
@@ -305,9 +296,9 @@ describe('upsert_character_card · 审计 B6（改卡以现有卡为底）', () 
   it('省掉 name/description 也算改；但新建时它们仍然必填', () => {
     const card = existingCard();
 
-    const draft = draftCardOf(edit({ scenario: '雨夜' }, card));
+    const draft = draftCardOf(edit({ personality: '安静' }, card));
 
-    expect(draft.scenario).toBe('雨夜');
+    expect(draft.personality).toBe('安静');
     expect(draft.name).toBe('酒馆老板');
     expect(draft.description).toBe('旧城东侧酒馆的老板');
 
@@ -317,9 +308,9 @@ describe('upsert_character_card · 审计 B6（改卡以现有卡为底）', () 
   it('显式空串表示清空，null 表示「没提」', () => {
     const card = existingCard();
 
-    const draft = draftCardOf(edit({ firstMessage: '', nickname: null }, card));
+    const draft = draftCardOf(edit({ personality: '', nickname: null }, card));
 
-    expect(draft.firstMessage).toBe('');
+    expect(draft.personality).toBe('');
     expect(draft.nickname).toBe('老板');
   });
 
@@ -329,7 +320,9 @@ describe('upsert_character_card · 审计 B6（改卡以现有卡为底）', () 
     const draft = draftCardOf(edit({ tags: [] }, card));
 
     expect(draft.tags).toEqual([]);
-    expect(draft.alternateGreetings).toEqual(['又来啦？']);
+
+    const untouched = draftCardOf(edit({ personality: '沉默' }, card));
+    expect(untouched.tags).toEqual(['酒馆', '旧城']);
   });
 
   it('草稿带上下手时的版本号，采纳路径才知道它有没有过期', () => {
@@ -344,11 +337,20 @@ describe('upsert_character_card · 审计 B6（改卡以现有卡为底）', () 
     expect(fresh.draft.baseUpdatedAt).toBeNull();
   });
 
-  it('alternateGreetings 真的进了工具声明（以前只有参数名、schema 里没有）', () => {
+  it('顺序 90：被删掉的字段不再进工具声明；模型还在传会被点名为不认得的参数', () => {
     const tool = ADMIN_TOOLS.find((item) => item.function.name === 'upsert_character_card');
     const parameters = tool?.function.parameters as { properties?: Record<string, unknown> } | undefined;
+    const properties = Object.keys(parameters?.properties ?? {});
 
-    expect(Object.keys(parameters?.properties ?? {})).toContain('alternateGreetings');
+    for (const key of ['scenario', 'firstMessage', 'alternateGreetings', 'exampleMessages', 'systemPrompt']) {
+      expect(properties).not.toContain(key);
+    }
+
+    const card = existingCard();
+    const legacy = edit({ scenario: '雨夜' }, card);
+    expect(legacy.ok).toBe(true);
+    if (!legacy.ok) return;
+    expect(legacy.unknownArgs).toEqual(['scenario']);
   });
 });
 

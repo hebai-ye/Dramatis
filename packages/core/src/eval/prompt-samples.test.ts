@@ -30,14 +30,7 @@ function card(name: string, overrides: Partial<Card> = {}): Card {
     nickname: '',
     description: `${name} 的描述`,
     personality: '',
-    scenario: '',
-    firstMessage: '',
-    alternateGreetings: [],
-    exampleMessages: '',
-    systemPrompt: '',
-    postHistoryInstructions: '',
     creator: '',
-    creatorNotes: '',
     characterVersion: '',
     tags: [],
     embeddedWorldBook: null,
@@ -58,7 +51,6 @@ function fixture() {
   const aliceCard = card('Alice', {
     description: '酒馆的常客，二十五六岁，白天在旧城的书铺里做活。',
     personality: '安静、警惕，话少但对熟人很实在',
-    exampleMessages: '「……」\n# 她把手里的杯子转了半圈，没有看他。\n「你要是非问不可，那我告诉你。」',
   });
   const bobCard = card('Bob', {
     description: '走南闯北的行商，四十岁上下，嗓门大，爱打听也爱说。',

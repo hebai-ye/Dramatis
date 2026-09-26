@@ -186,6 +186,13 @@ export function parseWorldBook(
 
 export interface WorldBookMatch {
   entry: WorldBookEntry;
+  /**
+   * 条目属于哪本世界书（审计 B8）。
+   *
+   * SillyTavern 导入的条目 id 常是 "0"、"1"：两本书一起用时条目 id 会撞，提示词块 id 必须
+   * 带上书的 id 才唯一。`matchWorldBookEntries` 总会填它；手工构造的老调用可以不填。
+   */
+  bookId?: WorldBookId;
   matchedKeys: string[];
   reason: 'constant' | 'keyword';
   /** 第几轮扫出来的：1 是玩家输入 + 最近历史那一轮，>1 是被上一轮命中带出来的（顺序 60）。 */
@@ -221,9 +228,57 @@ const REGEXP_SPECIALS = /[.*+?^${}()|[\]\\]/g;
 /** 中日韩文字没有词间空格，整词匹配对它们没有意义。 */
 const WIDE_SCRIPT = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/u;
 
+/**
+ * SillyTavern 的正则关键词：`/pattern/flags`（审计 C5）。
+ *
+ * 安全边界：JS 的正则没法设超时，所以只能在编译前拦——
+ * 1. 模式长度上限 `REGEX_KEY_MAX_LENGTH`；
+ * 2. 拒绝嵌套量词（`(a+)+`、`(\w*)*` 这类灾难性回溯的典型形状）；
+ * 3. 扫描文本截到 `REGEX_HAYSTACK_MAX_LENGTH` 个字符再测。
+ * 编译不过或被拒的，退回当普通文字匹配（与之前的行为一致）。
+ */
+export const REGEX_KEY_MAX_LENGTH = 200;
+const REGEX_HAYSTACK_MAX_LENGTH = 20_000;
+const REGEX_KEY = /^\/(.+)\/([dgimsuy]*)$/s;
+const NESTED_QUANTIFIER = /\((?:[^()\\]|\\.)*[+*}](?:[^()\\]|\\.)*\)\s*(?:[+*]|\{\d)/;
+
+/** 编译结果缓存：同一个关键词每轮都要测，不必每轮重新 new RegExp。null 表示「不当正则」。 */
+const regexCache = new Map<string, RegExp | null>();
+const REGEX_CACHE_LIMIT = 2000;
+
+function cached(key: string, build: () => RegExp | null): RegExp | null {
+  const hit = regexCache.get(key);
+  if (hit !== undefined) return hit;
+  const built = build();
+  if (regexCache.size >= REGEX_CACHE_LIMIT) regexCache.clear();
+  regexCache.set(key, built);
+  return built;
+}
+
+/** 这个关键词是不是 ST 的正则写法；是就返回编译好的正则。 */
+export function compileRegexKey(key: string): RegExp | null {
+  if (!key.startsWith('/') || key.length > REGEX_KEY_MAX_LENGTH + 2) return null;
+  return cached(`re:${key}`, () => {
+    const parsed = REGEX_KEY.exec(key);
+    const source = parsed?.[1];
+    if (source === undefined || source.length > REGEX_KEY_MAX_LENGTH) return null;
+    if (NESTED_QUANTIFIER.test(source)) return null;
+    // g / y 会让 test() 带状态（lastIndex），缓存复用时结果会飘：去掉
+    const flags = [...new Set((parsed?.[2] ?? '').replace(/[gy]/g, ''))].join('');
+    try {
+      return new RegExp(source, flags);
+    } catch {
+      return null;
+    }
+  });
+}
+
 function keyMatches(haystack: string, needle: string, entry: WorldBookEntry): boolean {
   const key = needle.trim();
   if (key === '') return false;
+
+  const regex = compileRegexKey(key);
+  if (regex !== null) return regex.test(haystack.slice(-REGEX_HAYSTACK_MAX_LENGTH));
 
   const hay = entry.caseSensitive ? haystack : haystack.toLowerCase();
   const target = entry.caseSensitive ? key : key.toLowerCase();
@@ -234,9 +289,12 @@ function keyMatches(haystack: string, needle: string, entry: WorldBookEntry): bo
     return hay.includes(target);
   }
 
-  // \b 对 Unicode 不可靠，这里显式用「非字母数字下划线」作为词边界
-  const pattern = `(^|[^\\p{L}\\p{N}_])${target.replace(REGEXP_SPECIALS, '\\$&')}(?=$|[^\\p{L}\\p{N}_])`;
-  return new RegExp(pattern, 'u').test(hay);
+  // \b 对 Unicode 不可靠，这里显式用「非字母数字下划线」作为词边界；编译结果按关键词缓存
+  const wholeWord = cached(
+    `ww:${target}`,
+    () => new RegExp(`(^|[^\\p{L}\\p{N}_])${target.replace(REGEXP_SPECIALS, '\\$&')}(?=$|[^\\p{L}\\p{N}_])`, 'u'),
+  );
+  return wholeWord?.test(hay) ?? false;
 }
 
 function applySelectiveLogic(entry: WorldBookEntry, hitSecondary: boolean[]): boolean {
@@ -339,6 +397,7 @@ export function matchWorldBookEntries(book: WorldBook, options: MatchOptions): W
 
       matched.set(entry.id, {
         entry,
+        bookId: book.id,
         matchedKeys,
         reason: entry.constant ? 'constant' : 'keyword',
         round,

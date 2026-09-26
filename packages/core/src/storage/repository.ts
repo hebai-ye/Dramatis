@@ -21,7 +21,7 @@ import { type AdminArtifact, localSeqOf, type MemoryEvent, type Message } from '
 import { createPersona, type Persona } from '../model/persona.js';
 import type { ProviderCredential, ProviderProfile } from '../model/provider.js';
 import type { Room, Scene } from '../model/room.js';
-import type { EntityQuery, EntityStore } from '../platform/entity-store.js';
+import { type EntityQuery, type EntityStore, updateEntity } from '../platform/entity-store.js';
 import {
   EMPTY_SYNC_STATE,
   type LocalSyncRecord,
@@ -221,6 +221,11 @@ export const MIGRATIONS: readonly Migration[] = [
       for (const room of rooms) {
         const id = typeof room.id === 'string' ? room.id : '';
         if (id === '') continue;
+        /*
+         * 幂等（审计 C1）：迁移不是原子的，中途断掉下次启动会整条重跑。已经拿到主线的
+         * 世界不能再造一条空「主线」——那样消息会留在旧主线上，而世界指向新的空主线。
+         */
+        if (typeof room.activeConversationId === 'string' && room.activeConversationId !== '') continue;
 
         const now = typeof room.updatedAt === 'string' ? room.updatedAt : nowIso();
         const activeScene = typeof room.activeSceneId === 'string' ? asSceneId(room.activeSceneId) : null;
@@ -672,6 +677,21 @@ export class Repository {
 
   async writeSyncState(state: SyncState): Promise<void> {
     await this.setMeta(META_KEYS.syncState, state);
+    /*
+     * 把逻辑时钟也推到水位线之上（审计 B14）。
+     *
+     * 水位线缓存只在**本标签页**失效；别的标签页手里还是旧水位线。可逻辑时钟每次盖章都在
+     * 事务里现读，所以只要时钟 ≥ 水位线，任何标签页盖出来的章都必然 > 水位线——
+     * 跨标签页不需要额外的广播。
+     */
+    const pushedAt = state.pushedAt ?? '';
+    if (pushedAt !== '') {
+      await updateEntity<MetaRecord>(this.store, COLLECTIONS.meta, META_KEYS.clock, (current) => {
+        const clock = typeof current?.value === 'string' ? current.value : '';
+        if (clock >= pushedAt) return undefined;
+        return { id: META_KEYS.clock, value: pushedAt, updatedAt: nowIso() };
+      });
+    }
     // 水位线变了：下一次盖时间戳必须重新读（顺序 62）
     this.stampCache = null;
   }
@@ -823,17 +843,26 @@ export class Repository {
       };
       this.stampCache = cache;
     }
-    const localClock = cache.clock;
     const watermark = cache.watermark;
+    const cachedClock = cache.clock;
 
+    /*
+     * 时钟的读与写放进同一个事务（审计 B14）：别的标签页可能刚把时钟推过去，
+     * 内存里的那份就旧了。事务里现读的时钟才作数，缓存只是它的下界——
+     * 没有 `update` 的后端退回 get + put，语义不变。
+     */
     let candidate = at;
-    for (const floor of [previous, localClock, watermark]) {
-      if (floor === '' || candidate > floor) continue;
-      const parsed = Date.parse(floor);
-      candidate = Number.isNaN(parsed) ? at : new Date(parsed + 1).toISOString();
-    }
+    await updateEntity<MetaRecord>(this.store, COLLECTIONS.meta, META_KEYS.clock, (current) => {
+      const storedClock = typeof current?.value === 'string' ? current.value : '';
+      candidate = at;
+      for (const floor of [previous, cachedClock, storedClock, watermark]) {
+        if (floor === '' || candidate > floor) continue;
+        const parsed = Date.parse(floor);
+        candidate = Number.isNaN(parsed) ? at : new Date(parsed + 1).toISOString();
+      }
+      return { id: META_KEYS.clock, value: candidate, updatedAt: nowIso() };
+    });
 
-    await this.setMeta(META_KEYS.clock, candidate);
     this.stampCache = { ...cache, clock: candidate };
     return candidate;
   }
@@ -1066,7 +1095,9 @@ export class Repository {
     const removedMemories = await this.deleteMemoriesByConversation(conversation.id);
     // 章节摘要也是「这条线发生过的事」，归档一并收走
     const removedChapters = await this.deleteChapterSummariesByConversation(conversation.id);
-    await this.store.put(COLLECTIONS.conversations, { ...conversation, archivedAt: at, updatedAt: at });
+    // 走逻辑时钟（审计 A5）：直接写墙钟会在水位线超前时永远推不出去，或被对端旧状态压回
+    const archivedStamp = await this.stampUpdatedAt(COLLECTIONS.conversations, conversation.id, at);
+    await this.store.put(COLLECTIONS.conversations, { ...conversation, archivedAt: at, updatedAt: archivedStamp });
 
     const room = await this.getRoom(conversation.roomId);
     let nextConversationId = room?.activeConversationId ?? null;
@@ -1171,12 +1202,30 @@ export class Repository {
   async appendMessages(roomId: RoomId, messages: readonly Message[]): Promise<Message[]> {
     const deviceId = await this.deviceId();
     const counterKey = `localSeq:${roomId}`;
-    let next = await this.getMeta<number>(counterKey);
-    if (next === null) next = await this.getMeta<number>(`seq:${roomId}`);
-    if (next === null) {
-      const existing = await this.store.list<StoredMessage>(COLLECTIONS.messages, { where: { roomId } });
-      next = existing.reduce((max, item) => Math.max(max, localSeqOf(item)), 0);
+    /*
+     * 计数器丢了时的续号起点（只在计数器不存在时才去扫库）。
+     * 扫描在事务外做：它只是下界，真正的发号在下面的原子更新里。
+     */
+    let fallback: number | null = null;
+    if ((await this.getMeta<number>(counterKey)) === null) {
+      fallback = await this.getMeta<number>(`seq:${roomId}`);
+      if (fallback === null) {
+        const existing = await this.store.list<StoredMessage>(COLLECTIONS.messages, { where: { roomId } });
+        fallback = existing.reduce((max, item) => Math.max(max, localSeqOf(item)), 0);
+      }
     }
+
+    /*
+     * 一次性**原子地**预留这一批号段（审计 B14）：读计数器与写回计数器在同一个事务里。
+     * 以前是先读、写完消息再写回，两处并发追加（两个标签页、后台与界面）会拿到同一段号。
+     */
+    let start = 0;
+    await updateEntity<MetaRecord>(this.store, COLLECTIONS.meta, counterKey, (current) => {
+      const stored = typeof current?.value === 'number' ? current.value : null;
+      start = Math.max(stored ?? 0, stored === null ? (fallback ?? 0) : 0);
+      return { id: counterKey, value: start + messages.length, updatedAt: nowIso() };
+    });
+    let next = start;
 
     const stamped: Message[] = [];
     for (const message of messages) {
@@ -1188,7 +1237,6 @@ export class Repository {
     }
 
     await this.store.bulkPut(COLLECTIONS.messages, stamped);
-    await this.setMeta(counterKey, next);
     return stamped;
   }
 
@@ -1235,7 +1283,8 @@ export class Repository {
   private async getMessage(id: MessageId): Promise<Message | null> {
     const raw = await this.store.get<StoredMessage>(COLLECTIONS.messages, id);
     if (raw === null || !isAlive(raw)) return null;
-    return reviveMessage(raw, this.deviceIdCache ?? '');
+    // 缓存为空时不能补空串（审计 C2）：老消息会被写回一个「无主」的设备号
+    return reviveMessage(raw, await this.deviceId());
   }
 
   async updateMessage(id: MessageId, patch: Partial<Message>): Promise<Message | null> {
@@ -1390,14 +1439,22 @@ export class Repository {
 
   // ---- 聚合 ----
 
-  async loadRoom(roomId: RoomId): Promise<RoomSnapshot | null> {
+  /**
+   * 读一个世界的整份快照。
+   *
+   * `options.conversationId`（审计 B11）：只要这一条对话的消息、记忆与章节——收尾阶段
+   * 每轮要读 7–10 次快照，而一个世界里别的对话的几千条消息这时根本用不上。
+   * 不传就是原来的整份（归档回顾、导出等需要全部对话的地方照旧）。
+   */
+  async loadRoom(roomId: RoomId, options: { conversationId?: ConversationId } = {}): Promise<RoomSnapshot | null> {
     const room = await this.getRoom(roomId);
     if (!room) return null;
 
+    const scoped = options.conversationId === undefined ? {} : { conversationId: options.conversationId };
     const conversations = await this.listConversations(roomId, { includeArchived: true });
     const scenes = await this.listScenes(roomId);
     const instances = await this.listInstances(roomId);
-    const messages = await this.listMessages(roomId);
+    const messages = await this.listMessages(roomId, scoped);
 
     const cards: Card[] = [];
     for (const cardIdValue of room.cardIds) {
@@ -1412,8 +1469,8 @@ export class Repository {
     }
 
     const personas = await this.listPersonas();
-    const memories = await this.listMemories(roomId);
-    const chapters = await this.listChapterSummaries(roomId);
+    const memories = await this.listMemories(roomId, scoped);
+    const chapters = await this.listChapterSummaries(roomId, scoped);
     return { room, conversations, scenes, instances, cards, worldBooks, messages, memories, chapters, personas };
   }
 
@@ -1540,7 +1597,39 @@ export class Repository {
   }
 
   async deleteMemory(id: EventId): Promise<void> {
+    const existing = await this.getAlive<MemoryEvent>(COLLECTIONS.memories, id);
     await this.softDelete(COLLECTIONS.memories, id);
+    if (existing !== null) await this.undoConsolidation([existing], new Set([id]));
+  }
+
+  /**
+   * 印象被删时「撤销合并」（审计 B4）。
+   *
+   * 原文被合并后带着 `supersededBy`（召回跳过它）与 `consolidatedAt`（不再参与合并）。
+   * 印象一删，这两个章就成了悬空引用：那些回合的记忆既召回不到、也不会被重新合并，
+   * 看起来就像「二十轮记忆一起消失了」。所以把仍然指向这条印象、且自己还活着的原文
+   * 恢复成「从未合并过」。`deletedIds` 是同一批被删的记忆——它们不必恢复。
+   */
+  private async undoConsolidation(removed: readonly MemoryEvent[], deletedIds: ReadonlySet<string>): Promise<number> {
+    let restored = 0;
+    for (const impression of removed) {
+      const sources = impression.supersedes ?? [];
+      for (const sourceId of sources) {
+        if (deletedIds.has(sourceId)) continue;
+        const source = await this.getAlive<MemoryEvent>(COLLECTIONS.memories, sourceId);
+        if (source === null || source.supersededBy !== impression.id) continue;
+        const updatedAt = await this.stampUpdatedAt(COLLECTIONS.memories, sourceId);
+        await this.store.put(COLLECTIONS.memories, {
+          ...source,
+          supersededBy: null,
+          consolidatedAt: null,
+          updatedAt,
+          deletedAt: null,
+        });
+        restored += 1;
+      }
+    }
+    return restored;
   }
 
   /**
@@ -1555,6 +1644,8 @@ export class Repository {
     for (const event of affected) {
       await this.softDelete(COLLECTIONS.memories, event.id);
     }
+    // 被连带删掉的印象：其余回合的原文要重新参与召回与合并（审计 B4）
+    await this.undoConsolidation(affected, new Set(affected.map((event) => event.id)));
     return affected.length;
   }
 

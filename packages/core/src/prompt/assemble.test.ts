@@ -309,7 +309,8 @@ describe('assemblePrompt', () => {
       scene,
       history: history(...Array.from({ length: 40 }, (_, index) => `第${String(index)}句话`.repeat(20))),
       playerInput: '继续',
-      budget: { maxTokens: 2000, reserveForReply: 1500 },
+      // 估算计入了消息结构开销与 5% 余量（审计 B12），不可丢的那几块需要 600 左右的窗口
+      budget: { maxTokens: 2100, reserveForReply: 1500 },
     });
 
     expect(prompt.report.stages.length).toBeGreaterThan(0);
@@ -451,14 +452,14 @@ describe('assemblePrompt / 记忆的来源（顺序 57）', () => {
   it('来源统计只数预算后真正留下来的：分数最低的补充项先被丢', () => {
     const { card, instance, room, scene } = fixtures();
     const input = { card, instance, room, scene, history: [], playerInput: '夹层呢？', memories };
-    const full = assemblePrompt({ ...input, budget: baseBudget });
-
-    // 刚好差一个 token：预算守卫得丢一块，按分数丢的是「来源」那条
     const reserveForReply = 100;
-    const squeezed = assemblePrompt({
-      ...input,
-      budget: { maxTokens: full.tokenEstimate + reserveForReply - 1, reserveForReply },
-    });
+    const assembleWith = (maxTokens: number) => assemblePrompt({ ...input, budget: { maxTokens, reserveForReply } });
+
+    // 找到「刚好什么都不丢」的最小窗口（估算带结构开销与 5% 余量，审计 B12），再少一个 token
+    let fitting = assembleWith(baseBudget.maxTokens).tokenEstimate + reserveForReply;
+    while (assembleWith(fitting - 1).report.dropped.length === 0) fitting -= 1;
+    while (assembleWith(fitting).report.dropped.length > 0) fitting += 1;
+    const squeezed = assembleWith(fitting - 1);
 
     expect(squeezed.report.stages).toContain('drop-memory');
     expect(squeezed.memoryStats).toEqual({ recall: 1, mention: 1, source: 0 });

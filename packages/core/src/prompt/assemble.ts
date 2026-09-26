@@ -27,7 +27,7 @@ import type { Room, Scene } from '../model/room.js';
 import { INTENT_FORMAT_RULE } from '../render/intent.js';
 import { ACTION_FORMAT_EXAMPLES, ACTION_FORMAT_RULE, normalizeCardExample } from '../render/segments.js';
 import { heuristicTokenCounter, type TokenCounter } from '../token/estimate.js';
-import { applyBudget } from './budget.js';
+import { applyBudget, MESSAGE_OVERHEAD_TOKENS, structuralOverhead } from './budget.js';
 import { expandHistoryOnMention, partitionHistory, selectHistoryFor } from './history.js';
 import { NO_REPEAT_RULE, REPLY_LENGTH_RULES } from './reply-style.js';
 import type { BudgetReport, ChatMessage, PromptBlock, PromptPlacement } from './types.js';
@@ -113,6 +113,11 @@ export interface AssembleInput {
     maxTokens: number;
     /** 为回复预留的空间。 */
     reserveForReply: number;
+    /**
+     * 提示词之外还会随请求发出去的 token（审计 B12），例如工具定义（`tools`）。
+     * 调用方知道自己要带什么，就按估算值传进来；缺省 0。
+     */
+    extraTokens?: number;
   };
   options?: AssembleOptions;
 }
@@ -151,6 +156,9 @@ const PRIORITY = {
   history: 300,
 } as const;
 
+/** 预算守卫只用可用窗口的 95%：启发式 token 估算有误差（审计 B12）。 */
+const BUDGET_SAFETY_MARGIN = 0.05;
+
 /** 预算被榨干时仍要留下的最小空间，保证 prompt 不会退化成空。 */
 const MIN_PROMPT_TOKENS = 256;
 
@@ -177,6 +185,17 @@ const TRAIT_LABELS: Record<TraitAxis, readonly [string, string]> = {
   playfulness: ['爱开玩笑', '正经严肃'],
   caution: ['谨慎多疑', '大胆冒进'],
 };
+
+/**
+ * 把正文里行首的 `##`/`###` 转义掉（审计 C6）。
+ *
+ * system 提示是按 `### 小节` 分段的；世界书或卡片正文里自带一行 `### 基本规则`，就能在
+ * 模型眼里伪造出一个新小节（比如假装是更高优先级的规则）。前面加一个反斜杠：模型照样
+ * 读得懂原文，但它不再是结构。单个 `#` 不动——那是动作写法的约定。
+ */
+export function escapeSectionHeadings(text: string): string {
+  return text.replace(/^([ \t]*)(#{2,})/gm, '$1\\$2');
+}
 
 function truncate(text: string, max: number): string {
   const trimmed = text.trim();
@@ -261,8 +280,8 @@ function describeModes(modes: ConversationModes | undefined): string[] {
 
 function buildPersonaBlock(card: Card, instance: CharacterInstance): PromptBlock {
   const parts = [`你现在扮演的是「${instance.displayName}」。`];
-  if (card.description.trim() !== '') parts.push(card.description.trim());
-  if (card.personality.trim() !== '') parts.push(`性格：${card.personality.trim()}`);
+  if (card.description.trim() !== '') parts.push(escapeSectionHeadings(card.description.trim()));
+  if (card.personality.trim() !== '') parts.push(`性格：${escapeSectionHeadings(card.personality.trim())}`);
 
   const traits = describeTraits(instance.traits);
   if (traits !== '') parts.push(`性格倾向：${traits}`);
@@ -273,11 +292,11 @@ function buildPersonaBlock(card: Card, instance: CharacterInstance): PromptBlock
     normalizeCardExample(card.exampleMessages, [card.name, card.nickname, instance.displayName]),
     1200,
   );
-  if (examples !== '') parts.push(`对话风格示例：\n${examples}`);
+  if (examples !== '') parts.push(`对话风格示例：\n${escapeSectionHeadings(examples)}`);
 
   const compressed = [
     `你现在扮演的是「${instance.displayName}」。`,
-    truncate(firstNonEmpty(card.description, card.personality), 160),
+    escapeSectionHeadings(truncate(firstNonEmpty(card.description, card.personality), 160)),
   ]
     .filter((part) => part.trim() !== '')
     .join('\n');
@@ -418,17 +437,19 @@ function buildWorldBookBlocks(matches: readonly WorldBookMatch[]): PromptBlock[]
     if (a.entry.order !== b.entry.order) return a.entry.order - b.entry.order;
     return a.entry.title.localeCompare(b.entry.title);
   });
-  const rankOf = new Map(byOrderAscending.map((match, index) => [match.entry.id, index]));
+  // 按命中对象本身排名，而不是条目 id：两本书的条目 id 可能相同（审计 B8）
+  const rankOf = new Map(byOrderAscending.map((match, index) => [match, index]));
 
   return matches.map((match) => {
-    const rank = rankOf.get(match.entry.id) ?? 0;
+    const rank = rankOf.get(match) ?? 0;
     const title = match.entry.title.trim() === '' ? '未命名条目' : match.entry.title.trim();
     const placement = PLACEMENT_BY_POSITION[match.entry.position] ?? 'default';
     return {
-      id: `worldbook:${match.entry.id}`,
+      // 块 id 带上书的 id（审计 B8）：否则两本书的「0 号条目」丢块时会一起丢、React key 也会撞
+      id: match.bookId === undefined ? `worldbook:${match.entry.id}` : `worldbook:${match.bookId}:${match.entry.id}`,
       kind: 'worldbook',
       label: '世界设定',
-      content: `【${title}】\n${match.entry.content.trim()}`,
+      content: `【${title}】\n${escapeSectionHeadings(match.entry.content.trim())}`,
       priority: Math.min(PRIORITY.scene - 1, PRIORITY.relationship + 1 + rank),
       droppable: true,
       placement,
@@ -948,8 +969,24 @@ export function assemblePrompt(input: AssembleInput): AssembledPrompt {
     });
   }
 
-  const available = Math.max(MIN_PROMPT_TOKENS, input.budget.maxTokens - input.budget.reserveForReply);
-  const { blocks: kept, report } = applyBudget(blocks, { maxTokens: available, counter });
+  const available = Math.max(
+    MIN_PROMPT_TOKENS,
+    input.budget.maxTokens - input.budget.reserveForReply - Math.max(0, input.budget.extraTokens ?? 0),
+  );
+  /*
+   * 估算口径补上结构开销（审计 B12）：每条消息的角色标记、每个小节的 `### 标题`、
+   * 那条大 system 消息本身；再留 5% 余量给估算误差——启发式计数在临界时低估，
+   * 服务端就会直接 400 整轮失败。
+   */
+  const budgetTokens = Math.max(
+    MIN_PROMPT_TOKENS,
+    Math.floor(available * (1 - BUDGET_SAFETY_MARGIN)) - MESSAGE_OVERHEAD_TOKENS,
+  );
+  const { blocks: kept, report } = applyBudget(blocks, {
+    maxTokens: budgetTokens,
+    counter,
+    overhead: (block) => structuralOverhead(block, counter),
+  });
 
   const memoryStats = { recall: 0, mention: 0, source: 0 };
   const keptIds = new Set(kept.map((block) => block.id));

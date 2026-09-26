@@ -1,5 +1,5 @@
 import { newId, nowIso } from '../model/ids.js';
-import type { EntityStore } from './entity-store.js';
+import { type EntityStore, updateEntity } from './entity-store.js';
 
 /**
  * 后台任务队列（ROADMAP P1-9，重抽撤销见 P0-7）。
@@ -102,11 +102,19 @@ export function createBackgroundRunner(store: EntityStore): BackgroundRunner {
 
       // 必须把状态变更后的对象返回给调用方，否则调用方拿到的是过期的 pending，
       // 会以为自己没有独占这个任务。
+      //
+      // 认领是一次**原子的比较交换**（审计 B3）：在同一个事务里重读，只有仍是 pending
+      // 才改成 running。两个标签页同时 list 到同一条时，后到的那个读到的已经是 running，
+      // 于是放弃——模型不会被调两次、账单不会记两笔、情绪不会叠加两次。
       const claimed: BackgroundTask[] = [];
       for (const task of pending) {
-        const running: BackgroundTask = { ...task, status: 'running', updatedAt: nowIso() };
-        await store.put(COLLECTION, running);
-        claimed.push(running);
+        let won = false;
+        const result = await updateEntity<BackgroundTask>(store, COLLECTION, task.id, (current) => {
+          if (current === null || current.status !== 'pending') return undefined;
+          won = true;
+          return { ...current, status: 'running', updatedAt: nowIso() };
+        });
+        if (won && result !== null) claimed.push(result);
       }
       return claimed;
     },

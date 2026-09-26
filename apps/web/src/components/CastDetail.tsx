@@ -1,6 +1,7 @@
 import type { Card, CharacterInstance, InstanceId, MemoryEvent, Presence } from '@dramatis/core';
 import { PRESENCE_OPTIONS, signed } from '../lib/labels';
 import { useDraftField } from '../lib/useDraftField';
+import { avatarOf, portraitOf } from '../lib/portraits';
 import { Avatar } from './MessageBody';
 import { Modal } from './Modal';
 
@@ -79,11 +80,12 @@ export function CastDetail({
       onClose={onClose}
       head={
         <>
-          <Avatar name={instance.displayName} size={40} />
+          <Avatar name={instance.displayName} size={40} avatar={avatarOf(card)} />
           <input className="conversation-name" disabled={disabled} aria-label="显示名" {...nameField.bind} />
         </>
       }
     >
+      {portraitOf(card) ? <img className="cast-portrait" src={portraitOf(card) ?? ''} alt={`${instance.displayName}的立绘`} /> : null}
       <section className="panel">
         <h2>在场状态</h2>
         <select

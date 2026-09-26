@@ -32,10 +32,10 @@ export function avatarColor(name: string): string {
   return `hsl(${String(hash)} 45% 38%)`;
 }
 
-export function Avatar({ name, size = 34 }: { name: string; size?: number }) {
+export function Avatar({ name, size = 34, avatar }: { name: string; size?: number; avatar?: string | null }) {
   return (
     <span className="avatar" style={{ background: avatarColor(name), width: size, height: size }} title={name}>
-      {name.trim().slice(0, 1)}
+      {avatar ? <img src={avatar} alt="" loading="lazy" /> : name.trim().slice(0, 1)}
     </span>
   );
 }

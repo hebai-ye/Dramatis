@@ -63,3 +63,8 @@ deploy/LOCAL-NOTES.md
 # 不忽略的话，一次 `git add -A` 会把 worktree 与真实角色卡一起提交进去。
 .claude/
 tmp-test-cards/
+
+# 立绘源图：48 张 1024×1536 PNG，约 114 MB，只留在本机，不进仓库（用户 2026-09-26 裁定）。
+# 仓库里保留 art/README.md、两张总览图、tools/art/prepare-assets.py；
+# 应用实际使用的是 apps/web/public/portraits/ 下的 WebP 与缩略图。
+art/source/

@@ -33,6 +33,7 @@ interface ItemProps {
   message: Message;
   /** 只要 id 与显示名（顺序 62）：情绪每轮都在变，名字不变就不该重画 */
   cast: readonly CastName[];
+  avatars: Readonly<Record<string, string | null>>;
   /** 只有最后一条角色回复可以重抽：重抽更早的消息会让后面的对话失去前提。 */
   isLastCharacter: boolean;
   editing: boolean;
@@ -80,6 +81,7 @@ function EditBox({
 export const MessageItem = memo(function MessageItem({
   message,
   cast,
+  avatars,
   isLastCharacter,
   editing,
   highlighted,
@@ -126,7 +128,9 @@ export const MessageItem = memo(function MessageItem({
       onTouchCancel={handlers.onPressCancel}
       onClickCapture={handlers.onClickCapture}
     >
-      {message.role === 'character' ? <Avatar name={displayName} /> : null}
+      {message.role === 'character' ? (
+        <Avatar name={displayName} avatar={avatars[message.speakerInstanceId ?? ''] ?? null} />
+      ) : null}
 
       <div className="message-column">
         {message.role === 'character' ? <span className="message-name">{displayName}</span> : null}
@@ -224,6 +228,7 @@ export const MessageItem = memo(function MessageItem({
 interface ListProps {
   messages: readonly Message[];
   cast: readonly CastName[];
+  avatars: Readonly<Record<string, string | null>>;
   lastCharacterId: MessageId | null;
   editingId: MessageId | null;
   highlightId: MessageId | null;
@@ -248,6 +253,7 @@ export const MessageList = memo(function MessageList(props: ListProps) {
           key={message.id}
           message={message}
           cast={props.cast}
+          avatars={props.avatars}
           isLastCharacter={message.id === props.lastCharacterId}
           editing={props.editingId === message.id}
           highlighted={props.highlightId === message.id}

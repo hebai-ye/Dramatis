@@ -29,6 +29,7 @@ interface Props {
   scene: Scene | null;
   messages: Message[];
   cast: CharacterInstance[];
+  avatars: Readonly<Record<string, string | null>>;
   busy: boolean;
   ready: boolean;
   /** 已归档的对话只用于回顾，不能再说话。 */
@@ -205,6 +206,7 @@ function MainChatImpl({
   scene,
   messages,
   cast,
+  avatars,
   busy,
   ready,
   archived,
@@ -552,6 +554,7 @@ function MainChatImpl({
         <MessageList
           messages={messages}
           cast={castNames}
+          avatars={avatars}
           lastCharacterId={lastCharacterId}
           editingId={editingId}
           highlightId={highlightId}
@@ -563,7 +566,14 @@ function MainChatImpl({
           handlers={handlers}
         />
 
-        <StreamingBubble key={conversation.id} busy={busy} suspendAutoScroll={focus !== null} bottomRef={bottomRef} />
+        <StreamingBubble
+          key={conversation.id}
+          busy={busy}
+          suspendAutoScroll={focus !== null}
+          bottomRef={bottomRef}
+          cast={castNames}
+          avatars={avatars}
+        />
 
         <div ref={bottomRef} />
       </div>

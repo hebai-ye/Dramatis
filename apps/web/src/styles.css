@@ -1977,6 +1977,138 @@ details summary {
   flex: 0 0 auto;
   font-size: 14px;
   justify-content: center;
+  overflow: hidden;
+}
+
+.avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center;
+}
+
+.portrait-picker {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 12px;
+}
+
+.portrait-picker-heading {
+  align-items: start;
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.portrait-picker-heading .hint {
+  margin: 4px 0 10px;
+}
+
+.portrait-selected {
+  align-items: end;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.portrait-avatar-preview {
+  align-items: center;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.portrait-selected img,
+.cast-portrait {
+  border-radius: 8px;
+  display: block;
+  max-height: 340px;
+  max-width: 100%;
+  object-fit: contain;
+}
+
+.portrait-selected img {
+  max-height: 240px;
+}
+
+.cast-portrait {
+  margin: 0 auto 16px;
+}
+
+.portrait-grid {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(auto-fill, minmax(82px, 1fr));
+  max-height: 360px;
+  overflow-y: auto;
+}
+
+.portrait-tile {
+  align-items: center;
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 4px;
+}
+
+.portrait-tile.selected {
+  border-color: var(--accent);
+}
+
+.portrait-tile img {
+  aspect-ratio: 2 / 3;
+  border-radius: 4px;
+  object-fit: cover;
+  width: 100%;
+}
+
+.portrait-tile span {
+  font-size: 11px;
+}
+
+.avatar-crop-editor {
+  border-top: 1px solid var(--line);
+  display: grid;
+  gap: 10px;
+  margin-top: 10px;
+  padding-top: 12px;
+}
+
+.avatar-crop-editor .hint {
+  margin: 0;
+}
+
+.avatar-crop-window {
+  background: var(--surface-2, #27211e);
+  cursor: grab;
+  height: 256px;
+  margin: 0 auto;
+  overflow: hidden;
+  position: relative;
+  touch-action: none;
+  width: 256px;
+}
+
+.avatar-crop-window:active {
+  cursor: grabbing;
+}
+
+.avatar-crop-window img {
+  max-width: none;
+  position: absolute;
+  user-select: none;
+}
+
+.avatar-crop-circle {
+  border: 2px solid #fff;
+  border-radius: 50%;
+  box-shadow: 0 0 0 999px rgb(0 0 0 / 50%);
+  inset: 0;
+  pointer-events: none;
+  position: absolute;
 }
 
 /* 动作不在气泡里：它是描写，不是谁说的话 */

@@ -46,6 +46,7 @@ import { useAdminChat } from './lib/admin';
 import { useAppearance } from './lib/appearance';
 import { useArchive } from './lib/archive';
 import { useProviders } from './lib/providers';
+import { avatarOf } from './lib/portraits';
 import { useDatabase, useSession } from './lib/session';
 import { useStorageStatus } from './lib/storage';
 import { useSync } from './lib/sync';
@@ -209,6 +210,21 @@ export function App() {
   const castNames = useMemo<CastName[]>(
     () => cast.map((instance) => ({ id: instance.id, displayName: instance.displayName })),
     [cast],
+  );
+  /** 包含离场角色：旧消息仍应显示原说话人的头像。状态数值变化不重建这份映射。 */
+  const avatarKey = instances
+    .map((instance) => {
+      const card = session.library.cards.find((item) => item.id === instance.cardId);
+      return `${instance.id}:${instance.cardId}:${card?.updatedAt ?? ''}`;
+    })
+    .join('|');
+  // biome-ignore lint/correctness/useExhaustiveDependencies: 仅头像相关的角色卡版本变化时才更新旧消息
+  const avatars = useMemo<Record<string, string | null>>(
+    () => Object.fromEntries(instances.map((instance) => [
+      instance.id,
+      avatarOf(session.library.cards.find((card) => card.id === instance.cardId)),
+    ])),
+    [avatarKey],
   );
   const [castAsk, setCastAsk] = useState<{ text: string; seq: number } | null>(null);
   const castAskSeq = useRef(0);
@@ -931,6 +947,7 @@ export function App() {
                   scene={scene}
                   messages={messages}
                   cast={cast}
+                  avatars={avatars}
                   busy={busy}
                   ready={ready}
                   archived={archived}
@@ -1008,7 +1025,7 @@ export function App() {
             <CastRail
               instances={instances}
               scene={scene}
-              cards={session.cards}
+              cards={session.library.cards}
               disabled={disabled}
               onOpenDetail={setDetailId}
               availableCards={availableCards}
@@ -1083,7 +1100,7 @@ export function App() {
       {detail === null ? null : (
         <CastDetail
           instance={detail}
-          card={session.cards.find((card) => card.id === detail.cardId) ?? null}
+          card={session.library.cards.find((card) => card.id === detail.cardId) ?? null}
           memories={session.memories}
           disabled={disabled}
           onClose={() => setDetailId(null)}

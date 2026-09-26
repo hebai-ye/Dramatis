@@ -1,4 +1,4 @@
-import { renderMessageContent } from '@dramatis/core';
+import { renderMessageContent, type CastName } from '@dramatis/core';
 import { type RefObject, useLayoutEffect, useRef } from 'react';
 import { countRender } from '../lib/render-count';
 import { useStreamState } from '../lib/stream-store';
@@ -10,6 +10,8 @@ interface Props {
   suspendAutoScroll: boolean;
   /** 对话区底部的锚点：流式内容长出来时滚到它。 */
   bottomRef: RefObject<HTMLDivElement | null>;
+  cast: readonly CastName[];
+  avatars: Readonly<Record<string, string | null>>;
 }
 
 /**
@@ -33,9 +35,11 @@ function tailOf(text: string, max = 120): string {
  * 它是**唯一**订阅流式状态的组件：每个 token 到达只重画这里，几百条已落盘的消息、
  * 左栏、面板都不动。三块内容与拆出来之前一样：推理流、阶段占位（0ms 就有话说）、流式气泡。
  */
-export function StreamingBubble({ busy, suspendAutoScroll, bottomRef }: Props) {
+export function StreamingBubble({ busy, suspendAutoScroll, bottomRef, cast, avatars }: Props) {
   countRender('StreamingBubble');
   const { text, speaker, reasoning, phase } = useStreamState();
+  const speakerId = cast.find((member) => member.displayName === speaker)?.id;
+  const avatar = speakerId ? avatars[speakerId] : null;
   const previousHeight = useRef<number | null>(null);
 
   // 用本次 DOM 长高之前的距离判断是否贴底；大块输出即使一次长高超过 120px，
@@ -69,7 +73,7 @@ export function StreamingBubble({ busy, suspendAutoScroll, bottomRef }: Props) {
       */}
       {busy && phase !== 'idle' && text === '' ? (
         <article className="message-row character pending">
-          <Avatar name={speaker === '' ? '…' : speaker} />
+          <Avatar name={speaker === '' ? '…' : speaker} avatar={avatar} />
           <div className="message-column">
             <span className="message-name">{speaker === '' ? '正在准备' : speaker}</span>
             <p className="pending-line">
@@ -83,7 +87,7 @@ export function StreamingBubble({ busy, suspendAutoScroll, bottomRef }: Props) {
 
       {text !== '' ? (
         <article className="message-row character">
-          <Avatar name={speaker} />
+          <Avatar name={speaker} avatar={avatar} />
           <div className="message-column streaming">
             <span className="message-name">{speaker}</span>
             {/* 流式气泡与落盘后的渲染用同一套规则，否则「我」会在生成完的一瞬间跳成名字 */}

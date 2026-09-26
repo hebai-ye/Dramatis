@@ -1,6 +1,7 @@
 import type { Card, CharacterInstance, InstanceId, Scene } from '@dramatis/core';
 import { memo } from 'react';
 import { countRender } from '../lib/render-count';
+import { avatarOf } from '../lib/portraits';
 import { Avatar } from './MessageBody';
 
 interface Props {
@@ -51,7 +52,7 @@ function CastRailImpl({ instances, scene, cards, disabled, onOpenDetail, availab
                 event.dataTransfer.effectAllowed = 'copy';
               }}
             >
-              <Avatar name={instance.displayName} size={30} />
+              <Avatar name={instance.displayName} size={30} avatar={avatarOf(cards.find((card) => card.id === instance.cardId))} />
               <span className="cast-card-name">{instance.displayName}</span>
               <span className="cast-card-state">{onstage ? '在场' : '在场外'}</span>
             </button>
@@ -71,7 +72,7 @@ function CastRailImpl({ instances, scene, cards, disabled, onOpenDetail, availab
               title={`把「${card.name}」拉进这个世界`}
               onClick={() => onAddInstance(card)}
             >
-              <Avatar name={card.name} size={30} />
+              <Avatar name={card.name} size={30} avatar={avatarOf(card)} />
               <span className="cast-card-name">{card.name}</span>
             </button>
           ))}

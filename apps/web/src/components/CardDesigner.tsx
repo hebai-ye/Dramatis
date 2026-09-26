@@ -1,5 +1,8 @@
 import { type Card, type CardId, createBlankCard, resolveCardSystemPrompt } from '@dramatis/core';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { PORTRAITS, avatarOf, portraitOf } from '../lib/portraits';
+import { AvatarCropper } from './AvatarCropper';
+import { Avatar } from './MessageBody';
 
 interface Props {
   cards: Card[];
@@ -61,6 +64,10 @@ export function CardDesigner({ cards, disabled, onSave, onDelete }: Props) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [draft, setDraft] = useState<Card | null>(null);
   const [showAdvanced, setShowAdvanced] = useState(false);
+  const [showPortraits, setShowPortraits] = useState(false);
+  const [cropSource, setCropSource] = useState<File | string | null>(null);
+  const [imageError, setImageError] = useState<string | null>(null);
+  const imageInput = useRef<HTMLInputElement | null>(null);
 
   const selected = cards.find((card) => card.id === selectedId) ?? null;
 
@@ -76,6 +83,11 @@ export function CardDesigner({ cards, disabled, onSave, onDelete }: Props) {
         : { ...selected, systemPrompt: resolveCardSystemPrompt(selected.systemPrompt) },
     );
   }, [selected]);
+
+  useEffect(() => {
+    setCropSource(null);
+    setImageError(null);
+  }, [selectedId]);
 
   const patch = (changes: Partial<Card>): void => {
     setDraft((previous) => (previous ? { ...previous, ...changes } : previous));
@@ -151,6 +163,134 @@ export function CardDesigner({ cards, disabled, onSave, onDelete }: Props) {
               onBlur={commit}
             />
           </label>
+
+          <section className="portrait-picker">
+            <div className="portrait-picker-heading">
+              <div>
+                <strong>角色立绘</strong>
+                <p className="hint">可选内置立绘，或上传自己的角色图并裁切对话头像。</p>
+              </div>
+              <button type="button" className="ghost" onClick={() => setShowPortraits((value) => !value)}>
+                {showPortraits ? '收起图库' : '浏览图库'}
+              </button>
+            </div>
+            {portraitOf(draft) ? (
+              <div className="portrait-selected">
+                <img src={portraitOf(draft) ?? ''} alt={`${draft.name}的立绘`} />
+                <div className="portrait-avatar-preview">
+                  <Avatar name={draft.name} size={64} avatar={avatarOf(draft)} />
+                  <span className="hint">对话头像</span>
+                </div>
+                <button
+                  type="button"
+                  className="ghost"
+                  disabled={disabled}
+                  onClick={() => {
+                    const {
+                      dramatisPortrait: _bundled,
+                      dramatisCustomPortrait: _custom,
+                      dramatisCustomAvatar: _avatar,
+                      ...extensions
+                    } = draft.extensions;
+                    const updated = { ...draft, extensions };
+                    setDraft(updated);
+                    onSave(updated);
+                  }}
+                >
+                  移除立绘
+                </button>
+              </div>
+            ) : null}
+            <input
+              ref={imageInput}
+              type="file"
+              accept="image/png,image/jpeg,image/webp"
+              className="hidden-file"
+              onChange={(event) => {
+                const file = event.target.files?.[0];
+                event.target.value = '';
+                if (!file) return;
+                if (!['image/png', 'image/jpeg', 'image/webp'].includes(file.type)) {
+                  setImageError('请选择 PNG、JPEG 或 WebP 图片。');
+                  return;
+                }
+                if (file.size > 12 * 1024 * 1024) {
+                  setImageError('图片不能超过 12 MB。');
+                  return;
+                }
+                setImageError(null);
+                setCropSource(file);
+              }}
+            />
+            <div className="inline">
+              <button type="button" className="ghost" disabled={disabled} onClick={() => imageInput.current?.click()}>
+                上传角色图
+              </button>
+              {typeof draft.extensions.dramatisCustomPortrait === 'string' ? (
+                <button
+                  type="button"
+                  className="ghost"
+                  disabled={disabled}
+                  onClick={() => setCropSource(draft.extensions.dramatisCustomPortrait as string)}
+                >
+                  重新选取头像
+                </button>
+              ) : null}
+            </div>
+            {imageError ? <p className="notice error">{imageError}</p> : null}
+            {cropSource ? (
+              <AvatarCropper
+                source={cropSource}
+                disabled={disabled}
+                onCancel={() => setCropSource(null)}
+                onConfirm={(portrait, avatar) => {
+                  const {
+                    dramatisPortrait: _bundled,
+                    dramatisCustomPortrait: _oldPortrait,
+                    dramatisCustomAvatar: _oldAvatar,
+                    ...extensions
+                  } = draft.extensions;
+                  const updated = {
+                    ...draft,
+                    extensions: { ...extensions, dramatisCustomPortrait: portrait, dramatisCustomAvatar: avatar },
+                  };
+                  setDraft(updated);
+                  onSave(updated);
+                  setCropSource(null);
+                }}
+              />
+            ) : null}
+            {showPortraits ? (
+              <div className="portrait-grid" aria-label="可选角色立绘">
+                {PORTRAITS.map((portrait) => (
+                  <button
+                    type="button"
+                    key={portrait.src}
+                    className={portraitOf(draft) === portrait.src ? 'portrait-tile selected' : 'portrait-tile'}
+                    disabled={disabled}
+                    title={`${String(portrait.number).padStart(2, '0')} · ${portrait.name}（${portrait.namingStyle}）`}
+                    onClick={() => {
+                      const {
+                        dramatisCustomPortrait: _custom,
+                        dramatisCustomAvatar: _avatar,
+                        ...extensions
+                      } = draft.extensions;
+                      const updated = {
+                        ...draft,
+                        extensions: { ...extensions, dramatisPortrait: portrait.src },
+                      };
+                      setDraft(updated);
+                      onSave(updated);
+                      setCropSource(null);
+                    }}
+                  >
+                    <img src={portrait.thumbnail} alt="" loading="lazy" />
+                    <span>{String(portrait.number).padStart(2, '0')} · {portrait.name}</span>
+                  </button>
+                ))}
+              </div>
+            ) : null}
+          </section>
 
           <label>
             性格

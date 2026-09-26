@@ -32,9 +32,22 @@ if ! command -v node >/dev/null 2>&1; then
   echo "装好后重新跑这个脚本。"
   exit 1
 fi
-NODE_VERSION="$(node -v)"
-echo "  发现 node ${NODE_VERSION}"
-node -e 'const [maj,min]=process.versions.node.split(".").map(Number); if (maj<22||(maj===22&&min<5)) { console.error("需要 Node >= 22.5（内置 node:sqlite）"); process.exit(1);}'
+NODE_BIN="${DRAMATIS_NODE:-$(command -v node)}"
+# systemd 的 ExecStart 要绝对路径，而且解析掉符号链接，免得 PATH 里换了个 node 悄悄换版本
+NODE_BIN="$(readlink -f "${NODE_BIN}")"
+if [[ "${NODE_BIN}" != /* || ! -x "${NODE_BIN}" ]]; then
+  echo "node 路径无效：${NODE_BIN}（可以用 DRAMATIS_NODE=/绝对路径/node 指定）" >&2
+  exit 1
+fi
+NODE_VERSION="$("${NODE_BIN}" -v)"
+echo "  发现 node ${NODE_VERSION}（${NODE_BIN}）"
+"${NODE_BIN}" -e 'const [maj,min]=process.versions.node.split(".").map(Number); if (maj<22||(maj===22&&min<5)) { console.error("需要 Node >= 22.5（内置 node:sqlite）"); process.exit(1);}'
+case "${NODE_BIN}" in
+  /home/*|/root/*)
+    echo "  node 在家目录里（${NODE_BIN}）。服务开了 ProtectHome，读不到那里；请装到 /usr 或 /opt 下再跑。" >&2
+    exit 1
+    ;;
+esac
 
 echo "== 2/5 检查文件是否已拷好 =="
 [[ -f "${APP_DIR}/start.mjs" ]] || { echo "缺少 ${APP_DIR}/start.mjs（先把 tools/sync-server/ 拷过去）" >&2; exit 1; }
@@ -43,14 +56,18 @@ echo "== 2/5 检查文件是否已拷好 =="
 
 echo "== 3/5 建用户与目录 =="
 if ! id -u "${SERVICE_USER}" >/dev/null 2>&1; then
-  useradd --system --home "${APP_DIR}" --shell /usr/sbin/nologin "${SERVICE_USER}"
+  useradd --system --home "${DATA_DIR}" --no-create-home --shell /usr/sbin/nologin "${SERVICE_USER}"
   echo "  已创建系统用户 ${SERVICE_USER}"
 else
   echo "  用户 ${SERVICE_USER} 已存在"
 fi
 
 mkdir -p "${DATA_DIR}" "${WEB_DIR}"
-chown -R "${SERVICE_USER}:${SERVICE_USER}" "${APP_DIR}" "${DATA_DIR}"
+# 审计 B19：代码归 root、服务用户只读——服务被攻破也改不了自己的代码来持久化。
+# 只有数据目录归服务用户可写。
+chown -R root:root "${APP_DIR}"
+chmod -R u=rwX,go=rX "${APP_DIR}"
+chown -R "${SERVICE_USER}:${SERVICE_USER}" "${DATA_DIR}"
 chmod 700 "${DATA_DIR}"
 
 echo "== 4/5 装 systemd 单元 =="
@@ -70,13 +87,23 @@ Environment=DRAMATIS_SYNC_PORT=8787
 # 同源部署（网页与 API 同一个域名）时不需要跨源白名单；
 # 如果你把网页放到别处，再在这里加 DRAMATIS_SYNC_ORIGINS=https://...
 Environment=DRAMATIS_SYNC_ORIGINS=
-ExecStart=$(command -v node) --no-warnings ${APP_DIR}/start.mjs
+ExecStart=${NODE_BIN} --no-warnings ${APP_DIR}/start.mjs
 Restart=always
 RestartSec=3
+# 加固（审计 B19）：整个文件系统只读，只有数据目录可写；看不到家目录与物理设备
 NoNewPrivileges=true
 PrivateTmp=true
-ProtectSystem=full
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
 ReadWritePaths=${DATA_DIR}
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictSUIDSGID=true
+LockPersonality=true
+UMask=0077
 
 [Install]
 WantedBy=multi-user.target

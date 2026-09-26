@@ -6,7 +6,7 @@
   "description": "多角色扮演酒馆 —— 导演你的角色阵容，让每个角色记住属于自己的故事",
   "packageManager": "pnpm@11.22.0",
   "engines": {
-    "node": ">=20"
+    "node": ">=22.5"
   },
   "scripts": {
     "dev": "pnpm --filter @dramatis/web dev",

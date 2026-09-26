@@ -862,7 +862,7 @@ P1-7/P1-8 情绪与抗漂移、P1-9 调用预算与熔断（T19）、P1-10 七�
 ```bash
 pnpm install
 pnpm desktop        # 起本地服务并用应用窗口打开
-pnpm test           # 468 个测试
+pnpm test           # 全部单元测试（数量以输出为准）
 pnpm typecheck
 pnpm lint
 pnpm build          # 生产构建（PWA 的 Service Worker 只在这个产物里注册）

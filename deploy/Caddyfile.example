@@ -9,15 +9,36 @@
 sync.你的域名 {
 	# 网页（apps/web/dist 拷到这里）
 	root * /var/www/dramatis
-	file_server
 
-	# 同步 API：同源，所以不需要 CORS
+	# 同步 API：同源，所以不需要 CORS。请求体上限与服务端 8MB 对齐
 	handle_path /sync/* {
+		request_body {
+			max_size 8MB
+		}
 		reverse_proxy 127.0.0.1:8787
 	}
 
-	# PWA 的 service worker 需要这个头才能覆盖整个站点
+	# 单页应用：找不到的路径回 index.html（深层链接刷新不再 404）
+	handle {
+		try_files {path} /index.html
+		file_server
+	}
+
+	# service worker 不要缓存，否则更新发布不出去
 	header /sw.js Cache-Control "no-cache"
+
+	# 安全响应头（审计 A15）。Caddy 的 header 不存在 nginx 那种继承问题，sw.js 也会带上。
+	# CSP 各指令的理由与 Report-Only 灰度步骤见 nginx-security-headers.conf：
+	#   先用 Content-Security-Policy-Report-Only 跑几天，控制台无报错后
+	#   把它改名为 Content-Security-Policy。
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		X-Frame-Options "DENY"
+		Permissions-Policy "camera=(), microphone=(), geolocation=()"
+		Content-Security-Policy-Report-Only "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; font-src 'self' data:; connect-src 'self' https: http://127.0.0.1:* http://localhost:*; worker-src 'self'; manifest-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
+	}
 
 	encode zstd gzip
 

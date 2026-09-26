@@ -50,6 +50,20 @@ sudo bash /opt/dramatis-sync/deploy/install-server.sh   # 幂等，可重复跑
 `install-server.sh` 只做本机的事（建用户与目录、装 systemd 单元、给权限），
 **不会**替你去网上装 Node、也不会写你的地址——那两条它只打印给你看。
 
+它会把 `/opt/dramatis-sync` 设成 root 所有、服务用户只读，只有 `/var/lib/dramatis-sync` 可写；
+systemd 单元开了 `ProtectSystem=strict`、`ProtectHome` 等隔离，`ExecStart` 写的是解析后的 node 绝对路径
+（node 不能装在家目录里；要指定别的 node 用 `DRAMATIS_NODE=/usr/local/bin/node`）。
+以后 rsync 更新代码要用 root（或 sudo）执行。
+
+## 安全响应头（HSTS / CSP 等）
+
+- nginx：先 `sudo cp deploy/nginx-security-headers.conf /etc/nginx/snippets/dramatis-security-headers.conf`，
+  `nginx-8443.conf.example` 里已经 include 它（`location = /sw.js` 里也 include 了一次，因为 nginx 的
+  `add_header` 在 location 里不继承）。
+- Caddy：`Caddyfile.example` 里直接写了 `header { ... }`。
+- CSP 默认是 **Report-Only**：只在浏览器控制台报违规，不拦。把各功能走一遍、观察几天没报错，
+  再按 `nginx-security-headers.conf` 顶部的步骤切成正式的 `Content-Security-Policy`。
+
 ## 证书
 
 | 情况 | 怎么拿证书 |

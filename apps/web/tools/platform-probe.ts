@@ -14,6 +14,8 @@
  * 每 500 毫秒 +1，冻住期间它不涨，就是「后台队列会停」的直接证据。
  */
 
+export {};
+
 const out = document.querySelector('#out');
 
 declare global {

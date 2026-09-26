@@ -59,10 +59,11 @@ coverage/
 # 本机私有部署笔记（含服务器地址、域名、凭据线索）
 deploy/LOCAL-NOTES.md
 
-# 本地会话产物：agent worktree（各带一份 node_modules）与临时测试角色卡。
-# 不忽略的话，一次 `git add -A` 会把 worktree 与真实角色卡一起提交进去。
-.claude/
+# 本地测试用角色卡（可能含真实角色卡或对话，别提交）
 tmp-test-cards/
+
+# Claude Code 本地会话与 worktree（各带一份 node_modules；别让 `git add -A` 一起提交）
+.claude/
 
 # 立绘源图：48 张 1024×1536 PNG，约 114 MB，只留在本机，不进仓库（用户 2026-09-26 裁定）。
 # 仓库里保留 art/README.md、两张总览图、tools/art/prepare-assets.py；

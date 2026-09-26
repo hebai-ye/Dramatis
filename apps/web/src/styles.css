@@ -1292,7 +1292,6 @@ button.ghost:focus-visible {
   padding: 9px 12px;
 }
 
-/* biome-ignore lint/style/noDescendingSpecificity: 这两条选择器不会命中同一个元素，声明顺序无影响 */
 .bubble p {
   margin: 0;
   white-space: pre-wrap;
@@ -1923,9 +1922,6 @@ details summary {
  */
 .app.has-bg .chat-body {
   text-shadow: 0 1px 3px rgba(0, 0, 0, 0.45);
-}
-
-.chat-body {
 }
 
 .chat-surface.empty {

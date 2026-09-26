@@ -1111,6 +1111,7 @@ export function App() {
           onClose={() => setDetailId(null)}
           onRename={(id, name) => void session.updateInstance(id, { displayName: name })}
           onSetPresence={(id, presence) => void session.setPresence(id, presence)}
+          onSetRelationship={(id, field, value) => void session.setRelationship(id, field, value)}
           onRemove={(id) => {
             setDetailId(null);
             void session.removeInstance(id);

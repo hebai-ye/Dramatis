@@ -1,8 +1,19 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { Card } from '../model/card.js';
 import { createConversation } from '../model/conversation.js';
-import { cardId, eventId, instanceId, messageId, newId, nowIso, roomId, sceneId, worldBookId } from '../model/ids.js';
-import { type CharacterInstance, neutralTraits } from '../model/instance.js';
+import {
+  cardId,
+  eventId,
+  instanceId,
+  messageId,
+  newId,
+  nowIso,
+  PLAYER,
+  roomId,
+  sceneId,
+  worldBookId,
+} from '../model/ids.js';
+import { type CharacterInstance, INITIAL_PLAYER_AFFINITY, neutralTraits } from '../model/instance.js';
 import type { Room, Scene } from '../model/room.js';
 import { createBackgroundRunner } from '../platform/background-runner.js';
 import { createMemoryKeyStore } from '../platform/key-store.js';
@@ -232,7 +243,7 @@ describe('Repository / schema', () => {
 
     // 从 v9 起步，所以 v10 与它之后的每一步都会跑；这条测试关心的是 v10 那一步。
     // 加新迁移时这一行要跟着加——故意钉死，免得「迁移没跑」被默默放过。
-    expect(report.applied.map((migration) => migration.version)).toEqual([10, 11]);
+    expect(report.applied.map((migration) => migration.version)).toEqual([10, 11, 12]);
     expect(migrated?.personaId).toBe('persona-old');
     expect(migrated?.playerName).toBe('沈砚');
     expect(migrated?.playerPersona).toBe('旧信的主人');
@@ -1140,5 +1151,109 @@ describe('快照的引用复用（顺序 62）', () => {
     expect(
       (await store.listSince<{ id: string }>('demo', firstSince, { inclusive: true })).map((row) => row.id),
     ).toEqual(['row-0', 'row-1', 'row-2']);
+  });
+});
+
+/**
+ * 顺序 89（用户 2026-09-26 裁定）：老对话里「从没被谁碰过」的好感也一起提到 40%。
+ *
+ * 条件必须收得紧——只动 `affinity === 0 && history.length === 0 && target === player`。
+ * 用户自己养出来的关系（涨过、跌过、被拖过滑杆）一律不动，否则一次升级会把
+ * 几十轮剧情推出来的关系抹平。
+ */
+describe('顺序 89：迁移把从未变动过的好感提到 40%', () => {
+  function legacyInstance(affinity: number, history: unknown[] = []) {
+    const { instance } = fixtures();
+    return {
+      ...instance,
+      relationships: [
+        {
+          target: PLAYER,
+          trust: 0,
+          affinity,
+          fear: 0,
+          respect: 0,
+          tension: 0,
+          updatedAt: instance.updatedAt,
+          history,
+        },
+      ],
+    };
+  }
+
+  it('0 且没有历史的对玩家关系被提到 0.4，并留下一条能撤销的记录', async () => {
+    const store = createMemoryEntityStore();
+    const instance = legacyInstance(0);
+    await store.put(COLLECTIONS.instances, instance as never);
+
+    const repo = new Repository(store);
+    await repo.migrate();
+    const [migrated] = await repo.listInstances(instance.roomId);
+
+    const edge = migrated?.relationships[0];
+    expect(edge?.affinity).toBe(INITIAL_PLAYER_AFFINITY);
+    expect(edge?.history).toHaveLength(1);
+    expect(edge?.history[0]?.before).toBe(0);
+    expect(edge?.history[0]?.after).toBe(INITIAL_PLAYER_AFFINITY);
+    expect(edge?.history[0]?.reason).toContain('顺序 89');
+  });
+
+  it('已经动过的关系保持原样（有历史、或值本来就不是 0）', async () => {
+    const store = createMemoryEntityStore();
+    const untouched = legacyInstance(0, [
+      { at: '2026-01-01T00:00:00.000Z', turnId: 'turn-1', field: 'affinity', delta: 0.2, reason: '剧情' },
+    ]);
+    // 第二条实例：值已是负数（被剧情推下去过），历史为空
+    const { instance: other } = fixtures();
+    const negative = {
+      ...other,
+      relationships: [{ ...other.relationships[0], target: PLAYER, affinity: -0.3, history: [] }],
+      id: instanceId(newId()),
+      roomId: untouched.roomId,
+    };
+    await store.put(COLLECTIONS.instances, untouched as never);
+    await store.put(COLLECTIONS.instances, negative as never);
+
+    const repo = new Repository(store);
+    await repo.migrate();
+    const byId = new Map((await repo.listInstances(untouched.roomId)).map((item) => [item.id, item]));
+
+    expect(byId.get(untouched.id)?.relationships[0]?.affinity).toBe(0);
+    expect(byId.get(negative.id)?.relationships[0]?.affinity).toBe(-0.3);
+  });
+
+  it('不是对玩家的关系边不动', async () => {
+    const store = createMemoryEntityStore();
+    const instance = legacyInstance(0);
+    const other = instanceId(newId());
+    await store.put(COLLECTIONS.instances, {
+      ...instance,
+      relationships: [{ ...instance.relationships[0], target: other }],
+    } as never);
+
+    const repo = new Repository(store);
+    await repo.migrate();
+    const [migrated] = await repo.listInstances(instance.roomId);
+
+    expect(migrated?.relationships[0]?.affinity).toBe(0);
+    expect(migrated?.relationships[0]?.history).toEqual([]);
+  });
+
+  it('重复跑不会越提越高，也不会重复写记录', async () => {
+    const store = createMemoryEntityStore();
+    const instance = legacyInstance(0);
+    await store.put(COLLECTIONS.instances, instance as never);
+
+    const repo = new Repository(store);
+    await repo.migrate();
+    const first = (await repo.listInstances(instance.roomId))[0];
+
+    // 再建一个仓储（同一份数据）跑一次迁移：已经迁移过的库不会再跑，值也不该变
+    const again = new Repository(store);
+    await again.migrate();
+    const second = (await again.listInstances(instance.roomId))[0];
+
+    expect(second?.relationships[0]?.affinity).toBe(INITIAL_PLAYER_AFFINITY);
+    expect(second?.relationships[0]?.history).toHaveLength(first?.relationships[0]?.history.length ?? 0);
   });
 });

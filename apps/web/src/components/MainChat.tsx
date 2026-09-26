@@ -123,11 +123,12 @@ const MODE_OPTIONS: Array<{
     write: (checked) => ({ historyMode: checked ? 'recap-aware' : 'full' }),
   },
   /*
-   * 无限制模式（用户 2026-09-25 点名）。
+   * 无限制模式（用户 2026-09-25 点名；2026-09-26 追加「不可更改、不可阅读」）。
    *
    * 它替换了原来那个「高级系统提示 · 当前对话」输入框：提示词不再一条对话一份地手打，
-   * 而是住在代码里的一个常量（`packages/core/src/prompt/unlimited.ts`），
-   * 这里只留一个开关。开关是**对话级**的，与其它模式一致。
+   * 而是**一段存在用户本机库里的正文**（键见 `META_KEYS.unlimitedPrompt`，
+   * 为什么不能写进代码见 `packages/core/src/prompt/unlimited.ts`），这里只留一个开关。
+   * 开关是**对话级**的，与其它模式一致；正文的编辑与显示都已撤掉。
    *
    * 提示词为空时开关照常显示，但不会改变提示词（下面会说明一句）。
    */
@@ -249,15 +250,12 @@ function MainChatImpl({
   const [editingId, setEditingId] = useState<MessageId | null>(null);
   const [modeMenuOpen, setModeMenuOpen] = useState(false);
   /**
-   * 无限制模式提示词的编辑草稿（2026-09-25）。
+   * 无限制模式的提示词是**用户自己的东西**，而且用户 2026-09-26 明说了两件事：
+   * 词已经设定好、**不可更改**；内容**不可阅读**（商业机密，见 `packages/core/src/prompt/unlimited.ts`）。
    *
-   * 与旧版「高级系统提示」的草稿同一个套路：编辑期间只动本地草稿，显式保存才写库。
-   * `unlimitedPrompt.text` 只在初次加载与保存后变化，所以这个 effect 不会打断正在输入的内容。
+   * 所以这里既不留编辑框，也不显示正文，**连字数都不显示**——只说明配没配好。
+   * 正文照旧由 `App` 从本机库里读出来注入装配，界面不参与。
    */
-  const [unlimitedDraft, setUnlimitedDraft] = useState(unlimitedPrompt.text);
-  useEffect(() => {
-    setUnlimitedDraft(unlimitedPrompt.text);
-  }, [unlimitedPrompt.text]);
   const unlimitedReady = unlimitedPrompt.text.trim() !== '';
   /**
    * 旧版「高级系统提示 · 当前对话」（顺序 67e 的输入框）还留着内容的证据。
@@ -789,35 +787,15 @@ function MainChatImpl({
                   ))}
 
                   {/*
-                    无限制模式的正文是**用户数据**，所以粘贴框在这儿、存在本机。
-                    它不会进代码、不会进网页包（`packages/core/src/prompt/unlimited.ts` 顶上
-                    记了为什么）；代价是不参与同步，换设备要重新粘一次。
+                    无限制模式的正文是**用户数据**（保存在本机库里），而且用户 2026-09-26
+                    明确要求不可更改、不可阅读——所以这里不渲染正文、不显示字数、也不留
+                    编辑入口，只说明配没配好。正文照旧注入装配
+                    （`packages/core/src/prompt/unlimited.ts` 顶上记了为什么它不进代码）。
                   */}
-                  <label className="mode-menu-label" htmlFor={`unlimited-prompt-${conversation.id}`}>
-                    无限制模式的提示词
-                  </label>
                   <p className="hint">
-                    只存在这台设备上（不进代码、不进网页包，也不同步）。
-                    {unlimitedReady ? `当前 ${unlimitedPrompt.text.trim().length} 字。` : '还没填。'}
+                    无限制模式的提示词：
+                    {unlimitedReady ? '已配置（内容不在此显示，也不参与同步）。' : '尚未配置。'}
                   </p>
-                  <textarea
-                    id={`unlimited-prompt-${conversation.id}`}
-                    className="mode-text-input"
-                    value={unlimitedDraft}
-                    maxLength={4000}
-                    rows={5}
-                    disabled={archived}
-                    placeholder="粘贴你自己的提示词"
-                    onChange={(event) => setUnlimitedDraft(event.target.value)}
-                  />
-                  <button
-                    type="button"
-                    className="ghost mode-menu-button"
-                    disabled={archived || unlimitedDraft === unlimitedPrompt.text}
-                    onClick={() => void unlimitedPrompt.save(unlimitedDraft)}
-                  >
-                    保存提示词
-                  </button>
 
                   {unlimitedModeOf(conversation.modes) && !unlimitedReady ? (
                     <p className="hint">无限制模式已经打开，但提示词还是空的：现在它不会改变提示词。</p>

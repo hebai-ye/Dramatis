@@ -1,4 +1,4 @@
-import type { Card, CharacterInstance, InstanceId, MemoryEvent, Presence } from '@dramatis/core';
+import type { Card, CharacterInstance, InstanceId, MemoryEvent, Presence, RelationshipField } from '@dramatis/core';
 import { PRESENCE_OPTIONS, signed } from '../lib/labels';
 import { avatarOf, portraitOf } from '../lib/portraits';
 import { useDraftField } from '../lib/useDraftField';
@@ -13,6 +13,8 @@ interface Props {
   onClose: () => void;
   onRename: (id: InstanceId, name: string) => void;
   onSetPresence: (id: InstanceId, presence: Presence) => void;
+  /** 手动调整对玩家的某个关系维度（顺序 89：好感滑杆）。 */
+  onSetRelationship: (id: InstanceId, field: RelationshipField, value: number) => void;
   onRemove: (id: InstanceId) => void;
   /** 按一条状态历史撤销影响（顺序 27d）。 */
   onRevertChange: (id: InstanceId, changeId: string) => void;
@@ -32,6 +34,7 @@ export function CastDetail({
   onClose,
   onRename,
   onSetPresence,
+  onSetRelationship,
   onRemove,
   onRevertChange,
 }: Props) {
@@ -74,6 +77,26 @@ export function CastDetail({
     },
   });
 
+  /*
+   * 好感滑杆（顺序 89，用户点名「好感要能自己调」）。
+   *
+   * 显示按百分比：内部量表是 -1 ~ 1，40% 就是 0.4（新的初始好感）。滑杆只覆盖
+   * 0 ~ 1：用户想表达的是「关系不错/很好」，负值交给剧情去跌，也可以等模型推下来
+   * 之后在标签上看到负数（滑杆停在 0）。
+   *
+   * 拖动期间只改本地草稿，停手 300ms 才落库一次——`useDraftField` 那套正是为此写的，
+   * 否则一次拖动会写几十次 IndexedDB 并重建整份快照。
+   */
+  const affinityPercent = towardPlayer === undefined ? 0 : Math.round(towardPlayer.affinity * 100);
+  const affinityField = useDraftField({
+    value: String(affinityPercent),
+    commit: (next) => {
+      const parsed = Number(next);
+      if (!Number.isFinite(parsed)) return;
+      onSetRelationship(instance.id, 'affinity', parsed / 100);
+    },
+  });
+
   return (
     <Modal
       label="角色详情"
@@ -110,10 +133,24 @@ export function CastDetail({
           情绪：{signed(instance.affect.valence)} / 激动 {instance.affect.arousal.toFixed(2)}
         </p>
         {towardPlayer ? (
-          <p className="hint">
-            对玩家：信任 {signed(towardPlayer.trust)}、好感 {signed(towardPlayer.affinity)}、畏惧{' '}
-            {signed(towardPlayer.fear)}、敬重 {signed(towardPlayer.respect)}、紧张 {signed(towardPlayer.tension)}
-          </p>
+          <>
+            <p className="hint">
+              对玩家：信任 {signed(towardPlayer.trust)}、好感 {signed(towardPlayer.affinity)}、畏惧{' '}
+              {signed(towardPlayer.fear)}、敬重 {signed(towardPlayer.respect)}、紧张 {signed(towardPlayer.tension)}
+            </p>
+            <label className="affinity-slider">
+              <span className="hint">好感 {affinityPercent}%（可手动调整，独立于剧情推演）</span>
+              <input
+                type="range"
+                min={0}
+                max={100}
+                step={1}
+                disabled={disabled}
+                aria-label="对玩家的好感"
+                {...affinityField.bind}
+              />
+            </label>
+          </>
         ) : (
           <p className="hint">还没有对玩家的关系记录。</p>
         )}

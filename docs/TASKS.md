@@ -100,6 +100,9 @@
 | 87 | **额度上限按币种比较（顺序 86 带出来的）** `[审][数]` | **P3** | `packages/core/src/storage/budget.ts:43` 拿 `summary.total.cost` 与 `limits.maxCost` 比，而 `maxCost` 没有币种字段；混币种时现在比的是**主币种**的小计（B9 之前是所有币种乱加）。要做严谨得给 `BudgetLimits` 加币种，或按 `summary.total.costs` 逐个比 | ⬜ 等拍板 |
 | 88 | **审计 B10：流式失败边角（200+error 体 / 未知 finish_reason / 不 cancel reader）** `[审][数]` | **P2** | 非流式回退不看 `json.error`、非 JSON 抛 SyntaxError 而非 `ProviderError`、`eos`/`end_turn`/大写 `STOP` 等正常结束被当失败（丢回复）、上层提前退出只 `releaseLock` 不 `cancel()`（服务端继续生成照样计费）、多行 `data:` 逐行解析不合规范 | ✅ 2026-09-26（取回 `a6adfa` worktree 里那份未提交的改动 + 逐条审校 + 4 条新测试；见 EVAL 第七十八节） |
 | 28 / 29 / 30 / 56 | 语音归属模型侧根治 / 平板横屏 / 备案切 443 等 / 服务器管理台 | **P4** | 原有条目，等条件或等拍板，不变 | ⬜ |
+| 89 | **用户 2026-09-26 体验反馈第一批：初始好感 / 各模式生效 / 默认系统预设** `[体]` | **P2** | ① 角色一出场好感为 0 → 交流充满敌意（用户要初始 40% 且可手动调）；② 「＋」里几种模式实际只有两条落到提示词，`historyMode`/无限制模式模型看不见；③ 无限制模式正文在界面上可编辑、还显示字数（用户：不可更改、不可阅读） | ✅ 2026-09-26（`INITIAL_PLAYER_AFFINITY = 0.4` + 迁移 v12；`describeModes` 补齐；无限制模式只留开关；见 EVAL 第七十九节） |
+| 90 | **用户 2026-09-26 体验反馈第二批：界面裁剪与「本场场记」** `[体]` | **P2** | 删卡级场景设定 / 开场白 / 高级字段 / 对话示例（用户裁定「彻底删除已有数据」）；「本场场记」整块不显示；玩家可编辑区域不可滑动（裁定「随内容自动长高 + 拖动隔离」两个都要） | ⬜ 下一批 |
+| 91 | **用户 2026-09-26 体验反馈第三批：两个 bug** `[体]` | **P2** | ① 场景设定输入区在笔画输入法下逐笔落库（`SceneDialog.tsx` 漏了 `useDraftField`）；② 流式结束到消息出现之间「先消失、过一会儿整条出现」+ 卡顿 | ⬜ 下一批 |
 
 依赖关系：58 复用 57 的「按关键词取回」；66 在 59 之后；65 可以插在任何两批之间；80 依赖 68 已经落下的 `updatedAt` 不变量与迁移 11。
 
@@ -177,6 +180,26 @@ A4 的 core 侧（`packages/core/src/sync/loop.ts:153-162` 的 `serverHead < pul
 - **`onWarning` 没接到界面**：只落到 `console.warn`，用户看不到「模型以未识别状态结束」；要接得挂到 `apps/web/src/hooks/useNotices.ts` 那套顶部提示上。
 - **原 worktree 里的那份改动仍未提交**：`.claude/worktrees/agent-a6adfa051fc0cc2bd` 里的 `provider/openai-compatible.ts` 与未跟踪测试仍在原处（本批只取了副本，没动那条分支）。
 - **真机/真模型没验**：各家网关 `finish_reason` 的实际取值、`cancel()` 是否真让服务端停止计费，都归 Codex；仓库里一律「待验证」。
+
+**顺序 89（用户 2026-09-26 体验反馈第一批）怎么处理的**：
+
+| 用户要的 | 处理 | 落点 |
+| --- | --- | --- |
+| 角色一上场就敌对、好感要 40% | 新增 `INITIAL_PLAYER_AFFINITY = 0.4`，三处同一口径：新建实例、补缺失的关系边、迁移 v12；关系块照旧把数值写进提示词（新角色是「好感 +0.40」） | `packages/core/src/model/instance.ts`、`session/setup.ts`、`memory/affect.ts`、`storage/repository.ts`（`SCHEMA_VERSION` 11 → **12**） |
+| 老对话也要提上来（用户裁定「也要」） | 迁移 **v12** 只动 `target === player && affinity === 0 && history.length === 0` 的关系边：改成 0.4、盖 `updatedAt`、追加一条可撤销的 history（理由写明「顺序 89：初始好感由 0 提到 40」）；涨过/跌过/有历史的一律保持原样 | 同上（`MIGRATIONS` 末尾） |
+| 好感要能自己手动调 | core 新增 `setRelationshipField(instance, field, value, meta)`：按维度夹紧、不受单轮上限约束、写一条「手动调整」的 history、**值没变就返回同一个对象**（调用方据此跳过写库）；web 侧 `session.setRelationship` + 角色详情面板一根 0–100% 滑杆（拖动只改草稿，停手 300ms 落库一次） | `packages/core/src/memory/affect.ts`、`apps/web/src/lib/session.ts`、`apps/web/src/components/CastDetail.tsx`、`apps/web/src/App.tsx` |
+| 「＋」里各种模式没有作用 | `describeModes` 补齐：无限制模式开着时先出一条「上面那段是最高约束」的指令，**并让 `playerFirst`/`silent` 本轮不再输出**（两条本来互斥，不能让模型自己抽签）；`historyMode` 为 `recap-aware` 时新增一条「场记」指令。`replyLength` 已有自己的 `reply-style` 块、`intentFirst` 是生成前那次便宜调用而不是给模型的约束，两者**故意不重复** | `packages/core/src/prompt/assemble.ts`（`describeModes`） |
+| 默认系统提示换成用户的系统预设 | `DEFAULT_CARD_SYSTEM_PROMPT` 整段替换（沉浸代入、只输出角色行为与对话、输出格式、剧情主导权、长动作、语气、动态世界观、战斗、交互逻辑、禁用缓存、禁止事项、特殊事项）；**只改一处**：格式段按引擎写法（动作行以 `#` 开头、对白不加引号），其余照收 | `packages/core/src/model/card.ts` |
+| 无限制模式不可更改、不可阅读 | 删掉粘贴框与「保存提示词」按钮，**连字数也不显示**，只说明「已配置 / 尚未配置」；正文照旧从本机库（`META_KEYS.unlimitedPrompt`）注入装配，不进代码、不进网页包、不参与同步 | `apps/web/src/components/MainChat.tsx` |
+
+预设里那句具体题材要求（「空毁灭世界的描写多一些」）判定为**误贴进预设的示例**，**没有**收进默认提示词——它是某一条对话的要求，不是所有对话的规则。
+
+**顺序 89 自己带出来的遗留（别当成已解决）**：
+
+- **换设备 / 清库之后无法再配置无限制提示词**：入口按用户要求撤掉了，而正文只存在本机 IndexedDB、不参与同步。真要重配得临时加回入口（**等用户拍板**）。
+- **负好感只能看、不能拖**：滑杆是 0–100%（按百分比显示），被剧情推到负数时标签显示负数、滑杆停在 0；要双向调整得把范围改成 -100 ~ 100。
+- **迁移只提「从未动过」的关系边**：这是对用户裁定「也要」的最稳解释；若想连已经动过的也一起提，要另开一条批量迁移。
+- **真机没验**：新预设与 0.4 起点在真实模型下的效果（角色是否还不那么敌对、是否照引擎格式写）归 Codex。顺序 88 的两条遗留（`onWarning` 没接界面、真机 `finish_reason`）也仍在。
 
 **顺序 82 合并前必须先改的三处 —— 已改完（2026-09-26，随 `5014509` 落进 main）**：
 

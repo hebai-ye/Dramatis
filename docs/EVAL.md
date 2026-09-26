@@ -4073,4 +4073,77 @@ Core **709** 条 / 63 文件、Web **12** 条 / 4 文件全绿；build ✓（495
 5. **`dataPayloadsOf` 的判据是启发式**：规范的跨行 JSON 若恰好每行都能单独解析，会走逐行分支（现实中没遇到，属于病态输入）。
 6. **本批未 push、未部署**：纯内核改动，已部署的服务端与网页产物不受影响；要跟着下次上线一起走。
 
+## 七十九、顺序 89：初始好感 40% + 各模式真的落到提示词 + 默认系统提示换成用户的系统预设
+
+**来源**：用户 2026-09-26 的一批体验反馈（原始消息与逐条重组见 TASKS 顺序 89 行）。三条主线：
+
+1. 「角色对用户初始好感为零（增加好感较困难），交流充满敌意」→ 要**初始好感 40**，并且**用户能手动调整好感**；
+2. 「加号里的各种模式无作用」→ 模式必须真的落到 prompt 里，「尤其是无限制模式」；
+3. 无限制模式的词用户**已经设定好**，要求**不可更改**，并且**不可阅读（商业机密）**。
+
+另有两条相关裁定（都由 `ask_user_question` 拿到）：老对话里的好感**也要**一起提上来（用户自填「也要」）；默认系统提示换成用户给的那套系统预设时，**保留引擎的格式写法、预设其余内容照收**。
+
+### 初始好感 0.4（这一条的关键是**三处共用一个常量**）
+
+| 位置 | 改法 |
+| --- | --- |
+| `packages/core/src/model/instance.ts:37` | 新增 `export const INITIAL_PLAYER_AFFINITY = 0.4;`（doc 写明「以前是 0，一开口就敌对是体验问题」，并点名三处共用：新建实例、补缺失的关系边、迁移） |
+| `packages/core/src/session/setup.ts:35` | `createInstanceFor` 里对玩家的关系边改成 `affinity: INITIAL_PLAYER_AFFINITY`（其余四个维度仍是 0） |
+| `packages/core/src/memory/affect.ts:200` | `ensureRelationship` 补边时 `affinity: target === PLAYER ? INITIAL_PLAYER_AFFINITY : 0`——**只有对玩家**是 0.4，对别的角色仍是 0 |
+| `packages/core/src/storage/repository.ts` | `SCHEMA_VERSION` 11 → **12**，`MIGRATIONS` 末尾新增 v12：只动 `target === player && affinity === 0 && history.length === 0` 的关系边 |
+
+v12 的三个判断都是有意的：
+
+- **`affinity === 0`**：已经被剧情推到非 0 的值保持原样；
+- **`history.length === 0`**：「从没被谁改过」的判据。涨过、跌过、被拖过滑杆的都会留下 history，所以一次升级不会把用户自己养出来的关系抹平；
+- **盖 `updatedAt`**：好感在同步集合（`SYNC_COLLECTIONS` 含 `instances`）里按 LWW 比时间戳。迁移统一盖成本机当前时间，结果与设备顺序、时钟快慢都无关；同时追加一条 `history`（`reason: '顺序 89：初始好感由 0 提到 40（用户裁定）'`），让这次自动改动在「状态变化的可撤销记录」里看得见、也能撤销。
+
+### 手动调整（core helper + 一根滑杆）
+
+- `packages/core/src/memory/affect.ts` 新增 `setRelationshipField(instance, field, value, meta)`：按维度夹紧（`tension`/`fear` → `[0,1]`，其余 → `[-1,1]`）、**不受 `MAX_DELTA_PER_TURN` 约束**（那是给模型推演的抗漂移闸）、写一条 `reason: '手动调整'` 的 history（`turnId: ''`），**值没变时原样返回同一个对象**——调用方据此跳过写库与重建快照。
+- `apps/web/src/lib/session.ts` 新增 `setRelationship(id, field, value)`（走 `saveInstance` + `setSnapshot`，与 `revertAffectChange` 同一套路）。
+- `apps/web/src/components/CastDetail.tsx` 加一根 `input[type=range]`（0–100%，`useDraftField` 包着：拖动期间只改草稿、停手 300ms 才落库一次）。**没有改 `styles.css`**（避免和另一条会话抢文件，用浏览器默认样式）。
+- 滑杆只覆盖 0 ~ 1：界面按百分比显示（0.4 → 40%），负好感时标签显示负数、滑杆停在 0（登记为遗留）。
+
+### 各模式落到提示词（`describeModes`）
+
+以前只有 `playerFirst` 与 `silent` 两句，其余模式模型完全看不到。现在：
+
+- **无限制模式开着**：先出一条「上面那段无限制提示词是本轮的最高约束——它与其它模式、与角色卡里的旧规则冲突时，一律以它为准」，并且**`playerFirst`/`silent` 这两条本轮不再输出**。「静默＝不要说话」与「主动推进剧情」互相矛盾，两条一起发出去等于让模型抽签；用户点名要「无限制模式优先级最高」，这就是它的落法。
+- **`historyMode` 为 `recap-aware`**：新增一条「本轮模式（场记）：较早的经过已经由场记、章节与记忆代表……需要细节时先从这些材料里找」。
+- **故意不在这里写的两条**：`replyLength` 已经有内容更细的 `reply-style` 块；`intentFirst` 决定的是**生成前那一次便宜调用**做不做（`session/turn.ts` 的意图规划），不是给模型的约束。重复一遍只会互相稀释。
+
+### 默认系统提示换成用户的系统预设
+
+`packages/core/src/model/card.ts` 的 `DEFAULT_CARD_SYSTEM_PROMPT` 整段替换。它是「基本规则」块（`id: 'system'`，priority 1000、`droppable: false`）的内容来源，所以这段正文直接决定每一轮的语气与格式。
+
+**唯一改动**是格式段：预设原文写「动作用括号、对话用双引号」，而引擎渲染与解析按「动作行以 `#` 开头、对白不加引号」来；用户裁定「保留引擎写法，预设其余内容照收」，所以这一版按引擎写法写，其余逐条照收（沉浸代入、只输出角色行为与对话、角色性格/身份/用户身份、输出格式、剧情主导权、长动作处理、角色语气、动态世界观（每轮至少一项五感细节）、战斗场景、交互逻辑（短回复大胆推进、结尾尽量用疑问句、禁止输出玩家角色的对话）、禁用缓存、禁止事项、特殊事项）。
+
+**预设里那句「在本次对话中，对于空毁灭世界的描写多一些」判定为误贴进预设的示例**，没有收进默认提示词——它是某一条对话的要求，不是所有对话的规则（已在 TASKS 与本节写明）。
+
+### 无限制模式：只留开关
+
+`apps/web/src/components/MainChat.tsx` 删掉粘贴框、「保存提示词」按钮与本地草稿 state，**连字数也不显示**，只说明「已配置（内容不在此显示，也不参与同步）/ 尚未配置」。正文照旧由 `App` 从本机库（`META_KEYS.unlimitedPrompt`）读出来、经 `AssembleInput.unlimitedPrompt` 注入 `buildUnlimitedModeBlock`（`UNLIMITED_BLOCK_ID`，priority `system`、`droppable: false`）——它从来没进过代码或网页包，所以「不可阅读」这条本来就成立，本批只是把界面上的显示口子也堵掉。顺手改正了 `MainChat.tsx` 里那句过时注释（写成「提示词住在代码里的常量」，实际是用户本机数据）。
+
+### 测试（新增 19 条，实跑）
+
+- `packages/core/src/memory/affect.test.ts` +7：补关系边时对玩家从 0.4 起步（`history[0].before` 就是 0.4）、对别的角色仍是 0、手动调整写「手动调整」记录且不受单轮上限约束、四种维度的夹紧、**值没变返回同一个对象**、好感不参与情绪褪色（30 轮 `decayAffect` 后仍是 0.5）、手动调整也能按记录撤销。
+- `packages/core/src/session/setup.test.ts` **新增**（2 条）：新实例对玩家 0.4、其它维度 0、history 为空（钉住「别再掉回 0」）；开新世界同一口径。
+- `packages/core/src/storage/repository.test.ts` +4：0 且无历史 → 提到 0.4 并留下可撤销记录；**已经动过的保持原样**（有历史 / 值已是 -0.3）；不是对玩家的边不动；重复跑不会越提越高。另外把钉死迁移清单的断言 `[10, 11]` 补成 `[10, 11, 12]`。
+- `packages/core/src/model/card.test.ts` +3：新预设保留用户点名的要求、格式段用引擎写法（且不含「双引号」）、禁止替玩家写对白。
+- `packages/core/src/prompt/assemble.test.ts` +3：无限制模式下「最高约束」在、`只有玩家先开口` 与 `本轮模式（静默）` 都**不在**；`historyMode` 为 `recap-aware` 时场记指令在、为 `full` 时不在；**新实例的初始好感真的进到提示词**（`好感 +0.40`）。
+
+**五项门禁（实跑）**：`pnpm typecheck` ✓、`pnpm lint` ✓（`Checked 281 files`，0 error / 0 warning）、`pnpm test` ✓（Core **70 文件 / 815 条**、Web 13 文件 / 45 条）、`pnpm build` ✓（`dist/assets/index-BKXw5gyp.js` 653.78 kB / gzip 206.43 kB、`dist/assets/index-aDHWLtbR.css` 38.39 kB，500 kB chunk 警告是既有项）、`pnpm build:sync-server` ✓。
+
+（门禁第一次跑出 4 个 lint error，全在本批改过的行上：两处 import 排序与两处行宽。用 `biome check --write` 就地修好，之后 281 文件 0 error。）
+
+### 没验的 / 已知遗留
+
+1. **换设备或清库后没有入口再配置无限制提示词**：按用户要求撤掉了编辑口，而正文只在本机 IndexedDB、不参与同步。用户若要在新设备上用，得临时加回入口（等拍板）。
+2. **负好感只能看不能拖**：滑杆范围 0–100%（按百分比），剧情把好感推到负数时标签显示负数、滑杆停在 0。
+3. **迁移只提「从未动过」的关系边**：这是对用户裁定「也要」的最稳解释；要连动过的也提，需要另开批量迁移。
+4. **真机与真模型没验（归 Codex）**：新预设与 0.4 起点的实际效果（角色是否还过度敌对、是否照引擎格式写、好感涨落速度是否合适）。
+5. **顺序 88 的两条遗留仍在**：`onWarning` 没接到 `useNotices`；各家网关 `finish_reason` 的真实取值待验。
+6. **本批未 push、未部署**：内核 + 界面改动，已部署的旧产物不受影响，跟着下次上线一起走。
+
 

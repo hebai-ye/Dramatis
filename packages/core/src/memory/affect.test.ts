@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { cardId, eventId, instanceId, newId, nowIso, PLAYER, roomId } from '../model/ids.js';
-import { type CharacterInstance, neutralTraits } from '../model/instance.js';
+import { type CharacterInstance, INITIAL_PLAYER_AFFINITY, neutralTraits } from '../model/instance.js';
 import {
   AFFECT_DECAY_PER_TURN,
   type AffectUpdate,
@@ -11,6 +11,7 @@ import {
   parseAffectUpdates,
   revertAffectChange,
   revertAffectForTurn,
+  setRelationshipField,
 } from './affect.js';
 
 function actor(name: string): CharacterInstance {
@@ -302,5 +303,80 @@ describe('revertAffectForTurn', () => {
     }
 
     expect(current.relationships[0]?.affinity).toBeCloseTo(0, 6);
+  });
+});
+
+describe('顺序 89：初始好感 40% 与手动调整', () => {
+  it('补关系边时对玩家从 0.4 起步，不是从敌对的 0', () => {
+    const alice: CharacterInstance = { ...actor('Alice'), relationships: [] };
+
+    const next = setRelationshipField(alice, 'affinity', 0.5, meta);
+
+    const edge = next.relationships[0];
+    expect(edge?.target).toBe(PLAYER);
+    expect(edge?.history[0]?.before).toBeCloseTo(INITIAL_PLAYER_AFFINITY, 6);
+    expect(edge?.affinity).toBeCloseTo(0.5, 6);
+  });
+
+  it('只有对玩家的关系从 0.4 起步，对别的角色仍是 0', () => {
+    const alice: CharacterInstance = { ...actor('Alice'), relationships: [] };
+    const other = instanceId(newId());
+
+    const next = setRelationshipField(alice, 'affinity', 0.2, { ...meta, target: other });
+
+    expect(next.relationships[0]?.target).toBe(other);
+    expect(next.relationships[0]?.history[0]?.before).toBe(0);
+  });
+
+  it('手动调整写一条「手动调整」的记录，且不受单轮上限约束', () => {
+    const alice = actor('Alice'); // 这一条 fixture 的初始好感仍是 0
+    const next = setRelationshipField(alice, 'affinity', 1, meta);
+
+    const change = next.relationships[0]?.history[0];
+    expect(next.relationships[0]?.affinity).toBe(1);
+    expect(change?.reason).toBe('手动调整');
+    expect(change?.turnId).toBe('');
+    expect(change?.delta).toBeCloseTo(1, 6);
+    expect(change?.delta).toBeGreaterThan(MAX_DELTA_PER_TURN);
+    expect(change?.sourceMemoryIds).toEqual([]);
+  });
+
+  it('按维度夹紧（好感/信任/敬重 -1~1，畏惧/紧张 0~1）', () => {
+    const alice = actor('Alice');
+
+    expect(setRelationshipField(alice, 'affinity', 5, meta).relationships[0]?.affinity).toBe(1);
+    expect(setRelationshipField(alice, 'affinity', -5, meta).relationships[0]?.affinity).toBe(-1);
+    expect(setRelationshipField(alice, 'tension', -5, meta).relationships[0]?.tension).toBe(0);
+    expect(setRelationshipField(alice, 'fear', 5, meta).relationships[0]?.fear).toBe(1);
+  });
+
+  it('值没变时原样返回同一个对象，调用方据此跳过写库', () => {
+    const alice = actor('Alice');
+
+    expect(setRelationshipField(alice, 'affinity', 0, meta)).toBe(alice);
+
+    const set = setRelationshipField(alice, 'affinity', 0.6, meta);
+    expect(setRelationshipField(set, 'affinity', 0.6, meta)).toBe(set);
+  });
+
+  it('好感不参与情绪褪色，三十轮之后还是原值', () => {
+    const alice: CharacterInstance = { ...actor('Alice'), relationships: [] };
+    let current = setRelationshipField(alice, 'affinity', 0.5, meta);
+
+    for (let index = 0; index < 30; index += 1) current = decayAffect(current, meta);
+
+    expect(current.relationships[0]?.affinity).toBeCloseTo(0.5, 6);
+    expect(current.affect.valence).toBe(0);
+  });
+
+  it('手动调整也走同一条撤销通道', () => {
+    const alice = actor('Alice');
+    const changed = setRelationshipField(alice, 'affinity', 0.8, meta);
+    const change = changed.relationships[0]?.history[0];
+
+    const reverted = revertAffectChange(changed, change?.id ?? '', { at: meta.at, turnId: 'undo' });
+
+    expect(reverted.relationships[0]?.affinity).toBeCloseTo(0, 6);
+    expect(reverted.relationships[0]?.history).toHaveLength(2);
   });
 });

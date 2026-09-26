@@ -6,6 +6,7 @@ import { cardId, eventId, type InstanceId, instanceId, newId, nowIso, PLAYER, ro
 import { type CharacterInstance, neutralTraits } from '../model/instance.js';
 import type { MemoryEvent } from '../model/message.js';
 import type { Room, Scene } from '../model/room.js';
+import { createInstanceFor } from '../session/setup.js';
 import { createCharacterMessage, createPlayerMessage } from '../session/turn.js';
 import { assemblePrompt, buildUnlimitedModeBlock, UNLIMITED_BLOCK_ID } from './assemble.js';
 import { unlimitedPromptOf } from './unlimited.js';
@@ -908,6 +909,77 @@ describe('assemblePrompt / 多角色场景', () => {
     expect(system).toContain('静默');
     // 静默模式下连动作的写法也要交代清楚，否则模型会干脆什么都不输出
     expect(system).toContain('`#`');
+  });
+
+  it('顺序 89：无限制模式是本轮最高约束，与之冲突的模式让位', () => {
+    const { card, instance, room, scene } = fixtures();
+
+    const prompt = assemblePrompt({
+      card,
+      instance,
+      room,
+      scene,
+      history: [],
+      playerInput: '你还在吗',
+      // 「静默＝不要说话」与「我先说」都和「主动推进剧情」互相矛盾，
+      // 无限制模式下不能同时发出去让模型自己抽签
+      modes: { playerFirst: true, silent: true, unlimited: true, historyMode: 'full' },
+      unlimitedPrompt: '按这一段写。',
+      budget: baseBudget,
+    });
+    const system = prompt.messages[0]?.content ?? '';
+
+    expect(system).toContain('无限制模式已开启');
+    expect(system).toContain('最高约束');
+    expect(system).toContain('按这一段写。');
+    expect(system).not.toContain('只有玩家先开口');
+    expect(system).not.toContain('本轮模式（静默）');
+  });
+
+  it('顺序 89：场记模式也有对应的一句指令', () => {
+    const { card, instance, room, scene } = fixtures();
+
+    const recap = assemblePrompt({
+      card,
+      instance,
+      room,
+      scene,
+      history: [],
+      playerInput: '你还在吗',
+      modes: { playerFirst: false, silent: false, historyMode: 'recap-aware' },
+      budget: baseBudget,
+    });
+    expect(recap.messages[0]?.content).toContain('本轮模式（场记）');
+
+    const full = assemblePrompt({
+      card,
+      instance,
+      room,
+      scene,
+      history: [],
+      playerInput: '你还在吗',
+      modes: { playerFirst: false, silent: false, historyMode: 'full' },
+      budget: baseBudget,
+    });
+    expect(full.messages[0]?.content).not.toContain('本轮模式（场记）');
+  });
+
+  it('顺序 89：新实例的初始好感真的进到提示词里（+0.40）', () => {
+    const { card, room, scene } = fixtures();
+    // 用建的实例而不是 fixture：这条要验的是「新角色一出场模型看到的是什么」
+    const fresh = createInstanceFor(card, room.id);
+
+    const prompt = assemblePrompt({
+      card,
+      instance: fresh,
+      room,
+      scene,
+      history: [],
+      playerInput: '你还在吗',
+      budget: baseBudget,
+    });
+
+    expect(prompt.messages[0]?.content).toContain('好感 +0.40');
   });
 
   it('多人同场时交代清楚「名字前缀只是给你看的标记」', () => {

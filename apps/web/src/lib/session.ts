@@ -24,6 +24,7 @@ import {
   type Persona,
   type Presence,
   planNewConversation,
+  type RelationshipField,
   type Room,
   type RoomId,
   type RoomSnapshot,
@@ -33,6 +34,7 @@ import {
   revertAffectChange as revertAffectChangeForInstance,
   revertAffectForTurn,
   type Scene,
+  setRelationshipField as setRelationshipFieldForInstance,
   syncPresenceForScene,
   type WorldBook,
   type WorldBookId,
@@ -231,6 +233,13 @@ export interface SessionApi {
   addInstance: (card: Card) => Promise<CharacterInstance | null>;
   removeInstance: (id: InstanceId) => Promise<void>;
   updateInstance: (id: InstanceId, patch: Partial<CharacterInstance>) => Promise<void>;
+  /**
+   * 手动调整角色对玩家的关系维度（顺序 89：好感滑杆）。
+   *
+   * 走 core 的 `setRelationshipField`，所以值域夹紧与「状态变化的可撤销记录」
+   * 与模型推演出来的变化完全同路；不受单轮上限约束。
+   */
+  setRelationship: (id: InstanceId, field: RelationshipField, value: number) => Promise<void>;
   /** 按一条状态历史 id 撤销影响；原记录保留，只追加反向量。 */
   revertAffectChange: (id: InstanceId, changeId: string) => Promise<void>;
   setPresence: (id: InstanceId, presence: Presence) => Promise<void>;
@@ -1051,6 +1060,24 @@ export function useSession(db: DramatisDb | null): SessionApi {
     [db, setSnapshot],
   );
 
+  const setRelationship = useCallback(
+    async (id: InstanceId, field: RelationshipField, value: number) => {
+      const current = snapshotRef.current;
+      if (!db || !current) return;
+      const instance = current.instances.find((item) => item.id === id);
+      if (!instance) return;
+
+      const next = setRelationshipFieldForInstance(instance, field, value, { at: nowIso() });
+      if (next === instance) return; // 值没变：不写库、不重建快照
+      await db.repository.saveInstance(next);
+      setSnapshot({
+        ...current,
+        instances: current.instances.map((item) => (item.id === id ? next : item)),
+      });
+    },
+    [db, setSnapshot],
+  );
+
   const revertAffectChange = useCallback(
     async (id: InstanceId, changeId: string) => {
       const current = snapshotRef.current;
@@ -1542,6 +1569,7 @@ export function useSession(db: DramatisDb | null): SessionApi {
       addInstance,
       removeInstance,
       updateInstance,
+      setRelationship,
       revertAffectChange,
       setPresence,
       startNewScene,
@@ -1612,6 +1640,7 @@ export function useSession(db: DramatisDb | null): SessionApi {
     setBudget,
     setPersona,
     setPresence,
+    setRelationship,
     setWorldScene,
     snapshot,
     startConversation,

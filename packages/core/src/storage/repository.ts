@@ -11,11 +11,17 @@ import {
   type MessageId,
   newId,
   nowIso,
+  PLAYER,
   type RoomId,
   type SceneId,
   type WorldBookId,
 } from '../model/ids.js';
-import type { AffectChange, CharacterInstance, RelationshipChange } from '../model/instance.js';
+import {
+  type AffectChange,
+  type CharacterInstance,
+  INITIAL_PLAYER_AFFINITY,
+  type RelationshipChange,
+} from '../model/instance.js';
 import { aliveOnly, isAlive } from '../model/lifecycle.js';
 import { type AdminArtifact, localSeqOf, type MemoryEvent, type Message } from '../model/message.js';
 import { createPersona, type Persona } from '../model/persona.js';
@@ -37,7 +43,7 @@ import { USAGE_COLLECTION } from './usage.js';
  * 任何会改变已落盘数据结构的改动都要 +1，并补一条 `Migration`。
  * 这是「从第一天就留好升级路径」的具体做法（ROADMAP P0-1）。
  */
-export const SCHEMA_VERSION = 11;
+export const SCHEMA_VERSION = 12;
 
 export const COLLECTIONS = {
   meta: 'meta',
@@ -599,6 +605,59 @@ export const MIGRATIONS: readonly Migration[] = [
        * 事务，会把启动拖住（这开销一次安装只发生一次，但没理由让它按事务数放大）。
        */
       if (normalized.length > 0) await store.bulkPut(COLLECTIONS.usageRecords, normalized);
+    },
+  },
+  {
+    version: 12,
+    describe: '把从未变动过的「对玩家的好感」从 0 提到 0.4（顺序 89：初始好感改成 40）',
+    run: async (store) => {
+      /*
+       * 用户 2026-09-26 裁定「老对话也要一起提上来」，但条件收得很紧：
+       * 只有 `target === player`、当前 `affinity === 0`、且 `history` 为空的关系边才动。
+       * 「history 为空」就是「从模型推演到手动拖滑杆，谁都没碰过好感」——
+       * 已经涨过、跌过或被调整过的关系一律保持原样，免得把用户自己养出来的关系抹平。
+       *
+       * 为什么敢盖 `updatedAt`：好感在同步集合里，LWW 按 `updatedAt` 比大小。
+       * 不盖章的话，两台设备迁移后值相同（都 0.4）倒是收敛，但只要有一台设备的库
+       * 还没迁移就推旧值回来，规则就变成「谁的时间戳新谁赢」——盖成本机当前时间，
+       * 结果与设备顺序、时钟快慢都无关。
+       *
+       * 顺带写一条 `history`：这条变化在角色详情里能看见，也能被「撤销这条影响」反悔，
+       * 而不是悄悄改掉一个用户没动过的数字。
+       */
+      const instances = await store.list<CharacterInstance & { id: string }>(COLLECTIONS.instances);
+      const at = nowIso();
+      const migrated: Array<CharacterInstance & { id: string }> = [];
+      for (const instance of instances) {
+        let changed = false;
+        const relationships = instance.relationships.map((edge) => {
+          if (edge.target !== PLAYER || edge.affinity !== 0 || edge.history.length > 0) return edge;
+          changed = true;
+          return {
+            ...edge,
+            affinity: INITIAL_PLAYER_AFFINITY,
+            updatedAt: at,
+            history: [
+              ...edge.history,
+              {
+                id: newId(),
+                at,
+                turnId: '',
+                field: 'affinity' as const,
+                before: 0,
+                after: INITIAL_PLAYER_AFFINITY,
+                delta: INITIAL_PLAYER_AFFINITY,
+                reason: '顺序 89：初始好感由 0 提到 40（用户裁定）',
+                sourceMemoryIds: [],
+                reversionOf: null,
+              },
+            ],
+          };
+        });
+        if (!changed) continue;
+        migrated.push({ ...instance, relationships, updatedAt: at });
+      }
+      if (migrated.length > 0) await store.bulkPut(COLLECTIONS.instances, migrated);
     },
   },
 ];

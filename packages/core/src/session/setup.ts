@@ -10,7 +10,7 @@ import {
   nowIso,
   PLAYER,
 } from '../model/ids.js';
-import { type CharacterInstance, neutralTraits } from '../model/instance.js';
+import { type CharacterInstance, INITIAL_PLAYER_AFFINITY, neutralTraits } from '../model/instance.js';
 import type { Persona } from '../model/persona.js';
 import type { Room, Scene } from '../model/room.js';
 
@@ -31,7 +31,8 @@ export function createInstanceFor(card: Card, roomIdValue: Room['id'], displayNa
       {
         target: PLAYER,
         trust: 0,
-        affinity: 0,
+        // 初始好感不是 0（顺序 89，用户裁定）：一上场就敌对是体验问题，不是设定
+        affinity: INITIAL_PLAYER_AFFINITY,
         fear: 0,
         respect: 0,
         tension: 0,

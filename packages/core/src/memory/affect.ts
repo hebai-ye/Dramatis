@@ -1,5 +1,5 @@
 import { type EventId, type InstanceId, newId, PLAYER } from '../model/ids.js';
-import type { CharacterInstance, Relationship } from '../model/instance.js';
+import { type CharacterInstance, INITIAL_PLAYER_AFFINITY, type Relationship } from '../model/instance.js';
 import type { Message } from '../model/message.js';
 import type { ChatMessage } from '../prompt/types.js';
 import { toFinite } from '../util/json.js';
@@ -196,13 +196,62 @@ function ensureRelationship(instance: CharacterInstance, target: Relationship['t
   return {
     target,
     trust: 0,
-    affinity: 0,
+    // 补一条「对玩家」的关系边时和新建实例同一口径（顺序 89）：起点是 40% 好感，不是敌对
+    affinity: target === PLAYER ? INITIAL_PLAYER_AFFINITY : 0,
     fear: 0,
     respect: 0,
     tension: 0,
     updatedAt: at,
     history: [],
   };
+}
+
+/**
+ * 手动调整一段关系的某一维（用户 2026-09-26 点名：好感要能自己改）。
+ *
+ * 与 `applyAffectUpdate` 共用同一套值域与历史约定：夹紧之后写一条 `history`，
+ * 撤销仍然按记录走（所以界面上的「撤销这条影响」对人工调整同样有效）。
+ *
+ * 两处刻意的不同：
+ * - 这里**不受 `MAX_DELTA_PER_TURN` 约束**——那是给模型推演用的抗漂移闸，用户拖到哪就是哪；
+ * - `reason` 记成「手动调整」，这样回看历史时能分清哪一步是模型推的、哪一步是人拖的。
+ *
+ * 值没变时**原样返回同一个对象**，调用方据此跳过写库。
+ */
+export function setRelationshipField(
+  instance: CharacterInstance,
+  field: RelationshipField,
+  value: number,
+  meta: { at: string; target?: Relationship['target']; reason?: string },
+): CharacterInstance {
+  const target = meta.target ?? PLAYER;
+  const base = ensureRelationship(instance, target, meta.at);
+  const before = base[field];
+  const bounded = field === 'tension' || field === 'fear' ? [0, 1] : [-1, 1];
+  const after = clamp(Number.isFinite(value) ? value : before, bounded[0] ?? 0, bounded[1] ?? 1);
+  if (after === before) return instance;
+
+  const updated: Relationship = { ...base, history: [...base.history] };
+  updated[field] = after;
+  updated.updatedAt = meta.at;
+  updated.history.push({
+    id: newId(),
+    at: meta.at,
+    turnId: '',
+    field,
+    before,
+    after,
+    delta: after - before,
+    reason: meta.reason ?? '手动调整',
+    sourceMemoryIds: [],
+    reversionOf: null,
+  });
+
+  const relationships = instance.relationships.some((edge) => edge.target === target)
+    ? instance.relationships.map((edge) => (edge.target === target ? updated : edge))
+    : [...instance.relationships, updated];
+
+  return { ...instance, relationships, updatedAt: meta.at };
 }
 
 export interface ApplyMeta {

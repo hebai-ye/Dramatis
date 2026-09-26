@@ -39,6 +39,18 @@
 - **没验的**：真机 / 真模型一律没动（归 Codex）；`manifest.webmanifest` 的 MIME 仍是 `application/octet-stream`（nginx 的 `mime.types` 里没有 `webmanifest`，本轮没改）；CSP 仍是 Report-Only，要灰度几天再切正式。
 - **教训**：**别把 `deploy/` 整个 `scp` 上服务器**——本轮把 `deploy/LOCAL-NOTES.md`（本地私有、含敏感内容）一起拷上去了，发现后已从服务器删除，并把旧的 `deploy.old-*` 备份目录一并清掉。
 
+### 2026-09-26：顺序 89 落进 main（用户体验反馈第一批：初始好感 40% + 手动滑杆 + 各模式真的落到提示词 + 默认系统提示换成用户的系统预设）
+
+- **来源**：用户当天的一批体验反馈。原话要点：「角色对用户初始好感为零（增加好感较困难），交流充满敌意」→ 要**初始好感 40**、且**用户能手动调整好感**；「加号里的各种模式无作用」→ 模式要真的落到 prompt 里，「尤其是无限制模式」；无限制模式的词用户**已经设定好**，要求**不可更改**、**不可阅读（商业机密）**。两条相关裁定：老对话里的好感**也要**一起提上来（自填「也要」）；默认系统提示换成用户的系统预设时「**保留引擎写法，预设其余内容照收**」。
+- **好感 0.4 一处常量、三处同一口径**：`packages/core/src/model/instance.ts:37` 新增 `INITIAL_PLAYER_AFFINITY = 0.4`；`session/setup.ts` 建实例时给玩家的关系边用它；`memory/affect.ts` 的 `ensureRelationship` 补边时 `target === PLAYER ? 0.4 : 0`（**只有对玩家**）；迁移 **v12**（`SCHEMA_VERSION` 11 → 12）只动 `target === player && affinity === 0 && history.length === 0` 的边——涨过、跌过、被拖过滑杆的都有 history，所以一次升级不会抹平用户自己养出来的关系；改动会盖 `updatedAt`（同步集合按 LWW 比时间戳）并追加一条可撤销的 history（理由写明「顺序 89：初始好感由 0 提到 40」）。
+- **手动调整**：`memory/affect.ts` 新增 `setRelationshipField(instance, field, value, meta)`——按维度夹紧（`tension`/`fear` → `[0,1]`，其余 → `[-1,1]`）、**不受单轮 `MAX_DELTA_PER_TURN` 约束**、写一条「手动调整」的 history、**值没变就返回同一个对象**（调用方据此跳过写库与重建快照）；web 侧新增 `session.setRelationship`，角色详情面板加一根 0–100% 滑杆（拖动只改草稿、停手 300ms 落库一次）。界面按百分比显示（0.4 → 40%）。
+- **各模式落到提示词**：`prompt/assemble.ts` 的 `describeModes` 补齐。无限制模式开着时先出一条「上面那段无限制提示词是本轮的最高约束，与其它模式和旧规则冲突时以它为准」，并且**`playerFirst`/`silent` 两条本轮不再输出**（「静默＝不要说话」与「主动推进剧情」互相矛盾，两条一起发等于让模型抽签）；`historyMode` 为 `recap-aware` 时新增一条「场记」指令。`replyLength` 已有自己的 `reply-style` 块、`intentFirst` 是生成前那次便宜调用而非给模型的约束，两者**故意不重复**。
+- **默认系统提示换成用户的系统预设**：`packages/core/src/model/card.ts` 的 `DEFAULT_CARD_SYSTEM_PROMPT` 整段替换（它是「基本规则」块的内容来源，直接决定每轮语气与格式）。**唯一改动**是格式段按引擎写法（动作行以 `#` 开头、对白不加引号），其余逐条照收。预设里那句「在本次对话中，对于空毁灭世界的描写多一些」判定为**误贴进预设的示例**，没有收进默认提示词。
+- **无限制模式只留开关**：`MainChat.tsx` 删掉粘贴框、「保存提示词」按钮与本地草稿 state，**连字数也不显示**，只说明「已配置（内容不在此显示，也不参与同步）/ 尚未配置」。正文照旧由 `App` 从本机库（`META_KEYS.unlimitedPrompt`）读出后注入装配（`UNLIMITED_BLOCK_ID`、priority `system`、`droppable: false`）——它从来没进过代码或网页包，「不可阅读」本来就成立，本批把界面显示口子也堵掉。顺手改正了那句过时注释（写成「提示词住在代码里的常量」，实际是用户本机数据）。
+- **测试**：新增 **19 条**——`memory/affect.test.ts` +7（补边对玩家 0.4、对别人仍是 0、手动调整写记录且不受单轮上限、四维夹紧、值没变返回同一对象、好感不参与情绪褪色、手动调整可撤销）；`session/setup.test.ts` **新增** 2 条；`storage/repository.test.ts` +4（v12 三种情况 + 重复跑不越提越高，并把钉死迁移清单的断言补成 `[10, 11, 12]`）；`model/card.test.ts` +3；`prompt/assemble.test.ts` +3（含「新实例的初始好感真的进到提示词」）。
+- **五项门禁全绿**：typecheck ✓、lint ✓（281 文件，0 error / 0 warning）、test ✓（Core **70 文件 / 815 条**、Web 13 文件 / 45 条）、build ✓（`dist/assets/index-BKXw5gyp.js` 653.78 kB / gzip 206.43 kB、css `index-aDHWLtbR.css` 38.39 kB，500 kB 警告是既有项）、build:sync-server ✓。（第一轮跑出 4 个 lint error，全在本批改过的行上：两处 import 排序、两处行宽，`biome check --write` 就地修好。）
+- **遗留**：① 换设备或清库后**没有入口再配置无限制提示词**（入口按用户要求撤掉，而正文只在本机 IndexedDB、不参与同步）——要不要临时加回等拍板；② 负好感只能看不能拖（滑杆 0–100%，剧情推到负数时标签显示负数、滑杆停在 0）；③ 迁移只提「从未动过」的关系边；④ 真机/真模型没验（新预设与 0.4 起点的实际效果）归 Codex。**本批未 push、未部署**（内核 + 界面改动，已部署的旧产物不受影响，跟着下次上线走）。
+
 ### 2026-09-26：顺序 88 落进 main（审计 B10 流式失败边角 —— 58 条里最后一条 ⬜）
 
 - **来源与处理**：B10 在顺序 86 时故意不碰（`a6adfa` 的 worktree 里有未提交的 `packages/core/src/provider/openai-compatible.ts` + 未跟踪的新测试）。那条分支的提交已随顺序 82 进 main（`5014509`），脏改动一直没提交；顺序 84/85 合完、整批上线之后挡它的条件解除，本批把**那两份文件取回 main**（不是 merge，那条分支上没有这次提交），逐条对照审计的 5 个点审校，并补了 4 条测试。

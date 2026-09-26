@@ -265,15 +265,40 @@ function defaultSystemPrompt(card: Card, playerName: string): string {
  *
  * 模式只是开关，模型不知道就等于没开——所以它必须落到 prompt 里，
  * 和入场策略一样，是「界面上的设置真的生效」的那一步。
+ *
+ * 顺序 89（用户点名「加号里的各种模式无作用」）把这里补齐：
+ * - 以前只写 `playerFirst` 与 `silent` 两条，其余模式**模型完全看不到**；
+ * - 现在 `historyMode` 也有对应的一句；
+ * - **无限制模式优先级最高**：开着它时，它那段正文是本轮的最高约束，
+ *   与之冲突的模式（静默＝不要说话、角色等我先说＝必须等玩家开口）本轮让位，
+ *   并在这一条里把这件事明确告诉模型——否则「两个互相矛盾的指令」由模型自己抽签。
+ *
+ * 两处**故意不在这里写**：
+ * - `replyLength` 已经有自己的 `reply-style` 块（`prompt/reply-style.ts`），
+ *   内容比一行摘要细，重复一遍反而互相稀释；
+ * - `intentFirst` 不是给模型的约束，它决定了**生成前那一次便宜调用**做不做
+ *   （`session/turn.ts` 的意图规划），所以照旧不落到这里。
  */
 function describeModes(modes: ConversationModes | undefined): string[] {
   if (!modes) return [];
   const lines: string[] = [];
-  if (modes.playerFirst) {
+  const unlimited = unlimitedModeOf(modes);
+
+  if (unlimited) {
+    lines.push(
+      '本轮模式：无限制模式已开启。上面那段无限制提示词是本轮的最高约束——它与其它模式、与角色卡里的旧规则冲突时，一律以它为准。',
+    );
+  }
+  if (modes.playerFirst && !unlimited) {
     lines.push('本轮模式：只有玩家先开口，你才可以接话。玩家没说话就保持沉默，用动作推进即可。');
   }
-  if (modes.silent) {
+  if (modes.silent && !unlimited) {
     lines.push('本轮模式（静默）：不要说话，只写动作与神态（每条用 `#` 起段），也不要替别人发言。');
+  }
+  if (historyPolicyOf(modes).mode === 'recap-aware') {
+    lines.push(
+      '本轮模式（场记）：较早的经过已经由场记、章节与记忆代表，不再逐条重复原文。需要细节时先从这些材料里找，不要凭空补写没看过的事。',
+    );
   }
   return lines;
 }

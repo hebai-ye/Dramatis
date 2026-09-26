@@ -4289,6 +4289,6 @@ v12 的三个判断都是有意的：
 - **push 失败的第 3 次（代理已开）**：`git push origin main` 仍报 `Recv failure: Connection was reset`——而 `curl -x http://127.0.0.1:7897 https://github.com` 返回 **200**、`git ls-remote origin` 返回 **0**（能读到 `refs/heads/main`），说明代理与远端可达，问题出在 push 的 HTTP 层。
 - **解法**：`git -c http.version=HTTP/1.1 -c http.postBuffer=524288000 push origin main` → **成功**，`a1dc78a..1cf1eab  main -> main`，`git rev-list --count origin/main..main` = **0**。随后把 `http.version=HTTP/1.1` 写进**本仓库本地配置**（`git config --local http.version HTTP/1.1`），免得下次再撞。
 - **代理怎么开的**：Clash Verge 的 GUI 没运行时我直接把它拉起来了（`Start-Process 'D:\Work\Clash Verge\clash-verge.exe'`；安装位置由注册表 uninstall 项查到），`verge-mihomo` 随之启动，`127.0.0.1:7897` 开始监听。
-- **本节的改口**：上面两节里所有「push 未成 / 等用户打开 Clash Verge」的说法**以本节为准**——到 `1cf1eab` 为止的 6 个提交都已 push；`origin/main` = `1cf1eab`。四项遗留（正文进公开产物、旧副本不清理、服务端未重部署、真机没验）不变。
+- **本节的改口**：上面两节里所有「push 未成 / 等用户打开 Clash Verge」的说法**以本节为准**——到 `1cf1eab` 为止的 6 个提交都已 push；本节这次改口的提交（`4769268` 起）也跟着推上去，**`origin/main` 以远端为准**（本机 `git rev-list --count origin/main..main` = 0）。四项遗留（正文进公开产物、旧副本不清理、服务端未重部署、真机没验）不变。
 
 

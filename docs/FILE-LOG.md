@@ -1392,6 +1392,8 @@ TASKS 第〇节顺序 68。用户裁定「A+B 推进」；原方案里的 `limit
 | `docs/FILE-LOG.md` | 改 | 本节这段；上面那段里的三处「push 未成」改成「push 当时未成」 |
 | （仓库外）`deploy/LOCAL-NOTES.md` | 改 | 追加 push 成功的命令与 `http.version=HTTP/1.1` 这条经验（本机私有、不提交） |
 
+这次改口的提交本身也一并 `git push`（`1cf1eab..4769268`），所以文档里不再写死「`origin/main` = 某个 hash」，一律写「**以远端为准**」；真机 / 真实模型验证仍归 Codex。
+
 ## 七十、几点注意
 
 ---

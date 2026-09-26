@@ -16,6 +16,7 @@ import {
 import { type MouseEvent, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { countRender } from '../lib/render-count';
+import { isNearBottom } from '../lib/scroll';
 import type { UnlimitedPromptApi } from '../lib/useUnlimitedPrompt';
 import { useCoarsePointer } from '../lib/viewport';
 import { Composer } from './Composer';
@@ -392,15 +393,48 @@ function MainChatImpl({
     node.style.height = `${String(Math.min(node.scrollHeight, 200))}px`;
   }, [input]);
 
-  // 新消息落下来就跟到底部（流式长出来的那部分由 StreamingBubble 自己跟）
+  /*
+   * 新消息落下来时要不要跟到底部（审计 B17）。
+   *
+   * 以前是无条件滚到底：用户往上翻着看旧剧情，后台一条消息落库就被拽回底部。
+   * 现在只在「本来就贴着底部（80px 内）」或「是自己刚发的那句」时跟；否则只亮一个
+   * 「有新消息」的小按钮，点了再下去。流式长出来的那部分由 StreamingBubble 自己按同样的规矩跟。
+   */
+  const bodyRef = useRef<HTMLDivElement | null>(null);
+  const nearBottomRef = useRef(true);
+  const [hasNewBelow, setHasNewBelow] = useState(false);
+  const onBodyScroll = useCallback(() => {
+    const node = bodyRef.current;
+    if (node === null) return;
+    const near = isNearBottom(node);
+    nearBottomRef.current = near;
+    if (near) setHasNewBelow(false);
+  }, []);
+  const jumpToBottom = useCallback(() => {
+    nearBottomRef.current = true;
+    setHasNewBelow(false);
+    bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, []);
+
   const lastMessage = messages[messages.length - 1];
   const lastMessageKey = lastMessage === undefined ? '' : `${lastMessage.id}:${String(lastMessage.content.length)}`;
+  const lastIsPlayer = lastMessage?.role === 'player';
+  const conversationKeyRef = useRef<string | null>(null);
   useEffect(() => {
     if (lastMessageKey === '') return;
     // 正在跳原句时别把用户又拽到底部——下面那条 effect 会自己滚到位
     if (focus !== null) return;
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [lastMessageKey, focus]);
+    // 刚切进一条对话：总是从底部开始看
+    const switched = conversationKeyRef.current !== conversation.id;
+    conversationKeyRef.current = conversation.id;
+    if (switched || lastIsPlayer || nearBottomRef.current) {
+      nearBottomRef.current = true;
+      setHasNewBelow(false);
+      bottomRef.current?.scrollIntoView({ behavior: switched ? 'auto' : 'smooth' });
+      return;
+    }
+    setHasNewBelow(true);
+  }, [lastMessageKey, lastIsPlayer, focus, conversation.id]);
 
   /**
    * 跳到原句（T11）。
@@ -535,7 +569,7 @@ function MainChatImpl({
         if (dropped !== '') onDropInstance(dropped as InstanceId);
       }}
     >
-      <div className="chat-body">
+      <div className="chat-body" ref={bodyRef} onScroll={onBodyScroll}>
         {archived ? (
           <div className="notice warn">
             <strong>这是一条已归档的对话</strong>
@@ -574,6 +608,12 @@ function MainChatImpl({
           cast={castNames}
           avatars={avatars}
         />
+
+        {hasNewBelow ? (
+          <button type="button" className="jump-to-latest" onClick={jumpToBottom}>
+            ↓ 有新消息
+          </button>
+        ) : null}
 
         <div ref={bottomRef} />
       </div>

@@ -15,6 +15,7 @@ import {
   renameAccount,
   writeActiveAccount,
 } from '../lib/db';
+import { passwordStrengthHint } from '../lib/password-policy';
 import { syncPasswordKeyRef } from '../lib/sync';
 
 /** 每个账户卡片上要显示的同步状态（异步读它自己的库）。 */
@@ -456,6 +457,9 @@ export function AccountPanel({ disabled }: { disabled: boolean }) {
                       spellCheck={false}
                       onChange={(event) => setRegisterPassword(event.target.value)}
                     />
+                    {passwordStrengthHint(registerPassword) === null ? null : (
+                      <span className="hint">{passwordStrengthHint(registerPassword)}</span>
+                    )}
                   </label>
                   <label>
                     再输一次

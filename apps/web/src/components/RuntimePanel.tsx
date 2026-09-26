@@ -61,6 +61,8 @@ interface Props {
   /** 当前对话名，给用量面板做标题。 */
   conversationTitle: string;
   workerError: string | null;
+  failedTasks?: number;
+  onRetryFailed?: () => void;
   disabled: boolean;
   onSceneChange: (patch: Partial<Scene>) => void;
   onStartNewScene: (title: string) => void;
@@ -236,6 +238,8 @@ function RuntimePanelImpl(props: Props) {
           pending={props.pending}
           extraCalls={props.extraCalls}
           workerError={props.workerError}
+          {...(props.failedTasks === undefined ? {} : { failedTasks: props.failedTasks })}
+          {...(props.onRetryFailed === undefined ? {} : { onRetryFailed: props.onRetryFailed })}
           disabled={props.disabled}
           onUpdate={props.onUpdateMemory}
           onDelete={props.onDeleteMemory}

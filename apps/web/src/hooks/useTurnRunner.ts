@@ -331,6 +331,8 @@ export function useTurnRunner({
       scene: Scene;
       instances: CharacterInstance[];
       turnId: string;
+      /** 用户在规划阶段点「停止」也要能打断这一次调用（审计 C17）。 */
+      signal?: AbortSignal;
     }): Promise<IntentPlanEntry[] | null> => {
       if (!isIntentFirst(conversation?.modes)) return null;
       // 熔断：已达本局上限就不再问「谁开口、想做什么」，退回纯规则调度
@@ -366,6 +368,7 @@ export function useTurnRunner({
             maxSpeakers: 1,
           }),
           { temperature: config.temperature },
+          input.signal,
         );
         // 这一调用的开销也要算进成本：它是每回合固定多出来的一次。
         // 走账单而不是内存计数——刷新之后这笔钱还得在（T7）
@@ -408,6 +411,45 @@ export function useTurnRunner({
     await enqueueMemoryConsolidationTask(db, worker, { roomId: world.id, conversationId: conversation.id });
   }, [burned, conversation, db, worker, world]);
 
+  /**
+   * 给某个角色召回这一轮要带的记忆（审计 B7：发送与重抽共用）。
+   *
+   * 以前只有发送路径做召回，重抽不传 memories——召回退化为空，重抽出来的回复「失忆」。
+   */
+  const recallFor = useCallback(
+    (input: { speaker: CharacterInstance; text: string; history: readonly Message[]; scene: Scene; now: string }) => {
+      /*
+       * 顺序 27c：跨对话旧记忆不能再走普通召回，否则附件索引已经省下的正文
+       * 会从另一条路原样漏回来。常规召回只看当前对话；旧对话由记忆附件
+       * 在关键词/过去意图命中时按需展开。
+       */
+      const recallPool = session.memories.filter((memory) => memory.conversationId === conversation?.id);
+      /*
+       * 顺序 57：统一的记忆入口。常规通路只在**未被印象取代**的条目里召回
+       * （合并过的原文不再线性涨池子），兜底上限照旧（T22：有命中时最多再带两条
+       * 「顺带想起」，实测 800 token 里原本平均 5 条是无关条目，EVAL 第五节）。
+       * 被取代的原文只走两条补充通路：玩家**这一句**提到了它的关键词（不看历史，
+       * 否则一个词会连着六轮翻旧账），或玩家在问过去时顺着印象的来源展开。
+       */
+      return recallForPrompt(
+        recallPool,
+        {
+          observerId: input.speaker.id,
+          text: [input.text, ...input.history.slice(-6).map((message) => message.content)].join('\n'),
+          participantIds: input.scene.cast,
+          location: input.scene.location,
+          now: input.now,
+        },
+        {
+          budgetTokens: MEMORY_BUDGET_TOKENS,
+          mentionText: input.text,
+          askingPast: asksAboutPast(input.text),
+        },
+      ).selected;
+    },
+    [conversation, session.memories],
+  );
+
   const handleSend = useCallback(
     async (text: string) => {
       /*
@@ -440,6 +482,13 @@ export function useTurnRunner({
       setStreamState('main', { text: '', speaker: '', reasoning: '', phase: 'planning' });
       setBridge(null);
 
+      /*
+       * 停止按钮从这一刻起就有效（审计 C17）：以前 controller 在写玩家消息、跑完导演
+       * 调用之后才建，规划阶段点「停止」什么也不会发生。
+       */
+      const controller = new AbortController();
+      abortRef.current = controller;
+
       const turnId = createTurnId();
       const history = messages;
 
@@ -452,13 +501,10 @@ export function useTurnRunner({
         content: text,
         audience: scene.cast,
       });
-      await session.appendMessages([playerMessage]);
-
-      const controller = new AbortController();
-      abortRef.current = controller;
       let continuedHistory: Message[] = [...history, playerMessage];
 
       try {
+        await session.appendMessages([playerMessage]);
         // 只有真的说了话的那一轮才算「发言」：全程只做动作的角色不该被冷却压住
         const spokeHistory = history.filter((message) => message.role !== 'character' || hasSpeech(message.content));
         const since = turnsSinceLastSpoke(spokeHistory, turnId);
@@ -496,7 +542,9 @@ export function useTurnRunner({
          * 并且**只是建议**：名字不在名单里就退回规则调度，绝不让看不见的人上台。
          * 用户可以在「对话模式」里关掉它，省下这一次调用。
          */
-        const plan = await runIntentPlan({ text, history, scene, instances, turnId });
+        const plan = await runIntentPlan({ text, history, scene, instances, turnId, signal: controller.signal });
+        // 导演调用失败会被吞掉退回规则调度；但若是用户点了停止，这一轮到此为止
+        if (controller.signal.aborted) throw new Error('在安排发言时停止');
         const sceneCast = instances.filter(
           (instance) => instance.presence === 'onstage' && scene.cast.includes(instance.id),
         );
@@ -514,35 +562,7 @@ export function useTurnRunner({
 
           // 只召回这个人自己的视角条目
           const now = new Date().toISOString();
-          /*
-           * 顺序 27c：跨对话旧记忆不能再走普通召回，否则附件索引已经省下的正文
-           * 会从另一条路原样漏回来。常规召回只看当前对话；旧对话由记忆附件
-           * 在关键词/过去意图命中时按需展开。
-           */
-          const recallPool = session.memories.filter((memory) => memory.conversationId === conversation?.id);
-          /*
-           * 顺序 57：统一的记忆入口。常规通路只在**未被印象取代**的条目里召回
-           * （合并过的原文不再线性涨池子），兜底上限照旧（T22：有命中时最多再带两条
-           * 「顺带想起」，实测 800 token 里原本平均 5 条是无关条目，EVAL 第五节）。
-           * 被取代的原文只走两条补充通路：玩家**这一句**提到了它的关键词（不看历史，
-           * 否则一个词会连着六轮翻旧账），或玩家在问过去时顺着印象的来源展开。
-           */
-          const recall = recallForPrompt(
-            recallPool,
-            {
-              observerId: speaker.id,
-              text: [text, ...history.slice(-6).map((message) => message.content)].join('\n'),
-              participantIds: scene.cast,
-              location: scene.location,
-              now,
-            },
-            {
-              budgetTokens: MEMORY_BUDGET_TOKENS,
-              mentionText: text,
-              askingPast: asksAboutPast(text),
-            },
-          );
-          const recalled = recall.selected;
+          const recalled = recallFor({ speaker, text, history, scene, now });
 
           setStreamState('main', { text: '', reasoning: '', speaker: speaker.displayName, phase: 'writing' });
           const plannedIntent = intentByInstance.get(speaker.id) ?? null;
@@ -686,6 +706,7 @@ export function useTurnRunner({
       makeCharacterLine,
       messages,
       providers,
+      recallFor,
       runGeneration,
       runIntentPlan,
       scene,
@@ -737,14 +758,40 @@ export function useTurnRunner({
       abortRef.current = controller;
 
       try {
+        /*
+         * 重抽与发送用同一份召回与意图（审计 B7）：以前这里不传 memories / intent /
+         * mentionText，召回退化为空，重抽出来的角色「失忆」，也不再照原来的打算落笔。
+         * 意图默认复用原消息里导演给出的那一条（不再多花一次调用重新判断）。
+         */
+        const now = new Date().toISOString();
+        const recalled = recallFor({
+          speaker,
+          text: playerMessage.content,
+          history: earlierHistory,
+          scene,
+          now,
+        });
+        const originalIntent =
+          target.intentSource === 'planned' && target.intent !== undefined && target.intent.trim() !== ''
+            ? { intent: target.intent, mode: 'reply' }
+            : null;
         const generation = await runGeneration({
           speaker,
           card: speakerCard,
           history: earlierHistory,
           playerInput: playerMessage.content,
+          mentionText: playerMessage.content,
+          memories: recalled.map(toPromptMemory),
           showStream: true,
           signal: controller.signal,
+          intent: originalIntent,
         });
+        if (recalled.length > 0) {
+          void session.markRecalled(
+            recalled.map((item) => item.event),
+            now,
+          );
+        }
 
         // 重抽同样是一次真实调用：旧的那笔账不撤销（钱花了），新的这笔记上
         await recordModelCall(db, {
@@ -767,17 +814,23 @@ export function useTurnRunner({
           throw new Error('模型只返回了格式标记，原回复已保留。请重试。');
         }
 
-        // 先确认完整的新回复，再撤销旧回复与后台状态。服务商过滤、截断或断流时，
-        // 不触碰旧消息、记忆和队列；它们仍是这一轮最后一次成功的结果。
-        // clearTurn 会移除已完成任务的幂等键，以便新的分析重新入队。
-        await db.queue.clearTurn(target.turnId);
-        await session.revertTurn(target.turnId);
+        /*
+         * 先确认完整的新回复，再撤销旧回复与后台状态。服务商过滤、截断或断流时，
+         * 不触碰旧消息、记忆和队列；它们仍是这一轮最后一次成功的结果。
+         *
+         * 写入顺序（审计 C18）：**先落新回复，再删旧的**。中途任何一步失败，最坏是
+         * 新旧两条同时在（用户删掉一条即可），而不是这一轮一条回复都不剩。
+         * clearTurn 会移除已完成任务的幂等键，以便新的分析重新入队。
+         */
         await session.appendMessages([
           {
             ...replacement,
             ...(generation.usage === null ? {} : { usage: generation.usage }),
+            ...(originalIntent === null ? {} : { intent: originalIntent.intent, intentSource: 'planned' as const }),
           },
         ]);
+        await db.queue.clearTurn(target.turnId);
+        await session.revertTurn(target.turnId);
         for (const message of turnMessages) {
           if (message.role === 'character') await session.deleteMessage(message.id);
         }
@@ -809,6 +862,7 @@ export function useTurnRunner({
       makeCharacterLine,
       messages,
       providers,
+      recallFor,
       runGeneration,
       scene,
       session,

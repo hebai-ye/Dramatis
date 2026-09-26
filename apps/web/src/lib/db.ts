@@ -14,6 +14,7 @@ import {
 } from '@dramatis/core';
 import { type DBSchema, type IDBPDatabase, openDB } from 'idb';
 import { removeBrowserKeyRefs } from './keystore';
+import { createTaskQueueExtras, type TaskQueueExtras } from './task-queue';
 
 const DB_NAME = 'dramatis';
 
@@ -431,7 +432,17 @@ export async function listLocalDatabases(): Promise<string[]> {
  *
  * **同步状态不带过去**：`sync.config` / `sync.state` 属于「那个账户连的是哪个空间」，
  * 带过去会让新账户一打开就自动连上旧账户的空间——那是串号。
+ *
+ * **设备号也不带过去**（审计 C3）：`device.id` 是 `(deviceId, localSeq)` 排序的一半，
+ * 两个库共用一个设备号，同步到同一空间后两边各自发的 1 号、2 号就会撞在一起。
+ *
+ * 写入放在**一个事务**里：中途失败（配额满、页面关掉）就整批回滚，不会留下半个账户。
  */
+export function shouldCopyRow(row: { collection: string; id: string }): boolean {
+  if (row.collection !== 'meta') return true;
+  return !row.id.startsWith('sync.') && row.id !== 'device.id';
+}
+
 export async function copyLocalDatabase(from: string, to: string): Promise<number> {
   const source = await createIndexedDbEntityStore(from);
   const target = await createIndexedDbEntityStore(to);
@@ -439,8 +450,10 @@ export async function copyLocalDatabase(from: string, to: string): Promise<numbe
   try {
     const rows = await source.db.getAll(STORE);
     // 同步状态不带过去（见上面的说明）
-    const keep = rows.filter((row) => !(row.collection === 'meta' && row.id.startsWith('sync.')));
-    for (const row of keep) await target.db.put(STORE, row);
+    const keep = rows.filter(shouldCopyRow);
+    const tx = target.db.transaction(STORE, 'readwrite');
+    for (const row of keep) void tx.store.put(row);
+    await tx.done;
     copied = keep.length;
   } finally {
     source.db.close();
@@ -448,6 +461,15 @@ export async function copyLocalDatabase(from: string, to: string): Promise<numbe
   }
   return copied;
 }
+/** 数据库连接出状况时发给界面的事件名（审计 B13）；detail 是 'blocked' | 'blocking'。 */
+export const DB_CONNECTION_EVENT = 'dramatis:db-connection';
+export type DbConnectionIssue = 'blocked' | 'blocking';
+
+function announceDbConnection(issue: DbConnectionIssue): void {
+  if (typeof window === 'undefined') return;
+  window.dispatchEvent(new CustomEvent<DbConnectionIssue>(DB_CONNECTION_EVENT, { detail: issue }));
+}
+
 /**
  * 库版本（顺序 62：1 → 2）。
  *
@@ -501,6 +523,21 @@ export async function createIndexedDbEntityStore(
   databaseName = DB_NAME,
 ): Promise<{ store: EntityStore; db: IDBPDatabase<DramatisSchema> }> {
   const db = await openDB<DramatisSchema>(databaseName, DB_VERSION, {
+    /*
+     * 升级被别的标签页挡住（审计 B13）：那边还开着旧版本的连接。
+     * 告诉用户关掉其他标签页；那边收到 versionchange 后会自己关（见下面的 blocking）。
+     */
+    blocked() {
+      announceDbConnection('blocked');
+    },
+    /*
+     * 本页挡住了别处的升级：立刻关掉连接让对方先升，再提示用户刷新本页。
+     * 不关的话，新版本那一页会一直卡在打开数据库这一步。
+     */
+    blocking() {
+      db.close();
+      announceDbConnection('blocking');
+    },
     upgrade(database, _oldVersion, _newVersion, transaction) {
       if (!database.objectStoreNames.contains(STORE)) {
         const store = database.createObjectStore(STORE, { keyPath: ['collection', 'id'] });
@@ -640,6 +677,8 @@ export interface DramatisDb {
    * 不参与剧情数据的级联语义（归档不回滚它，删世界才清）。
    */
   ledger: UsageLedger;
+  /** 队列的网页侧补充操作：挑任务、退避、重试失败任务（审计 B2）。 */
+  tasks: TaskQueueExtras;
 }
 
 /**
@@ -674,5 +713,6 @@ export async function openDramatisDb(): Promise<DramatisDb> {
     repository: new Repository(store),
     queue: createBackgroundRunner(store),
     ledger: createUsageLedger(store),
+    tasks: createTaskQueueExtras(store),
   };
 }

@@ -13,7 +13,61 @@
  * - 非 GET（模型调用都是 POST）直接在第一步就返回，连 respondWith 都不进
  * - 导航请求网络优先，离线时才回落到缓存里的外壳——不会让人看着旧页面以为数据是新的
  */
-const CACHE = 'dramatis-shell-v1';
+// v2（审计 A2）：v1 会把同源 GET 的同步接口（/sync/...）也缓存下来，版本号一换，
+// activate 时旧缓存整体删除，被污染的 head / pull 响应随之清掉。
+const CACHE = 'dramatis-shell-v2';
+
+/**
+ * 白名单：只有这些**静态**路径允许进缓存（审计 A2）。
+ *
+ * 以前是「同源 GET 一律缓存优先」，结果 `/sync/spaces/x/head` 第一次成功后永远命中
+ * 缓存，本机永远以为远端没变；明文还留在 Cache Storage 里。改成白名单之后，任何
+ * 新接口默认都不缓存，从根上杜绝。
+ */
+const STATIC_FILES = new Set([
+  '/',
+  '/index.html',
+  '/manifest.webmanifest',
+  '/favicon.png',
+  '/icon-192.png',
+  '/icon-512.png',
+  '/icon-maskable-192.png',
+  '/icon-maskable-512.png',
+]);
+
+/**
+ * 可以进缓存的**目录前缀**（2026-09-26 补：头像与立绘）。
+ *
+ * `/portraits/**`（立绘 / 缩略图 / 头像）与 `/brand/**` 是**运行时按需加载**的：
+ * 它们不出现在 index.html 里，`discoverShell` 抓不到，只能在第一次用到时顺手存下来。
+ * 不写进白名单的后果很具体——装到桌面之后断网打开，所有头像与立绘都变成破图。
+ *
+ * 这些名字是**稳定**的（`/portraits/01.webp`，不是带哈希的构建产物），所以顺手存下来
+ * 有可能拿到旧图；不要紧：`refreshShell()` 每次 activate 都会把「不在外壳清单里」的缓存
+ * 删掉，换过一次部署就自愈了。
+ */
+const STATIC_PREFIXES = ['/assets/', '/portraits/', '/brand/'];
+
+/** 路径是否属于可缓存的静态外壳：构建产物 `/assets/*`、头像立绘 `/portraits/*`、`/brand/*`，以及上面列出的文件。 */
+function isCacheablePath(pathname) {
+  if (pathname.startsWith('/sync') || pathname.startsWith('/api')) return false;
+  if (pathname.includes('..')) return false;
+  if (STATIC_PREFIXES.some((prefix) => pathname.startsWith(prefix))) return true;
+  return STATIC_FILES.has(pathname);
+}
+
+/**
+ * 一个请求该怎么处理：'pass'（不碰）、'navigate'（网络优先 + 外壳兜底）、'cache'（缓存优先）。
+ * 单独拎出来是为了能在测试里直接验证策略。
+ */
+function classifyRequest(method, href, mode, origin) {
+  if (method !== 'GET') return 'pass';
+  const url = new URL(href);
+  if (url.origin !== origin) return 'pass';
+  if (url.pathname.startsWith('/sync') || url.pathname.startsWith('/api')) return 'pass';
+  if (mode === 'navigate') return 'navigate';
+  return isCacheablePath(url.pathname) ? 'cache' : 'pass';
+}
 
 /**
  * 应用外壳要缓存哪些文件——**装的时候自己从 index.html 里读出来**。
@@ -32,7 +86,7 @@ async function discoverShell(html) {
   for (const pattern of patterns) {
     for (const match of html.matchAll(pattern)) {
       const url = match[1];
-      if (url.startsWith('/')) urls.add(url);
+      if (url.startsWith('/') && isCacheablePath(url.split('?')[0])) urls.add(url);
     }
   }
 
@@ -40,7 +94,9 @@ async function discoverShell(html) {
   try {
     const manifest = await (await fetch('/manifest.webmanifest', { cache: 'no-store' })).json();
     for (const icon of manifest.icons ?? []) {
-      if (typeof icon.src === 'string' && icon.src.startsWith('/')) urls.add(icon.src);
+      if (typeof icon.src === 'string' && icon.src.startsWith('/') && isCacheablePath(icon.src)) {
+        urls.add(icon.src);
+      }
     }
   } catch {
     // manifest 读不到不影响外壳：图标顶多离线时退化
@@ -105,21 +161,15 @@ self.addEventListener('fetch', (event) => {
     if (recent.length > 20) recent.shift();
   };
 
-  // 模型调用是 POST：不碰
-  if (request.method !== 'GET') {
-    record('pass:非 GET');
-    return;
-  }
-
-  const url = new URL(request.url);
-  // 跨域一律放行：模型接口、本地模型、任何第三方
-  if (url.origin !== self.location.origin) {
-    record('pass:跨域');
+  const policy = classifyRequest(request.method, request.url, request.mode, self.location.origin);
+  // 非 GET（模型调用）、跨域、同步接口、任何不在白名单里的路径：一律不碰
+  if (policy === 'pass') {
+    record('pass');
     return;
   }
 
   // 页面导航：网络优先；断网时给缓存的外壳
-  if (request.mode === 'navigate') {
+  if (policy === 'navigate') {
     event.respondWith(
       fetch(request).catch(async () => {
         const cached = await caches.match('/index.html', { ignoreVary: true });
@@ -146,7 +196,7 @@ self.addEventListener('fetch', (event) => {
       }
       return fetch(request)
         .then((response) => {
-          record('network ' + String(response.status));
+          record(`network ${String(response.status)}`);
           // 只缓存成功的同源响应；opaque 与错误响应不入库
           if (response.ok && response.type === 'basic') {
             const copy = response.clone();
@@ -155,7 +205,7 @@ self.addEventListener('fetch', (event) => {
           return response;
         })
         .catch((error) => {
-          record('network 失败: ' + String(error).slice(0, 40));
+          record(`network 失败: ${String(error).slice(0, 40)}`);
           throw error;
         });
     }),

@@ -1163,7 +1163,7 @@ TASKS 第〇节顺序 68。用户裁定「A+B 推进」；原方案里的 `limit
 | `docs/TASKS.md` | 改 | 83 行改 ✅；归属表三行更新；「重叠实现」补写「A9/B1 的重叠已在顺序 83 消掉」；新增「顺序 83 带出来的遗留」四条与**顺序 84 的只读复核回执**（可信 12 / 有疑 3 / 合并前 5 项） |
 | `docs/EVAL.md` | 改 | 新增**第七十三节**：分支带进来的东西、三条有疑的改法表、为什么采用 `a5ef9` 的模块、五项门禁、七条「没验的 / 已知遗留」 |
 | `docs/STATUS.md` | 改 | 新增「2026-09-26：顺序 83 落进 main」一段与下一步（84 真正只看两条、部署等 84/85 一起上） |
-| `docs/FILE-LOG.md` | 改 | 本节；「几点注意」顺延为**六十三**（顺序 86、顺序 71 之后又两次顺延，顺序 84/85 收尾后现为**六十五**） |
+| `docs/FILE-LOG.md` | 改 | 本节；「几点注意」顺延为**六十三**（顺序 86、顺序 71 之后又两次顺延，顺序 84/85 收尾后现为**六十五**，整批上线后现为**六十六**） |
 
 > 本批**没有 push、没有部署**（服务端那批要重新部署才生效，用户裁定等 84/85 合完一起上）。
 
@@ -1220,7 +1220,7 @@ TASKS 第〇节顺序 68。用户裁定「A+B 推进」；原方案里的 `limit
 | `docs/TASKS.md` | 改 | 71 行改 ✅（写明「口径本身仍等真机样本」）+ 明细段落追加结论 |
 | `docs/EVAL.md` | 改 | 新增**第七十五节**：为什么不动公式、三条落点、测试、两个实现坑、五项门禁、遗留 |
 | `docs/STATUS.md` | 改 | 新增「2026-09-26：顺序 71 落进 main」一段 |
-| `docs/FILE-LOG.md` | 改 | 本节；「几点注意」顺延为**六十四**（顺序 84/85 收尾后现为**六十五**） |
+| `docs/FILE-LOG.md` | 改 | 本节；「几点注意」顺延为**六十四**（顺序 84/85 收尾后现为**六十五**，整批上线后现为**六十六**） |
 
 > **没 push、没部署。** 校准比例本身**仍是待验证**：本机没有真实 Key、也没有服务端 `usage` 可对照，
 > 所以「低估多少」要等用户在真机上跑够 10 轮生成之后看那一行提示（或 `usageCalibration` 的返回值）。
@@ -1249,12 +1249,33 @@ TASKS 第〇节顺序 68。用户裁定「A+B 推进」；原方案里的 `limit
 | `docs/TASKS.md` | 改 | 84 / 85 两行改 ✅；新增「当天那批脏改动怎么处理的」段；两条结构性缺口更新（lint 已全绿、`tools/*` 仍未补） |
 | `docs/EVAL.md` | 改 | 新增**第七十六节**：四条 commit、代提交的两道检查、合并与 `.gitignore` 冲突解法、依赖插曲、lint 三处修法、五项门禁、六条遗留 |
 | `docs/STATUS.md` | 改 | 新增「2026-09-26：顺序 84 / 85 合入 main」一段 |
-| `docs/FILE-LOG.md` | 改 | 本节；「几点注意」顺延为**六十五** |
+| `docs/FILE-LOG.md` | 改 | 本节；「几点注意」顺延为**六十五**（整批上线后现为**六十六**） |
 
-> 四个提交都**未 push、未部署**。审计那 58 条至此全部在 main；但 `tools/*` 仍不在 `pnpm-workspace.yaml`、B10 未做、B11/B12 只接一半，
-> 服务端那批（配额 / 限流 / `spaces.epoch`）**要重新部署才生效**——用户裁定「等 84/85 合完一起上」，条件已满足，等下一步。
+> 四个提交当时**未 push、未部署**，已在 **2026-09-26 整批上线**（见下一节）。审计那 58 条至此全部在 main；但 `tools/*` 仍不在 `pnpm-workspace.yaml`、B10 未做、B11/B12 只接一半，
+> 服务端那批（配额 / 限流 / `spaces.epoch`）已在下一节记录的部署中生效。
 
-## 六十五、几点注意
+## 六十五、2026-09-26：整批上线（push + 服务端 / nginx / 网页重新部署）
+
+这一节**没有新增或修改仓库文件**（部署件都来自上面的提交），只记录「什么时候把哪一份放到了线上」，以及
+`docs/STATUS.md` / `docs/TASKS.md` / `docs/EVAL.md` 三份文档为它改了什么。服务器私有信息（域名 / 地址 / 凭据）仍只在 `deploy/LOCAL-NOTES.md`（gitignore，不入仓）。
+
+| 对象 | 动作 | 内容 |
+| --- | --- | --- |
+| `origin/main` | push | `789f744..aa4f724`（顺序 81–86、顺序 71、代提交 `3c2859f`、审计报告 `71a26be` 一起上去） |
+| `/opt/dramatis-sync/dist` | 换 | 新构建；旧目录留成 `dist.bak-20260926-183042` |
+| `/opt/dramatis-sync/{backup.mjs,start.mjs,README.md,.env.example}` | 换 / 不动 | `backup.mjs` 换成带审计 C16 `keep >= 1` 校验的版本；`start.mjs` 与线上逐字节一致 |
+| `/opt/dramatis-sync/deploy/` | 换 | 来自 `554d5d2`；`LOCAL-NOTES.md` 误拷上去后**已删除** |
+| `/etc/systemd/system/dramatis-sync.service` | 换（加固） | `deploy/install-server.sh` 重写：`ProtectSystem=strict`、`ProtectHome=true`、`PrivateDevices=true`、`ProtectKernelTunables/Modules/ControlGroups`、`RestrictAddressFamilies=…`、`RestrictSUIDSGID`、`LockPersonality`、`UMask=0077` |
+| `/var/lib/dramatis-sync/sync.db` | 自动迁移 | `spaces.epoch` 补 4 行；`heads.record_count`/`byte_count` 回填；行数不变（4 空间 / 641 记录） |
+| `/etc/nginx/snippets/dramatis-security-headers.conf` | **新增** | 来自 `deploy/nginx-security-headers.conf`（审计 A15） |
+| `/etc/nginx/sites-available/dramatis` | 改 | 三处：server 级与 `location = /sw.js` 各 include 安全头；`location /sync/` 加 `client_max_body_size 8m`；保留 `listen 8443 ssl http2;` |
+| `/var/www/dramatis` | 换 | `assets/index-9bjwPXDa.js`、`assets/index-aDHWLtbR.css`、`/portraits/{,thumbs/,avatars/}`、`brand/icon-master.png`、新图标、`sw.js` 8852 B（`dramatis-shell-v2`）；旧目录留成 `dramatis.bak-20260926-183139` |
+| `docs/STATUS.md` | 改 | 顶部新增「整批上线」一节，并把它下面各节的「未 push、未部署」改正 |
+| `docs/TASKS.md` | 改 | 84 / 85 两行改 ✅；审计报告「尚未 push」改正；服务端那批「要重新部署才生效」改成已部署 |
+| `docs/EVAL.md` | 改 | 新增**第七十七节**（push、服务端、nginx、网页、备份、三个坑、没验的五条）；第七十六节第 1/6 条改正 |
+| `docs/FILE-LOG.md` | 改 | 本节；「几点注意」顺延为**六十六** |
+
+## 六十六、几点注意
 
 ---
 

@@ -21,6 +21,24 @@
 
 ## 新会话从这里接（2026-09-23）
 
+### 2026-09-26：整批上线（push + 重新部署服务端与前端；用户裁定「连着一起上」）
+
+本页下面各节里写的「未 push、未部署」「线上仍是旧服务端」**以本节为准**：到 `aa4f724` 为止的全部提交都已上线。
+
+- **push**：`git push origin main` → `789f744..aa4f724`，之后 `git status -sb` 是 `## main...origin/main`（无差异）。
+- **服务端**：`/opt/dramatis-sync/dist` 换成新构建（旧目录留成 `dist.bak-20260926-183042`），`backup.mjs` 换成带审计 C16 `keep >= 1` 校验的版本（`start.mjs` 与线上一致、没变），`deploy/` 目录刷新；
+  跑 `deploy/install-server.sh` 把 systemd 单元换成加固版（新增 `ProtectSystem=strict`、`ProtectHome=true`、`PrivateDevices=true`、`ProtectKernelTunables/Modules/ControlGroups`、`RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX`、`RestrictSUIDSGID`、`LockPersonality`、`UMask=0077`；旧单元只有 `NoNewPrivileges/PrivateTmp/ProtectSystem=full`），
+  `systemctl restart dramatis-sync` 后 `/health` 正常、日志无报错。
+- **数据库迁移**（重启时自动、幂等）：`spaces` 多出 `epoch`（4 个空间都拿到 16 字节随机值），`heads` 多出 `record_count`/`byte_count` 并按 `records` 回填（40/104263、9/7599、9/7599、583/1228072）；
+  **数据行数不变**（4 空间 / 641 记录）。
+- **nginx**：装 `/etc/nginx/snippets/dramatis-security-headers.conf`（审计 A15：HSTS、`X-Content-Type-Options`、`Referrer-Policy`、`X-Frame-Options`、`Permissions-Policy`、CSP **Report-Only** 灰度），server 级与 `location = /sw.js` 各 include 一次；
+  `location /sync/` 加 `client_max_body_size 8m`；保留 `listen 8443 ssl http2;`（nginx 1.24 不认示例里的 `http2 on;`）。`nginx -t` 通过后 reload，线上 `/` 与 `/sw.js` 都能看到全套安全头。
+- **网页**：`/var/www/dramatis` 换成新构建（旧目录留成 `dramatis.bak-20260926-183139`）：`assets/index-9bjwPXDa.js`（649.25 kB）、`assets/index-aDHWLtbR.css`、144 张立绘（`/portraits/`、`/portraits/thumbs/`、`/portraits/avatars/`）、`brand/icon-master.png`、新图标；
+  `sw.js` 从 6284 B 换成 8852 B（`CACHE = 'dramatis-shell-v2'`、`STATIC_PREFIXES` 含 `/portraits/`、`/brand/`）。
+- **备份**：部署前手动快照 `/var/backups/dramatis/sync.db.2026-09-26T10-29-24-733Z.bak`（1 814 528 B）；nginx 站点配置留了 `dramatis.bak-20260926-182924`（部署前）与 `dramatis.bak-headers-20260926-183113`（加安全头前）；每 6 小时的 cron 备份（`/etc/cron.d/dramatis-sync`，以 `dramatis` 用户跑）照旧。
+- **没验的**：真机 / 真模型一律没动（归 Codex）；`manifest.webmanifest` 的 MIME 仍是 `application/octet-stream`（nginx 的 `mime.types` 里没有 `webmanifest`，本轮没改）；CSP 仍是 Report-Only，要灰度几天再切正式。
+- **教训**：**别把 `deploy/` 整个 `scp` 上服务器**——本轮把 `deploy/LOCAL-NOTES.md`（本地私有、含敏感内容）一起拷上去了，发现后已从服务器删除，并把旧的 `deploy.old-*` 备份目录一并清掉。
+
 ### 2026-09-26：顺序 84 / 85 合入 main（审计第三、四批全落）+ 代提交另一条会话的成果
 
 审计那 58 条现在**全部进了 main**（顺序 81/82/83/84/85/86 + 顺序 71 的 B12 半条）：
@@ -32,7 +50,7 @@
 - **`554d5d2` 顺序 85**：合 `audit/integration`（A14/A15/B19/B20/B21/C16/C21/C22 与本地助手 A1/A13/C19/C20），唯一冲突是 `.gitignore`（两边条目都留，没动 `--ours/--theirs`）；CI 里 actions 固定到 SHA、加 `build:sync-server` 步骤、engines 提到 `node: >=22.5`。
 - **`655230c` 顺序 85 收尾**：lint 从 13 error 收到 **0 error / 0 warning**（本仓第一次），门禁五项全绿：
   typecheck ✓、lint ✓（279 文件）、test ✓（Core 68 文件/780 条、Web 13 文件/45 条）、build ✓（`dist/assets/index-9bjwPXDa.js` 649.25 kB / gzip 204.58 kB）、build:sync-server ✓。
-- **仍未做**：`tools/*` 不在 `pnpm-workspace.yaml`（顺序 85 没补，缺口仍在）；B10 流式失败边角；B11/B12 只接了一半；顺序 87 的预算币种；**服务端那批改动的重新部署**（用户裁定「等 84/85 合完一起上」，条件已满足，等下一步动手）。四个提交都**未 push**。
+- **仍未做**：`tools/*` 不在 `pnpm-workspace.yaml`（顺序 85 没补，缺口仍在）；B10 流式失败边角；B11/B12 只接了一半；顺序 87 的预算币种。**服务端与网页的重新部署已在 2026-09-26 完成**（见本页最上面的「整批上线」一节）。六个提交都已 push。
 - 合并插曲：`package.json`/`pnpm-workspace.yaml` 变过之后，非 TTY 下 `pnpm` 会因 `verify-deps-before-run` 报 `ERR_PNPM_ABORTED_REMOVE_MODULES_DIR_NO_TTY`；解法是 `$env:CI='true'; pnpm install`（`pnpm-lock.yaml` 未被改动）。
 
 ### 2026-09-26：顺序 71 落进 main（token 估算校准：先把实测数据通路打通，口径等真机数字）
@@ -48,7 +66,7 @@
 - `estimate.ts` 的字面量 4 提成 `NARROW_CHARS_PER_TOKEN`，**行为一字未变**——本机没有任何 tokenizer（tiktoken/gpt-token/bpe 全空），凭感觉调数字会让英文侧白丢历史。
 
 门禁：typecheck ✓、Core **780**（68 文件）+ Web **29**（8 文件）全绿、全仓 lint 仍是那 13 个 error（全部来自另一条会话未提交的文件）、build ✓、build:sync-server ✓。
-做法、两个实现坑与五条遗留见 **EVAL 第七十五节**。**「误差 < 10%」这个目标仍是待验证**：实测比例要等真机（归 Codex / 用户）。**本批未 push、未部署。**
+做法、两个实现坑与五条遗留见 **EVAL 第七十五节**。**「误差 < 10%」这个目标仍是待验证**：实测比例要等真机（归 Codex / 用户）。**本批已 push 并部署**（见本页最上面的「整批上线」一节）。
 
 ### 2026-09-26：顺序 86 落进 main（审计遗留里没人修的五条：B6/B9/B15 修了，B18 裁定不动，B10 不做）
 
@@ -66,11 +84,11 @@
 - **B10（流式失败边角）**：**本批不做**——别人在 `.claude/worktrees/agent-a6adfa051fc0cc2bd` 里有未提交的 `provider/openai-compatible.ts` + 新测试，碰了会撞车。
 
 门禁：typecheck ✓、Core **760**（67 文件）+ Web **19**（6 文件）全绿、本批 14 个文件 lint 干净、build ✓、build:sync-server ✓；
-全仓 lint 仍是那 13 个 error（全部来自另一条会话未提交的文件）。做法、数字与遗留见 EVAL 第七十四节。**本批未 push、未部署。**
+全仓 lint 仍是那 13 个 error（全部来自另一条会话未提交的文件）。做法、数字与遗留见 EVAL 第七十四节。**本批已 push 并部署**（见本页最上面的「整批上线」一节）。
 
 **下一步**：84 = 合 `a5ef9`（**两条真代码已在分支上补掉**：`task-queue.ts` 的 `claim` 走 `updateEntity` 原子 CAS、`sw.js` 白名单加 `/portraits/` 与 `/brand/`；已把 main 预先并进那条分支、预集成门禁全绿 → 等脏文件提交后合并很快）。
 **84/85 仍必须等另一条会话提交 `App.tsx` / `styles.css` / `components/*.tsx`**（现在合会被 git 拒）。
-**部署：服务端那批（配额/限流/`epoch` 三列）等 84/85 合完一起上**（用户裁定）——线上仍是旧服务端。
+**部署：服务端那批（配额/限流/`epoch` 三列）已在 2026-09-26 上线**（见本页最上面的「整批上线」一节）。
 
 ### 2026-09-26：顺序 83 落进 main（审计第三批 + 三条「有疑」按裁定补齐）
 
@@ -84,7 +102,7 @@ A9/B1 是**故意按 `a5ef9` 那一套原样落地**的，好让顺序 84 合并
 **下一步**：84 = 合 `a5ef9`（**只读复核回执已到**：15 条里 A2/A10/B2/B5/B7/B13/B17/C3/C13/C17/C18 可信，A4/A9/B1 是重复且更弱的一份、已被 main 覆盖；
 **真正要动代码的只有两条**——① B3 回退：`worker.ts:548` 改调 `db.tasks.claim` 会绕开 main 的原子 CAS，需改回或走 `updateEntity` 事务；② SW 白名单要加 `/portraits/**` 与 `/brand/**`，否则装到桌面后立绘/头像离线破图）。
 **下一步**：84/85 仍然必须等另一条会话提交 `App.tsx` / `styles.css` / `components/*.tsx`（现在合会被 git 拒；86 已做完，见上一节）。
-**部署：服务端那批（配额/限流/`epoch` 三列）等 84/85 合完一起上**（用户裁定）——线上仍是旧服务端；升级窗口要盯住已有库的 `ALTER TABLE` 与 `/sync/health`。**本批未 push、未部署。**
+**部署：服务端那批（配额/限流/`epoch` 三列）已在 2026-09-26 上线**（见本页最上面的「整批上线」一节）；升级时盯住的已有库 `ALTER TABLE` 与 `/sync/health` 都已实测通过。**本批已 push、已部署。**
 
 ### 2026-09-26：顺序 82 落进 main（审计第二批 + 三处必修）
 
@@ -96,7 +114,7 @@ A9/B1 是**故意按 `a5ef9` 那一套原样落地**的，好让顺序 84 合并
 **下一步**：83 = 合 `a063c`（只读复核回执已到：A3/A6/A7/A8/C8–C12/C14/C15 可信；A4/A9/B1 只做了一半；
 **合并前要拍板三处**——SYNC.md §4.12.2 的措辞、新建空间是否强制密码最小长度、B1 入口串行化做不做）；
 84 与 85 仍必须等另一条会话提交 `App.tsx` / `styles.css`；86 = 补五条没人修的（B6/B9/B10/B15/B18）。
-82 自己带出来的遗留（回滚没有界面提示、5 分钟窗口内不收拾、C6/A11 复核有疑未消解、B11/B12 只接一半）已记进 TASKS 第〇节。**本批未 push、未部署**。
+82 自己带出来的遗留（回滚没有界面提示、5 分钟窗口内不收拾、C6/A11 复核有疑未消解、B11/B12 只接一半）已记进 TASKS 第〇节。**本批已 push、已部署**（见本页最上面的「整批上线」一节）。
 
 ### 2026-09-26：审计遗留归账 + 顺序 81 落地（本机助手加固）
 
@@ -108,7 +126,7 @@ opus5.5 那轮深度审计（`docs/AUDIT-2026-09-26.md`，58 条）**一条都�
 
 **下一步（当时；82 与 83 的复核后来都出了结果，见上面两节）**：82 = 合 `a6adfa`；83 = 合 `a063c`；
 **84 与 85 必须等另一条会话把 `App.tsx` / `styles.css` 的改动提交**（那两条分支碰了这两个脏文件，现在合会被 git 拒绝）；
-86 = 补五条没人修的（B6/B9/B10/B15/B18）。**本批未 push、未部署**。
+86 = 补五条没人修的（B6/B9/B10/B15/B18）。**本批已 push、已部署**（见本页最上面的「整批上线」一节）。
 
 ### 2026-09-25：无限制模式已上线（push + 部署，用户明确要求）
 

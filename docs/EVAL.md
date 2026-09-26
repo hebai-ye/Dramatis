@@ -3981,11 +3981,61 @@ Core **709** 条 / 63 文件、Web **12** 条 / 4 文件全绿；build ✓（495
 
 **没验的 / 已知遗留（别当成已解决）**：
 
-1. **服务端那批改动仍未部署**：配额 50 000 条 / 256 MB、限流 120 次·分、`spaces.epoch`、`heads.record_count/byte_count` 与两条受保护的 `ALTER TABLE` 都要重新部署才生效。用户裁定「等 84/85 合完一起上」——**现在 84/85 已合完，条件满足，但还没动线上**。
+1. ~~**服务端那批改动仍未部署**~~ → **已于 2026-09-26 部署并实测**（配额 50 000 条 / 256 MB、限流 120 次·分、`spaces.epoch`、`heads.record_count/byte_count` 与两条受保护的 `ALTER TABLE` 都已生效）：见 **第七十七节**。
 2. **`tools/*` 仍不在 `pnpm-workspace.yaml`**（顺序 85 动过这个文件但没补），所以 `tools/local-bridge/policy.test.mjs` 那 15 条断言仍不在任何门禁里，只能手动 `node --test` 跑。
 3. **B10（流式失败边角）仍未做**：`a6adfa` 的 worktree 里那批未提交的 `provider/openai-compatible.ts` + 新测试本批没碰。
 4. **B11 / B12 只接了一半**（顺序 82/83 留的账）：`loadRoom(roomId, { conversationId })` 生产调用方一个没改；`AssembleInput.budget.extraTokens` 仍无调用方。
 5. **代提交那批没有逐行审阅**：只做过敏感信息排查与「旧成果没被冲掉」的 grep 核对；那批界面改动（头像裁剪、立绘选择）的真机表现归 Codex。
-6. 四个提交都**未 push、未部署**；顺序 87（预算总额按币种）还没开。
+6. 四个提交**已 push 并部署**（`789f744..aa4f724`，2026-09-26，见第七十七节）；顺序 87（预算总额按币种）还没开。
+
+
+## 七十七、2026-09-26：整批上线（push + 服务端 / nginx / 网页重新部署）
+
+**来源**：用户裁定「连着一起上：push + 重新部署服务端与前端」（ask_user_question `deploy-now`）。此前 84/85 合并与 lint 收尾都压在本地，服务端那批（配额/限流/`epoch` 三列）按旧裁定「等 84/85 合完一起上」也一直没动线上。
+
+**push**：`git push origin main` → `789f744..aa4f724`；之后 `git status -sb` 为 `## main...origin/main`（无差异）。这一步把顺序 81–86、顺序 71、代提交 `3c2859f` 与审计报告 `71a26be` 一起推上去了。
+
+**服务端（`ssh dramatis`，Ubuntu 24.04 / Node v22.23.2 / nginx 1.24.0）**：
+
+| 步骤 | 做法 | 证据 |
+| --- | --- | --- |
+| 换 dist | 先把新构建 `scp` 到 `/tmp/sync-server-dist`，核对 `dist/tools/sync-server/src/main.js` 到了；再 `mv` 旧目录成 `dist.bak-20260926-183042`、`mv` 新的进来、`chown -R root:root` + `chmod -R u=rwX,go=rX` | 新 `main.js` 12174 字节、root:root；旧目录保留 |
+| 换辅助文件 | `backup.mjs` 更新为带审计 C16 `keep >= 1` 校验的版本（`start.mjs` 与线上逐字节一致，未动） | `diff` 只显示新增的 5 行 `keep` 校验 |
+| systemd | 跑 `deploy/install-server.sh`（幂等）→ 单元换成加固版：`ProtectSystem=strict`、`ProtectHome=true`、`PrivateDevices=true`、`ProtectKernelTunables/Modules/ControlGroups=true`、`RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX`、`RestrictSUIDSGID`、`LockPersonality`、`UMask=0077`（旧单元只有 `NoNewPrivileges`/`PrivateTmp`/`ProtectSystem=full`） | `systemctl cat` 输出；`install-server.sh` 本身不重启，所以随后手动 `systemctl restart dramatis-sync` |
+| 重启 + 健康 | 18:30:53 重启，日志只有「Dramatis 同步服务端已启动 / 监听 127.0.0.1:8787 / 数据 … / 跨源只允许同源 / 可信代理 1 层」，无报错 | `{"ok":true,"uptimeMs":…}`；`systemctl is-active` = active |
+| 数据库迁移 | 启动时幂等迁移自动补列 | `spaces` 列：`space_handle,credential_hash,recovery_credential_hash,key_wraps,created_at,epoch`；`heads` 列：`space_handle,head,record_count,byte_count`。4 个空间都拿到 16 位十六进制 `epoch`；`heads` 回填 40/104263、9/7599、9/7599、583/1228072；**行数不变**（4 空间 / 641 记录、heads 4 行） |
+
+**nginx（审计 A15）**：
+
+- 装片段：`/etc/nginx/snippets/dramatis-security-headers.conf`（HSTS `max-age=31536000`、`X-Content-Type-Options nosniff`、`Referrer-Policy strict-origin-when-cross-origin`、`X-Frame-Options DENY`、`Permissions-Policy "camera=(), microphone=(), geolocation=()"`、`Content-Security-Policy-Report-Only` 灰度版）。
+- 站点配置改动（`diff` 三处，全部逐行核对）：`ssl_certificate_key` 后加 server 级 `include …`；`location = /sw.js` 内 `add_header Cache-Control "no-cache";` 后加同一个 `include`（nginx 的 `add_header` 在 location 里不继承 server 级，所以必须再 include 一次）；`location /sync/` 内加 `client_max_body_size 8m`。
+- **保留 `listen 8443 ssl http2;`**：`deploy/nginx-8443.conf.example` 已经改成 `http2 on;`，但线上 nginx 1.24 不认那两行。
+- 流程：`cp` 前先 `cp -a` 存一份 `dramatis.bak-headers-20260926-183113` → `nginx -t` 通过 → `systemctl reload nginx`；不通过就自动回滚（本次没走到）。
+- 线上实测（外部，`https://dramatissync.com:8443/`）：`/` 与 `/sw.js` **都**返回全套安全头；`/sync/health` 经 nginx 反代 = `{"ok":true,…}`。
+
+**网页**：
+
+- `/var/www/dramatis` ← 新构建（旧目录留成 `dramatis.bak-20260926-183139`），`chown -R root:root` + `chmod -R u=rwX,go=rX`。
+- 内容核对：`index.html` 引 `assets/index-9bjwPXDa.js`（HTTP 200，649256 字节）与 `assets/index-aDHWLtbR.css`（200，38399 字节）；`/portraits/48.webp`、`/portraits/thumbs/48.webp`、`/portraits/avatars/48.webp`、`/brand/icon-master.png`、`/icon-192.png` 全部 200；SPA 回退（`/nonexistent-route` → `index.html` 200）正常。
+- `sw.js` 从 6284 → **8852 字节**：`CACHE = 'dramatis-shell-v2'`、`STATIC_PREFIXES = ['/assets/', '/portraits/', '/brand/']`；`Cache-Control: no-cache` 仍在。
+
+**备份（可回滚点）**：
+
+- 数据库：部署前手动 `VACUUM INTO` 快照 `/var/backups/dramatis/sync.db.2026-09-26T10-29-24-733Z.bak`（1 814 528 B）；每 6 小时的 cron（`/etc/cron.d/dramatis-sync`，以 `dramatis` 用户跑）照旧。
+- 配置/产物：`dist.bak-20260926-183042`（服务端旧代码）、`dramatis.bak-20260926-182924`（部署前站点配置）、`dramatis.bak-headers-20260926-183113`（加安全头前）、`dramatis.bak-20260926-183139`（旧网页）。**全部保留，没有删旧目录。**
+
+**这一轮踩到的三个坑**：
+
+1. **`node backup.mjs` 要 `sudo`**：数据目录是 `700 dramatis`，`ubuntu` 用户跑会报「找不到数据库」——这不是库丢了，是权限。
+2. **别把 `deploy/` 整个 `scp` 上服务器**：本轮把只该留本机的 `deploy/LOCAL-NOTES.md`（含域名/路径等私有信息）一起拷上去了，发现后从服务器删除，并把旧的 `deploy.old-*` 备份目录一并清掉。（`deploy/LOCAL-NOTES.md` 在本地是 gitignore 的，不入仓。）
+3. **`ssh … 'bash -s'` 的脚本只写 ASCII**：中文经 PowerShell 管道会乱码；另外行尾 CR 会让远端的 bash 每行报一次 `$'\r': command not found`（命令仍会执行，但输出被污染）→ 发之前 `-replace "\r", ""` 去掉。
+
+**没验的 / 已知遗留**：
+
+1. **真机与真模型一律没动**（归 Codex）：客户端对 `epoch`/`record_count` 的新字段、同步往返、CSP 在真实浏览器里的报错都要真机走一遍；两台真设备的合并演练仍未做。
+2. **CSP 仍是 Report-Only**：按片段里的说明要灰度几天、走完聊天/同步/导入卡/换背景/本地模型，再切正式那条。
+3. **`manifest.webmanifest` 的 MIME 仍是 `application/octet-stream`**：nginx 的 `mime.types` 里没有 `webmanifest`；本轮没改（PWA 此前就是这么跑的），要装的话在站点配置里给它单独 `default_type application/manifest+json;`。
+4. `tools/*` 仍不在 `pnpm-workspace.yaml`（顺序 85 没补，与本轮无关）。
+5. 服务器上仍留着 6 个历史 `dist.bak-*` 与 3 个 `dramatis.bak-*`（磁盘 42G 可用，暂不清理）。
 
 

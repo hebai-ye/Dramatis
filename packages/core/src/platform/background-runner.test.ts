@@ -130,4 +130,24 @@ describe('BackgroundRunner', () => {
 
     expect(await queue.recoverInterrupted()).toBe(0);
   });
+
+  it('两个标签页同时认领同一任务，只有一个拿到（审计 B3）', async () => {
+    const store = createMemoryEntityStore();
+    const tabA = createBackgroundRunner(store);
+    const tabB = createBackgroundRunner(store);
+    await tabA.enqueue({ kind: 'a', payload: {}, idempotencyKey: 'only' });
+
+    const [left, right] = await Promise.all([tabA.take(1), tabB.take(1)]);
+    expect(left.length + right.length).toBe(1);
+  });
+
+  it('没有原子 update 的后端也能认领（退回 get + put）', async () => {
+    const base = createMemoryEntityStore();
+    const { update: _dropped, ...rest } = base;
+    const queue = createBackgroundRunner({ ...rest, kind: 'legacy' });
+    await queue.enqueue({ kind: 'a', payload: {}, idempotencyKey: 'x' });
+    const [task] = await queue.take(1);
+    expect(task?.status).toBe('running');
+    expect(await queue.take(1)).toEqual([]);
+  });
 });

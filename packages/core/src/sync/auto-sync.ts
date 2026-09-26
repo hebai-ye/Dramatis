@@ -43,7 +43,13 @@ export interface AutoSyncOptions {
 export interface AutoSync {
   /** 请求一次自动同步：立刻跑，或者排到节流窗口结束。 */
   request: () => void;
-  /** 不管节流，立刻跑一趟（手动「立即同步」用）。 */
+  /**
+   * 不管节流，立刻跑一趟（手动「立即同步」用）。
+   *
+   * 正在跑的时候调用：**先等那一趟跑完，再补跑一趟**，两趟都完了才返回（审计 B1）。
+   * 以前在运行中只记一笔「待补」就立刻返回，调用方以为已经同步完了。
+   * 补跑那一趟失败时照样通过 `onResult` 回调，不从这里抛。
+   */
   flush: () => Promise<void>;
   /** 有没有排着队的同步。 */
   isPending: () => boolean;
@@ -63,6 +69,8 @@ export function createAutoSync(options: AutoSyncOptions): AutoSync {
   let lastRunAt: number | null = null;
   let timer: unknown = null;
   let running = false;
+  /** 正在跑的那一趟（flush 要等它）。 */
+  let inFlight: Promise<void> | null = null;
   /** 运行期间又来了请求：结束后再补一趟。 */
   let dirty = false;
 
@@ -73,12 +81,17 @@ export function createAutoSync(options: AutoSyncOptions): AutoSync {
     }
   };
 
-  const runOnce = async (manual: boolean): Promise<void> => {
-    if (running) {
+  const runOnce = (manual: boolean): Promise<void> => {
+    if (running && inFlight !== null) {
       dirty = true;
-      return;
+      return inFlight;
     }
+    const current = execute(manual);
+    inFlight = current;
+    return current;
+  };
 
+  const execute = async (manual: boolean): Promise<void> => {
     running = true;
     options.onBusyChange?.(true);
     try {
@@ -95,6 +108,7 @@ export function createAutoSync(options: AutoSyncOptions): AutoSync {
       });
     } finally {
       running = false;
+      inFlight = null;
       options.onBusyChange?.(false);
 
       if (dirty) {
@@ -127,6 +141,11 @@ export function createAutoSync(options: AutoSyncOptions): AutoSync {
     request: schedule,
     flush: async () => {
       clearPending();
+      // 先等正在跑的那一趟（以及它结束时可能立刻补上的一趟）
+      while (inFlight !== null) await inFlight;
+      // 那一趟结束时可能排了一个节流定时器：手动这一趟就是它，别再多跑一次
+      clearPending();
+      dirty = false;
       await runOnce(true);
     },
     isPending: () => timer !== null || running || dirty,

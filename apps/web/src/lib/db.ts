@@ -626,6 +626,31 @@ export async function createIndexedDbEntityStore(
       return records.map((record) => record.value) as T[];
     },
 
+    /**
+     * 原子读-改-写（审计 B3 / B14）：读和写在同一个 readwrite 事务里。
+     *
+     * IndexedDB 会把同一仓库上重叠的 readwrite 事务（包括别的标签页的）串行执行，
+     * 所以两个标签页同时认领同一个任务、同时发 localSeq，只会有一个先读到旧值。
+     * `mutate` 是同步的：事务里不能等别的 Promise，否则事务会提前提交。
+     */
+    async update<T extends { id: string }>(
+      collection: string,
+      id: string,
+      mutate: (current: T | null) => T | undefined,
+    ): Promise<T | null> {
+      const tx = db.transaction(STORE, 'readwrite');
+      const record = await tx.store.get([collection, id]);
+      const current = record === undefined ? null : (structuredClone(record.value) as T);
+      const next = mutate(current);
+      if (next === undefined) {
+        await tx.done;
+        return current;
+      }
+      void tx.store.put({ collection, id, value: structuredClone({ ...next, id }) });
+      await tx.done;
+      return next;
+    },
+
     async clear(collection: string): Promise<void> {
       const tx = db.transaction(STORE, 'readwrite');
       const index = tx.store.index('byCollection');

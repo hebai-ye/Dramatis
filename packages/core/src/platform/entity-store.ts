@@ -42,7 +42,40 @@ export interface EntityStore {
    * 改默认值等于悄悄改同步协议。
    */
   listSince?<T>(collection: string, updatedAt: string, options?: { inclusive?: boolean }): Promise<T[]>;
+  /**
+   * 可选：**原子的**读-改-写（审计 B3 / B14）。
+   *
+   * `mutate` 拿到当前值（没有则 null），返回新值就写入，返回 `undefined` 表示不写。
+   * 实现必须保证读与写在**同一个事务**里（IndexedDB 的一个 readwrite 事务会把同一仓库上的
+   * 其他 readwrite 事务——包括别的标签页的——排在它后面），所以 `mutate` 必须是**同步**的。
+   *
+   * 返回写入后的值（没写就返回读到的值）。不实现也能跑：调用方退回 get + put（非原子）。
+   */
+  update?<T extends { id: string }>(
+    collection: string,
+    id: string,
+    mutate: (current: T | null) => T | undefined,
+  ): Promise<T | null>;
   clear(collection: string): Promise<void>;
+}
+
+/**
+ * `update` 的统一入口：后端实现了就走原子路径，否则退回 get + put。
+ *
+ * 退回路径在单个 JS 线程里仍然是「读完立刻写」，只是跨标签页不再原子——语义不变，保证变弱。
+ */
+export async function updateEntity<T extends { id: string }>(
+  store: EntityStore,
+  collection: string,
+  id: string,
+  mutate: (current: T | null) => T | undefined,
+): Promise<T | null> {
+  if (store.update !== undefined) return store.update<T>(collection, id, mutate);
+  const current = await store.get<T>(collection, id);
+  const next = mutate(current);
+  if (next === undefined) return current;
+  await store.put(collection, next);
+  return next;
 }
 
 /** 顶层字段的浅比较匹配，null 与 undefined 视为等价。 */

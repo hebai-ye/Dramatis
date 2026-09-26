@@ -367,7 +367,8 @@ export function useBackgroundWorker(options: {
       const scene = await db.repository.getScene(payload.sceneId);
       if (!scene) return { called: false, usage: null };
 
-      const messages = await db.repository.listMessages(payload.roomId);
+      // 带上墓碑：场记游标那条被删了也要认得出位置（审计 C4），输出里墓碑会被滤掉
+      const messages = await db.repository.listMessages(payload.roomId, { includeDeleted: true });
       // **触发判断只在这一处**：界面只负责「这一轮结算完了，来看一眼」，
       // 攒够没攒够由拿到最新数据的人判断。放在界面侧会让过期的场景对象
       // 重复触发（真机第一轮就出现过两次摘要调用）。

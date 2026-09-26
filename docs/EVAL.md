@@ -3703,3 +3703,148 @@ B = `since` 下推；原方案里的「`summary` 增量缓存」按实测拆出�
 上线后**把线上那份 JS 下载回来扫过**：`live_bundle_has_secret: false`，
 而 `无限制模式` / `清空旧提示` 两个标记都在——**部署的是新包，且不含用户正文**。
 没验的：真机浏览器里的实际交互（归 Codex）。
+
+## 七十一、顺序 81：审计第一批——本机助手（local-bridge）的公网暴露面（2026-09-26）
+
+**来源**：用户 2026-09-26 说用 opus5.5 做了一轮深度审计（报告 [`AUDIT-2026-09-26.md`](./AUDIT-2026-09-26.md)，
+提交 `71a26be`，58 条），要我把遗留查清、定出下一步。查下来发现：**58 条一条都没进 TASKS**，修复散在五条分支/worktree 上，
+而 A1/A13/C19/C20 这四条 P0 已经写在一个提交里（`96120d9`）。这一节记**第一批落地**（顺序 81）的做法与验证；
+其余批次的归属、重叠与「先改再合」结论记在 TASKS 第〇节「审计遗留」小节。
+
+**这批修的是什么**（原状 → 现状）：
+
+| 位置 | 原状（审计发现） | 现状 |
+| --- | --- | --- |
+| `tools/local-bridge/server.mjs` 的 CORS | `access-control-allow-origin: *`——**任何网页**都能调用用户的本机助手 | 只回显白名单来源（默认 `https://dramatissync.com` / `:8443`、`http://127.0.0.1:5273`、`http://localhost:5273`），加 `vary: Origin`；被拒的请求**一个 CORS 头都不回**（脚本连错误内容都读不到）；新增 `access-control-allow-private-network`（Chrome 的公网页面访问 127.0.0.1 预检要求） |
+| 同上：Host / Origin / 令牌 | 完全不校验（可被 DNS rebinding 打） | 每个请求先过 `checkAccess`：Host 必须是 `127.0.0.1:PORT` 或 `localhost:PORT`；Origin 不在白名单 → 403；支持可选配对令牌 `--token` / `DRAMATIS_BRIDGE_TOKEN`（常量时间比较） |
+| 同上：请求体 / 超时 / 并发 | 请求体不限长；`timeoutMs` 不夹；`/ask` 能并发任意多 | 请求体 ≤ 1MB（413）；`timeoutMs` 夹在 5–600 秒；`/ask` 串行，最多再排 2 个（429） |
+| 同上：端口参数 | `Number(args[...])`，`--port abc` 变 `NaN` 后行为不明 | `parsePort` 校验 1–65535，非法**启动即退出**并说明原因 |
+| `tools/fake-model/server.mjs` | CORS 回 `*` | 只放行本机来源（任意端口） |
+| `tools/desktop/launch.mjs` | `DRAMATIS_PORT` 不校验 | 校验 1–65535 整数 |
+
+新增 `tools/local-bridge/policy.mjs`（155 行**纯函数**，便于单测）+ `policy.test.mjs`（299 行）；
+`tools/local-bridge/README.md` 新增，写清 **9222 调试端口的风险**（开着 `--remote-debugging-port` 的 Chrome，
+本机任何进程都能完全控制它、读它所有 Cookie，必须用独立的 `--user-data-dir`，只登模型网页，用完即关）。
+
+**验证（本机能做的都做了）**：
+
+- 五项门禁（合并提交 `acb93dd` 之后跑）：typecheck ✓；Core **671** + Web **12** ✓；build ✓（997 ms）；build:sync-server ✓；
+  **lint 本批路径干净**（`pnpm exec biome check tools/local-bridge tools/desktop tools/fake-model` → `Checked 5 files. No fixes applied.`）。
+  全仓 `pnpm lint` 的 13 个 error **全部**落在另一条会话未提交的文件上（用 `biome check . --reporter=json` 逐条归因，清单见 TASKS 第〇节）。
+- **手动跑 `node --test tools/local-bridge/policy.test.mjs`：15 tests / 5 suites 全过**（`duration_ms 2345`）。
+  其中 3 条是**真起进程**的集成测试：外来 Origin 被拒、设了令牌后必须带 `Authorization: Bearer`、非法端口启动即退出；
+  另两条覆盖假模型（C19）与桌面启动器（C20）。
+- **这 15 条不在任何门禁里**（实测）：`pnpm test` 是 `pnpm -r test`，而 `pnpm-workspace.yaml` 只列了 `packages/*` 与 `apps/*`
+  → `tools/*` 的测试不会被跑到。这是审计没提、本批自己撞出来的**结构性缺口**，已记入 TASKS。
+
+**行为变更（用户需要知道的一条）**：本机助手**从「谁都能调」变成白名单**。如果你的应用不是从
+`https://dramatissync.com`（或 `:8443`）与本机 `:5273` 打开的，调用会被 403——用 `--allow-origin <你的来源>`
+或 `DRAMATIS_BRIDGE_ORIGINS=a,b` 追加。**没有 Origin 头的本机脚本（curl 等）仍然可用**（Host 校验还在），
+这是刻意的：要挡的是**网页**，不是用户自己敲的命令。
+
+**没验的（归 Codex 真机）**：
+
+1. 真实浏览器里「应用 → 本机助手」这条路的端到端（白名单回显、`Private-Network` 预检、可选令牌）——只有真 Chrome + 真站点上跑才算数。
+2. `--allow-origin` 追加来源的真实行为（本机只测了「白名单来源放行 / 外来来源拒绝 / 非法令牌拒绝」）。
+3. 桌面启动器在新校验下的真机启动（本机只测了非法端口退出）。
+
+**同一批拿到的复核证据（属顺序 82 的证据，等那批落地时展开）**：对分支 `a6adfa` 的 15 条做了只读复核
+（逐条查审计原文 → 看 diff → 必要时读改后文件）。判定：A5、B3、B14、C2、C4、C5、A12、B4、B8 **可信**（B14 残留「计数器丢了按库里最大号续上」在事务外，低风险）；
+C1、C6、A11、B11、B12、C7 **有疑**。其中三处必须在合并前改、两处不许宣称已完成（详见 TASKS 第〇节「审计遗留」小节里的清单）。
+
+**一条协作事实（写下来避免以后重复踩）**：`docs/AUDIT-2026-09-26.md`（`71a26be`）**没有 push**，
+58 条也从未登记进 TASKS——`grep` 全 `docs/` 只命中报告自身。所以「审计过」这件事在清单上曾经等于不存在。
+本批把它归了账：五条分支的覆盖、4 条重复实现、**5 条没人修**（B6/B9/B10/B15/B18）、**2 条只接了一半**（B11/B12）。
+
+---
+
+## 七十二、顺序 82：审计第二批（同步正确性与存储原子性）落进 main，外加三处必修
+
+**来源**：`docs/AUDIT-2026-09-26.md` 的 A5/A11/A12/B3/B4/B8/B11/B12/B14/C1/C2/C4/C5/C6/C7 十五条，由分支
+`worktree-agent-a6adfa051fc0cc2bd`（3 提交）实现；合并提交 **`5014509`**（19 文件 1695+/266-，无冲突）。
+合并前的只读复核判出**三处必须先改**——本批把三处改在 **main 上**（改的是合并后的代码，不是分支）。
+
+**三处必修（问题 → 改法 → 证据）**：
+
+| # | 复核判出的问题 | 改法 | 证据 |
+| --- | --- | --- | --- |
+| ① | `recoverInterruptedImports`（`packages/core/src/storage/archive.ts`）**没有任何生产调用方**（`apps/web/src/lib/archive.ts` 只 import 了 `importWorldArchive`）→ 导入中途崩了，标记永远留着、半个世界不回滚、还污染下一次判断 | `apps/web/src/lib/session.ts` 的 `useDatabase` 在 `migrate()` / `queue.recoverInterrupted()` 之后调用它；`BootReport` 新增 `recoveredImports` | 启动路径已接线（**界面提示没做**，见下） |
+| ② | `IMPORT_PENDING_META_KEY` 是**模块级单键**：两个标签页同时导入，A 成功清标记会把 B 的待回滚信息一起擦掉 | 改成**一次导入一把钥匙**：`IMPORT_PENDING_KEY_PREFIX = 'archive.importPending:'` + `newId()`，成功/失败各删自己那把；另加 `IMPORT_PENDING_STALE_MS = 5 * 60_000`，启动时只回滚**超过 5 分钟**的标记；还认老版本留下的单键 `archive.importPending`（同样按 5 分钟判） | `archive-roundtrip.test.ts` 新增 2 条：另一个标签页还活着时不动它；老版本单键「太新不动 / 死透才收拾」 |
+| ③ | C1 的守卫判据是 `room.activeConversationId`，而那个字段**在迁移最后一步才写** → 「conversation 已建、assign 途中失败」重跑仍会再建一条空主线 | v3 迁移判据改成「该 room 是否已存在 `kind === 'main'` 且未删的 conversation」，命中就接着用那条主线（`assign(id)` + `pointRoomAt(id)`） | `audit-repository.test.ts` 新增 1 条：包装 `store.put` 在写 messages 时抛「断电」，重跑 v3 后断言只有 1 条主线 |
+
+**意义校验（新测试不是摆设）**：把新守卫的判据临时改回 `&& false` → 该测试立刻变红
+`AssertionError: expected [ { …(14) }, { …(14) } ] to have a length of 1 but got 2`；随后已复原。
+
+**这一批顺带加的两个仓储 API**：`packages/core/src/storage/repository.ts` 的 `listMetaKeys(prefix)` 与 `deleteMeta(key)`
+（前者就是给「一次导入一把钥匙」用的）。
+
+**五项门禁**：typecheck ✓（中途一条 `packages/core/src/storage/audit-repository.test.ts(245,37): error TS2345:
+Argument of type 'unknown' is not assignable to parameter of type '{ id: string; }'`，把包装器签名写实后消失）；
+Core **709** 条 / 63 文件、Web **12** 条 / 4 文件全绿；build ✓（495 ms）；build:sync-server ✓；
+本批路径 `pnpm exec biome check packages/core/src/storage apps/web/src/lib/session.ts` → `Checked 19 files. No fixes applied.`；
+全仓 `pnpm lint` 仍是 13 error，逐条归因不变——**全部**来自另一条会话未提交的 `apps/web/src/App.tsx` 与
+`components/{AvatarCropper,CardDesigner,CastDetail,CastRail,StreamingBubble}.tsx`。
+
+**测试数对账**：分支 worktree 上量到 64 文件 / 717 条，合入 main 之后是 63 文件 / 709 条。差数来自那条 worktree 里
+**别人未提交**的文件（有人在那边改 B10），没有随合并进来。**以 main 的 709 / 12 为准。**
+
+**没验的 / 已知遗留（别当成已解决）**：
+
+1. 「已经帮你回滚了未完成的导入」**没有任何界面提示**，只写进 `console.warn`（`apps/web/src/App.tsx` 还被另一条会话占着，改不了）。
+2. 崩了之后**立刻**重开：标记还太新（< 5 分钟）→ 那半个世界要等到下一次启动才会被收拾。这是刻意选的：宁可晚清，不可误删另一个标签页正在导入的东西。
+3. `migrate()` 之前就崩、或标记损坏被删的那些半成品世界**仍然没人收拾**（只靠标记，不做全库扫描）。
+4. 复核判「有疑」但本批**没有逐条消解**的两条：**C6**（`packages/core/src/prompt/assemble.ts` 的 `escapeSectionHeadings` 只覆盖世界书与卡片的 description/personality/examples，scene/memory/chapter 未转义）、
+   **A11**（映射表 `buildIdMaps` 与往返测试都在，残余引用字段没逐条复查）。
+5. **B11 / B12 仍然只接了一半**：B11 的 `loadRoom(roomId, { conversationId })` 生产调用方一个都没改；B12 的 `AssembleInput.budget.extraTokens` 无人传。
+6. **真机层**：这一批全是存储/装配层，没有需要真机才能定性的行为变更；但「中断的导入在**真实 IndexedDB** 上被回滚」只跑过内存后端的等价测试，真机上重跑一次仍属 Codex 范畴。
+7. 这一批**未 push、未部署**（用户没要求）。
+
+---
+
+## 七十三、顺序 83：审计第三批（同步/加密/上传与文档漂移）落进 main，三条「有疑」按用户裁定补齐
+
+**来源**：`docs/AUDIT-2026-09-26.md` 的 A3/A4/A6/A7/A8/A9/B1/B16/C8–C12/C14/C15 十五条，由分支
+`worktree-agent-a063c593632cf9c7c`（7 提交，Core 699 全绿）实现；合并提交 **`6ce2b89`**（24 文件 1991+/363-，无冲突）。
+合并前的只读复核判出三条**只做了一半**（A4 / A9 / B1）——用户 2026-09-26 裁定「补接线 / 新建空间也 ≥6 / 入口串行化现在就做」，
+三条都改在 **main 上**（改的是合并后的代码，不是分支）。
+
+**分支带进来的东西（要点）**：
+
+- `packages/core/src/sync/sqlite.ts`：启动时**受保护地**改表——`ALTER TABLE spaces ADD COLUMN epoch TEXT`、
+  `heads ADD COLUMN record_count / byte_count`（先 `PRAGMA table_info` 查列再改，重复启动不会炸）。
+- `packages/core/src/sync/server.ts`：配额与限流——`maxRecordsPerSpace = 50_000`、`maxBytesPerSpace = 256 * 1024 * 1024`、
+  `pushesPerMinute = 120`、`spacesPerMinute = 20`、`metaReadsPerMinute = 30`（限流状态在进程内存，重启即清）；
+  新错误 `SyncQuotaExceededError`，`appendWithinQuota()` 把**配额判定与写入放在同一个事务**里。
+- `packages/core/src/sync/types.ts`：`epoch?: string`、`SyncResetReason = 'space-changed' | 'head-behind' | 'epoch-changed'`、`SyncReport.reset?`。
+- 另含 `packages/core/src/{admin/bridge*,platform/key-vault*}`、`tools/sync-server/src/main.ts`、`docs/{SYNC,SYNC-DEPLOY}.md`。
+
+**三条「有疑」的改法（问题 → 改法 → 证据）**：
+
+| # | 复核判出的问题 | 改法 | 证据 |
+| --- | --- | --- | --- |
+| A4 | `resetSyncState`（`packages/core/src/sync/loop.ts:125`）在 `apps/web` **没有任何调用者**，而 `docs/SYNC.md` §4.12.2 写着「必须调用」 → 换空间/回灌快照后宿主游标还指着旧水位 | `apps/web/src/lib/sync.ts` 的 `connect` 在 **created（新建空间）分支**、`restoreSnapshot` 在**灌完快照之后**各调一次 `resetSyncState(db.repository, spaceHandle)`；`resync` 里手写的 `writeSyncState({ spaceHandle, pulledHead: 0, pushedAt: null })` 换成同一个函数 | `resetSyncState` 现在有 3 个生产调用点 |
+| A9 | `sync.ts` 新建空间只查「非空」，`SyncPanel` 的 ≥6 只作用于**换**密码 | `apps/web/src/lib/password-policy.ts`（`MIN_PASSWORD_LENGTH = 6`、`assertPassword`、`passwordStrength`、`passwordStrengthHint`）成为唯一实现；`connect` 在 `meta === null` 分支调 `assertPassword(secret)`；`account-auth.ts` 改为从它转发 | `password-policy.test.ts` 3 条；**加入已有空间绝不拦**（老用户可能是短口令） |
+| B1 | 启动自动同步 / `connect` / `syncNow` / `resync` 都直接推拉，多标签页会重复拉推 | `sync.ts` 新增 `runExclusive`：进程内串行队列（`createSerialQueue()`）+ 跨标签页 `navigator.locks`（锁名 `dramatis-sync:<密码>`）；原 `doSync` 实体改名 `syncOnce`，新的 `doSync` 先排队再在队首复查「空间没被换掉」 | `sync-queue.test.ts` 4 条；**死锁核查**：没有任何地方在 `runExclusive` 里再调 `runExclusive`/`doSync`/`syncNow` |
+
+**为什么 A9/B1 用的是 `a5ef9` 分支的代码**：那两条在 `a063c` 与 `a5ef9` 上**各有一份**（顺序 84 的复核也这么说）。
+本批**故意逐字采用 `a5ef9` 的同一套模块**（`password-policy.ts` / `sync-queue.ts` 连测试一起），
+这样 84 合并时这两块预期**无差异**，不会留下两条并行队列或两处口令下限——「同一件事只留一套机制」。
+
+**五项门禁（main 上跑）**：typecheck ✓；Core **66 文件 / 737 条**、Web **6 文件 / 19 条**全绿（新增 `sync-queue.test.ts` 4 条、`password-policy.test.ts` 3 条）；
+本批路径 `pnpm exec biome check`（`sync.ts` + 4 个新文件 + `account-auth.ts`）= `Checked 6 files. No fixes applied.`，
+只有 1 条**改造前就有的** warning：`apps/web/src/lib/sync.ts:27:25 lint/correctness/noUnusedImports`（`parseSnapshot`，本批未动）；
+全仓 `pnpm lint` = `Check 266 files` / **13 error**，逐条归因不变——**全部**来自另一条会话未提交的文件；
+`pnpm build` ✓（`dist/assets/index-BCY_2Nah.js` 637.76 kB / gzip 200.26 kB、`index-B5pK3UWP.css` 38.18 kB）；`pnpm build:sync-server` ✓。
+
+**没验的 / 已知遗留（别当成已解决）**：
+
+1. **服务端那批要重新部署才生效**：配额、限流、`epoch`/`record_count`/`byte_count` 三列与两条 `ALTER TABLE`
+   都只在**全新库的单测**上跑过；**在线上那个已有数据的 SQLite 上跑迁移没验**（用户裁定「等 84/85 合完一起上」，所以线上还是旧服务端）。
+   部署窗口要盯：升级后 `/sync/health`、已有空间还能读、写一次还能推上去。
+2. **Web Locks 的真实效果没验**：单测用的是假 locks；「两个真标签页同时自动同步只推一次」只能在真浏览器上量（归 Codex）。
+3. `packages/core/src/sync/http.ts` 仍把 `credentialHash` 回给客户端（`a063c` 未改）——单开一条或并进顺序 86。
+4. B16 只算「文档部分可信」：**界面**（`SyncPanel`）的措辞仍没写清「空间密码丢了数据就真的找不回来」。
+5. `docs/SYNC.md` / `SYNC-DEPLOY.md` 写了协议与理由，但**配额与限流的运维含义**（空间满了、被限流时用户看到什么）还没写。
+6. 顺序 83 的只读复核还判了 B16 之外的若干条「可信」（A3/A6/A7/A8/C8–C12/C14/C15），逐条依据写在 TASKS 第〇节「审计遗留」小节里。
+7. 这一批**未 push、未部署**。
+

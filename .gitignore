@@ -58,3 +58,8 @@ coverage/
 
 # 本机私有部署笔记（含服务器地址、域名、凭据线索）
 deploy/LOCAL-NOTES.md
+
+# 本地会话产物：agent worktree（各带一份 node_modules）与临时测试角色卡。
+# 不忽略的话，一次 `git add -A` 会把 worktree 与真实角色卡一起提交进去。
+.claude/
+tmp-test-cards/

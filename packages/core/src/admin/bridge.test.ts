@@ -109,6 +109,23 @@ describe('parseAdminBridgeOutput', () => {
     expect(parsed.answer).toBe(raw);
   });
 
+  it('正文里带 name 字段的 JSON 不当成工具调用（审计 C15）；围栏里的 name 变体照认', () => {
+    const prose = '比如她的卡可以是 {"name":"秦娘","description":"掌柜"} 这样。';
+    const parsed = parseAdminBridgeOutput(prose);
+    expect(parsed.calls).toHaveLength(0);
+    expect(parsed.invalid).toEqual([]);
+    expect(parsed.answer).toBe(prose);
+
+    const fenced = parseAdminBridgeOutput(
+      ['```json', '{"name":"set_scene","arguments":{"location":"河滩"}}', '```', '改好了。'].join('\n'),
+    );
+    expect(fenced.calls.map((call) => call.function.name)).toEqual(['set_scene']);
+    expect(fenced.answer).toBe('改好了。');
+
+    const openAiStyle = parseAdminBridgeOutput('```\n{"function":{"name":"set_scene","arguments":"{}"}}\n```');
+    expect(openAiStyle.calls).toHaveLength(1);
+  });
+
   it('坏 JSON 不抛错，当正文处理', () => {
     const parsed = parseAdminBridgeOutput('```json\n{"tool": "set_scene", 这里坏了}\n```');
     expect(parsed.calls).toHaveLength(0);

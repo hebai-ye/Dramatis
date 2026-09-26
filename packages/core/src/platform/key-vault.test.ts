@@ -110,4 +110,46 @@ describe('口令加密的密钥库（顺序 10）', () => {
     // 解不开的单条按「没有这条」处理：界面不该因为一条坏条目整个打不开
     expect(await reopened.get('ref-a')).toBeNull();
   });
+
+  it('并发写不丢更新：同时 set 几条，全都留下（审计 C14）', async () => {
+    // 故意让读写都「慢」一拍，逼出交错
+    let value: string | null = null;
+    const tick = () => new Promise<void>((resolve) => setTimeout(resolve, 1));
+    const storage = {
+      read: async () => {
+        await tick();
+        return value;
+      },
+      write: async (next: string) => {
+        await tick();
+        value = next;
+      },
+    };
+    await createVault(storage, '口令', FAST);
+    const first = await openVault(storage, '口令', FAST);
+    const second = await openVault(storage, '口令', FAST);
+
+    await Promise.all([
+      first.set('a', '1'),
+      first.set('b', '2'),
+      second.set('c', '3'),
+      first.remove('nothing'),
+      second.set('d', '4'),
+    ]);
+    expect((await vaultRefs(storage)).sort()).toEqual(['a', 'b', 'c', 'd']);
+    expect(await second.get('a')).toBe('1');
+  });
+
+  it('文件里的迭代数被改成离谱的值 → 拒绝解锁，而不是把页面卡死（审计 C14）', async () => {
+    const storage = memoryStorage();
+    await createVault(storage, '口令', FAST);
+    const file = JSON.parse(storage.raw() ?? '{}') as { kdf: { iterations: number } };
+    file.kdf.iterations = 1_000_000_000;
+    await storage.write(JSON.stringify(file));
+    await expect(openVault(storage, '口令', FAST)).rejects.toBeInstanceOf(CryptoError);
+
+    file.kdf.iterations = 1.5;
+    await storage.write(JSON.stringify(file));
+    await expect(readVault(storage)).rejects.toBeInstanceOf(CryptoError);
+  });
 });

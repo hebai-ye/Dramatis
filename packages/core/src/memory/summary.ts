@@ -1,4 +1,5 @@
 import type { ConversationId, MessageId, RoomId, SceneId } from '../model/ids.js';
+import { aliveOnly } from '../model/lifecycle.js';
 import type { Message } from '../model/message.js';
 import { localSeqOf } from '../model/message.js';
 import type { Scene } from '../model/room.js';
@@ -234,13 +235,18 @@ export function pendingSummary(
 function uncoveredBySummary(scene: Scene, inScene: readonly Message[]): Message[] {
   const cursorId = scene.recapUpToMessageId;
   if (cursorId !== undefined && cursorId !== null) {
+    /*
+     * 游标那条消息被删了也要认得出位置（审计 C4）：调用方可以把**墓碑**一起传进来，
+     * 位置照样能定，输出里再把墓碑滤掉。以前游标一删就退回序号口径，序号对不上时
+     * 整场重摘，场记里会出现重复的事实。
+     */
     const index = inScene.findIndex((message) => message.id === cursorId);
-    // 找不到那条消息（比如它被删了）时不猜：退回序号口径，宁可多摘一轮
-    if (index >= 0) return inScene.slice(index + 1);
+    if (index >= 0) return aliveOnly(inScene.slice(index + 1));
   }
 
+  // 找不到那条消息时不猜：退回序号口径，宁可多摘一轮
   const cursor = scene.recapUpToSeq ?? 0;
-  return inScene.filter((message) => localSeqOf(message) > cursor);
+  return aliveOnly(inScene.filter((message) => localSeqOf(message) > cursor));
 }
 
 /**
@@ -253,7 +259,7 @@ function uncoveredBySummary(scene: Scene, inScene: readonly Message[]): Message[
 export function coveredBySummary(scene: Scene, inScene: readonly Message[]): Set<MessageId> {
   if ((scene.recap ?? '').trim() === '') return new Set();
   const uncovered = new Set(uncoveredBySummary(scene, inScene).map((message) => message.id));
-  return new Set(inScene.filter((message) => !uncovered.has(message.id)).map((message) => message.id));
+  return new Set(aliveOnly(inScene.filter((message) => !uncovered.has(message.id))).map((message) => message.id));
 }
 
 /** 轮数或 token 谁先到阈值就压一次。没有新内容当然不压。 */

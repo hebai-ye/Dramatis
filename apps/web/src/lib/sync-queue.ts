@@ -50,6 +50,9 @@ export async function withCrossTabLock<T>(name: string, task: () => Promise<T>):
 /**
  * 只在「没有别的标签页正在做」时执行（后台任务 drain 用）：拿不到锁就返回 `skipped`。
  * 不支持 Web Locks 时照常执行。
+ *
+ * 注：顺序 83 只把它建出来，**还没有生产调用者**——后台任务 drain 那一侧要等
+ * 顺序 84 合入 a5ef9 分支时才接线（审计 B3 的另一半仍是「任务认领要走事务 CAS」）。
  */
 export async function withCrossTabLockIfAvailable<T>(
   name: string,

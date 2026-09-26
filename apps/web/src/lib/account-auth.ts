@@ -35,7 +35,11 @@ export function selfEndpoint(): string {
   return `${window.location.origin}/sync`;
 }
 
-/** 密码门槛统一放在 password-policy（审计 A9：建空间、注册、换密码同一条下限）。 */
+/**
+ * 密码门槛统一放在 password-policy（审计 A9）：注册、新建同步空间、换密码
+ * 必须共用同一条下限，否则「改密码要求 6 位、建空间却随便 1 位」这种缝就还在。
+ * 这里照旧再导出一遍，界面上原来从 account-auth 取的引用不用改。
+ */
 export { assertPassword, MIN_PASSWORD_LENGTH } from './password-policy';
 
 /** 把同步配置写进**某个账户自己的库**（注册/登录时那个账户还不是当前账户）。 */

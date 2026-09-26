@@ -133,10 +133,28 @@ function jsonCandidates(text: string): { raw: string; start: number; end: number
   return found;
 }
 
-/** 一块 JSON 想表达什么：`{"tool":"名字","arguments":{…}}`，也容忍几种常见变体。 */
-function toolCallOf(candidate: unknown, index: number): ChatToolCall | null {
+/** 所有 json 代码围栏（```json … ``` 或不写语言的 ``` … ```）覆盖的区间。 */
+function fencedRanges(text: string): { start: number; end: number }[] {
+  const ranges: { start: number; end: number }[] = [];
+  const fence = /```(?:json)?[ \t]*\r?\n([\s\S]*?)```/gi;
+  for (let match = fence.exec(text); match !== null; match = fence.exec(text)) {
+    ranges.push({ start: match.index, end: match.index + match[0].length });
+  }
+  return ranges;
+}
+
+/**
+ * 一块 JSON 想表达什么：`{"tool":"名字","arguments":{…}}`，也容忍几种常见变体。
+ *
+ * 审计 C15：变体（`name` / `tool_name` / `function.name`）**只在 json 代码围栏里**才认。
+ * 以前正文里任何带 `name` 字段的 JSON（比如管理员随口举例 `{"name":"秦娘"}`）
+ * 都会被当成一次工具调用、被挖出正文、还被报成「认不出的工具」。
+ * 带 `tool` 字段的照旧在哪儿都认——那是提示词里约定的写法，正文里不会碰巧出现。
+ */
+function toolCallOf(candidate: unknown, index: number, fenced: boolean): ChatToolCall | null {
   if (typeof candidate !== 'object' || candidate === null) return null;
   const record = candidate as Record<string, unknown>;
+  if (typeof record.tool !== 'string' && !fenced) return null;
 
   const name =
     typeof record.tool === 'string'
@@ -170,6 +188,7 @@ function toolCallOf(candidate: unknown, index: number): ChatToolCall | null {
  */
 export function parseAdminBridgeOutput(text: string): AdminBridgeOutput {
   const candidates = jsonCandidates(text);
+  const fences = fencedRanges(text);
   const calls: ChatToolCall[] = [];
   const invalid: string[] = [];
   const consumed: { start: number; end: number }[] = [];
@@ -182,7 +201,8 @@ export function parseAdminBridgeOutput(text: string): AdminBridgeOutput {
       continue; // 不是合法 JSON：当正文处理，别惊动用户
     }
 
-    const call = toolCallOf(parsed, calls.length);
+    const fenced = fences.some((range) => candidate.start >= range.start && candidate.end <= range.end);
+    const call = toolCallOf(parsed, calls.length, fenced);
     if (call === null) continue;
 
     calls.push(call);

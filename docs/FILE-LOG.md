@@ -1106,7 +1106,68 @@ TASKS 第〇节顺序 68。用户裁定「A+B 推进」；原方案里的 `limit
 > 本批还有一个**不进仓库**的产物：`secrets/unlimited-prompt.txt`（`.gitignore` 已挡住）——
 > 用户粘贴的正文从代码里取出来存这儿，用作泄露复核的参照物。**不要提交它。**
 
-## 五十九、几点注意
+## 五十九、2026-09-26：审计第一批（顺序 81，本机助手加固）+ 审计 58 条归账
+
+审计报告 `docs/AUDIT-2026-09-26.md`（提交 `71a26be`）里的 A1/A13/C19/C20 四条 P0 写在分支提交 `96120d9` 上，
+本批**合入 main**（合并提交 `acb93dd`，无冲突），另补 `.gitignore` 两行与四处文档。做法与验证见 EVAL 第七十一节。
+
+| 文件 | 改 / 新增 | 说明 |
+| --- | --- | --- |
+| `tools/local-bridge/policy.mjs` | 新增（`96120d9`） | 155 行**纯函数**：`DEFAULT_ALLOWED_ORIGINS`、`parseOriginList`/`parsePort`、`isAllowedHost`、`isAllowedOrigin`、`isAuthorized`（常量时间）、`checkAccess`、`clampTimeout`、`readLimitedBody`（超限 413）、`createSerialQueue`（排队上限 429） |
+| `tools/local-bridge/policy.test.mjs` | 新增（`96120d9`） | 299 行 / **15 条断言 / 5 suites**，其中 3 条真起进程（外来 Origin 被拒、令牌必带 Bearer、非法端口启动即退出）；**`pnpm test` 跑不到它**（`tools/*` 不在 workspace），要手动 `node --test` |
+| `tools/local-bridge/server.mjs` | 改（`96120d9`） | 每个请求先 `checkAccess`（Host 必须 127.0.0.1/localhost:PORT，Origin 走白名单，可选令牌）；`cors()` 改成回显白名单 + `vary: Origin` + `access-control-allow-private-network`，**不再回 `*`**；被拒的请求不回 CORS 头；`--port`/`--cdp` 走 `parsePort` |
+| `tools/local-bridge/README.md` | 新增（`96120d9`） | 白名单/令牌怎么配；**9222 调试端口的风险**（本机任何进程都能完全控制那个 Chrome，必须独立 `--user-data-dir`） |
+| `tools/fake-model/server.mjs` | 改（`96120d9`） | 只放行本机来源（任意端口），不再回 `*` |
+| `tools/desktop/launch.mjs` | 改（`96120d9`） | `DRAMATIS_PORT` 必须 1–65535 整数，否则启动即报错 |
+| `.gitignore` | 改 | 追加 `.claude/`（agent worktree，各带一份 node_modules）与 `tmp-test-cards/`（真实角色卡）——不忽略的话一次 `git add -A` 会把它们提交进去；`.claude/` 之前只写在 `.git/info/exclude` 里，是**本机私有**的绕法（biome 会因 worktree 里的嵌套 `biome.json` 直接报错退出，挡住 `pnpm lint`） |
+| `docs/TASKS.md` | 改 | 新增顺序 **81–86** 六行；新增「审计遗留」小节：58 条的归属表、4 条重复实现、**5 条没人修**、**2 条只接了一半**、顺序 82 的三处必须先改 |
+| `docs/EVAL.md` | 改 | 新增**第七十一节**：审计第一批的原状→现状对照、五项门禁、手动 15 条测试、行为变更（白名单从「谁都能调」收紧）、没验的三条、以及 `tools/*` 不在门禁里的结构性缺口 |
+| `docs/STATUS.md` | 改 | 新增「2026-09-26：审计遗留归账 + 顺序 81 落地」一段与下一步（82–86，其中 84/85 必须等脏文件提交） |
+
+> 本批**没有 push、没有部署**（用户只说了做主集成）。合并进来的 `96120d9` 是别人写的，本批只做集成 + 补漏 + 文档。
+
+## 六十、2026-09-26：顺序 82（审计第二批合入 main + 三处必修）
+
+分支 `worktree-agent-a6adfa051fc0cc2bd`（A5/A11/A12/B3/B4/B8/B11/B12/B14/C1/C2/C4/C5/C6/C7 十五条）合入 main
+（合并提交 `5014509`），随后在 main 上改掉只读复核判出的**三处必须先改**。做法与验证见 EVAL 第七十二节。
+
+| 文件 | 改 / 新增 | 说明 |
+| --- | --- | --- |
+| `packages/core/src/storage/repository.ts` | 改（合入 + 本批） | 合入：v3 迁移、`updateEntity` 单事务、`stampUpdatedAt`、`deleteMemory` 软删 + `undoConsolidation` 等；本批新增 `listMetaKeys(prefix)` / `deleteMeta(key)`，并把 v3 守卫判据换成「该 room 是否已有 `kind === 'main'` 且未删的 conversation」，命中就接着用那条主线 |
+| `packages/core/src/storage/archive.ts` | 改（合入 + 本批） | 合入：`buildIdMaps` / `remap*` 一整套引用改写 + 导入回滚；本批把标记改成 `IMPORT_PENDING_KEY_PREFIX = 'archive.importPending:'` + `newId()` 分键，加 `IMPORT_PENDING_STALE_MS = 5 * 60_000`，认老版本单键 `archive.importPending`，`recoverInterruptedImports` 返回 `{ rooms, stillPending }` |
+| `apps/web/src/lib/session.ts` | 改（本批） | `useDatabase` 在 `migrate()` 之后调用 `recoverInterruptedImports`；`BootReport` 新增 `recoveredImports`，回滚结果只进 `console.warn`（界面提示没做，`App.tsx` 被另一条会话占着） |
+| `packages/core/src/storage/archive-roundtrip.test.ts` | 新增（合入）/ 改（本批） | 322 行往返测试；本批把 C7 那组扩到 6 条：中途失败不留标记、页面被关掉留下的标记、另一个标签页还活着时不动它、认不出来的标记直接删、**老版本单键**（太新不动 / 死透才收拾）、正常导入不留标记 |
+| `packages/core/src/storage/audit-repository.test.ts` | 新增（合入）/ 改（本批） | 本批新增「断在『主线已建、归属没改完』之间：重跑接着用那条主线」——包装 `store.put` 在写 messages 时抛「断电」；把守卫改回旧判据该测试会变红 |
+| 其余合入文件（`a6adfa`） | 改 | `apps/web/src/lib/{db.ts,worker.ts}`、`compat/sillytavern/worldbook.ts`、`memory/{summary.ts,summary-cursor.test.ts}`、`platform/{background-runner.ts,background-runner.test.ts,entity-store.ts,memory-store.ts}`、`prompt/{assemble.ts,assemble.test.ts,audit-prompt.test.ts,budget.ts,budget-equivalence.test.ts}`、`storage/{archive.ts,archive.test.ts}`（合计 19 文件 1695+/266-） |
+| `docs/TASKS.md` | 改 | 82 行改成 ✅；「顺序 82 合并前必须先改的三处」改成办完记录；新增「顺序 82 自己带出来的遗留」四条与**顺序 83 的只读复核回执**（可信 12 条 / 有疑 3 条 / 合并前要拍板 3 处） |
+| `docs/EVAL.md` | 改 | 新增**第七十二节**：三处必修的做法与证据、意义校验（守卫改回旧判据测试变红）、五项门禁、六条「没验的 / 已知遗留」 |
+| `docs/STATUS.md` | 改 | 新增「2026-09-26：顺序 82 落进 main」一段与下一步（83–86），并把上一节的「下一步」标注为当时状态 |
+| `docs/FILE-LOG.md` | 改 | 本节；顺手把上一节编号从「六十」改成**五十九**（`422782d` 里写成了六十、把「几点注意」写成六十一，五十九空着） |
+
+> 本批**没有 push、没有部署**。合并进来的 15 条是别人写的，本批只做集成 + 三处必修 + 文档。
+
+## 六十一、2026-09-26：顺序 83（审计第三批合入 main + 三条「有疑」补齐）
+
+分支 `worktree-agent-a063c593632cf9c7c`（A3/A4/A6/A7/A8/A9/B1/B16/C8–C12/C14/C15 十五条）合入 main（合并提交 `6ce2b89`），
+随后在 main 上按用户裁定补齐复核判「只做了一半」的三条（A4 接线 / A9 新建也 ≥6 / B1 入口串行化）。做法与验证见 EVAL 第七十三节。
+
+| 文件 | 改 / 新增 | 说明 |
+| --- | --- | --- |
+| `apps/web/src/lib/sync-queue.ts` | **新增**（逐字采用 `a5ef9` 分支的同一份） | `SerialQueue` / `createSerialQueue()`（tail 链，前一个失败不卡后面的）/ `withCrossTabLock(name, task)`（有 `navigator.locks` 就用）/ `withCrossTabLockIfAvailable`（给顺序 84 的后台任务 drain 留的，当前无生产调用者） |
+| `apps/web/src/lib/sync-queue.test.ts` | **新增**（同） | 4 条：串行不重叠、前一失败不卡后、无 locks 直跑、有 locks 时走锁 |
+| `apps/web/src/lib/password-policy.ts` | **新增**（同） | `MIN_PASSWORD_LENGTH = 6`、`assertPassword`、`passwordStrength`、`passwordStrengthHint` |
+| `apps/web/src/lib/password-policy.test.ts` | **新增**（同） | 3 条 |
+| `apps/web/src/lib/account-auth.ts` | 改 | `MIN_PASSWORD_LENGTH` 与 `assertPassword` 改为 `export { … } from './password-policy'`——口令下限只留一处实现，`components/AccountPanel.tsx` 的 import 照旧可用 |
+| `apps/web/src/lib/sync.ts` | 改 | 本批的 A4/A9/B1 三处：`runExclusive`（串行队列 + Web Locks，锁名 `dramatis-sync:<密码>`）；`doSync` 实体改名 `syncOnce`，新的 `doSync` 排队后先复查空间；`connect` 新建分支 `assertPassword`、created 之后 `resetSyncState`；`rotatePassword` 改用 `assertPassword`；`restoreSnapshot` 包进 `runExclusive` 并事后 `resetSyncState`；`resync` 换用 `resetSyncState` |
+| 其余合入文件（`a063c`） | 改 | `packages/core/src/sync/{sqlite,server,types,http,…}.ts`（受保护的 `ALTER TABLE` 加 `epoch` / `record_count` / `byte_count`；配额 50 000 条 / 256 MB；限流 120 / 20 / 30 次每分；`SyncResetReason`、`SyncReport.reset`）、`admin/bridge*`、`platform/key-vault*`、`tools/sync-server/src/main.ts`、`docs/{SYNC,SYNC-DEPLOY}.md`（合计 24 文件 1991+/363-） |
+| `docs/TASKS.md` | 改 | 83 行改 ✅；归属表三行更新；「重叠实现」补写「A9/B1 的重叠已在顺序 83 消掉」；新增「顺序 83 带出来的遗留」四条与**顺序 84 的只读复核回执**（可信 12 / 有疑 3 / 合并前 5 项） |
+| `docs/EVAL.md` | 改 | 新增**第七十三节**：分支带进来的东西、三条有疑的改法表、为什么采用 `a5ef9` 的模块、五项门禁、七条「没验的 / 已知遗留」 |
+| `docs/STATUS.md` | 改 | 新增「2026-09-26：顺序 83 落进 main」一段与下一步（84 真正只看两条、部署等 84/85 一起上） |
+| `docs/FILE-LOG.md` | 改 | 本节；「几点注意」顺延为**六十二** |
+
+> 本批**没有 push、没有部署**（服务端那批要重新部署才生效，用户裁定等 84/85 合完一起上）。
+
+## 六十二、几点注意
 
 ---
 

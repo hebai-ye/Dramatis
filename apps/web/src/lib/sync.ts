@@ -11,6 +11,7 @@ import {
   normalizeRecoveryCode,
   openSpace,
   type RemoteSpaceMeta,
+  resetSyncState,
   rotatePassword as rotateSpacePassword,
   runSync,
   type SyncDeviceSummary,
@@ -23,7 +24,7 @@ import { type DramatisDb, readActiveAccount } from './db';
 import { createBrowserFileIO } from './fileio';
 import { createBrowserKeyStore, type KeyStorageMode } from './keystore';
 import { assertPassword } from './password-policy';
-import { buildSnapshot, type ServerSnapshot, snapshotFileName } from './snapshot';
+import { buildSnapshot, parseSnapshot, type ServerSnapshot, snapshotFileName } from './snapshot';
 import { createSerialQueue, withCrossTabLock } from './sync-queue';
 
 /**
@@ -240,6 +241,10 @@ export function useSync(db: DramatisDb | null, options: { onChanged?: () => void
   /**
    * 所有会碰同步游标 / 推送点的操作都排进这一条队（审计 B1）：启动、连接、立即同步、
    * 自动同步、重新拉、快照恢复。跨标签页再加一把同名 Web Lock（同一个账户只锁自己）。
+   *
+   * 为什么值得排队：四个入口完全可能同时触发（多标签页 + 一轮刚结束 + 用户手点），
+   * 两个 runSync 并排跑会互相覆盖推送点与拉取游标——虽然同步本身幂等、不至于毁数据，
+   * 但会白跑流量，也会让「上次结果」互相打架。
    */
   const queueRef = useRef(createSerialQueue());
   const lockName = `dramatis-sync:${passwordRef}`;
@@ -278,50 +283,61 @@ export function useSync(db: DramatisDb | null, options: { onChanged?: () => void
     [db, passwordRef],
   );
 
-  const doSync = useCallback(
+  /**
+   * 真正推拉一趟（**必须经过 `doSync` 排队**，别直接调它）。
+   */
+  const syncOnce = useCallback(
     async (current: SyncConfig, session: SyncSession): Promise<SyncReport> => {
       if (db === null) throw new Error('数据库还没准备好。');
-      return runExclusive(async () => {
+      const report = await runSync({
+        repository: db.repository,
+        transport: createHttpSyncTransport({ endpoint: current.endpoint }),
+        spaceHandle: current.spaceHandle,
+        credential: session.credential,
+        encKey: session.encKey,
+      }).catch((error: unknown) => {
+        // 撞上服务端护栏：记下来，界面会一直提示到真的恢复为止
         /*
-         * 排队期间可能已经断开或换了空间：那就别再用旧配置跑，更不能把它写回去
-         * （否则「断开」会被排在后面的这一轮悄悄复活）。
+         * 判据是**机器可读的 code**，不是文案（顺序 61）。
+         * 以前这里写的是 `message.includes('存满')`：服务端把那句话改一个字，
+         * 「空间满了」这个状态就静默失效，用户会以为一切正常而数据推不上去。
          */
+        if (error instanceof SyncHttpError && (error.code === 'space-full' || error.status === 413)) {
+          setSpaceFull(true);
+        }
+        throw error;
+      });
+
+      if (report.pushed > 0) setSpaceFull(false);
+
+      const updated: SyncConfig = {
+        ...current,
+        lastSyncAt: new Date().toISOString(),
+        lastReport: report,
+      };
+      await remember(updated, null);
+      onChangedRef.current?.();
+      return report;
+    },
+    [db, remember],
+  );
+
+  /**
+   * 同步的唯一入口（审计 B1）：排队 + 跨标签页互斥，然后再干活。
+   *
+   * 排队期间用户可能已经断开、或者换了空间：所以进队之后**重新读一次**当前配置，
+   * 对不上就跳过这一轮——否则「断开」会被排在后面的那一趟悄悄复活。
+   */
+  const doSync = useCallback(
+    (current: SyncConfig, session: SyncSession): Promise<SyncReport> =>
+      runExclusive(async () => {
         const latest = configRef.current;
         if (latest === null || latest.spaceHandle !== current.spaceHandle) {
           throw new Error('同步已断开或换了空间，这一轮跳过。');
         }
-        const report = await runSync({
-          repository: db.repository,
-          transport: createHttpSyncTransport({ endpoint: current.endpoint }),
-          spaceHandle: current.spaceHandle,
-          credential: session.credential,
-          encKey: session.encKey,
-        }).catch((error: unknown) => {
-          // 撞上服务端护栏：记下来，界面会一直提示到真的恢复为止
-          /*
-           * 判据是**机器可读的 code**，不是文案（顺序 61）。
-           * 以前这里写的是 `message.includes('存满')`：服务端把那句话改一个字，
-           * 「空间满了」这个状态就静默失效，用户会以为一切正常而数据推不上去。
-           */
-          if (error instanceof SyncHttpError && (error.code === 'space-full' || error.status === 413)) {
-            setSpaceFull(true);
-          }
-          throw error;
-        });
-
-        if (report.pushed > 0) setSpaceFull(false);
-
-        const updated: SyncConfig = {
-          ...(configRef.current ?? latest),
-          lastSyncAt: new Date().toISOString(),
-          lastReport: report,
-        };
-        await remember(updated, null);
-        onChangedRef.current?.();
-        return report;
-      });
-    },
-    [db, remember, runExclusive],
+        return syncOnce(current, session);
+      }),
+    [runExclusive, syncOnce],
   );
 
   // ---- 启动：读配置，能自动登录就自动同步一次 ----
@@ -400,7 +416,11 @@ export function useSync(db: DramatisDb | null, options: { onChanged?: () => void
 
         if (meta === null) {
           // 服务端上还没有这个空间 → 建一个（并把两份钥匙封装交给服务端保管）
-          // 新建才查密码强度（审计 A9）；加入已有空间绝不拦，老密码可能比下限短
+          /*
+           * 口令下限只拦「新建」（审计 A9）：这里的口令就是加密口令，而服务端的元数据
+           * 接口会把「用密码包起来的主密钥」交给任何人，弱口令等于没有锁。
+           * **加入已有空间绝不拦**——老用户当年可能就是用短口令建的，拦了等于把人锁在门外。
+           */
           assertPassword(secret);
           const created = await createSpaceCredentials({ userId: input.userId, password: secret });
           const registered = await createRemoteSpace(
@@ -440,10 +460,11 @@ export function useSync(db: DramatisDb | null, options: { onChanged?: () => void
         /*
          * 刚新建的空间 head 从 0 开始（审计 A4）：本地若还留着上一个空间（或服务端重建前）
          * 的游标与推送点，就会一条都不推、前 N 条永远拉不到。清零让它完整推拉一遍。
+         *
+         * 用内核的 `resetSyncState`（而不是在这儿自己拼 writeSyncState）：这句「什么时候
+         * 该清」的判据写在 loop.ts 里、`docs/SYNC.md` §4.12.2 也点了名，只有一处。
          */
-        if (freshSpace) {
-          await runExclusive(() => db.repository.writeSyncState({ spaceHandle, pulledHead: 0, pushedAt: null }));
-        }
+        if (freshSpace) await runExclusive(() => resetSyncState(db.repository, spaceHandle));
 
         sessionRef.current = session;
         setRecoveryCode(createdCode);
@@ -575,6 +596,7 @@ export function useSync(db: DramatisDb | null, options: { onChanged?: () => void
       const current = configRef.current;
       const session = sessionRef.current;
       if (db === null || current === null || session === null) throw new Error('先连上同步，才能换密码。');
+      // 与新建空间、注册共用同一条下限（审计 A9）——判据只在 password-policy 里
       assertPassword(newPassword);
 
       const rotated = await rotateSpacePassword({
@@ -657,6 +679,7 @@ export function useSync(db: DramatisDb | null, options: { onChanged?: () => void
    */
   const restoreSnapshot = useCallback(
     async (snapshot: ServerSnapshot): Promise<{ pushed: number; head: number }> => {
+      if (db === null) throw new Error('数据库还没准备好。');
       const current = configRef.current;
       const session = sessionRef.current;
       if (current === null || session === null) throw new Error('先连上同步，才能把快照灌回去。');
@@ -664,6 +687,7 @@ export function useSync(db: DramatisDb | null, options: { onChanged?: () => void
         throw new Error('这份快照是别的空间的（句柄对不上），不能灌到这里。');
       }
 
+      // 这一趟会成批改写服务端：不许和正在跑的同步并排（审计 B1）
       return runExclusive(async () => {
         const transport = createHttpSyncTransport({ endpoint: current.endpoint });
         let pushed = 0;
@@ -685,13 +709,12 @@ export function useSync(db: DramatisDb | null, options: { onChanged?: () => void
           pushed += batch.length;
           head = result.head;
         }
+
         /*
-         * 灌回去之后服务端的序号是全新的（审计 A4）：本地游标若还停在旧 head，
-         * 对端推上来的前若干条本机永远拉不到。清零，让下一轮完整推拉一遍。
+         * 服务端的内容被整体换过（重建之后 head 可能比本机游标还小）：清零本机游标，
+         * 下一次同步就会走「先拉、再推、再拉」，不会漏掉刚灌回去的这一批（审计 A4）。
          */
-        if (db !== null) {
-          await db.repository.writeSyncState({ spaceHandle: current.spaceHandle, pulledHead: 0, pushedAt: null });
-        }
+        await resetSyncState(db.repository, current.spaceHandle);
         return { pushed, head };
       });
     },
@@ -762,10 +785,8 @@ export function useSync(db: DramatisDb | null, options: { onChanged?: () => void
     const current = configRef.current;
     if (db === null || current === null) throw new Error('还没有连上同步空间。');
 
-    // 只清游标与推送点：本地数据、服务端数据都不动
-    await runExclusive(() =>
-      db.repository.writeSyncState({ spaceHandle: current.spaceHandle, pulledHead: 0, pushedAt: null }),
-    );
+    // 只清游标与推送点：本地数据、服务端数据都不动（走队列，免得踩到正在跑的那一趟）
+    await runExclusive(() => resetSyncState(db.repository, current.spaceHandle));
     await syncNow();
   }, [db, runExclusive, syncNow]);
 

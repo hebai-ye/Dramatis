@@ -5,15 +5,22 @@ on:
     branches: [main]
   pull_request:
 
+# 最小权限（审计 B20）：CI 只需要读代码
+permissions:
+  contents: read
+
 jobs:
   verify:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      # actions 固定到提交 SHA，注释里是对应的版本号（审计 B20）
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
           cache: pnpm
@@ -24,6 +31,7 @@ jobs:
       - name: Lint 与格式检查
         run: pnpm lint
 
+      # 包含 apps/web/tools（apps/web/tsconfig.tools.json）
       - name: 类型检查
         run: pnpm typecheck
 
@@ -32,3 +40,7 @@ jobs:
 
       - name: 构建
         run: pnpm build
+
+      # 线上跑的同步服务端（审计 A14）：以前坏了 CI 也是绿的
+      - name: 构建同步服务端
+        run: pnpm build:sync-server

@@ -2,19 +2,10 @@ packages:
   - packages/*
   - apps/*
 
-minimumReleaseAgeExclude:
-  - '@vitest/mocker@5.0.1'
-  - '@vitest/spy@5.0.1'
-  - vitest@5.0.1
-  - '@biomejs/biome@2.5.14'
-  - '@biomejs/cli-darwin-arm64@2.5.14'
-  - '@biomejs/cli-darwin-x64@2.5.14'
-  - '@biomejs/cli-linux-arm64-musl@2.5.14'
-  - '@biomejs/cli-linux-arm64@2.5.14'
-  - '@biomejs/cli-linux-x64-musl@2.5.14'
-  - '@biomejs/cli-linux-x64@2.5.14'
-  - '@biomejs/cli-win32-arm64@2.5.14'
-  - '@biomejs/cli-win32-x64@2.5.14'
+# 防投毒冷静期（审计 B20）：不再给 vitest / biome 开例外。
+# 之前排除的 vitest@5.0.1（2026-09-15 发布）、@biomejs/biome@2.5.14（2026-09-16 发布）
+# 冷静期均已过（2026-09-26 核对），例外已删除。以后升级新版本若被拦，
+# 等冷静期过去再装，不要再往这里加 minimumReleaseAgeExclude。
 
 # pnpm 10+ 默认阻止依赖的生命周期脚本，esbuild 需要放行才能装二进制
 onlyBuiltDependencies:

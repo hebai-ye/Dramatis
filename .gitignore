@@ -58,3 +58,9 @@ coverage/
 
 # 本机私有部署笔记（含服务器地址、域名、凭据线索）
 deploy/LOCAL-NOTES.md
+
+# 本地测试用角色卡（可能含真实角色卡或对话，别提交）
+tmp-test-cards/
+
+# Claude Code 本地会话与 worktree
+.claude/

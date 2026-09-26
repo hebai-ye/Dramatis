@@ -26,6 +26,11 @@ if (dbPathArg === undefined || outDirArg === undefined) {
 const dbPath = resolve(dbPathArg);
 const outDir = resolve(outDirArg);
 const keep = Number(keepArg ?? '30');
+// 审计 C16：keep=0 / 负数 / 非整数会把刚做好的这一份也删掉，一律拒绝
+if (!Number.isInteger(keep) || keep < 1) {
+  process.stderr.write(`保留份数必须是 >= 1 的整数（收到：${String(keepArg)}）\n`);
+  process.exit(1);
+}
 
 if (!existsSync(dbPath)) {
   process.stderr.write(`找不到数据库：${dbPath}\n`);

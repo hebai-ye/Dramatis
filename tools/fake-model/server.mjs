@@ -152,12 +152,39 @@ async function sse(res, status, cors, chunks, chunkMs = 0) {
   res.end();
 }
 
+/**
+ * 只放行本机页面（任意端口的 localhost / 127.0.0.1 / [::1]），不回 `*`（审计 C19）。
+ * 没有 Origin 的请求（curl、脚本）照常放行。
+ */
+function isLocalOrigin(origin) {
+  if (typeof origin !== 'string') return false;
+  try {
+    const url = new URL(origin);
+    return (
+      (url.protocol === 'http:' || url.protocol === 'https:') &&
+      (url.hostname === '127.0.0.1' || url.hostname === 'localhost' || url.hostname === '[::1]')
+    );
+  } catch {
+    return false;
+  }
+}
+
 const server = createServer((req, res) => {
-  const cors = {
-    'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Headers': '*',
-    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-  };
+  const origin = req.headers.origin;
+  if (origin !== undefined && !isLocalOrigin(origin)) {
+    res.writeHead(403, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: { message: 'fake-model 只接受本机页面的请求' } }));
+    return;
+  }
+  const cors =
+    origin === undefined
+      ? {}
+      : {
+          'Access-Control-Allow-Origin': origin,
+          Vary: 'Origin',
+          'Access-Control-Allow-Headers': '*',
+          'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+        };
 
   if (req.method === 'OPTIONS') {
     res.writeHead(204, cors);

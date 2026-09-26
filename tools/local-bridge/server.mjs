@@ -32,16 +32,58 @@
  * 2. **它只在本机跑，也只连本机的 Chrome**。提示词与回复不经过任何第三方；
  *    但你的会话本来就在那些服务器上，这一点没有变化。
  * 3. **它不偷你的密码，也不需要你的密码**。它连的是你已经登录好的那个浏览器。
+ *
+ * ## 访问控制（审计 A1 / A13）
+ *
+ * - 只接受 Host 为 `127.0.0.1:PORT` / `localhost:PORT` 的请求（挡 DNS rebinding）。
+ * - 浏览器来源只放行 `https://dramatissync.com(:8443)` 与本机 `5273`；
+ *   其他来源用 `--allow-origin a,b` 或环境变量 `DRAMATIS_BRIDGE_ORIGINS` 追加。不回 `*`。
+ * - 可选配对令牌：`--token xxx` 或 `DRAMATIS_BRIDGE_TOKEN`，设了就要求 `Authorization: Bearer xxx`。
+ * - 请求体 ≤ 1MB（否则 413）；timeoutMs 夹在 5-600 秒；同一时刻只跑一个 /ask，
+ *   最多再排 2 个，再多回 429。
+ *
+ * **9222 调试端口的风险**：开着 `--remote-debugging-port` 的 Chrome，本机任何进程都能
+ * 完全控制它（读所有 Cookie、所有标签页）。必须用独立的 `--user-data-dir`（不要用日常
+ * 配置），只登录模型网页，用完即关。详见 tools/local-bridge/README.md。
  */
 
 import { createServer } from 'node:http';
+import {
+  checkAccess,
+  clampTimeout,
+  createSerialQueue,
+  DEFAULT_ALLOWED_ORIGINS,
+  parseOriginList,
+  parsePort,
+  readLimitedBody,
+} from './policy.mjs';
 
 const args = process.argv.slice(2);
-const portIndex = args.indexOf('--port');
-const PORT = Number(portIndex === -1 ? 8791 : args[portIndex + 1]);
-const cdpIndex = args.indexOf('--cdp');
-/** Chrome 的调试端口：`--remote-debugging-port` 那个数。 */
-const CDP_PORT = Number(cdpIndex === -1 ? 9222 : args[cdpIndex + 1]);
+function argValue(name) {
+  const index = args.indexOf(name);
+  return index === -1 ? undefined : (args[index + 1] ?? '');
+}
+
+let PORT;
+let CDP_PORT;
+let ALLOWED_ORIGINS;
+try {
+  PORT = parsePort(argValue('--port'), 8791, '--port');
+  /** Chrome 的调试端口：`--remote-debugging-port` 那个数。 */
+  CDP_PORT = parsePort(argValue('--cdp'), 9222, '--cdp');
+  ALLOWED_ORIGINS = [
+    ...DEFAULT_ALLOWED_ORIGINS,
+    ...parseOriginList(process.env.DRAMATIS_BRIDGE_ORIGINS),
+    ...parseOriginList(argValue('--allow-origin')),
+  ];
+} catch (error) {
+  process.stderr.write(`[local-bridge] 启动参数错误：${error instanceof Error ? error.message : String(error)}
+`);
+  process.exit(1);
+}
+/** 可选配对令牌：设置后每个请求都要带 `Authorization: Bearer <token>`。 */
+const TOKEN = argValue('--token') ?? process.env.DRAMATIS_BRIDGE_TOKEN ?? '';
+const askQueue = createSerialQueue();
 
 /**
  * 认哪个标签页是「模型网页」：地址里包含这段就算。
@@ -55,24 +97,23 @@ const POLL_MS = 1200;
 /** 连续多少次「内容没变」就算写完了（3 次大约 3.6 秒）。 */
 const STABLE_ROUNDS = 3;
 
-function cors(response) {
-  // 只允许本机页面调用：应用跑在 https://dramatissync.com 或本机 5273 上
-  response.setHeader('access-control-allow-origin', '*');
-  response.setHeader('access-control-allow-headers', 'content-type');
+function cors(request, response) {
+  // 只回显白名单里的来源（checkAccess 已经把关）；没有 Origin 时不发任何 CORS 头
+  const origin = request.headers.origin;
+  if (typeof origin !== 'string' || !ALLOWED_ORIGINS.includes(origin)) return;
+  response.setHeader('access-control-allow-origin', origin);
+  response.setHeader('vary', 'Origin');
+  response.setHeader('access-control-allow-headers', 'content-type, authorization');
   response.setHeader('access-control-allow-methods', 'GET, POST, OPTIONS');
+  // Chrome 的 Private Network Access：公网页面访问 127.0.0.1 时预检要带这个
+  response.setHeader('access-control-allow-private-network', 'true');
 }
 
-function send(response, status, body) {
-  cors(response);
+function send(request, response, status, body) {
+  cors(request, response);
   response.statusCode = status;
   response.setHeader('content-type', 'application/json; charset=utf-8');
   response.end(JSON.stringify(body));
-}
-
-async function readBody(request) {
-  const chunks = [];
-  for await (const chunk of request) chunks.push(chunk);
-  return Buffer.concat(chunks).toString('utf8');
 }
 
 /** 问 Chrome 要「现在有哪些标签页」。 */
@@ -223,8 +264,26 @@ async function waitForReply(call, timeoutMs) {
 const server = createServer((request, response) => {
   void (async () => {
     const url = request.url ?? '/';
+    const access = checkAccess({
+      method: request.method,
+      headers: request.headers,
+      port: PORT,
+      allowedOrigins: ALLOWED_ORIGINS,
+      token: TOKEN,
+    });
+    if (!access.ok) {
+      process.stderr.write(
+        `[local-bridge] 拒绝 ${String(access.status)}：Host=${String(request.headers.host)} Origin=${String(request.headers.origin)}
+`,
+      );
+      // 被拒的来源不回 CORS 头，浏览器里的脚本连错误内容都读不到
+      response.statusCode = access.status;
+      response.setHeader('content-type', 'application/json; charset=utf-8');
+      response.end(JSON.stringify({ error: access.error }));
+      return;
+    }
     if (request.method === 'OPTIONS') {
-      cors(response);
+      cors(request, response);
       response.statusCode = 204;
       response.end();
       return;
@@ -233,9 +292,9 @@ const server = createServer((request, response) => {
     if (request.method === 'GET' && url.startsWith('/health')) {
       try {
         const target = await findTarget();
-        send(response, 200, { ok: true, attached: true, page: target.url, cdpPort: CDP_PORT });
+        send(request, response, 200, { ok: true, attached: true, page: target.url, cdpPort: CDP_PORT });
       } catch (error) {
-        send(response, 200, {
+        send(request, response, 200, {
           ok: true,
           attached: false,
           cdpPort: CDP_PORT,
@@ -247,33 +306,48 @@ const server = createServer((request, response) => {
 
     if (request.method === 'POST' && url.startsWith('/ask')) {
       try {
-        const body = JSON.parse(await readBody(request));
-        const prompt = typeof body.prompt === 'string' ? body.prompt : '';
-        if (prompt.trim() === '') {
-          send(response, 400, { error: 'prompt 不能是空的。' });
+        let body;
+        try {
+          body = JSON.parse(await readLimitedBody(request));
+        } catch (error) {
+          if (error?.status === 413) throw error;
+          send(request, response, 400, { error: '请求体不是合法 JSON。' });
           return;
         }
-        const timeoutMs = typeof body.timeoutMs === 'number' ? body.timeoutMs : 180_000;
+        if (body === null || typeof body !== 'object') {
+          send(request, response, 400, { error: '请求体必须是 JSON 对象。' });
+          return;
+        }
+        const prompt = typeof body.prompt === 'string' ? body.prompt : '';
+        if (prompt.trim() === '') {
+          send(request, response, 400, { error: 'prompt 不能是空的。' });
+          return;
+        }
+        const timeoutMs = clampTimeout(body.timeoutMs);
 
-        const target = await findTarget();
-        const text = await withCdp(target, async (call) => {
-          await call('Runtime.enable');
-          await fillComposer(call, prompt);
-          await clickSend(call);
-          return await waitForReply(call, timeoutMs);
+        // 串行：两个 /ask 同时往一个输入框里填字会互相覆盖
+        const text = await askQueue.run(async () => {
+          const target = await findTarget();
+          return await withCdp(target, async (call) => {
+            await call('Runtime.enable');
+            await fillComposer(call, prompt);
+            await clickSend(call);
+            return await waitForReply(call, timeoutMs);
+          });
         });
 
         process.stdout.write(`[local-bridge] 发出 ${String(prompt.length)} 字，收回 ${String(text.length)} 字\n`);
-        send(response, 200, { text });
+        send(request, response, 200, { text });
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         process.stderr.write(`[local-bridge] 失败：${message}\n`);
-        send(response, 500, { error: message });
+        const status = error?.status === 413 || error?.status === 429 ? error.status : 500;
+        send(request, response, status, { error: message });
       }
       return;
     }
 
-    send(response, 404, { error: '没有这个接口（只有 /health 与 /ask）。' });
+    send(request, response, 404, { error: '没有这个接口（只有 /health 与 /ask）。' });
   })();
 });
 
@@ -281,5 +355,7 @@ server.listen(PORT, '127.0.0.1', () => {
   process.stdout.write(
     `本地助手：http://127.0.0.1:${String(PORT)}（要连的 Chrome 调试端口 ${String(CDP_PORT)}，目标 ${TARGET_PATTERN}）\n`,
   );
+  process.stdout.write(`放行来源：${ALLOWED_ORIGINS.join(', ')}${TOKEN === '' ? '' : '；已启用配对令牌'}
+`);
   process.stdout.write('提醒：它驱动的是网页本身，不是官方接口；请先确认你接受这件事再长期开着。\n');
 });

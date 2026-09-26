@@ -85,11 +85,11 @@ export interface AssembleInput {
   /** 会话级对话模式：静默、是否必须等主角先开口（LAYOUT「输入区 · 加号」）。 */
   modes?: ConversationModes;
   /**
-   * 无限制模式的提示词正文（用户数据，2026-09-25）。
+   * 无限制模式的提示词正文（2026-09-25 引入；来源在 2026-09-26 顺序 92 改成仓库文件）。
    *
-   * **由调用方从用户自己的存储里读出来传进来**，不是本仓库的常量：网页是公开托管的
-   * 静态站点，写进代码就等于编译进公开可下载的 JS（`prompt/unlimited.ts` 的注释里记了
-   * 这件事的来龙去脉）。缺省 / 空串 → 模式开着也不加块。
+   * **由调用方传进来**：core 不读文件、不打包这段正文。应用侧现在给的是一份仓库里固定
+   * 的正文（`apps/web/src/prompt/unlimited-preset.txt`，所有对话共用；用户明确接受了它
+   * 会进公开产物这件事，来龙去脉见 `prompt/unlimited.ts`）。缺省 / 空串 → 模式开着也不加块。
    */
   unlimitedPrompt?: string;
   /**
@@ -759,8 +759,8 @@ export const UNLIMITED_BLOCK_ID = 'unlimited';
  * 无限制模式那一条 system 块（用户 2026-09-25 点名）。
  *
  * 传 `null`（模式关着，或正文为空）就返回 `null` —— 调用方据此**什么都不加**。
- * 正文由调用方从用户自己的存储里读出来（`AssembleInput.unlimitedPrompt`），
- * 仓库里没有这段文字：网页产物是公开可下载的。
+ * 正文由调用方给（`AssembleInput.unlimitedPrompt`）：core 不读文件，应用侧现在给的是一份
+ * 仓库里固定的正文（顺序 92 起；`prompt/unlimited.ts` 里记了它为什么会进公开产物）。
  *
  * 为什么 `droppable: false`：这是用户**自己打开的**开关，预算一紧就悄悄不加，
  * 等于告诉他「开了」却没开。要挤就挤别人（它和角色卡系统提示同一档）。
@@ -828,8 +828,9 @@ export function assemblePrompt(input: AssembleInput): AssembledPrompt {
   }
 
   /*
-   * 无限制模式（用户 2026-09-25 点名）：正文来自**用户数据**（`input.unlimitedPrompt`），
-   * 不是仓库里的常量——理由写在 `prompt/unlimited.ts` 顶上。模式开着且正文非空才放进去。
+   * 无限制模式（用户 2026-09-25 点名）：正文由调用方通过 `input.unlimitedPrompt` 给
+   * （顺序 92 起 web 侧给的是一份仓库里固定的正文，理由写在 `prompt/unlimited.ts` 顶上）。
+   * 模式开着且正文非空才放进去。
    */
   const unlimitedBlock = buildUnlimitedModeBlock(
     unlimitedModeOf(input.modes) ? unlimitedPromptOf(input.unlimitedPrompt) : null,

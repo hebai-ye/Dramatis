@@ -51,9 +51,9 @@ import { useDatabase, useSession } from './lib/session';
 import { useStorageStatus } from './lib/storage';
 import { useSync } from './lib/sync';
 import { extraCalls, useUsage } from './lib/usage';
-import { useUnlimitedPrompt } from './lib/useUnlimitedPrompt';
 import { NARROW_SCREEN_QUERY, useNarrowScreen } from './lib/viewport';
 import { useBackgroundWorker } from './lib/worker';
+import { UNLIMITED_PROMPT } from './prompt/unlimitedPreset';
 
 /**
  * 应用外壳（LAYOUT 的骨架）。
@@ -77,13 +77,15 @@ export function App() {
   });
 
   /**
-   * 无限制模式的提示词（用户 2026-09-25）。
+   * 无限制模式的正文（用户 2026-09-26 裁定，顺序 92）。
    *
-   * 它存在本机 `meta` 里，**不进代码、不进网页包**——网页是公开托管的静态站点，
-   * 写进源码就等于公开（`core/prompt/unlimited.ts` 顶上记了来龙去脉）。
-   * 代价是不参与同步，换设备要重新粘一次（想跟着账户走要新开同步集合，见 TASKS 68b）。
+   * **仓库里固定一份，所有对话共用**：正文写在 `prompt/unlimited-preset.txt`，
+   * 由 `prompt/unlimitedPreset.ts` 用 Vite 的 `?raw` 读成字符串。它会被编译进公开可下载的
+   * 网页包——这是用户明确接受的取舍（早先版本为了保密把正文挪进本机库，本批又搬了回来，
+   * 来龙去脉写在 `prompt/unlimitedPreset.ts` 与 `core/prompt/unlimited.ts` 的注释里）。
+   * 生成那一侧在 `useTurnRunner` 里另取一次同一个常量；这里只用于菜单的「配没配好」。
    */
-  const unlimitedPrompt = useUnlimitedPrompt(db);
+  const unlimitedPrompt = UNLIMITED_PROMPT;
 
   /**
    * 调用预算（P1-9 熔断）。

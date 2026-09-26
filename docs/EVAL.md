@@ -4172,7 +4172,7 @@ v12 的三个判断都是有意的：
 | `apps/web/src/styles.css` | 全局 `textarea` 自动长高 + 拖动隔离；删掉 `.recap`/`.recap-text`；聊天输入框退回 `field-sizing: fixed` |
 | `docs/ROLEPLAY-PROMPT.md` | 整篇重写（它整篇是为被删字段写的）：默认系统提示只有代码一处来源、无限制模式只有开关、补一节「删掉的 7 个字段去哪了」 |
 | `docs/{ADMIN-CONSOLE,DESIGN,LAYOUT,ROADMAP}.md` | 各加一处「顺序 90 起……」的注释，避免这几份「当前规格」文档继续描述已经被删的字段 |
-| `docs/STATUS.md` | 文档地图里 `ROLEPLAY-PROMPT.md` 那一行的说明改成「默认系统提示（「基本规则」）的正文与改法」 |
+| `docs/STATUS.md` | 文档地图里 `ROLEPLAY-PROMPT.md` 那一行的说明改成「默认系统提示（「基本规则」）的正文与改法」（顺序 92 又补成「与无限制模式固定正文的正文与改法」） |
 | `apps/web/tools/world-seed-probe.ts` | `cardFor()` 不再收 `scenario` 参数（`tsconfig.tools.json` 也在这个 typecheck 范围内，不改就红） |
 
 ### 「彻底删除已有数据」= 迁移 v13 + 三条复活通路
@@ -4212,5 +4212,60 @@ v12 的三个判断都是有意的：
 5. **顺序 89 的四条遗留仍在**（无限制提示词换设备后无法重配、负好感不能拖、迁移只提「未动过」的关系边、真机没验）。
 6. **真机与真输入法没验（归 Codex）**：笔画输入法逐笔落库那条属顺序 91；编辑区新行为在手机浏览器上的实际手感也待验。
 7. **本批未 push、未部署**：内核 + 界面改动，已部署的旧产物不受影响，跟着下次上线一起走。
+
+## 八十一、顺序 92：无限制模式的正文改成「仓库里固定一份」（用户改口径）
+
+**来源**：用户 2026-09-26 改了口径。原话：「无限制模式的预设词是固定的，是我在文件中存储的，并非本机独有，是所有的无限制模式都是这一份词，如果你找不出那么便在一个新的地方存储他，为我指出应在文件的哪里复制粘贴。」
+
+**先查再改（结论：全树都没有这段正文）**：用 `Select-String` 扫全仓（含 gitignore 的 `deploy/LOCAL-NOTES.md`）搜「无限制」，只命中代码与文档里的**说明文字**，没有正文；`deploy/LOCAL-NOTES.md` 也不命中。正文此前**只活在浏览器自己的 IndexedDB** 里——`apps/web/src/lib/useUnlimitedPrompt.ts` 读 `META_KEYS.unlimitedPrompt`（值 `'modes.unlimitedPrompt'`），所以它恰恰是「本机独有」的：换设备、清库、换个浏览器 profile 就没了，与用户说的「并非本机独有」相反。
+
+**裁定**：`ask_user_question` 四个选项（服务端一份登录后取回（推荐）/ 随账户加密同步＝顺序 68b / 仓库文件一份但会泄露 / 保持现状）里，用户选了 **「仓库里指定一个文件给你粘（最省事，但会泄露）」**——明确**接受正文进公开产物**。这不是回归：2026-09-25 把正文挪进本机库的理由正是「公开托管的静态站点，写进源码就等于编译进 `assets/index-*.js`」（当时实测包体涨 8.95 kB），本次是用户本人改的口径。
+
+### 正文放在哪（给用户的答案）
+
+**`apps/web/src/prompt/unlimited-preset.txt`**——**整份文件的内容就是正文**，一字不改地进提示词。所以：
+
+- 不要写注释、不要写标题、不要写「正文如下」这类说明行；
+- 首尾空白与 BOM 会被 `trim()` 吃掉，正文中间的空行照原样保留；
+- 现在是**空文件**（等用户粘贴）：此时菜单显示「尚未配置（应用里那份正文还是空的）」，打开开关也不会改变提示词。
+
+读它的是 **`apps/web/src/prompt/unlimitedPreset.ts`**：`import raw from './unlimited-preset.txt?raw';` + `export const UNLIMITED_PROMPT = raw.trim();`（Vite 的 `?raw`，类型来自 `apps/web/tsconfig.json` 里已有的 `"types": ["vite/client"]`）。该文件的 doc 注释记了「往哪儿粘」「为什么和顺序 89 的说法反了」「它怎么进提示词」。
+
+### 两个入口都取同一常量
+
+| 位置 | 改动 |
+| --- | --- |
+| `apps/web/src/App.tsx` | `import { useUnlimitedPrompt } from './lib/useUnlimitedPrompt'` → `import { UNLIMITED_PROMPT } from './prompt/unlimitedPreset'`；`const unlimitedPrompt = useUnlimitedPrompt(db)` → `const unlimitedPrompt = UNLIMITED_PROMPT`（doc 注释重写）；传给 `MainChat` 的 `unlimitedPrompt={unlimitedPrompt}` 不变 |
+| `apps/web/src/hooks/useTurnRunner.ts` | `const unlimitedPrompt = (await repository?.getMeta<string>(META_KEYS.unlimitedPrompt)) ?? ''` → `const unlimitedPrompt = UNLIMITED_PROMPT;`；顺手删掉只为它存在的 `const repository = db?.repository ?? null`（连同 `META_KEYS` import 与依赖数组里的 `repository`） |
+| `apps/web/src/components/MainChat.tsx` | prop 类型 `UnlimitedPromptApi` → **`string`**（删掉那个 import）；`unlimitedReady = unlimitedPrompt.text.trim() !== ''` → `unlimitedPrompt.trim() !== ''`；「＋」菜单里那条注释与文案改成「仓库里固定一份」 |
+| `apps/web/src/lib/useUnlimitedPrompt.ts` | **整个文件删掉**（含 `UnlimitedPromptApi`） |
+| `packages/core/src/storage/repository.ts` | `META_KEYS` 删掉 `unlimitedPrompt: 'modes.unlimitedPrompt'` 这一条（本机库里残留的值从本批起既不读也不写，只是无用数据，不做清理） |
+
+**core 侧契约没变**：`assemblePrompt` 只认调用方给的字符串（`AssembleInput.unlimitedPrompt`），core 不读文件、不打包正文；`buildUnlimitedModeBlock`（`UNLIMITED_BLOCK_ID = 'unlimited'`、priority `system`、`droppable: false`）照旧，模式关或正文空就不加块。改的只是注释口径：`packages/core/src/prompt/unlimited.ts`（整块换成新来龙去脉 + 「旧键 `modes.unlimitedPrompt` 从顺序 92 起不再读写」一句可 grep 的痕迹）、`prompt/assemble.ts`（`AssembleInput.unlimitedPrompt` 的 doc、`buildUnlimitedModeBlock` 的注释、装配处的注释）、`prompt/assemble.test.ts`（那一组 describe 的说明）。
+
+### 界面（用户要求「不可更改、不可阅读」照旧）
+
+只留**对话级**勾选框：不渲染正文、**不显示字数**、没有编辑口。文案改动两处：
+
+- 已配置 → 「无限制模式的提示词：已随应用一起固定提供（正文不在此显示）。」（旧文案里的「也不参与同步」删掉——现在它随应用一起发，同步不同步已不是它的事）
+- 空正文 → 「尚未配置（应用里那份正文还是空的）。」+ 打开开关时那句「现在它不会改变提示词」。
+
+### 测试与门禁
+
+本批**没有新增测试**（没有新的判定逻辑，只是取值来源换了；`prompt/assemble.test.ts` 那组契约测试照旧钉住「正文从参数来、空正文不加块、开关关着不加块」）。实跑：
+
+- `pnpm typecheck` ✓（core `tsc --noEmit` 与 web `tsc --noEmit && tsc -p tsconfig.tools.json` 都过）
+- `pnpm lint` ✓ ——**第一轮红 1 条**：`apps/web/src/hooks/useTurnRunner.ts:164` 的 `lint/correctness/useExhaustiveDependencies`「This hook specifies more dependencies than necessary: repository.」（`repository` 就是只为读旧 meta 键而存在的那个变量）。删掉变量 + 依赖项后重跑 `Checked 281 files`，0 error / 0 warning。
+- `pnpm test` ✓ Core **70 文件 / 809 条**、Web 13 文件 / 45 条（与顺序 90 同一批数字）
+- `pnpm build` ✓（`dist/assets/index-DciY98CU.js` 646.18 kB / gzip 204.07 kB、`dist/assets/index-CmI7ar9V.css` 38.28 kB；比顺序 90 的 646.62 kB 略小——删掉了那个 hook）、`pnpm build:sync-server` ✓
+
+### 没验的 / 已知遗留
+
+1. **正文会进公开产物**：粘上之后 `assets/index-*.js` 里能原样读到它（顺序 89 之前实测过一次：包体涨约 8.95 kB）。这是用户接受的取舍；要保密得走服务端按账户下发或随账户加密同步（TASKS 顺序 68b）。
+2. **仓库里那份文件现在是空的**：用户粘上之前，菜单显示「尚未配置」，开关不改变提示词。
+3. **老库里那份旧副本不被清理**：`modes.unlimitedPrompt` 残留数据留在 IndexedDB 里没人读，不进同步、不占提示词。
+4. **顺序 89 的第一条遗留自动消失**：「换设备/清库后无法再配置无限制提示词」因为正文随应用走而不成立（那条遗留已在 `docs/TASKS.md` 的顺序 89 小节标注「顺序 92 已解」）。
+5. **文档口径已同步**：`docs/ROLEPLAY-PROMPT.md` 的无限制模式一节整节重写（原文写着「只存在你自己的浏览器里」「别人打开这个站点看不到它」，与本批事实相反）。
+6. **真机没验**（归 Codex）；**本批未 push、未部署**——要等用户粘贴正文并重新构建后才谈上线。
 
 

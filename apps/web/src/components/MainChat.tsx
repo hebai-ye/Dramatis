@@ -17,7 +17,6 @@ import { type MouseEvent, memo, useCallback, useEffect, useLayoutEffect, useMemo
 import { createPortal } from 'react-dom';
 import { countRender } from '../lib/render-count';
 import { isNearBottom } from '../lib/scroll';
-import type { UnlimitedPromptApi } from '../lib/useUnlimitedPrompt';
 import { useCoarsePointer } from '../lib/viewport';
 import { Composer } from './Composer';
 import { IconPlus, IconScene } from './Icons';
@@ -67,12 +66,14 @@ interface Props {
   /** 改对话模式：传要改的那几个字段（对话级，落 `ConversationModes`）。 */
   onChangeModes: (patch: Partial<ConversationModes>) => void;
   /**
-   * 无限制模式的提示词（用户数据，存在本机）。
+   * 无限制模式的正文（仓库里固定一份，所有对话共用；用户 2026-09-26 裁定，顺序 92）。
    *
-   * 它**不是**仓库里的常量：网页是公开托管的静态站点，写进代码就等于编译进公开可下载的
-   * JS（`packages/core/src/prompt/unlimited.ts` 的注释里记了来龙去脉）。
+   * 正文在 `apps/web/src/prompt/unlimited-preset.txt`，会被编译进公开可下载的 JS——这是
+   * 用户明确接受的取舍（早先版本为了保密把它挪进本机库，本批又搬了回来，来龙去脉写在
+   * `packages/core/src/prompt/unlimited.ts` 与 `apps/web/src/prompt/unlimitedPreset.ts`）。
+   * 这里只用它判断「配没配好」，不渲染正文、不给编辑口。
    */
-  unlimitedPrompt: UnlimitedPromptApi;
+  unlimitedPrompt: string;
   onOpenScene: () => void;
   /** 从右栏把角色拖进来：进入当前场景。 */
   onDropInstance: (id: InstanceId) => void;
@@ -123,14 +124,15 @@ const MODE_OPTIONS: Array<{
     write: (checked) => ({ historyMode: checked ? 'recap-aware' : 'full' }),
   },
   /*
-   * 无限制模式（用户 2026-09-25 点名；2026-09-26 追加「不可更改、不可阅读」）。
+   * 无限制模式（用户 2026-09-25 点名；2026-09-26 追加「不可更改、不可阅读」，
+   * 同日又裁定「仓库里固定一份，所有对话共用」＝顺序 92）。
    *
    * 它替换了原来那个「高级系统提示 · 当前对话」输入框：提示词不再一条对话一份地手打，
-   * 而是**一段存在用户本机库里的正文**（键见 `META_KEYS.unlimitedPrompt`，
-   * 为什么不能写进代码见 `packages/core/src/prompt/unlimited.ts`），这里只留一个开关。
-   * 开关是**对话级**的，与其它模式一致；正文的编辑与显示都已撤掉。
+   * 而是**仓库里的一份固定正文**（`apps/web/src/prompt/unlimited-preset.txt`，
+   * 经 `prompt/unlimitedPreset.ts` 读成字符串）。这里只留一个**对话级**开关，与其它模式一致；
+   * 正文的编辑口、显示口、字数都不给（用户要求不可更改、不可阅读）。
    *
-   * 提示词为空时开关照常显示，但不会改变提示词（下面会说明一句）。
+   * 正文为空（仓库里那份文件还没填）时开关照常显示，但不会改变提示词（下面会说明一句）。
    */
   {
     key: 'unlimited',
@@ -250,13 +252,13 @@ function MainChatImpl({
   const [editingId, setEditingId] = useState<MessageId | null>(null);
   const [modeMenuOpen, setModeMenuOpen] = useState(false);
   /**
-   * 无限制模式的提示词是**用户自己的东西**，而且用户 2026-09-26 明说了两件事：
-   * 词已经设定好、**不可更改**；内容**不可阅读**（商业机密，见 `packages/core/src/prompt/unlimited.ts`）。
+   * 无限制模式的正文是**仓库里固定的一份**（顺序 92），而且用户 2026-09-26 明说了两件事：
+   * 词已经设定好、**不可更改**；内容**不可阅读**。
    *
    * 所以这里既不留编辑框，也不显示正文，**连字数都不显示**——只说明配没配好。
-   * 正文照旧由 `App` 从本机库里读出来注入装配，界面不参与。
+   * 装配那一侧由 `useTurnRunner` 直接取同一个常量，界面不参与。
    */
-  const unlimitedReady = unlimitedPrompt.text.trim() !== '';
+  const unlimitedReady = unlimitedPrompt.trim() !== '';
   /**
    * 旧版「高级系统提示 · 当前对话」（顺序 67e 的输入框）还留着内容的证据。
    *
@@ -787,14 +789,15 @@ function MainChatImpl({
                   ))}
 
                   {/*
-                    无限制模式的正文是**用户数据**（保存在本机库里），而且用户 2026-09-26
+                    无限制模式的正文是**仓库里固定的一份**（顺序 92），用户 2026-09-26
                     明确要求不可更改、不可阅读——所以这里不渲染正文、不显示字数、也不留
-                    编辑入口，只说明配没配好。正文照旧注入装配
-                    （`packages/core/src/prompt/unlimited.ts` 顶上记了为什么它不进代码）。
+                    编辑入口，只说明配没配好。正文由 `useTurnRunner` 直接取同一个常量注入装配。
                   */}
                   <p className="hint">
                     无限制模式的提示词：
-                    {unlimitedReady ? '已配置（内容不在此显示，也不参与同步）。' : '尚未配置。'}
+                    {unlimitedReady
+                      ? '已随应用一起固定提供（正文不在此显示）。'
+                      : '尚未配置（应用里那份正文还是空的）。'}
                   </p>
 
                   {unlimitedModeOf(conversation.modes) && !unlimitedReady ? (

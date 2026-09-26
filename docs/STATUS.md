@@ -11,7 +11,7 @@
 | 长期路线、优先级、风险 | [ROADMAP.md](./ROADMAP.md) |
 | 用户要的界面长什么样、怎么动 | [LAYOUT.md](./LAYOUT.md) |
 | 怎么验证它能用、真模型跑出来的结论 | [EVAL.md](./EVAL.md) |
-| 默认系统提示（「基本规则」）的正文与改法 | [ROLEPLAY-PROMPT.md](./ROLEPLAY-PROMPT.md) |
+| 默认系统提示（「基本规则」）与无限制模式固定正文的正文与改法 | [ROLEPLAY-PROMPT.md](./ROLEPLAY-PROMPT.md) |
 | 账号与同步怎么定、协议长什么样 | [SYNC.md](./SYNC.md) |
 | 服务器管理台怎么安全地管密文空间 | [ADMIN-CONSOLE.md](./ADMIN-CONSOLE.md) |
 | 架构与数据模型的原始设计 | [DESIGN.md](./DESIGN.md) |
@@ -38,6 +38,18 @@
 - **备份**：部署前手动快照 `/var/backups/dramatis/sync.db.2026-09-26T10-29-24-733Z.bak`（1 814 528 B）；nginx 站点配置留了 `dramatis.bak-20260926-182924`（部署前）与 `dramatis.bak-headers-20260926-183113`（加安全头前）；每 6 小时的 cron 备份（`/etc/cron.d/dramatis-sync`，以 `dramatis` 用户跑）照旧。
 - **没验的**：真机 / 真模型一律没动（归 Codex）；`manifest.webmanifest` 的 MIME 仍是 `application/octet-stream`（nginx 的 `mime.types` 里没有 `webmanifest`，本轮没改）；CSP 仍是 Report-Only，要灰度几天再切正式。
 - **教训**：**别把 `deploy/` 整个 `scp` 上服务器**——本轮把 `deploy/LOCAL-NOTES.md`（本地私有、含敏感内容）一起拷上去了，发现后已从服务器删除，并把旧的 `deploy.old-*` 备份目录一并清掉。
+
+### 2026-09-26：顺序 92 落进 main（无限制模式的正文改成「仓库里固定一份」——用户改口径）
+
+- **来源**：用户当天改了口径。原话：「无限制模式的预设词是固定的，是我在文件中存储的，并非本机独有，是所有的无限制模式都是这一份词，如果你找不出那么便在一个新的地方存储他，为我指出应在文件的哪里复制粘贴。」先前（顺序 89/68a）把这份正文当**用户数据**存本机 `meta`，理由是「公开托管的静态站点，写进源码就等于公开」；用户这次明确要求它**是所有对话共用的一份固定正文**，并选了「仓库里指定一个文件给你粘（最省事，但会泄露）」这个方案——**接受正文进公开产物**，这是用户本人的新裁定。
+- **先查再改**：全树（含 gitignore 的 `deploy/LOCAL-NOTES.md`）都搜不到这段正文；它此前只活在**浏览器自己的 IndexedDB** 的 `meta` 键 `modes.unlimitedPrompt` 里——所以换设备/清库就没了，恰恰不是用户说的「并非本机独有」。
+- **正文位**：新建 **`apps/web/src/prompt/unlimited-preset.txt`**（**整份文件就是正文**，不加注释/标题行；现在是**空文件，等用户粘贴**)，`apps/web/src/prompt/unlimitedPreset.ts` 用 Vite 的 `?raw` 读成字符串导出 `UNLIMITED_PROMPT = raw.trim()`；`apps/web/tsconfig.json` 已有 `"types": ["vite/client"]`，`?raw` 自带类型。
+- **两个入口都取同一常量**：`apps/web/src/App.tsx`（`useUnlimitedPrompt(db)` → `UNLIMITED_PROMPT`，菜单只用来判断「配没配好」）与 `apps/web/src/hooks/useTurnRunner.ts`（原来的 `await repository?.getMeta<string>(META_KEYS.unlimitedPrompt)` → `UNLIMITED_PROMPT`，再进 `AssembleInput.unlimitedPrompt`）。core 侧契约不变：`assemblePrompt` 只认调用方给的字符串，`buildUnlimitedModeBlock`（`UNLIMITED_BLOCK_ID = 'unlimited'`、priority `system`、`droppable: false`）照旧；模式关或正文空就不加块。
+- **撤掉旧通路**：**删除** `apps/web/src/lib/useUnlimitedPrompt.ts`（连 `UnlimitedPromptApi`）；`packages/core/src/storage/repository.ts` 的 `META_KEYS.unlimitedPrompt`（值 `'modes.unlimitedPrompt'`）整条删掉——本机库里残留的值从本批起既不读也不写，只是无用数据（不做清理）。`useTurnRunner` 里那个只为它存在的 `repository` 变量与依赖数组项一并删掉（lint 的 `useExhaustiveDependencies` 会点出来）。
+- **界面**：照旧只留**对话级**勾选框，不渲染正文、**不显示字数**、无编辑口；文案从「已配置（内容不在此显示，也不参与同步）」改成「已随应用一起固定提供（正文不在此显示）」，空正文时是「尚未配置（应用里那份正文还是空的）」。
+- **文档改写**：`docs/ROLEPLAY-PROMPT.md` 的「当前对话的额外提示：无限制模式」一节按新事实重写（原文写着「只存在你自己的浏览器里」「别人打开这个站点看不到它」，与本批相反）；`packages/core/src/prompt/{unlimited,assemble}.ts` 与 `prompt/assemble.test.ts` 的注释改口；`docs/TASKS.md` 顺序 92 行 + 处理表，并给顺序 89 那条「换设备后无法再配置」的遗留标注**已解**。
+- **五项门禁全绿**：typecheck ✓、lint ✓（281 文件，0 error / 0 warning）、test ✓（Core **70 文件 / 809 条**、Web 13 文件 / 45 条）、build ✓、build:sync-server ✓。第一轮 lint 报 1 个 `useTurnRunner.ts` 的 `useExhaustiveDependencies`（`repository` 成了多余依赖），删掉后重跑干净。
+- **遗留**：① 正文会进公开产物 `assets/index-*.js`（实测过一次：填进去包体涨约 8.95 kB），是用户接受的取舍，要保密得走服务端下发或加密同步（TASKS 顺序 68b）；② 仓库里那份文件现在是空的，用户粘上之前打开开关不改变提示词；③ 老库里那份旧副本不被清理（无害）；④ 真机没验。**本批未 push、未部署**（要粘贴正文并重新构建后才谈上线）。
 
 ### 2026-09-26：顺序 90 落进 main（体验反馈第二批：删掉卡上的场景设定 / 开场白 / 高级字段 / 对话示例，「本场场记」整块撤下，编辑区不再滑动）
 

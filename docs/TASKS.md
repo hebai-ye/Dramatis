@@ -93,7 +93,7 @@
 | 80 | **账单汇总增量缓存（顺序 68 拆出来的那一半）** `[审][数]` | **P2** | 68 实测：`since` 下推能少读 93% 的行，但**不带 `since` 的 `summary({roomId})` 仍要把该世界账单全读一遍**——而后台队列每取一条任务就调一次（`worker.ts:548`），长对话里一轮好几次。前置：把「删世界绕开 ledger 直接删账单」收口，否则缓存会漏掉删除路径 | ⬜ |
 | 81 | **审计第一批：本地助手公网暴露面（A1/A13/C19/C20）** `[审][数]` | **P0** | `tools/local-bridge` 的 CORS 回 `*`、不校验 Host/Origin、请求体无上限；假模型同样回 `*`；桌面启动器不校验端口 | ✅ 2026-09-26（`96120d9` 合入为 `acb93dd`；手动 `node --test` 15 条全过，见 EVAL 第七十一节） |
 | 82 | **审计第二批：同步正确性与存储原子性（A5/A11/A12/B3/B4/B8/B11/B12/B14/C1/C2/C4/C5/C6/C7）** `[审][数]` | **P1** | 归档与同步水位线互卡、后台任务非事务 CAS、IDB 读改写不原子、导入中断无回滚、预算守卫 O(n²)、世界书块 id 撞名 | ✅ **已在 main**（合并提交 `5014509` + 三处必修）——Core **709** 全绿（63 文件）、Web 12 全绿，见 EVAL 第七十二节 |
-| 83 | **审计第三批：同步/加密/上传与文档漂移（A3/A4/A6/A7/A8/A9/B1/B16/C8–C12/C14/C15）** `[审][数]` | **P1** | 主密码与密钥派生、会话过期、上传体积上限、导出遗漏、SYNC.md 与实现不一致 | 🟡 分支 `a063c` 就绪；**只读复核回执已到，合并前要拍板 3 处**（见「审计遗留」小节） |
+| 83 | **审计第三批：同步/加密/上传与文档漂移（A3/A4/A6/A7/A8/A9/B1/B16/C8–C12/C14/C15）** `[审][数]` | **P1** | 主密码与密钥派生、会话过期、上传体积上限、导出遗漏、SYNC.md 与实现不一致 | ✅ 2026-09-26（分支 `a063c` 合入为 `6ce2b89`；复核判「有疑」的三条按用户裁定补齐：A4 接线 `resetSyncState`、A9 新建空间口令 ≥6、B1 入口串行化 + Web Locks。Web **19** 全绿，见 EVAL 第七十三节） |
 | 84 | **审计第四批：前端稳定与缓存（A2/A10/B2/B5/B7/B13/B17/C3/C13/C17/C18）** `[审]` | **P1** | SW 缓存名与更新、流式取消、错误处理、隐私边界 | ⬜ **必须等另一条会话提交**：分支 `a5ef9` 改了 `apps/web/src/App.tsx` 与 `styles.css`，这两个文件现在是别人的未提交改动，此刻合并会被 git 拒绝；**只读复核子代理上次中途失败、要重派** |
 | 85 | **审计第五批：CI 与部署加固（A14/A15/B19/B20/B21/C16/C21/C22）** `[审][数]` | **P2** | CI 不跑 `build:sync-server`、nginx 缺安全头、systemd 无隔离、依赖冷静期例外、`.gitignore` 漏 `.claude/` | ⬜ 等另一条会话提交后合 `audit/integration`（它也改 `styles.css`） |
 | 86 | **审计遗留补做：B6 / B9 / B10 / B15 / B18** `[审][数]` | **P2** | 五条**没有任何分支在修**：管理员草稿整条替换会清空未传字段、多币种金额直接相加、流式失败边角（200+error 体 / 未知 finish_reason / 不 cancel reader）、PNG 解压无上限（压缩炸弹）、默认档位 Key 明文存 localStorage | ⬜（B10 有人在 `a6adfa` 的 worktree 里改到一半，未提交） |
@@ -113,13 +113,20 @@
 | --- | --- | --- | --- |
 | A1、A13、C19、C20 | **已在 main**（顺序 81，`acb93dd`） | 分支 `96120d9` | ✅ |
 | A5、A11、A12、B3、B4、B8、B11、B12、B14、C1、C2、C4、C5、C6、C7（15 条） | 分支 `worktree-agent-a6adfa051fc0cc2bd`（3 提交） | 顺序 82 | ✅ **已在 main**（`5014509` + 三处必修）——其中 B11/B12 只接了一半，见下 |
-| A3、A4、A6、A7、A8、A9、B1、B16、C8、C9、C10、C11、C12、C14、C15（15 条） | 分支 `worktree-agent-a063c593632cf9c7c`（7 提交，Core 699 全绿） | 顺序 83 | 🟡 待只读复核回执 |
-| A2、A4、A9、A10、B1、B2、B3、B5、B7、B13、B17、C3、C13、C17、C18（15 条） | 分支 `worktree-agent-a5ef9d3cfc346aade`（10 提交，Web 29 测试全绿） | 顺序 84 | ⬜ 等脏文件提交 |
+| A3、A4、A6、A7、A8、A9、B1、B16、C8、C9、C10、C11、C12、C14、C15（15 条） | 分支 `worktree-agent-a063c593632cf9c7c`（7 提交，Core 699 全绿） | 顺序 83 | ✅ **已在 main**（`6ce2b89` + 三条有疑的补丁，见下） |
+| A2、A4、A9、A10、B1、B2、B3、B5、B7、B13、B17、C3、C13、C17、C18（15 条） | 分支 `worktree-agent-a5ef9d3cfc346aade`（10 提交，Web 29 测试全绿） | 顺序 84 | 🟡 只读复核回执已到（见下）；**合并仍会被 git 拒**（`App.tsx`/`styles.css`/`components/*.tsx` 仍是别人的未提交改动） |
 | A14、A15、B19、B20、B21、C16、C21、C22（8 条）+ 已合入的 4 条 | 分支 `integration`（`a0ff3d8995c3dd432` + `96120d9`） | 顺序 85 | ⬜ 等脏文件提交（它改 `styles.css`） |
 | **B6、B9、B10、B15、B18（5 条）** | **没有任何分支在修** | 顺序 86 | ⬜ |
 
 **重叠实现（合并时要逐条对账，不能两份都留）**：A4、A9、B1（`a063c` 与 `a5ef9` 各一份）；B3（`a6adfa` 与 `a5ef9` 各一份）。
 其余 41 条只有一条分支在修。清单是 `git log main..<分支>` 抽取提交信息里的编号核出来的，不是照报告抄的。
+
+**其中 A9/B1 的重叠已经在顺序 83 消掉了**：本批**故意按 `a5ef9` 那一套原样落地**（逐行读过、逐字采用）——
+`apps/web/src/lib/password-policy.ts`（`MIN_PASSWORD_LENGTH = 6`、`assertPassword`、`passwordStrength`、`passwordStrengthHint`）与
+`apps/web/src/lib/sync-queue.ts`（`createSerialQueue`、`withCrossTabLock`、`withCrossTabLockIfAvailable`），连两个 `.test.ts` 一起，
+所以 84 合 `a5ef9` 时这两块预期无差异，不会留下两条并行队列或两处口令下限。
+A4 的 core 侧（`packages/core/src/sync/loop.ts:153-162` 的 `serverHead < pulledHead` 自愈）来自 `a063c`，早已在 main；web 侧的显式 `resetSyncState` 由本批补上。
+**84 真正要动代码的只剩 B3 与 SW 白名单两条。**
 
 **顺序 82 合并前必须先改的三处 —— 已改完（2026-09-26，随 `5014509` 落进 main）**：
 
@@ -144,7 +151,40 @@
 
 - **可信**：A3（`pushedVersions` 取代 pushedAt 递增、轮末按 updatedAt 分组结算；残余：同毫秒同坐标的墓碑可能被当回声过滤、每轮多一次 head 请求）、A6、A7（请求体 8MB 上限是刻意偏离、时间戳不做严格 ISO）、A8（`client-key.ts` 的 `hops === 0 || !LOOPBACK.has(socket)` 直连取 socket 地址）、C8、C9、C10、C11、C12、C14、C15；B16 文档部分可信（界面仍未写清）。
 - **有疑（只做了一半）**：A4（epoch 全链路可用，但 `resetSyncState`（`loop.ts:125`）在 `apps/web` 无调用者，与 `docs/SYNC.md` §4.12.2「必须调用」不符）、A9（哈希不回 credentialHash、30/min 限流都做了，但**新建空间不强制密码最小长度**：`apps/web/src/lib/sync.ts:369` 仍只查非空，`SyncPanel.tsx:500` 的 ≥6 只作用于换密码）、B1（core 的 auto-sync flush 修好了，但入口串行化没做：`syncNow:429` / `connect:417` / 启动:348 / `resync:715` 都直接 `doSync`，全仓无 `navigator.locks`；后果只是重复拉推，幂等无死锁）。
-- **顺序 83 合并前需拍板三处**：① SYNC.md §4.12.2 的措辞 vs 补接线；② 新建空间要不要强制密码最小长度；③ B1 入口串行化／Web Locks 做不做。均为「改文档或补跟进提交」级，不是数据损坏级。
+- **顺序 83 合并前需拍板三处**：① SYNC.md §4.12.2 的措辞 vs 补接线；② 新建空间要不要强制密码最小长度；③ B1 入口串行化／Web Locks 做不做。均为「改文档或补跟进提交」级，不是数据损坏级。→ **2026-09-26 用户裁定：A4 补接线、A9 新建空间也 ≥6、B1 入口串行化现在就做；三项都已随本批落进 main（见下）。**
+
+**顺序 83 的三条「有疑」是怎么处理的（2026-09-26，按用户裁定落进 main）**：
+
+1. **A4 = 补接线**：`apps/web/src/lib/sync.ts` 现在在**新建空间之后**（`connect` 的 created 分支）与 **`restoreSnapshot` 灌回快照之后**真的调 `resetSyncState(db.repository, spaceHandle)`；
+   `resync` 里原来手写的 `writeSyncState({ spaceHandle, pulledHead: 0, pushedAt: null })` 也换成同一个函数。`docs/SYNC.md` §4.12.2 的「必须调用」从此刻起成立。
+2. **A9 = 新建空间也强制 ≥6**：`connect` 只在 `meta === null`（新建）分支调 `assertPassword(secret)`，**加入已有空间绝不拦**（老用户可能就是短口令）。
+   口令下限与强度提示现在只有一处实现（`apps/web/src/lib/password-policy.ts`），`apps/web/src/lib/account-auth.ts` 改为从它转发 `assertPassword` / `MIN_PASSWORD_LENGTH`。
+3. **B1 = 入口串行化做掉**：`sync.ts` 加了 `runExclusive`（进程内串行队列 + 跨标签页 Web Locks，锁名 `dramatis-sync:<密码>`）；
+   原 `doSync` 实体改名 `syncOnce`，新的 `doSync` 先排队、再在队首复查「空间没被换掉」（`同步已断开或换了空间，这一轮跳过。`）；
+   启动自动同步 / `connect` / `syncNow` / 自动同步仍都只调 `doSync`。已核查**没有任何地方在 `runExclusive` 里再调 `runExclusive`/`doSync`**（无死锁）。
+
+**顺序 83 自己带出来的遗留（别当成已解决）**：
+
+- `packages/core/src/sync/http.ts` 仍把 `credentialHash` 回给客户端（`a063c` 未改）——单开一条或并进顺序 86。
+- **服务端那批要重新部署才生效**（配额 50 000 条 / 256 MB、限流 120 次·分、`spaces.epoch`、`heads.record_count/byte_count` 与两条受保护的 `ALTER TABLE`）；
+  用户裁定「等 84/85 合完一起上」，所以线上仍是旧服务端。
+- 真机验证没做：Web Locks 的好处要在真实多标签页/多设备上才看得出来；`password-policy` 的提示文案没在手机上量过（归 Codex）。
+- `docs/SYNC.md` / `SYNC-DEPLOY.md` 写了协议与理由，但**配额与限流的运维含义**（空间满了、被限流时用户会看到什么）还没写。
+
+**顺序 84 的只读复核回执（2026-09-26，子代理 `77fe7d0f-20c7-4f5c-8208-f88c675e3899`，分支 `a5ef9` tip `5683bd7`，10 提交）**：
+
+- **可信 12 条**：A2（`apps/web/public/sw.js:27-46` 白名单 + `/sync`、`/api` 直接 pass、CACHE 升 v2、activate 删旧缓存）、A10（拆两个 effect + `sameProfiles` 比内容）、
+  B2（退避 15s×4^(n-1) 封顶 10 分钟、缺 Key 不计失败、本轮失败跳过、新增 `failed` 状态 + UI 重试）、B5、B7（抽出 `recallFor` 共用，重抽复用原 intent/mentionText）、
+  B13（blocking → `db.close()` + 事件 + `useNotices` 提示）、B17（`apps/web/src/lib/scroll.ts` 的 `isNearBottom(80)` + 「有新消息」按钮）、C3、C13、C17、C18（重抽改为先写新回复再删旧）。
+- **有疑 3 条，但都是「重复且更弱的一份」**：A4、A9、B1——三条的更弱实现分别已被 main（`7c4527e`、`69a7554`）与本批（顺序 83 采用同款模块）覆盖。**真正要处理的只有 B3 与 SW 白名单。**
+- **合并前必须处理**：
+  ① **B3 回退**：`worker.ts:548` 改调 `db.tasks.claim`（`apps/web/src/lib/task-queue.ts` 的 `claim()` 是 get→put TOCTOU），**不再调 core 的 `take()`** → 合进 main 会绕开 main 已有的原子 CAS `packages/core/src/platform/background-runner.ts:95-120`；需改回或让 `claim()` 走 `updateEntity` 事务（「写入时再做一次幂等检查」仍未做）。
+  ② **SW 白名单与在做的头像/立绘冲突**：未提交的 `apps/web/src/lib/portraits.ts:11-13` 用 `/portraits/**`、另有 `/brand/**`，都不在 `sw.js:27-46` 白名单 → 新版 SW 不缓存它们，装到桌面后立绘/头像离线破图；要把这两条前缀加进白名单。
+  ③ 该分支**一个文档都没动**（含审计报告本身），要补：SW 缓存白名单 v2、口令下限与强度提示、后台任务退避/重试入口、重抽语义。
+  ④ 分支碰过 **27 个文件，全在 `apps/web`**（`public/sw.js`、`App.tsx`、`styles.css`、`components/{AccountPanel,MainChat,MemoryPanel,RuntimePanel,SyncPanel}.tsx`、`hooks/{useNotices,useTurnRunner}.ts`、
+  `lib/{account-auth,admin,db,db.test,providers,providers.test,sync,sync-queue,sync-queue.test,task-queue,task-queue.test,worker,password-policy,password-policy.test,scroll,scroll.test}.ts`、`pwa/sw-policy.test.ts`）
+  → `App.tsx` / `styles.css` / `components/*.tsx` 与别人的未提交改动重叠，**现在合会被 git 拒绝**。`git merge-tree` 干跑：**文本 0 冲突**（仅 `db.ts`、`worker.ts` 两侧都改过，可自动合并）。
+  ⑤ 测试（worktree 内跑、未改文件）：web 9 文件 29 测试全过（基线 2/8）、core 58 文件 671 全过。
 
 **不许宣称已完成的两条**（功能在、接线只接了一半，文档别写成已解决）：
 

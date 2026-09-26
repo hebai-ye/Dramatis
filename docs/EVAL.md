@@ -3798,3 +3798,53 @@ Core **709** 条 / 63 文件、Web **12** 条 / 4 文件全绿；build ✓（495
 5. **B11 / B12 仍然只接了一半**：B11 的 `loadRoom(roomId, { conversationId })` 生产调用方一个都没改；B12 的 `AssembleInput.budget.extraTokens` 无人传。
 6. **真机层**：这一批全是存储/装配层，没有需要真机才能定性的行为变更；但「中断的导入在**真实 IndexedDB** 上被回滚」只跑过内存后端的等价测试，真机上重跑一次仍属 Codex 范畴。
 7. 这一批**未 push、未部署**（用户没要求）。
+
+---
+
+## 七十三、顺序 83：审计第三批（同步/加密/上传与文档漂移）落进 main，三条「有疑」按用户裁定补齐
+
+**来源**：`docs/AUDIT-2026-09-26.md` 的 A3/A4/A6/A7/A8/A9/B1/B16/C8–C12/C14/C15 十五条，由分支
+`worktree-agent-a063c593632cf9c7c`（7 提交，Core 699 全绿）实现；合并提交 **`6ce2b89`**（24 文件 1991+/363-，无冲突）。
+合并前的只读复核判出三条**只做了一半**（A4 / A9 / B1）——用户 2026-09-26 裁定「补接线 / 新建空间也 ≥6 / 入口串行化现在就做」，
+三条都改在 **main 上**（改的是合并后的代码，不是分支）。
+
+**分支带进来的东西（要点）**：
+
+- `packages/core/src/sync/sqlite.ts`：启动时**受保护地**改表——`ALTER TABLE spaces ADD COLUMN epoch TEXT`、
+  `heads ADD COLUMN record_count / byte_count`（先 `PRAGMA table_info` 查列再改，重复启动不会炸）。
+- `packages/core/src/sync/server.ts`：配额与限流——`maxRecordsPerSpace = 50_000`、`maxBytesPerSpace = 256 * 1024 * 1024`、
+  `pushesPerMinute = 120`、`spacesPerMinute = 20`、`metaReadsPerMinute = 30`（限流状态在进程内存，重启即清）；
+  新错误 `SyncQuotaExceededError`，`appendWithinQuota()` 把**配额判定与写入放在同一个事务**里。
+- `packages/core/src/sync/types.ts`：`epoch?: string`、`SyncResetReason = 'space-changed' | 'head-behind' | 'epoch-changed'`、`SyncReport.reset?`。
+- 另含 `packages/core/src/{admin/bridge*,platform/key-vault*}`、`tools/sync-server/src/main.ts`、`docs/{SYNC,SYNC-DEPLOY}.md`。
+
+**三条「有疑」的改法（问题 → 改法 → 证据）**：
+
+| # | 复核判出的问题 | 改法 | 证据 |
+| --- | --- | --- | --- |
+| A4 | `resetSyncState`（`packages/core/src/sync/loop.ts:125`）在 `apps/web` **没有任何调用者**，而 `docs/SYNC.md` §4.12.2 写着「必须调用」 → 换空间/回灌快照后宿主游标还指着旧水位 | `apps/web/src/lib/sync.ts` 的 `connect` 在 **created（新建空间）分支**、`restoreSnapshot` 在**灌完快照之后**各调一次 `resetSyncState(db.repository, spaceHandle)`；`resync` 里手写的 `writeSyncState({ spaceHandle, pulledHead: 0, pushedAt: null })` 换成同一个函数 | `resetSyncState` 现在有 3 个生产调用点 |
+| A9 | `sync.ts` 新建空间只查「非空」，`SyncPanel` 的 ≥6 只作用于**换**密码 | `apps/web/src/lib/password-policy.ts`（`MIN_PASSWORD_LENGTH = 6`、`assertPassword`、`passwordStrength`、`passwordStrengthHint`）成为唯一实现；`connect` 在 `meta === null` 分支调 `assertPassword(secret)`；`account-auth.ts` 改为从它转发 | `password-policy.test.ts` 3 条；**加入已有空间绝不拦**（老用户可能是短口令） |
+| B1 | 启动自动同步 / `connect` / `syncNow` / `resync` 都直接推拉，多标签页会重复拉推 | `sync.ts` 新增 `runExclusive`：进程内串行队列（`createSerialQueue()`）+ 跨标签页 `navigator.locks`（锁名 `dramatis-sync:<密码>`）；原 `doSync` 实体改名 `syncOnce`，新的 `doSync` 先排队再在队首复查「空间没被换掉」 | `sync-queue.test.ts` 4 条；**死锁核查**：没有任何地方在 `runExclusive` 里再调 `runExclusive`/`doSync`/`syncNow` |
+
+**为什么 A9/B1 用的是 `a5ef9` 分支的代码**：那两条在 `a063c` 与 `a5ef9` 上**各有一份**（顺序 84 的复核也这么说）。
+本批**故意逐字采用 `a5ef9` 的同一套模块**（`password-policy.ts` / `sync-queue.ts` 连测试一起），
+这样 84 合并时这两块预期**无差异**，不会留下两条并行队列或两处口令下限——「同一件事只留一套机制」。
+
+**五项门禁（main 上跑）**：typecheck ✓；Core **66 文件 / 737 条**、Web **6 文件 / 19 条**全绿（新增 `sync-queue.test.ts` 4 条、`password-policy.test.ts` 3 条）；
+本批路径 `pnpm exec biome check`（`sync.ts` + 4 个新文件 + `account-auth.ts`）= `Checked 6 files. No fixes applied.`，
+只有 1 条**改造前就有的** warning：`apps/web/src/lib/sync.ts:27:25 lint/correctness/noUnusedImports`（`parseSnapshot`，本批未动）；
+全仓 `pnpm lint` = `Check 266 files` / **13 error**，逐条归因不变——**全部**来自另一条会话未提交的文件；
+`pnpm build` ✓（`dist/assets/index-BCY_2Nah.js` 637.76 kB / gzip 200.26 kB、`index-B5pK3UWP.css` 38.18 kB）；`pnpm build:sync-server` ✓。
+
+**没验的 / 已知遗留（别当成已解决）**：
+
+1. **服务端那批要重新部署才生效**：配额、限流、`epoch`/`record_count`/`byte_count` 三列与两条 `ALTER TABLE`
+   都只在**全新库的单测**上跑过；**在线上那个已有数据的 SQLite 上跑迁移没验**（用户裁定「等 84/85 合完一起上」，所以线上还是旧服务端）。
+   部署窗口要盯：升级后 `/sync/health`、已有空间还能读、写一次还能推上去。
+2. **Web Locks 的真实效果没验**：单测用的是假 locks；「两个真标签页同时自动同步只推一次」只能在真浏览器上量（归 Codex）。
+3. `packages/core/src/sync/http.ts` 仍把 `credentialHash` 回给客户端（`a063c` 未改）——单开一条或并进顺序 86。
+4. B16 只算「文档部分可信」：**界面**（`SyncPanel`）的措辞仍没写清「空间密码丢了数据就真的找不回来」。
+5. `docs/SYNC.md` / `SYNC-DEPLOY.md` 写了协议与理由，但**配额与限流的运维含义**（空间满了、被限流时用户看到什么）还没写。
+6. 顺序 83 的只读复核还判了 B16 之外的若干条「可信」（A3/A6/A7/A8/C8–C12/C14/C15），逐条依据写在 TASKS 第〇节「审计遗留」小节里。
+7. 这一批**未 push、未部署**。
+

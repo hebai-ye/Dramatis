@@ -1146,7 +1146,28 @@ TASKS 第〇节顺序 68。用户裁定「A+B 推进」；原方案里的 `limit
 
 > 本批**没有 push、没有部署**。合并进来的 15 条是别人写的，本批只做集成 + 三处必修 + 文档。
 
-## 六十一、几点注意
+## 六十一、2026-09-26：顺序 83（审计第三批合入 main + 三条「有疑」补齐）
+
+分支 `worktree-agent-a063c593632cf9c7c`（A3/A4/A6/A7/A8/A9/B1/B16/C8–C12/C14/C15 十五条）合入 main（合并提交 `6ce2b89`），
+随后在 main 上按用户裁定补齐复核判「只做了一半」的三条（A4 接线 / A9 新建也 ≥6 / B1 入口串行化）。做法与验证见 EVAL 第七十三节。
+
+| 文件 | 改 / 新增 | 说明 |
+| --- | --- | --- |
+| `apps/web/src/lib/sync-queue.ts` | **新增**（逐字采用 `a5ef9` 分支的同一份） | `SerialQueue` / `createSerialQueue()`（tail 链，前一个失败不卡后面的）/ `withCrossTabLock(name, task)`（有 `navigator.locks` 就用）/ `withCrossTabLockIfAvailable`（给顺序 84 的后台任务 drain 留的，当前无生产调用者） |
+| `apps/web/src/lib/sync-queue.test.ts` | **新增**（同） | 4 条：串行不重叠、前一失败不卡后、无 locks 直跑、有 locks 时走锁 |
+| `apps/web/src/lib/password-policy.ts` | **新增**（同） | `MIN_PASSWORD_LENGTH = 6`、`assertPassword`、`passwordStrength`、`passwordStrengthHint` |
+| `apps/web/src/lib/password-policy.test.ts` | **新增**（同） | 3 条 |
+| `apps/web/src/lib/account-auth.ts` | 改 | `MIN_PASSWORD_LENGTH` 与 `assertPassword` 改为 `export { … } from './password-policy'`——口令下限只留一处实现，`components/AccountPanel.tsx` 的 import 照旧可用 |
+| `apps/web/src/lib/sync.ts` | 改 | 本批的 A4/A9/B1 三处：`runExclusive`（串行队列 + Web Locks，锁名 `dramatis-sync:<密码>`）；`doSync` 实体改名 `syncOnce`，新的 `doSync` 排队后先复查空间；`connect` 新建分支 `assertPassword`、created 之后 `resetSyncState`；`rotatePassword` 改用 `assertPassword`；`restoreSnapshot` 包进 `runExclusive` 并事后 `resetSyncState`；`resync` 换用 `resetSyncState` |
+| 其余合入文件（`a063c`） | 改 | `packages/core/src/sync/{sqlite,server,types,http,…}.ts`（受保护的 `ALTER TABLE` 加 `epoch` / `record_count` / `byte_count`；配额 50 000 条 / 256 MB；限流 120 / 20 / 30 次每分；`SyncResetReason`、`SyncReport.reset`）、`admin/bridge*`、`platform/key-vault*`、`tools/sync-server/src/main.ts`、`docs/{SYNC,SYNC-DEPLOY}.md`（合计 24 文件 1991+/363-） |
+| `docs/TASKS.md` | 改 | 83 行改 ✅；归属表三行更新；「重叠实现」补写「A9/B1 的重叠已在顺序 83 消掉」；新增「顺序 83 带出来的遗留」四条与**顺序 84 的只读复核回执**（可信 12 / 有疑 3 / 合并前 5 项） |
+| `docs/EVAL.md` | 改 | 新增**第七十三节**：分支带进来的东西、三条有疑的改法表、为什么采用 `a5ef9` 的模块、五项门禁、七条「没验的 / 已知遗留」 |
+| `docs/STATUS.md` | 改 | 新增「2026-09-26：顺序 83 落进 main」一段与下一步（84 真正只看两条、部署等 84/85 一起上） |
+| `docs/FILE-LOG.md` | 改 | 本节；「几点注意」顺延为**六十二** |
+
+> 本批**没有 push、没有部署**（服务端那批要重新部署才生效，用户裁定等 84/85 合完一起上）。
+
+## 六十二、几点注意
 
 ---
 

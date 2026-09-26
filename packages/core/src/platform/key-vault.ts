@@ -39,6 +39,14 @@ export const VAULT_VERSION = 1;
  */
 export const VAULT_KDF_ITERATIONS = 600_000;
 
+/**
+ * 从文件里读到的迭代数上限（审计 C14）。
+ *
+ * 迭代数存在文件里（将来调高默认值时，老文件照样按自己的数解）。但文件能被别的程序改：
+ * 改成十亿次，解锁那一下就把页面卡死。默认值的 10 倍已经远超任何正常取值。
+ */
+export const VAULT_MAX_KDF_ITERATIONS = VAULT_KDF_ITERATIONS * 10;
+
 export const VAULT_ALGORITHM = 'AES-256-GCM';
 
 const VAULT_KIND = 'dramatis-key-vault';
@@ -119,12 +127,16 @@ export async function readVault(storage: VaultStorage): Promise<VaultFile | null
   if (record === null || record.kind !== VAULT_KIND || !isBox(record.check) || typeof record.kdf !== 'object') {
     throw new CryptoError('口令库文件的格式不认识。');
   }
+  const iterations = record.kdf.iterations ?? VAULT_KDF_ITERATIONS;
+  if (!Number.isInteger(iterations) || iterations < 1 || iterations > VAULT_MAX_KDF_ITERATIONS) {
+    throw new CryptoError('口令库文件里的迭代数不合理（可能被别的程序改过），拒绝解锁。');
+  }
   return {
     kind: VAULT_KIND,
     version: typeof record.version === 'number' ? record.version : VAULT_VERSION,
     kdf: {
       algorithm: 'PBKDF2-SHA256',
-      iterations: record.kdf.iterations ?? VAULT_KDF_ITERATIONS,
+      iterations,
       salt: record.kdf.salt ?? '',
     },
     check: record.check,
@@ -191,6 +203,25 @@ export async function openVault(
     await storage.write(JSON.stringify(next));
   };
 
+  /**
+   * 写入串行化（审计 C14）：每次改动都是「读整份 → 改一条 → 写整份」，两次并发的 set
+   * 会各自读到旧文件、后写的把先写的那条抹掉。所有改动排进同一条队列（按 storage 共享，
+   * 同一个库被打开两次也一样排队）；一次失败不堵住后面的。
+   */
+  const mutate = (change: (current: VaultFile) => Promise<boolean>): Promise<boolean> => {
+    const previous = writeQueues.get(storage) ?? Promise.resolve();
+    const next = previous
+      .catch(() => {})
+      .then(async () => {
+        const current = await readVault(storage);
+        if (current === null) return false;
+        if (await change(current)) await persist(current);
+        return true;
+      });
+    writeQueues.set(storage, next);
+    return next;
+  };
+
   return {
     kind: 'encrypted',
     async get(ref) {
@@ -205,25 +236,31 @@ export async function openVault(
       }
     },
     async set(ref, secret) {
-      const current = await readVault(storage);
-      if (current === null) throw new CryptoError('本机还没有口令库。');
-      current.secrets[ref] = await seal(kek, `secret:${ref}`, secret);
-      await persist(current);
+      const sealed = await seal(kek, `secret:${ref}`, secret);
+      const found = await mutate(async (current) => {
+        current.secrets[ref] = sealed;
+        return true;
+      });
+      if (!found) throw new CryptoError('本机还没有口令库。');
     },
     async remove(ref) {
-      const current = await readVault(storage);
-      if (current === null) return;
-      delete current.secrets[ref];
-      await persist(current);
+      await mutate(async (current) => {
+        if (!(ref in current.secrets)) return false;
+        delete current.secrets[ref];
+        return true;
+      });
     },
     async list() {
       return vaultRefs(storage);
     },
     async clear() {
-      const current = await readVault(storage);
-      if (current === null) return;
-      current.secrets = {};
-      await persist(current);
+      await mutate(async (current) => {
+        current.secrets = {};
+        return true;
+      });
     },
   };
 }
+
+/** 每个存储一条写入队列（见 `mutate`）。WeakMap：存储对象没了队列跟着回收。 */
+const writeQueues = new WeakMap<VaultStorage, Promise<boolean>>();

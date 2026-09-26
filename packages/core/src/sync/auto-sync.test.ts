@@ -104,6 +104,54 @@ describe('createAutoSync', () => {
     expect(auto.isPending()).toBe(false);
   });
 
+  /*
+   * 审计 B1：运行中 flush 以前只记一笔「待补」就立刻返回，调用方以为同步完了。
+   * 现在它要等正在跑的那一趟、再补跑一趟，两趟都完了才 resolve；而且不并发。
+   */
+  it('运行中 flush：等当前这趟跑完，再补跑一趟，之后才返回', async () => {
+    const gates: Array<() => void> = [];
+    let concurrent = 0;
+    let maxConcurrent = 0;
+    const run = vi.fn(async () => {
+      concurrent += 1;
+      maxConcurrent = Math.max(maxConcurrent, concurrent);
+      await new Promise<void>((resolve) => {
+        gates.push(resolve);
+      });
+      concurrent -= 1;
+    });
+    const results: AutoSyncResult[] = [];
+    const auto = createAutoSync({ run, intervalMs: 20_000, onResult: (result) => results.push(result) });
+
+    auto.request();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(run).toHaveBeenCalledTimes(1);
+
+    let flushed = false;
+    const flushing = auto.flush().then(() => {
+      flushed = true;
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(flushed).toBe(false);
+    expect(run).toHaveBeenCalledTimes(1);
+
+    gates[0]?.();
+    await vi.advanceTimersByTimeAsync(0);
+    // 第一趟完了，手动那一趟马上开始（不等节流窗口），但 flush 还没返回
+    expect(run).toHaveBeenCalledTimes(2);
+    expect(flushed).toBe(false);
+
+    gates[1]?.();
+    await flushing;
+    expect(flushed).toBe(true);
+    expect(maxConcurrent).toBe(1);
+    expect(results.map((result) => result.manual)).toEqual([false, true]);
+
+    // 之后没有多余的一趟
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(run).toHaveBeenCalledTimes(2);
+  });
+
   it('cancel 之后排着的那一趟不会跑', async () => {
     const run = vi.fn(async () => {});
     const auto = createAutoSync({ run, intervalMs: 20_000 });

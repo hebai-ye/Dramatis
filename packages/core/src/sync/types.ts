@@ -87,6 +87,13 @@ export interface SyncHeadInput extends SyncCredentials {}
 export interface SyncHeadResult {
   /** 服务端现在到第几号了（客户端拿它当拉取游标的上界）。 */
   head: number;
+  /**
+   * 这个空间的纪元（审计 A4）：建空间时服务端随机生成，空间只要还是原来那个就不变。
+   *
+   * 服务端库丢了重建、或者换了一台服务端时它必然不同，客户端据此把游标作废重来——
+   * 单看 `head` 看不出「重建之后号又涨过了旧值」。老服务端不发，客户端要兜住。
+   */
+  epoch?: string;
 }
 
 export interface SyncPushInput extends SyncCredentials {
@@ -163,14 +170,26 @@ export interface SyncDeviceSummary {
  * 本地同步状态（存 meta，不进实体——本地不该有服务端概念）。
  *
  * - `pulledHead`：上次拉到的服务端号；
- * - `pushedAt`：上次推出去的记录里最晚的 `updatedAt`，用来只推新改动。
+ * - `pushedAt`：推送点。它之前（含）的本地记录都已经在服务端上了——要么是本机推上去的，
+ *   要么是从服务端拉回来、本地与之完全相同的（审计 A3：同步期间本机新写的不算）。
  */
 export interface SyncState {
   /** 这份状态属于哪个空间；换空间就作废重来。 */
   spaceHandle: string | null;
   pulledHead: number;
   pushedAt: string | null;
+  /** 上次同步时服务端报的空间纪元（审计 A4）；老服务端没有，就不存。 */
+  epoch?: string;
 }
+
+/**
+ * 这一轮为什么把本地同步状态作废重来了（审计 A4）。
+ *
+ * - `space-changed`：换了空间；
+ * - `head-behind`：服务端的头号比本机记得的还小（被清空 / 回滚过）；
+ * - `epoch-changed`：服务端的空间纪元变了（被重建过）。
+ */
+export type SyncResetReason = 'space-changed' | 'head-behind' | 'epoch-changed';
 
 export const EMPTY_SYNC_STATE: SyncState = { spaceHandle: null, pulledHead: 0, pushedAt: null };
 
@@ -210,6 +229,8 @@ export interface SyncReport {
   /** 一共挡回去多少条（来自其它设备的）。 */
   overriddenCount: number;
   head: number;
+  /** 这一轮是不是把本地游标作废、按新设备重来的（审计 A4）；`null` / 缺省 = 没有。 */
+  reset?: SyncResetReason | null;
 }
 
 /** 一条「远端比本机旧、所以本机这条留着」的记录（顺序 19）。 */

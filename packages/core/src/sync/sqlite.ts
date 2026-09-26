@@ -12,7 +12,14 @@
  */
 
 import { CryptoError } from '../crypto/errors.js';
-import type { SyncServerStore, SyncSpaceRecord } from './server.js';
+import {
+  assertWithinQuota,
+  newSpaceEpoch,
+  projectUsage,
+  type SyncAppendQuota,
+  type SyncServerStore,
+  type SyncSpaceRecord,
+} from './server.js';
 import type { SyncAcceptedRecord, SyncPulledRecord, SyncWireRecord } from './types.js';
 
 /** 我们用到的那几个方法（`node:sqlite` 与 better-sqlite3 都是这个形状）。 */
@@ -41,7 +48,8 @@ CREATE TABLE IF NOT EXISTS spaces (
   credential_hash TEXT NOT NULL,
   recovery_credential_hash TEXT NOT NULL,
   key_wraps TEXT NOT NULL,
-  created_at TEXT NOT NULL
+  created_at TEXT NOT NULL,
+  epoch TEXT
 );
 CREATE TABLE IF NOT EXISTS records (
   space_handle TEXT NOT NULL,
@@ -57,7 +65,9 @@ CREATE TABLE IF NOT EXISTS records (
 CREATE INDEX IF NOT EXISTS records_by_rev ON records (space_handle, server_rev);
 CREATE TABLE IF NOT EXISTS heads (
   space_handle TEXT PRIMARY KEY,
-  head INTEGER NOT NULL
+  head INTEGER NOT NULL,
+  record_count INTEGER,
+  byte_count INTEGER
 );
 `;
 
@@ -76,7 +86,43 @@ export function ensureSyncSchema(db: SqliteDatabase): void {
   if (!columns.some((column) => column.name === 'device_id')) {
     db.exec('ALTER TABLE records ADD COLUMN device_id TEXT');
   }
+
+  /*
+   * 审计 A4 加的空间纪元。老库补列之后，给每个还没有纪元的空间补一个随机值：
+   * 客户端第一次见到它时只是记下来（本地没有旧纪元可比），不会误判成重建。
+   * 每次启动都跑一遍补漏（`WHERE epoch IS NULL`），回滚到老版本再升级也能补上。
+   */
+  const spaceColumns = db.prepare('PRAGMA table_info(spaces)').all() as { name?: string }[];
+  if (!spaceColumns.some((column) => column.name === 'epoch')) {
+    db.exec('ALTER TABLE spaces ADD COLUMN epoch TEXT');
+  }
+  db.exec("UPDATE spaces SET epoch = lower(hex(randomblob(16))) WHERE epoch IS NULL OR epoch = ''");
+
+  /*
+   * 审计 C10 加的增量用量计数（条数 + 字节）。以前每次 push 都对这个空间做一次
+   * `COUNT(*) / SUM(LENGTH(sealed))` 全表统计；现在在 heads 行里随写入增量维护。
+   * 老库补列后按现有行回填一次（`record_count IS NULL` 的那些），之后只做增量。
+   */
+  const headColumns = db.prepare('PRAGMA table_info(heads)').all() as { name?: string }[];
+  if (!headColumns.some((column) => column.name === 'record_count')) {
+    db.exec('ALTER TABLE heads ADD COLUMN record_count INTEGER');
+  }
+  if (!headColumns.some((column) => column.name === 'byte_count')) {
+    db.exec('ALTER TABLE heads ADD COLUMN byte_count INTEGER');
+  }
+  db.exec(`UPDATE heads SET
+    record_count = (SELECT COUNT(*) FROM records WHERE records.space_handle = heads.space_handle),
+    byte_count = (SELECT COALESCE(SUM(${ROW_BYTES_SQL}), 0) FROM records WHERE records.space_handle = heads.space_handle)
+    WHERE record_count IS NULL OR byte_count IS NULL`);
 }
+
+/**
+ * 一行记录的字节数（与 `syncRowBytes` 同一口径：各文本列的 UTF-8 字节数之和）。
+ * `LENGTH(CAST(x AS BLOB))` 量的是字节，`LENGTH(x)` 量的是字符——中文 id 会差三倍。
+ */
+const ROW_BYTES_SQL = `LENGTH(CAST(collection AS BLOB)) + LENGTH(CAST(id AS BLOB)) + LENGTH(CAST(updated_at AS BLOB))
+  + COALESCE(LENGTH(CAST(deleted_at AS BLOB)), 0) + COALESCE(LENGTH(CAST(device_id AS BLOB)), 0)
+  + LENGTH(CAST(sealed AS BLOB))`;
 
 /**
  * 打开库之后立刻设的两个 PRAGMA（顺序 61）。
@@ -102,6 +148,7 @@ interface SpaceRow {
   recovery_credential_hash: string;
   key_wraps: string;
   created_at: string;
+  epoch?: string | null;
 }
 
 interface RecordRow {
@@ -123,6 +170,7 @@ function asSpace(row: unknown): SyncSpaceRecord | null {
     recoveryCredentialHash: value.recovery_credential_hash,
     keyWraps: JSON.parse(value.key_wraps) as Record<string, unknown>,
     createdAt: value.created_at,
+    ...(typeof value.epoch === 'string' && value.epoch !== '' ? { epoch: value.epoch } : {}),
   };
 }
 
@@ -156,6 +204,92 @@ export function createSqliteSyncStore(db: SqliteDatabase): SyncServerStore & { s
     return row?.head ?? 0;
   };
 
+  const readUsage = (spaceHandle: string): { records: number; bytes: number } => {
+    const row = db.prepare('SELECT record_count, byte_count FROM heads WHERE space_handle = ?1').get(spaceHandle) as
+      | { record_count: number | null; byte_count: number | null }
+      | undefined;
+    return { records: row?.record_count ?? 0, bytes: row?.byte_count ?? 0 };
+  };
+
+  const appendRecords = (
+    spaceHandle: string,
+    records: readonly SyncWireRecord[],
+    quota: SyncAppendQuota | null,
+  ): SyncAcceptedRecord[] => {
+    if (records.length === 0) return [];
+    if (db.prepare('SELECT space_handle FROM spaces WHERE space_handle = ?1').get(spaceHandle) === undefined) {
+      throw new CryptoError('空间不存在。');
+    }
+
+    const accepted: SyncAcceptedRecord[] = [];
+    // 事务包住：号、行、用量计数要么一起落，要么都不落（中途失败不能留下跳号的空洞）。
+    // IMMEDIATE：一开始就拿写锁，配额的「读用量 → 判定 → 写」之间不会被别的写入插队。
+    db.exec('BEGIN IMMEDIATE');
+    try {
+      let head = getHead(spaceHandle);
+      const usage = readUsage(spaceHandle);
+      const existing = db.prepare(
+        `SELECT ${ROW_BYTES_SQL} AS bytes FROM records WHERE space_handle = ?1 AND collection = ?2 AND id = ?3`,
+      );
+      // 同一批里同一坐标出现多次时，后面那次要看到前面那次写下的行：按「批内最新」算
+      const seen = new Map<string, number>();
+      const existingBytes = (key: string): number | undefined => {
+        const cached = seen.get(key);
+        if (cached !== undefined) return cached;
+        const slash = key.indexOf('/');
+        const row = existing.get(spaceHandle, key.slice(0, slash), key.slice(slash + 1)) as
+          | { bytes: number }
+          | undefined;
+        return row?.bytes;
+      };
+      for (const record of records) {
+        const key = `${record.collection}/${record.id}`;
+        if (!seen.has(key)) {
+          const before = existingBytes(key);
+          if (before !== undefined) seen.set(key, before);
+        }
+      }
+      const projected = projectUsage(usage.records, usage.bytes, records, (key) => seen.get(key));
+      if (quota !== null) assertWithinQuota(projected, quota);
+
+      const upsert = db.prepare(
+        `INSERT INTO records (space_handle, collection, id, server_rev, updated_at, deleted_at, sealed, device_id)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+         ON CONFLICT(space_handle, collection, id)
+         DO UPDATE SET server_rev = excluded.server_rev, updated_at = excluded.updated_at,
+                       deleted_at = excluded.deleted_at, sealed = excluded.sealed,
+                       device_id = excluded.device_id`,
+      );
+
+      for (const record of records) {
+        head += 1;
+        upsert.run(
+          spaceHandle,
+          record.collection,
+          record.id,
+          head,
+          record.updatedAt,
+          record.deletedAt,
+          JSON.stringify(record.sealed),
+          record.deviceId ?? null,
+        );
+        accepted.push({ collection: record.collection, id: record.id, serverRev: head });
+      }
+
+      db.prepare(
+        `INSERT INTO heads (space_handle, head, record_count, byte_count) VALUES (?1, ?2, ?3, ?4)
+         ON CONFLICT(space_handle) DO UPDATE SET head = excluded.head,
+           record_count = excluded.record_count, byte_count = excluded.byte_count`,
+      ).run(spaceHandle, head, projected.records, projected.bytes);
+      db.exec('COMMIT');
+    } catch (error) {
+      db.exec('ROLLBACK');
+      throw error;
+    }
+
+    return accepted;
+  };
+
   return {
     async getSpace(spaceHandle) {
       return asSpace(db.prepare('SELECT * FROM spaces WHERE space_handle = ?1').get(spaceHandle));
@@ -166,8 +300,8 @@ export function createSqliteSyncStore(db: SqliteDatabase): SyncServerStore & { s
       // 比「先查再插」少一次往返，也不会被并发插队（SYNC §4.6 的 409 语义）
       const inserted = db
         .prepare(
-          `INSERT INTO spaces (space_handle, credential_hash, recovery_credential_hash, key_wraps, created_at)
-         VALUES (?1, ?2, ?3, ?4, ?5)
+          `INSERT INTO spaces (space_handle, credential_hash, recovery_credential_hash, key_wraps, created_at, epoch)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6)
          ON CONFLICT(space_handle) DO NOTHING`,
         )
         .run(
@@ -176,14 +310,15 @@ export function createSqliteSyncStore(db: SqliteDatabase): SyncServerStore & { s
           record.recoveryCredentialHash,
           JSON.stringify(record.keyWraps),
           record.createdAt,
+          record.epoch ?? newSpaceEpoch(),
         ) as { changes?: number };
 
       if ((inserted.changes ?? 0) === 0) return false;
 
       // 新建的空间要有 heads 行，后面的号才从 1 开始
-      db.prepare('INSERT INTO heads (space_handle, head) VALUES (?1, 0) ON CONFLICT(space_handle) DO NOTHING').run(
-        record.spaceHandle,
-      );
+      db.prepare(
+        'INSERT INTO heads (space_handle, head, record_count, byte_count) VALUES (?1, 0, 0, 0) ON CONFLICT(space_handle) DO NOTHING',
+      ).run(record.spaceHandle);
       return true;
     },
 
@@ -192,51 +327,15 @@ export function createSqliteSyncStore(db: SqliteDatabase): SyncServerStore & { s
     },
 
     async append(spaceHandle, records: readonly SyncWireRecord[]) {
-      if (records.length === 0) return [];
+      return appendRecords(spaceHandle, records, null);
+    },
 
-      const accepted: SyncAcceptedRecord[] = [];
-      let head = getHead(spaceHandle);
-      if (db.prepare('SELECT space_handle FROM spaces WHERE space_handle = ?1').get(spaceHandle) === undefined) {
-        throw new CryptoError('空间不存在。');
-      }
-
-      // 事务包住：号与行要么一起落，要么都不落（中途失败不能留下跳号的空洞）
-      db.exec('BEGIN');
-      try {
-        const upsert = db.prepare(
-          `INSERT INTO records (space_handle, collection, id, server_rev, updated_at, deleted_at, sealed, device_id)
-           VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
-           ON CONFLICT(space_handle, collection, id)
-           DO UPDATE SET server_rev = excluded.server_rev, updated_at = excluded.updated_at,
-                         deleted_at = excluded.deleted_at, sealed = excluded.sealed,
-                         device_id = excluded.device_id`,
-        );
-
-        for (const record of records) {
-          head += 1;
-          upsert.run(
-            spaceHandle,
-            record.collection,
-            record.id,
-            head,
-            record.updatedAt,
-            record.deletedAt,
-            JSON.stringify(record.sealed),
-            record.deviceId ?? null,
-          );
-          accepted.push({ collection: record.collection, id: record.id, serverRev: head });
-        }
-
-        db.prepare(
-          'INSERT INTO heads (space_handle, head) VALUES (?1, ?2) ON CONFLICT(space_handle) DO UPDATE SET head = excluded.head',
-        ).run(spaceHandle, head);
-        db.exec('COMMIT');
-      } catch (error) {
-        db.exec('ROLLBACK');
-        throw error;
-      }
-
-      return accepted;
+    /**
+     * 带配额的写入（审计 C11）：判定与写入在同一个 `BEGIN IMMEDIATE` 事务里。
+     * 超了就回滚、一条都不写，抛 `SyncQuotaExceededError`（服务端翻成 413）。
+     */
+    async appendWithinQuota(spaceHandle, records, quota) {
+      return appendRecords(spaceHandle, records, quota);
     },
 
     async list(spaceHandle, options) {
@@ -253,18 +352,11 @@ export function createSqliteSyncStore(db: SqliteDatabase): SyncServerStore & { s
     /**
      * 给配额用的用量（顺序 16）。
      *
-     * `bytes` 用 `length(sealed)` 而不是解出 base64 再量：这条查询要跑在
-     * 每次写入之前，答案只需要**随记录增长而增长**、量级对得上就行；
-     * 为了精确到字节去把每行 JSON 解析一遍，代价反而是每次写入都要全表读。
+     * 读的是 heads 行里增量维护的计数（审计 C10），不再每次全表统计。
+     * 字节口径与 `syncRowBytes` 一致（审计 A7：整行，不只是密文）。
      */
     async spaceUsage(spaceHandle) {
-      const row = db
-        .prepare(
-          `SELECT COUNT(*) AS records, COALESCE(SUM(LENGTH(sealed)), 0) AS bytes
-           FROM records WHERE space_handle = ?1`,
-        )
-        .get(spaceHandle) as { records: number; bytes: number } | undefined;
-      return { records: row?.records ?? 0, bytes: row?.bytes ?? 0 };
+      return readUsage(spaceHandle);
     },
 
     /** 按设备聚合（顺序 14）：每条记录只有一行，直接 GROUP BY。 */

@@ -54,6 +54,64 @@ export interface SyncHttpDeps {
    * 不填时退化成「所有请求共用一个 key」：粒度粗，但那道闸还在。
    */
   clientKey?: string;
+  /**
+   * 内部异常（非 `SyncServerError`）的去处（审计 C9）。
+   *
+   * 对外只回一句通用的「服务端出错了」，异常原文（可能带着 SQL、路径、栈）只交给这里——
+   * 宿主拿它写日志。不给就丢掉（单测、开发后端）。
+   */
+  onInternalError?: (error: unknown) => void;
+}
+
+/*
+ * 线上字段的形状护栏（审计 A7）。
+ *
+ * 这些上限都按**真实客户端写出来的数据**定得很宽：id 是 uuid（36 字符）或
+ * `provider:<uuid>`（45 字符），时间戳是 `toISOString()`（24 字符），设备号是 uuid，
+ * 句柄与凭证哈希是 43 字符的 base64url。宽到正常数据永远碰不到，窄到一条记录的坐标
+ * 不能再拿来塞几 MB 的垃圾。
+ *
+ * 时间戳刻意**不**校验成严格的 ISO：一条形状奇怪的老记录会让整批 push 400，
+ * 那台设备就永远推不上去了——那比多存几个字节糟得多。只限长度与控制字符。
+ */
+const MAX_ID_LENGTH = 256;
+const MAX_TIMESTAMP_LENGTH = 64;
+const MAX_DEVICE_ID_LENGTH = 128;
+const MAX_HANDLE_LENGTH = 128;
+/** 两份钥匙封装加起来的上限（一份正常是 ~120 字节的 JSON）。 */
+const MAX_KEY_WRAPS_BYTES = 4096;
+const BASE64URL = /^[A-Za-z0-9_-]+$/;
+// biome-ignore lint/suspicious/noControlCharactersInRegex: 就是要拦控制字符
+const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f]/;
+
+function isPlainText(value: unknown, maxLength: number): value is string {
+  return typeof value === 'string' && value !== '' && value.length <= maxLength && !CONTROL_CHARACTERS.test(value);
+}
+
+function isToken(value: unknown, maxLength: number): value is string {
+  return typeof value === 'string' && value.length > 0 && value.length <= maxLength && BASE64URL.test(value);
+}
+
+/** 一份钥匙封装（`WrappedKey`）：只认 `{ algorithm, iv, ciphertext }` 三个短字符串。 */
+function isWrappedKey(value: unknown): boolean {
+  const wrap = asRecord(value);
+  if (wrap === null) return false;
+  const keys = Object.keys(wrap);
+  if (keys.some((key) => key !== 'algorithm' && key !== 'iv' && key !== 'ciphertext')) return false;
+  return isPlainText(wrap.algorithm, 64) && isToken(wrap.iv, 64) && isToken(wrap.ciphertext, 512);
+}
+
+/** `keyWraps` 只允许 `password` / `recovery` 两份（可以缺），整体有上限。 */
+function readKeyWraps(value: unknown): Record<string, unknown> | null {
+  if (value === undefined || value === null) return {};
+  const wraps = asRecord(value);
+  if (wraps === null) return null;
+  for (const [key, wrap] of Object.entries(wraps)) {
+    if (key !== 'password' && key !== 'recovery') return null;
+    if (!isWrappedKey(wrap)) return null;
+  }
+  if (new TextEncoder().encode(JSON.stringify(wraps)).byteLength > MAX_KEY_WRAPS_BYTES) return null;
+  return wraps;
 }
 
 const JSON_HEADERS = { 'content-type': 'application/json; charset=utf-8' } as const;
@@ -97,16 +155,24 @@ function readWireRecord(value: unknown): SyncWireRecord | null {
   const record = asRecord(value);
   if (record === null) return null;
   if (!isCollection(record.collection)) return null;
-  if (typeof record.id !== 'string' || record.id === '') return null;
-  if (typeof record.updatedAt !== 'string' || record.updatedAt === '') return null;
+  if (!isPlainText(record.id, MAX_ID_LENGTH)) return null;
+  if (!isPlainText(record.updatedAt, MAX_TIMESTAMP_LENGTH)) return null;
 
-  const deletedAt = record.deletedAt;
-  if (deletedAt !== null && typeof deletedAt !== 'string') return null;
+  const deletedAt = record.deletedAt ?? null;
+  if (deletedAt !== null && !isPlainText(deletedAt, MAX_TIMESTAMP_LENGTH)) return null;
 
   const sealed = asRecord(record.sealed);
   if (sealed === null) return null;
   if (sealed.algorithm !== 'AES-256-GCM') return null;
-  if (typeof sealed.iv !== 'string' || typeof sealed.ciphertext !== 'string') return null;
+  // 密文是 base64url（`toBase64Url` 的输出）；IV 固定 12 字节 = 16 字符
+  if (!isToken(sealed.iv, 64)) return null;
+  if (typeof sealed.ciphertext !== 'string' || !BASE64URL.test(sealed.ciphertext)) {
+    return null;
+  }
+
+  // 设备号可选（老客户端不带）；带了就必须是一个短的普通字符串
+  const deviceId = record.deviceId;
+  if (deviceId !== undefined && deviceId !== null && !isPlainText(deviceId, MAX_DEVICE_ID_LENGTH)) return null;
 
   return {
     collection: record.collection,
@@ -114,6 +180,7 @@ function readWireRecord(value: unknown): SyncWireRecord | null {
     updatedAt: record.updatedAt,
     deletedAt,
     sealed: { algorithm: 'AES-256-GCM', iv: sealed.iv, ciphertext: sealed.ciphertext } as EncryptedRecord,
+    ...(typeof deviceId === 'string' ? { deviceId } : {}),
   };
 }
 
@@ -121,18 +188,20 @@ function readCreateSpace(value: unknown): CreateSyncSpaceInput | null {
   const body = asRecord(value);
   if (body === null) return null;
   const { spaceHandle, credentialHash, recoveryCredentialHash } = body;
-  if (typeof spaceHandle !== 'string' || spaceHandle === '') return null;
-  if (typeof credentialHash !== 'string' || credentialHash === '') return null;
-  if (typeof recoveryCredentialHash !== 'string' || recoveryCredentialHash === '') return null;
+  // 句柄是 `deriveSpaceHandle` 的 base64url 输出，两份哈希是 SHA-256 的 base64url
+  if (!isToken(spaceHandle, MAX_HANDLE_LENGTH)) return null;
+  if (!isToken(credentialHash, MAX_HANDLE_LENGTH)) return null;
+  if (!isToken(recoveryCredentialHash, MAX_HANDLE_LENGTH)) return null;
 
-  const wraps = asRecord(body.keyWraps);
-  // 未知形状的键值对：服务端照存照还，不解释
+  // 服务端照存照还、不解释内容，但形状与大小要管住（审计 A7）：它会被公开接口原样吐出去
+  const wraps = readKeyWraps(body.keyWraps);
+  if (wraps === null) return null;
   return {
     spaceHandle,
     credentialHash,
     recoveryCredentialHash,
-    keyWraps: wraps ?? {},
-    at: typeof body.at === 'string' && body.at !== '' ? body.at : new Date().toISOString(),
+    keyWraps: wraps,
+    at: isPlainText(body.at, MAX_TIMESTAMP_LENGTH) ? body.at : new Date().toISOString(),
   };
 }
 
@@ -188,7 +257,11 @@ async function route(request: Request, deps: SyncHttpDeps): Promise<Response> {
 
     const input = readCreateSpace(body);
     if (input === null) {
-      return fail(400, 'bad-request', '建空间需要 spaceHandle、credentialHash、recoveryCredentialHash 三个字段。');
+      return fail(
+        400,
+        'bad-request',
+        '建空间需要 spaceHandle、credentialHash、recoveryCredentialHash 三个字段（且形状要对，keyWraps 只收 password / recovery 两份）。',
+      );
     }
 
     try {
@@ -203,22 +276,30 @@ async function route(request: Request, deps: SyncHttpDeps): Promise<Response> {
       }
       return json({ status: result }, 201);
     } catch (error) {
-      return toErrorResponse(error);
+      return toErrorResponse(error, deps);
     }
   }
 
   const spaceHandle = second;
+  if (spaceHandle.length > MAX_HANDLE_LENGTH) return fail(404, 'space-not-found', '这个空间不存在。');
   const rest = third;
 
   // GET /spaces/{handle} —— 空间元数据（公开：加入的人先拿它才能解主密钥）
   if (rest === undefined) {
     if (request.method !== 'GET') return fail(405, 'method-not-allowed', '取空间元数据用 GET。');
-    const space = await deps.server.getSpaceMeta(spaceHandle);
+    let space: Awaited<ReturnType<SyncServer['getSpaceMeta']>>;
+    try {
+      space = await deps.server.getSpaceMeta(spaceHandle);
+    } catch (error) {
+      return toErrorResponse(error, deps);
+    }
     if (space === null) return fail(404, 'space-not-found', '这个空间不存在。');
+    /*
+     * 不再给出两份凭证哈希（审计 A9）：加入的人只需要钥匙封装，没有任何客户端读它们；
+     * 公开出去只是多给离线爆破一个校验目标。
+     */
     return json({
       spaceHandle: space.spaceHandle,
-      credentialHash: space.credentialHash,
-      recoveryCredentialHash: space.recoveryCredentialHash,
       keyWraps: space.keyWraps,
       createdAt: space.createdAt,
     });
@@ -231,7 +312,7 @@ async function route(request: Request, deps: SyncHttpDeps): Promise<Response> {
     try {
       return json(await deps.server.head(credentials));
     } catch (error) {
-      return toErrorResponse(error);
+      return toErrorResponse(error, deps);
     }
   }
 
@@ -252,9 +333,8 @@ async function route(request: Request, deps: SyncHttpDeps): Promise<Response> {
     const records: SyncWireRecord[] = [];
     for (const item of record.records) {
       const wire = readWireRecord(item);
-      if (wire === null) return fail(400, 'bad-request', '有一条记录的形状不对（集合名 / id / 密文）。');
-      if (typeof item === 'object' && item !== null && typeof (item as { deviceId?: unknown }).deviceId === 'string') {
-        wire.deviceId = (item as { deviceId: string }).deviceId;
+      if (wire === null) {
+        return fail(400, 'bad-request', '有一条记录的形状不对（集合名 / id / 时间戳 / 设备号 / 密文）。');
       }
       records.push(wire);
     }
@@ -267,7 +347,7 @@ async function route(request: Request, deps: SyncHttpDeps): Promise<Response> {
         }),
       );
     } catch (error) {
-      return toErrorResponse(error);
+      return toErrorResponse(error, deps);
     }
   }
 
@@ -275,12 +355,14 @@ async function route(request: Request, deps: SyncHttpDeps): Promise<Response> {
     if (request.method !== 'GET') return fail(405, 'method-not-allowed', 'pull 用 GET。');
     const since = Number(url.searchParams.get('since') ?? '0');
     const limitParam = url.searchParams.get('limit');
-    const limit = limitParam === null ? undefined : Number(limitParam);
+    // 审计 C12：`limit=abc` 解析不出数就当没给（服务端用默认页大小），不让 NaN 往下传
+    const parsedLimit = limitParam === null ? Number.NaN : Number(limitParam);
+    const limit = Number.isFinite(parsedLimit) ? parsedLimit : undefined;
 
     try {
       return json(await deps.server.pull({ ...credentials, since, ...(limit === undefined ? {} : { limit }) }));
     } catch (error) {
-      return toErrorResponse(error);
+      return toErrorResponse(error, deps);
     }
   }
 
@@ -290,7 +372,7 @@ async function route(request: Request, deps: SyncHttpDeps): Promise<Response> {
     try {
       return json(await deps.server.devices(credentials));
     } catch (error) {
-      return toErrorResponse(error);
+      return toErrorResponse(error, deps);
     }
   }
 
@@ -306,27 +388,28 @@ async function route(request: Request, deps: SyncHttpDeps): Promise<Response> {
     }
     const record = asRecord(body);
     const credentialHash = typeof record?.credentialHash === 'string' ? record.credentialHash : '';
-    if (credentialHash === '' || record?.passwordWrap === undefined) {
-      return fail(400, 'bad-request', 'rotate 需要 credentialHash 与 passwordWrap 两个字段。');
+    if (!isToken(credentialHash, MAX_HANDLE_LENGTH) || !isWrappedKey(record?.passwordWrap)) {
+      return fail(400, 'bad-request', 'rotate 需要 credentialHash 与 passwordWrap 两个字段（且形状要对）。');
     }
 
     try {
       await deps.server.rotatePassword({
         ...credentials,
         credentialHash,
-        passwordWrap: record.passwordWrap,
+        passwordWrap: record?.passwordWrap,
       });
       return json({ status: 'rotated' });
     } catch (error) {
-      return toErrorResponse(error);
+      return toErrorResponse(error, deps);
     }
   }
 
   return fail(404, 'not-found', '没有这个接口。');
 }
 
-function toErrorResponse(error: unknown): Response {
+function toErrorResponse(error: unknown, deps: SyncHttpDeps): Response {
   if (error instanceof SyncServerError) return fail(error.status, error.code, error.message);
-  const message = error instanceof Error ? error.message : String(error);
-  return fail(500, 'internal', `服务端出错了：${message}`);
+  // 审计 C9：内部异常原文只进日志，对外一句通用的话
+  deps.onInternalError?.(error);
+  return fail(500, 'internal', '服务端出错了，请稍后再试。');
 }

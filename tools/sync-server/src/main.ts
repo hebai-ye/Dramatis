@@ -9,6 +9,7 @@ import {
   createSqliteSyncStore,
   createSyncServer,
   handleSyncRequest,
+  resolveClientKey,
   type SyncServerLimits,
 } from '../../../packages/core/src/index.js';
 
@@ -41,6 +42,11 @@ export interface ServerConfig {
    * 这里留几个口子让运维可以按自己的机器调，不用改代码。
    */
   limits: Partial<SyncServerLimits>;
+  /**
+   * 前面有几层可信反向代理（审计 A8，默认 1）。限流认来源时从 `X-Forwarded-For`
+   * 的右边数这么多跳（一层时优先 `X-Real-IP`）；0 = 不信任何转发头。
+   */
+  trustedProxyHops: number;
 }
 
 const DEFAULT_DATA = './data/sync.db';
@@ -89,12 +95,16 @@ export function readConfig(argv: readonly string[], env: Record<string, string |
   const pushesPerMinute = positive('pushes-per-minute', 'DRAMATIS_SYNC_PUSHES_PER_MINUTE');
   const spacesPerMinute = positive('spaces-per-minute', 'DRAMATIS_SYNC_SPACES_PER_MINUTE');
   const maxSpaces = positive('max-spaces', 'DRAMATIS_SYNC_MAX_SPACES');
+  const metaReadsPerMinute = positive('meta-reads-per-minute', 'DRAMATIS_SYNC_META_READS_PER_MINUTE');
+  const hopsRaw = pick('trusted-proxy-hops', 'DRAMATIS_SYNC_TRUSTED_PROXY_HOPS');
+  const hops = hopsRaw === undefined ? Number.NaN : Number(hopsRaw);
   const limits: Partial<SyncServerLimits> = {
     ...(maxRecords === undefined ? {} : { maxRecordsPerSpace: maxRecords }),
     ...(maxMb === undefined ? {} : { maxBytesPerSpace: maxMb * 1024 * 1024 }),
     ...(pushesPerMinute === undefined ? {} : { pushesPerMinute }),
     ...(spacesPerMinute === undefined ? {} : { spacesPerMinute }),
     ...(maxSpaces === undefined ? {} : { maxSpaces }),
+    ...(metaReadsPerMinute === undefined ? {} : { metaReadsPerMinute }),
   };
 
   return {
@@ -107,6 +117,8 @@ export function readConfig(argv: readonly string[], env: Record<string, string |
         ? { cert: readFileSync(certPath, 'utf8'), key: readFileSync(keyPath, 'utf8') }
         : null,
     limits,
+    // 写错（负数、非整数）就退回默认的 1 层，而不是变成「谁的头都信」
+    trustedProxyHops: Number.isInteger(hops) && hops >= 0 && hops <= 10 ? hops : 1,
     quiet: flags.has('quiet') || env.DRAMATIS_SYNC_QUIET === '1',
   };
 }
@@ -123,16 +135,30 @@ function concat(chunks: readonly Uint8Array[]): Uint8Array<ArrayBuffer> | undefi
   return merged;
 }
 
-/** 请求体上限：正常同步一次几 KB，给 8 MB 已经是宽容的防线。 */
+/**
+ * 请求体上限：正常同步一次几 KB 到几百 KB（客户端 200 条一包），8 MB 是宽容的防线。
+ *
+ * 不降到 1-2 MB（审计 A7 的建议之一）：一包 200 条长消息可能超过 2 MB，超了客户端
+ * 那一包就永远推不上去。磁盘被刷满的风险由「整行计配额 + 字段长度上限」挡住。
+ * 放在 nginx 后面时，`client_max_body_size` 要不小于这个值（见 SYNC-DEPLOY.md）。
+ */
 const MAX_BODY_BYTES = 8 * 1024 * 1024;
+
+/** 请求体超限（审计 C9）：回 413，而不是笼统的 500。 */
+class BodyTooLargeError extends Error {
+  override readonly name = 'BodyTooLargeError';
+}
 
 async function readBody(request: IncomingMessage): Promise<Uint8Array<ArrayBuffer> | undefined> {
   if (request.method === 'GET' || request.method === 'HEAD') return undefined;
+  // 声明了长度就先看一眼：明摆着超的不必读进内存
+  const declared = Number(request.headers['content-length']);
+  if (Number.isFinite(declared) && declared > MAX_BODY_BYTES) throw new BodyTooLargeError('请求体太大');
   const chunks: Uint8Array[] = [];
   let size = 0;
   for await (const chunk of request) {
     size += chunk.byteLength;
-    if (size > MAX_BODY_BYTES) throw new Error('请求体太大');
+    if (size > MAX_BODY_BYTES) throw new BodyTooLargeError('请求体太大');
     chunks.push(chunk);
   }
   return concat(chunks);
@@ -155,6 +181,11 @@ export function startServer(config: ServerConfig): RunningServer {
   const log = (line: string): void => {
     if (config.quiet) return;
     process.stdout.write(`${new Date().toISOString()} ${line}\n`);
+  };
+  /** 内部异常只进服务端日志（stderr，quiet 也照写），不回给客户端（审计 C9）。 */
+  const logError = (where: string, error: unknown): void => {
+    const detail = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
+    process.stderr.write(`${new Date().toISOString()} [error] ${where} ${detail}\n`);
   };
 
   const handler = (request: IncomingMessage, response: ServerResponse): void => {
@@ -179,20 +210,18 @@ export function startServer(config: ServerConfig): RunningServer {
         const body = await readBody(request);
 
         /*
-         * 给公开接口限流用的「来源」（顺序 61）。
+         * 给公开接口限流用的「来源」（顺序 61，审计 A8）。
          *
          * 站在 nginx 后面时 socket 地址永远是 127.0.0.1，那样限流就退化成
-         * 「全服务器共用一个窗口」——所以**来自本机**的请求才信 `x-forwarded-for`
-         * 的第一跳（反代一定会覆盖这个头；外部直连的请求到不了这里）。
-         * 不配反代的直连用 socket 地址，同样有效。
+         * 「全服务器共用一个窗口」——所以**来自本机**的请求才看转发头，而且从右边数：
+         * `X-Real-IP`（一层代理时）或 `X-Forwarded-For` 的倒数第 N 跳。以前取第一跳，
+         * 那是客户端自己能填的。规则写在内核的 `resolveClientKey` 里，有单测。
          */
-        const forwarded = request.headers['x-forwarded-for'];
-        const forwardedFirst = (Array.isArray(forwarded) ? forwarded[0] : forwarded)?.split(',')[0]?.trim();
-        const socketAddress = request.socket.remoteAddress ?? '';
-        const fromLoopback =
-          socketAddress === '127.0.0.1' || socketAddress === '::1' || socketAddress === '::ffff:127.0.0.1';
-        const clientKey =
-          fromLoopback && forwardedFirst !== undefined && forwardedFirst !== '' ? forwardedFirst : socketAddress;
+        const clientKey = resolveClientKey({
+          socketAddress: request.socket.remoteAddress ?? '',
+          headers: request.headers,
+          trustedProxyHops: config.trustedProxyHops,
+        });
 
         const handled = await handleSyncRequest(
           new Request(`http://${host}${path}`, {
@@ -204,6 +233,9 @@ export function startServer(config: ServerConfig): RunningServer {
             server,
             cors: { allowedOrigins: config.allowedOrigins },
             ...(clientKey === '' ? {} : { clientKey }),
+            onInternalError: (error) => {
+              logError(`${request.method ?? 'GET'} ${path.split('?')[0] ?? ''}`, error);
+            },
           },
         );
 
@@ -214,13 +246,23 @@ export function startServer(config: ServerConfig): RunningServer {
         });
         response.end(text);
       } catch (error) {
-        response.statusCode = 500;
         response.setHeader('content-type', 'application/json; charset=utf-8');
-        response.end(
-          JSON.stringify({
-            error: { code: 'internal', message: error instanceof Error ? error.message : String(error) },
-          }),
-        );
+        if (error instanceof BodyTooLargeError) {
+          response.statusCode = 413;
+          response.end(
+            JSON.stringify({
+              error: {
+                code: 'payload-too-large',
+                message: `请求体太大（上限 ${String(MAX_BODY_BYTES / 1024 / 1024)} MB）。`,
+              },
+            }),
+          );
+          return;
+        }
+        // 审计 C9：异常原文（可能带路径、SQL）只进日志，对外一句通用的话
+        logError(`${request.method ?? 'GET'} ${path.split('?')[0] ?? ''}`, error);
+        response.statusCode = 500;
+        response.end(JSON.stringify({ error: { code: 'internal', message: '服务端出错了，请稍后再试。' } }));
       } finally {
         // 只记方法、路径、状态、耗时——**不记 Authorization，也不记请求体**
         const status = response.statusCode;
@@ -239,6 +281,7 @@ export function startServer(config: ServerConfig): RunningServer {
         `  监听：${scheme}://${config.host}:${String(config.port)}`,
         `  数据：${config.dataPath}`,
         `  跨源：${config.allowedOrigins.length === 0 ? '只允许同源（没配 DRAMATIS_SYNC_ORIGINS）' : config.allowedOrigins.join('、')}`,
+        `  可信代理：${String(config.trustedProxyHops)} 层（限流认来源时从 X-Forwarded-For 右边数；0 = 只看 socket）`,
         '  提示：服务端只存密文与哈希，日志不记录凭证与请求体。',
       ].join('\n'),
     );

@@ -1,4 +1,5 @@
 export * from './auto-sync.js';
+export * from './client-key.js';
 export * from './credential.js';
 export * from './http.js';
 export * from './http-client.js';

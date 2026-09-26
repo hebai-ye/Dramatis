@@ -4227,7 +4227,7 @@ v12 的三个判断都是有意的：
 
 - 不要写注释、不要写标题、不要写「正文如下」这类说明行；
 - 首尾空白与 BOM 会被 `trim()` 吃掉，正文中间的空行照原样保留；
-- 现在是**空文件**（等用户粘贴）：此时菜单显示「尚未配置（应用里那份正文还是空的）」，打开开关也不会改变提示词。
+- 落进 main 时是**空文件**（等用户粘贴）：此时菜单显示「尚未配置（应用里那份正文还是空的）」，打开开关也不会改变提示词。**用户 2026-09-27 已粘上**（9059 B / 102 行，`trim()` 后 3325 字符，见本节末尾「2026-09-27 补」）。
 
 读它的是 **`apps/web/src/prompt/unlimitedPreset.ts`**：`import raw from './unlimited-preset.txt?raw';` + `export const UNLIMITED_PROMPT = raw.trim();`（Vite 的 `?raw`，类型来自 `apps/web/tsconfig.json` 里已有的 `"types": ["vite/client"]`）。该文件的 doc 注释记了「往哪儿粘」「为什么和顺序 89 的说法反了」「它怎么进提示词」。
 
@@ -4261,11 +4261,24 @@ v12 的三个判断都是有意的：
 
 ### 没验的 / 已知遗留
 
-1. **正文会进公开产物**：粘上之后 `assets/index-*.js` 里能原样读到它（顺序 89 之前实测过一次：包体涨约 8.95 kB）。这是用户接受的取舍；要保密得走服务端按账户下发或随账户加密同步（TASKS 顺序 68b）。
-2. **仓库里那份文件现在是空的**：用户粘上之前，菜单显示「尚未配置」，开关不改变提示词。
+1. **正文会进公开产物**：粘上之后 `assets/index-*.js` 里能原样读到它（顺序 89 之前实测过一次：包体涨约 8.95 kB；2026-09-27 实测 646.62 kB → 655.34 kB，+8.72 kB）。这是用户接受的取舍；要保密得走服务端按账户下发或随账户加密同步（TASKS 顺序 68b）。
+2. **仓库里那份文件当时是空的**（2026-09-27 用户已粘上，见下）。
 3. **老库里那份旧副本不被清理**：`modes.unlimitedPrompt` 残留数据留在 IndexedDB 里没人读，不进同步、不占提示词。
 4. **顺序 89 的第一条遗留自动消失**：「换设备/清库后无法再配置无限制提示词」因为正文随应用走而不成立（那条遗留已在 `docs/TASKS.md` 的顺序 89 小节标注「顺序 92 已解」）。
 5. **文档口径已同步**：`docs/ROLEPLAY-PROMPT.md` 的无限制模式一节整节重写（原文写着「只存在你自己的浏览器里」「别人打开这个站点看不到它」，与本批事实相反）。
-6. **真机没验**（归 Codex）；**本批未 push、未部署**——要等用户粘贴正文并重新构建后才谈上线。
+6. **真机没验**（归 Codex）。**本批（`00b8f5d`）当时未 push、未部署。**
+
+### 2026-09-27 补：正文粘贴完成 + 前端单独上线（push 未成）
+
+用户指令（原话）：「粘贴完成，请push部署」。
+
+- **粘贴核验**：`apps/web/src/prompt/unlimited-preset.txt` = **9059 B / 102 行 / `trim()` 后 3325 字符**（`sha256` 前 16 位 `41C572F69F98D939`）；`git status` 只有这一个文件被改。仓库 `.gitattributes` 是 `* text=auto eol=lf`，工作区那份是 CRLF（`git ls-files --eol` → `i/lf w/crlf`），与仓库里其它文本文件一致。
+- **提交**：`14d1b96`「顺序 92 补：填入无限制模式的固定正文（用户粘贴完成）」（1 文件 / 102 行新增）。
+- **五项门禁（重跑，全绿）**：typecheck ✓、lint ✓（281 文件，0 error / 0 warning）、test ✓（Core 70 文件 / 809 条、Web 13 文件 / 45 条）、build ✓、build:sync-server ✓。构建产物 `apps/web/dist/assets/index-BBkcTtuN.js` **655.34 kB / gzip 209.43 kB**（顺序 90 的 `index-D2eEP_2v.js` 646.62 kB；差的 8.72 kB 就是这段正文）、`index-CmI7ar9V.css` 38.28 kB。
+- **产物核对（不泄露正文的查法）**：脚本里把正文读成变量、只打印布尔值——「正文首行是否出现在 `dist/assets/index-BBkcTtuN.js` 里」= `True`（正文首行 18 字符）。**没有任何文档记录正文本身**。
+- **上线范围：只重新部署前端**。`git log aa4f724..HEAD -- tools/ packages/core/src/sync/` 为空 ⇒ 自上次整批上线（`aa4f724`）以来同步服务端源码没动，`/opt/dramatis-sync/dist` 与服务不重启（复查 `systemctl is-active` 与 `/sync/health` 仍 `{"ok":true}`，uptime ≈ 6 天 10 小时）。
+- **部署过程**：`ssh dramatis 'rm -rf /tmp/dist-web-new'` → `scp -r -q apps/web/dist dramatis:/tmp/dist-web-new`（25 MB）→ `ls /tmp/dist-web-new/index.html` 确认到齐 → `sudo mv /var/www/dramatis /var/www/dramatis.bak-20260927-005736 && sudo mv /tmp/dist-web-new /var/www/dramatis && sudo chown -R root:root /var/www/dramatis && sudo chmod -R a+rX /var/www/dramatis`（照 `deploy/LOCAL-NOTES.md` 的「先确认新的到 → 把旧的改名 → 再换，全程不删」）。
+- **线上自查**（本机直连站点，`:8443`）：首页 → 200 / 1342 B，且引用 `assets/index-BBkcTtuN.js`；`/assets/index-BBkcTtuN.js` → 200 / **655 347 B**（与本地构建字节数一致）且**含正文首行**；`/sync/health` → 200 `{"ok":true,"uptimeMs":23209408}`。
+- **push 未成**：`git push origin main` 报 `fatal: unable to access 'https://github.com/hebai-ye/Dramatis.git/': Failed to connect to github.com port 443 via 127.0.0.1 after 2120 ms: Could not connect to server`；`git config` 里 `http.proxy`/`https.proxy` = `http://127.0.0.1:7897`，而本机**只有 `clash-verge-service` 服务进程在跑、Clash Verge 的 GUI 没开**（7897 无监听）。绕开代理直连（`git -c http.proxy= -c https.proxy= push`）报 `Recv failure: Connection was reset`（GitHub 直连被重置；`Test-NetConnection github.com -Port 443` 虽然是 `True`，TLS 阶段还是被切）。**等用户打开 Clash Verge 后重试**；当前 `main` 领先 `origin/main` **5 个提交**（`14d1b96`、`00b8f5d`、`49804d7`、`1a4779d`、`e63baf0`）。
 
 

@@ -43,13 +43,23 @@
 
 - **来源**：用户当天改了口径。原话：「无限制模式的预设词是固定的，是我在文件中存储的，并非本机独有，是所有的无限制模式都是这一份词，如果你找不出那么便在一个新的地方存储他，为我指出应在文件的哪里复制粘贴。」先前（顺序 89/68a）把这份正文当**用户数据**存本机 `meta`，理由是「公开托管的静态站点，写进源码就等于公开」；用户这次明确要求它**是所有对话共用的一份固定正文**，并选了「仓库里指定一个文件给你粘（最省事，但会泄露）」这个方案——**接受正文进公开产物**，这是用户本人的新裁定。
 - **先查再改**：全树（含 gitignore 的 `deploy/LOCAL-NOTES.md`）都搜不到这段正文；它此前只活在**浏览器自己的 IndexedDB** 的 `meta` 键 `modes.unlimitedPrompt` 里——所以换设备/清库就没了，恰恰不是用户说的「并非本机独有」。
-- **正文位**：新建 **`apps/web/src/prompt/unlimited-preset.txt`**（**整份文件就是正文**，不加注释/标题行；现在是**空文件，等用户粘贴**)，`apps/web/src/prompt/unlimitedPreset.ts` 用 Vite 的 `?raw` 读成字符串导出 `UNLIMITED_PROMPT = raw.trim()`；`apps/web/tsconfig.json` 已有 `"types": ["vite/client"]`，`?raw` 自带类型。
+- **正文位**：新建 **`apps/web/src/prompt/unlimited-preset.txt`**（**整份文件就是正文**，不加注释/标题行；本批落进 main 时是空文件，**用户当天稍后已粘上**：9059 B / 102 行、`trim()` 后 3325 字符，见下面「顺序 92 补」一节），`apps/web/src/prompt/unlimitedPreset.ts` 用 Vite 的 `?raw` 读成字符串导出 `UNLIMITED_PROMPT = raw.trim()`；`apps/web/tsconfig.json` 已有 `"types": ["vite/client"]`，`?raw` 自带类型。
 - **两个入口都取同一常量**：`apps/web/src/App.tsx`（`useUnlimitedPrompt(db)` → `UNLIMITED_PROMPT`，菜单只用来判断「配没配好」）与 `apps/web/src/hooks/useTurnRunner.ts`（原来的 `await repository?.getMeta<string>(META_KEYS.unlimitedPrompt)` → `UNLIMITED_PROMPT`，再进 `AssembleInput.unlimitedPrompt`）。core 侧契约不变：`assemblePrompt` 只认调用方给的字符串，`buildUnlimitedModeBlock`（`UNLIMITED_BLOCK_ID = 'unlimited'`、priority `system`、`droppable: false`）照旧；模式关或正文空就不加块。
 - **撤掉旧通路**：**删除** `apps/web/src/lib/useUnlimitedPrompt.ts`（连 `UnlimitedPromptApi`）；`packages/core/src/storage/repository.ts` 的 `META_KEYS.unlimitedPrompt`（值 `'modes.unlimitedPrompt'`）整条删掉——本机库里残留的值从本批起既不读也不写，只是无用数据（不做清理）。`useTurnRunner` 里那个只为它存在的 `repository` 变量与依赖数组项一并删掉（lint 的 `useExhaustiveDependencies` 会点出来）。
 - **界面**：照旧只留**对话级**勾选框，不渲染正文、**不显示字数**、无编辑口；文案从「已配置（内容不在此显示，也不参与同步）」改成「已随应用一起固定提供（正文不在此显示）」，空正文时是「尚未配置（应用里那份正文还是空的）」。
 - **文档改写**：`docs/ROLEPLAY-PROMPT.md` 的「当前对话的额外提示：无限制模式」一节按新事实重写（原文写着「只存在你自己的浏览器里」「别人打开这个站点看不到它」，与本批相反）；`packages/core/src/prompt/{unlimited,assemble}.ts` 与 `prompt/assemble.test.ts` 的注释改口；`docs/TASKS.md` 顺序 92 行 + 处理表，并给顺序 89 那条「换设备后无法再配置」的遗留标注**已解**。
 - **五项门禁全绿**：typecheck ✓、lint ✓（281 文件，0 error / 0 warning）、test ✓（Core **70 文件 / 809 条**、Web 13 文件 / 45 条）、build ✓、build:sync-server ✓。第一轮 lint 报 1 个 `useTurnRunner.ts` 的 `useExhaustiveDependencies`（`repository` 成了多余依赖），删掉后重跑干净。
-- **遗留**：① 正文会进公开产物 `assets/index-*.js`（实测过一次：填进去包体涨约 8.95 kB），是用户接受的取舍，要保密得走服务端下发或加密同步（TASKS 顺序 68b）；② 仓库里那份文件现在是空的，用户粘上之前打开开关不改变提示词；③ 老库里那份旧副本不被清理（无害）；④ 真机没验。**本批未 push、未部署**（要粘贴正文并重新构建后才谈上线）。
+- **遗留**：① 正文会进公开产物 `assets/index-*.js`（实测过一次：填进去包体涨约 8.95 kB），是用户接受的取舍，要保密得走服务端下发或加密同步（TASKS 顺序 68b）；② 仓库里那份文件当时是空的（用户当天稍后已粘上，见下一节）；③ 老库里那份旧副本不被清理（无害）；④ 真机没验。**本批未 push、未部署**（要粘贴正文并重新构建后才谈上线）。
+
+### 2026-09-27：顺序 92 补——无限制模式正文粘贴完成、前端单独上线（**push 未成**：本机代理没开）
+
+- **改动**：用户把固定正文粘进 `apps/web/src/prompt/unlimited-preset.txt`（9059 B / 102 行，`trim()` 后 3325 字符）。它是 `?raw` 数据文件，没有代码语义改动，走的是同一批顺序 92 的通路：`apps/web/src/prompt/unlimitedPreset.ts` → `apps/web/src/App.tsx` 与 `apps/web/src/hooks/useTurnRunner.ts` → `AssembleInput.unlimitedPrompt`。
+- **提交**：`14d1b96`「顺序 92 补：填入无限制模式的固定正文（用户粘贴完成）」（1 文件 / 102 行新增）。仓库 `.gitattributes` 是 `* text=auto eol=lf`，本机工作区那份是 CRLF（`git ls-files --eol` = `i/lf w/crlf`），与仓库里其它文本文件一致。
+- **五项门禁全绿（重跑）**：typecheck ✓、lint ✓（281 文件，0 error / 0 warning）、test ✓（Core **70 文件 / 809 条**、Web 13 文件 / 45 条）、build ✓、build:sync-server ✓。构建产物 `apps/web/dist/assets/index-BBkcTtuN.js` **655.34 kB / gzip 209.43 kB**（顺序 90 的 `index-D2eEP_2v.js` 是 646.62 kB，差 +8.72 kB 就是这段正文），css 仍是 `index-CmI7ar9V.css` 38.28 kB；另外用「正文首行是否出现在产物里」核对过，`True`（没有把正文内容写进任何文档）。
+- **上线范围**：**只重新部署前端**。`git log aa4f724..HEAD -- tools/ packages/core/src/sync/` 为空——自上次整批上线（`aa4f724`）以来同步服务端源码没动过，所以 `/opt/dramatis-sync/dist` 与服务不动（health 复查仍 `{"ok":true}`，uptime ≈ 6 天 10 小时）。网页 `scp -r apps/web/dist` 到 `/tmp/dist-web-new`（25 MB）后按「先确认新的到齐 → 把旧的改名 → 再换」换成 `/var/www/dramatis`（`chown root:root` + `chmod -R a+rX`），旧目录留成 `/var/www/dramatis.bak-20260927-005736`。
+- **线上自查**（本机直连站点，`:8443`）：首页 200 / 1342 B 且引用 `assets/index-BBkcTtuN.js`；该 JS 200 / **655 347 B**（与本机构建一致）且**含正文首行**；`/sync/health` 200 `{"ok":true,"uptimeMs":23209408}`。真机 / 真模型仍未验（归 Codex）。
+- **push 卡住**：`git push origin main` 失败——`http.proxy`/`https.proxy` 指向 `http://127.0.0.1:7897`，而本机 **Clash Verge 的 GUI 没在跑**（只有 `clash-verge-service` 服务进程，7897 没有监听）：报 `Failed to connect to github.com port 443 via 127.0.0.1`；绕开代理直连报 `Recv failure: Connection was reset`（GitHub 直连被重置）。等用户把 Clash Verge 打开后重试 `git push origin main`。**当前 main 比 origin/main 领先 5 个提交**（`14d1b96`、`00b8f5d`、`49804d7`、`1a4779d`、`e63baf0`）。
+
 
 ### 2026-09-26：顺序 90 落进 main（体验反馈第二批：删掉卡上的场景设定 / 开场白 / 高级字段 / 对话示例，「本场场记」整块撤下，编辑区不再滑动）
 

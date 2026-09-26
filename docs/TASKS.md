@@ -103,7 +103,7 @@
 | 89 | **用户 2026-09-26 体验反馈第一批：初始好感 / 各模式生效 / 默认系统预设** `[体]` | **P2** | ① 角色一出场好感为 0 → 交流充满敌意（用户要初始 40% 且可手动调）；② 「＋」里几种模式实际只有两条落到提示词，`historyMode`/无限制模式模型看不见；③ 无限制模式正文在界面上可编辑、还显示字数（用户：不可更改、不可阅读） | ✅ 2026-09-26（`INITIAL_PLAYER_AFFINITY = 0.4` + 迁移 v12；`describeModes` 补齐；无限制模式只留开关；见 EVAL 第七十九节） |
 | 90 | **用户 2026-09-26 体验反馈第二批：界面裁剪与「本场场记」** `[体]` | **P2** | 删卡级场景设定 / 开场白 / 高级字段 / 对话示例（用户裁定「彻底删除已有数据」）；「本场场记」整块不显示；玩家可编辑区域不可滑动（裁定「随内容自动长高 + 拖动隔离」两个都要） | ✅ 2026-09-26（`Card` 删 7 字段 + 迁移 v13 + 三条复活通路堵住；场记整块撤下；编辑区 `field-sizing: content`；见 EVAL 第八十节） |
 | 91 | **用户 2026-09-26 体验反馈第三批：两个 bug** `[体]` | **P2** | ① 场景设定输入区在笔画输入法下逐笔落库（`SceneDialog.tsx` 漏了 `useDraftField`）；② 流式结束到消息出现之间「先消失、过一会儿整条出现」+ 卡顿 | ⬜ 下一批 |
-| 92 | **无限制模式的正文改成仓库里固定一份（用户改口径）** `[体]` | **P2** | 用户 2026-09-26 裁定：这份词是固定的、所有无限制模式共用同一份 → 正文落到仓库文件，应用侧两个入口都从它取；老的本机 meta 键 `modes.unlimitedPrompt` 不再读写；界面照旧不可改、不可读、不显示字数 | ✅ 2026-09-26（正文位 `apps/web/src/prompt/unlimited-preset.txt` + `unlimitedPreset.ts`；删 `useUnlimitedPrompt`；见 EVAL 第八十一节） |
+| 92 | **无限制模式的正文改成仓库里固定一份（用户改口径）** `[体]` | **P2** | 用户 2026-09-26 裁定：这份词是固定的、所有无限制模式共用同一份 → 正文落到仓库文件，应用侧两个入口都从它取；老的本机 meta 键 `modes.unlimitedPrompt` 不再读写；界面照旧不可改、不可读、不显示字数 | ✅ 2026-09-26（正文位 `apps/web/src/prompt/unlimited-preset.txt` + `unlimitedPreset.ts`；删 `useUnlimitedPrompt`；见 EVAL 第八十一节）／**2026-09-27 补**：用户粘上正文（9059 B / 102 行）+ 前端单独上线（`14d1b96`；同 EVAL 第八十一节、STATUS 2026-09-27 一节；**push 未成——本机代理没开**） |
 
 依赖关系：58 复用 57 的「按关键词取回」；66 在 59 之后；65 可以插在任何两批之间；80 依赖 68 已经落下的 `updatedAt` 不变量与迁移 11。
 
@@ -225,18 +225,18 @@ A4 的 core 侧（`packages/core/src/sync/loop.ts:153-162` 的 `serverHead < pul
 
 | 要点 | 处理 | 落点 |
 | --- | --- | --- |
-| 正文放哪（用户裁定：仓库里指定一个文件） | 新建 **`apps/web/src/prompt/unlimited-preset.txt`**——**整份文件就是正文**（不加注释/标题），现在**是空的，等用户粘贴**；`apps/web/src/prompt/unlimitedPreset.ts` 用 Vite 的 `?raw` 读进来，导出 `UNLIMITED_PROMPT = raw.trim()` | `apps/web/src/prompt/unlimited-preset.txt`、`apps/web/src/prompt/unlimitedPreset.ts` |
+| 正文放哪（用户裁定：仓库里指定一个文件） | 新建 **`apps/web/src/prompt/unlimited-preset.txt`**——**整份文件就是正文**（不加注释/标题）；本批落进 main 时是空文件，**用户 2026-09-27 已粘上（9059 B / 102 行，`trim()` 后 3325 字符）**；`apps/web/src/prompt/unlimitedPreset.ts` 用 Vite 的 `?raw` 读进来，导出 `UNLIMITED_PROMPT = raw.trim()` | `apps/web/src/prompt/unlimited-preset.txt`、`apps/web/src/prompt/unlimitedPreset.ts` |
 | 装配从哪取 | 应用侧两个入口都改成取同一个常量：`App.tsx`（菜单的「配没配好」）与 `hooks/useTurnRunner.ts`（真正生成时塞进 `AssembleInput.unlimitedPrompt`）；core 侧契约不变（只认调用方给的字符串） | `apps/web/src/App.tsx`、`apps/web/src/hooks/useTurnRunner.ts`、`packages/core/src/prompt/{assemble,unlimited}.ts` 注释 |
 | 撤掉旧的「用户数据」通路 | **删除** `apps/web/src/lib/useUnlimitedPrompt.ts`（含 `UnlimitedPromptApi`）；`META_KEYS.unlimitedPrompt` 这个键从 `packages/core/src/storage/repository.ts` 删掉（本机库里残留的值变成无用数据，不自动清、也不影响任何行为） | `apps/web/src/lib/useUnlimitedPrompt.ts`（删）、`packages/core/src/storage/repository.ts` |
 | 界面（用户要求不可更改、不可阅读） | 照旧只留对话级勾选框：不渲染正文、**不显示字数**、无编辑口；只把文案从「内容不在此显示，也不参与同步」改成「已随应用一起固定提供（正文不在此显示）」 | `apps/web/src/components/MainChat.tsx` |
 
 **顺序 92 自己带出来的遗留（别当成已解决）**：
 
-- **正文现在会进公开产物**：`assets/index-*.js` 里能原样读到这段文字（实测过一次：填进去包体会涨约 8.95 kB）。这是用户 2026-09-26 的明确取舍，不是回归；要保密就得走服务端按账户下发或加密同步（TASKS 顺序 68b）。
-- **仓库里那份文件现在是空的**：所以在用户粘上之前，菜单显示「尚未配置（应用里那份正文还是空的）」，打开开关也不会改变提示词。**「粘哪里」的答案就是 `apps/web/src/prompt/unlimited-preset.txt`**。
+- **正文现在会进公开产物**：`assets/index-*.js` 里能原样读到这段文字（实测过一次：填进去包体会涨约 8.95 kB；2026-09-27 实测 `index-D2eEP_2v.js` 646.62 kB → `index-BBkcTtuN.js` 655.34 kB，+8.72 kB）。这是用户 2026-09-26 的明确取舍，不是回归；要保密就得走服务端按账户下发或加密同步（TASKS 顺序 68b）。
+- **正文已于 2026-09-27 贴上并上线**：文件 9059 B / 102 行（`trim()` 后 3325 字符），菜单不再显示「尚未配置」；**「以后要改这段词就改 `apps/web/src/prompt/unlimited-preset.txt` 并重新构建/部署**，不要加注释或标题行（整份文件都是正文）。
 - **老库里那份旧副本不会被清**：`modes.unlimitedPrompt` 留下的数据仍在 IndexedDB 里，只是没人读（迁移里没做清理，也没必要——它不进同步、不占提示词）。
 - **换设备/清库的老遗留自动消失**：顺序 89 那条「换设备后无法再配置」因为正文随应用走而不成立了；[ROLEPLAY-PROMPT.md](./ROLEPLAY-PROMPT.md) 里相应的一节已改写。
-- **真机没验**：正文粘贴后在真实模型下的效果归 Codex；本批**没有跑真机，也没部署**。
+- **真机没验**：正文粘贴后在真实模型下的效果归 Codex；本批**跑了五项门禁、前端已单独上线（2026-09-27，`/var/www/dramatis`，旧目录 `dramatis.bak-20260927-005736`）、但没有真机验证**；`git push` 因本机代理没开而未成（main 领先 origin/main 5 个提交）。
 
 **顺序 82 合并前必须先改的三处 —— 已改完（2026-09-26，随 `5014509` 落进 main）**：
 

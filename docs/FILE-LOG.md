@@ -1354,7 +1354,7 @@ TASKS 第〇节顺序 68。用户裁定「A+B 推进」；原方案里的 `limit
 
 | 文件 | 动作 | 内容 |
 | --- | --- | --- |
-| `apps/web/src/prompt/unlimited-preset.txt` | **新增** | 粘贴位：**整份文件的内容就是正文**（不加注释/标题行）；当前是**空文件**，等用户粘贴 |
+| `apps/web/src/prompt/unlimited-preset.txt` | **新增** | 粘贴位：**整份文件的内容就是正文**（不加注释/标题行）；落进 main 时是**空文件**，**2026-09-27 用户已粘上（9059 B / 102 行，`trim()` 后 3325 字符，提交 `14d1b96`）** |
 | `apps/web/src/prompt/unlimitedPreset.ts` | **新增** | `import raw from './unlimited-preset.txt?raw';` + `export const UNLIMITED_PROMPT = raw.trim();`，doc 记「往哪儿粘」「为什么和顺序 89 的说法反了」「它怎么进提示词」 |
 | `apps/web/src/App.tsx` | 改 | `useUnlimitedPrompt(db)` → `UNLIMITED_PROMPT`；import 换成 `./prompt/unlimitedPreset`；doc 注释重写成「仓库固定一份、会进公开网页包」 |
 | `apps/web/src/components/MainChat.tsx` | 改 | prop 类型 `UnlimitedPromptApi` → `string`；`unlimitedReady` 用 `unlimitedPrompt.trim()`；「＋」菜单的注释与文案改成「仓库里固定一份／已随应用一起固定提供（正文不在此显示）」 |
@@ -1369,6 +1369,18 @@ TASKS 第〇节顺序 68。用户裁定「A+B 推进」；原方案里的 `limit
 | `docs/STATUS.md` | 改 | 新增顺序 92 一节（在顺序 90 之前）；文档地图里 `ROLEPLAY-PROMPT.md` 那行补上「与无限制模式固定正文」 |
 | `docs/EVAL.md` | 改 | 新增**第八十一节**（来源原话、先查再改的结论、四个选项与选择、正文位、两个入口、撤掉的旧通路、界面、测试与门禁含第一轮 lint 红、六条遗留） |
 | `docs/FILE-LOG.md` | 改 | 本节；「几点注意」顺延为**七十**（1166 / 1223 / 1252 / 1276 / 1315 五处的交叉引用补上「顺序 92 后现为**七十**」） |
+
+**2026-09-27 补（同一个顺序号 92，单独一个提交 `14d1b96`）**：用户把固定正文粘进粘贴位（9059 B / 102 行，`trim()` 后 3325 字符），随后只重新部署了**前端**。
+
+| 文件 | 动作 | 内容 |
+| --- | --- | --- |
+| `apps/web/src/prompt/unlimited-preset.txt` | 改 | 填入正文；`git ls-files --eol` = `i/lf w/crlf`（`.gitattributes` 是 `* text=auto eol=lf`，与仓库其它文本文件一致） |
+| `docs/ROLEPLAY-PROMPT.md` | 改 | 「留空等于没有」那条改成「2026-09-27 起已经不是空的」 |
+| `docs/TASKS.md` | 改 | 计划表 92 行补「2026-09-27 补」；处理表的正文位、遗留两条、真机那条同步成「已粘贴 / 前端已上线 / push 未成」 |
+| `docs/STATUS.md` | 改 | 新增「2026-09-27：顺序 92 补——正文粘贴完成、前端单独上线（push 未成）」一节；顺序 92 那节里的「空文件」与「本批未 push、未部署」一并改口 |
+| `docs/EVAL.md` | 改 | 第八十一节末尾追加「2026-09-27 补：正文粘贴完成 + 前端单独上线（push 未成）」，并把遗留第 1/2/6 条改口 |
+| `docs/FILE-LOG.md` | 改 | 本节这段与上面那一行 |
+| （仓库外）`deploy/LOCAL-NOTES.md` | 改 | 记了这次上线的备份目录与命令（本机私有、不提交） |
 
 ## 七十、几点注意
 

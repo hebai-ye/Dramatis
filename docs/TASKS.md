@@ -115,11 +115,20 @@
 | A1、A13、C19、C20 | **已在 main**（顺序 81，`acb93dd`） | 分支 `96120d9` | ✅ |
 | A5、A11、A12、B3、B4、B8、B11、B12、B14、C1、C2、C4、C5、C6、C7（15 条） | 分支 `worktree-agent-a6adfa051fc0cc2bd`（3 提交） | 顺序 82 | ✅ **已在 main**（`5014509` + 三处必修）——其中 B11/B12 只接了一半，见下 |
 | A3、A4、A6、A7、A8、A9、B1、B16、C8、C9、C10、C11、C12、C14、C15（15 条） | 分支 `worktree-agent-a063c593632cf9c7c`（7 提交，Core 699 全绿） | 顺序 83 | ✅ **已在 main**（`6ce2b89` + 三条有疑的补丁，见下） |
-| A2、A4、A9、A10、B1、B2、B3、B5、B7、B13、B17、C3、C13、C17、C18（15 条） | 分支 `worktree-agent-a5ef9d3cfc346aade`（10 提交，Web 29 测试全绿） | 顺序 84 | 🟡 只读复核回执已到（见下）；**合并仍会被 git 拒**（`App.tsx`/`styles.css`/`components/*.tsx` 仍是别人的未提交改动） |
-| A14、A15、B19、B20、B21、C16、C21、C22（8 条）+ 已合入的 4 条 | 分支 `integration`（`a0ff3d8995c3dd432` + `96120d9`） | 顺序 85 | ⬜ 等脏文件提交（它改 `styles.css`） |
+| A2、A4、A9、A10、B1、B2、B3、B5、B7、B13、B17、C3、C13、C17、C18（15 条） | 分支 `worktree-agent-a5ef9d3cfc346aade`（10 提交，Web 29 测试全绿） | 顺序 84 | ✅ **已在 main**（`0ad316d`，21 文件 805+/135-，**零冲突**）；B3 按分支上的原子 `updateEntity` 收回，SW 静态白名单已含 `/portraits/`、`/brand/` |
+| A14、A15、B19、B20、B21、C16、C21、C22（8 条）+ 已合入的 4 条 | 分支 `integration`（`a0ff3d8995c3dd432` + `96120d9`） | 顺序 85 | ✅ **已在 main**（`554d5d2`）；唯一冲突 `.gitignore`，两边条目都留；CI 固定 actions 到 SHA 并加 `build:sync-server` 步骤 |
 | **B6、B9、B15（3 条）** | **已在 main**（顺序 86，本机提交） | 顺序 86 | ✅ |
 | **B18** | 用户 2026-09-26 裁定：**保持默认档位不变、不加提示**（理由见 EVAL 第七十四节） | 顺序 86 | ✅ 已裁定，不做改动 |
 | **B10** | **仍然没人修**：`a6adfa` 的 worktree 里有未提交的 `provider/openai-compatible.ts` + 新测试，本批故意不碰 | 待那批提交后单独做 | ⬜ |
+
+**84 / 85 合并当天那批脏改动的处理（2026-09-26，用户裁定「我代提交，解开 84/85」）**：
+
+- 另一条会话的 24 项未提交改动闲置约两小时（最新 mtime 16:35），`App.tsx`/`styles.css`/`components/*.tsx` 与 84、85 两条分支重叠，`git merge` 会被直接拒。经用户裁定由我**代提交**为 `3c2859f`（170 文件 742+/14-）：
+  五个 `apps/web/public/*.png` 图标换新、`brand/icon-master.png`、144 张 `/portraits/*.webp` 与 `thumbs`/`avatars`、`AvatarCropper.tsx` 与 `lib/{avatar-crop,portraits}.ts`（连两个 `.test.ts` 和 `portrait-catalog.json`）、
+  `CardDesigner/CastDetail/CastRail/MainChat/MessageBody/MessageItem/StreamingBubble/App.tsx` 与 `styles.css`、`tools/art/prepare-assets.py`、`art/{README.md,review-faces.jpg,review-portraits.jpg}`。
+  - 提交信息里写明这是**另一条会话的成果、由我代提交、未经逐行审阅**，只做了敏感信息排查（凭据 / 域名 / API Key / 私钥 / 内网地址全部零命中）。
+  - 用户第二项裁定「原图不进仓」→ `.gitignore` 新增 `art/source/`：48 张 1024×1536 原图（~114 MB）只留本机，仓库保留 README / 两张总览图 / 脚本，应用用的是 `apps/web/public/portraits/`（重跑 `python tools/art/prepare-assets.py` 可再生成）。
+- 84、85 合完后 `655230c`（顺序 85 收尾，7 文件 41+/21-）把 lint 从 13 error 收到 **0 error / 0 warning**，做法见下方缺口第 2 条。
 
 **重叠实现（合并时要逐条对账，不能两份都留）**：A4、A9、B1（`a063c` 与 `a5ef9` 各一份）；B3（`a6adfa` 与 `a5ef9` 各一份）。
 其余 41 条只有一条分支在修。清单是 `git log main..<分支>` 抽取提交信息里的编号核出来的，不是照报告抄的。
@@ -217,12 +226,14 @@ A4 的 core 侧（`packages/core/src/sync/loop.ts:153-162` 的 `serverHead < pul
 
 - `tools/*` **不在** `pnpm-workspace.yaml` 的 packages 里（只有 `packages/*`、`apps/*`），而 `pnpm test` = `pnpm -r test`
   → `tools/local-bridge/policy.test.mjs`（顺序 81 的 15 条断言，含真起进程的集成测试）**不在任何门禁里**，只能在根目录手动 `node --test tools/local-bridge/policy.test.mjs`。
-  顺序 85 的 `integration` 分支动了 `pnpm-workspace.yaml`，合并时确认它是否顺手补上了；没补就在顺序 86 里补。
-- 全仓 `pnpm lint` 现在**是红的（13 error）**，逐条经 `biome check --reporter=json` 归因，**全部来自另一条会话未提交**的
-  `apps/web/src/App.tsx` 与 `components/{AvatarCropper,CardDesigner,CastDetail,CastRail,StreamingBubble}.tsx`
-  （5×`organizeImports`、5×`format`、2×`a11y/useAriaPropsSupportedByRole`、1×`useExhaustiveDependencies`）。
-  另有一条 info 级 `biome.json:15`（`linter` 键在 Biome 2.5.14 已废弃，属顺序 85 的迁移项）与 `apps/web/public/sw.js` 的两条 info 级 `useTemplate`。
-  **归因方法**：本批只动 `tools/`，`pnpm exec biome check tools/local-bridge tools/desktop tools/fake-model` → `Checked 5 files. No fixes applied.`
+  顺序 85 的 `integration` 分支动了 `pnpm-workspace.yaml`，**合完 `554d5d2` 后确认它没补上**（packages 仍只有 `packages/*`、`apps/*`）→ 要在后面的顺序号里补。
+- 全仓 `pnpm lint` **已在 `655230c` 之后全绿**：`Checked 279 files`，**0 error / 0 warning**（本仓第一次）。
+  合并前那 13 error 逐条归因如下（`biome check --reporter=json`）：6 个文件是 `format` + `organizeImports`（`biome check --write` 自动修），
+  2 条 `a11y/useAriaPropsSupportedByRole` 与 1 条 `useExhaustiveDependencies` 手工修——
+  两个带 `aria-label` 的 `div` 改成 `<section>`（`div` 不支持 `aria-label`，补 `role="group"` 又会被 `a11y/useSemanticElements` 判成「该用原生元素」；`section` + `aria-label` 两边都过，`styles.css` 里 `.avatar-crop-window`/`.portrait-grid` 都是纯类选择器不受影响），
+  清草稿的 `useEffect` 加 `biome-ignore` 并写明理由；另有 1 条 `noUnusedImports` 是合并残留（`sync.ts` 的 `parseSnapshot`）已删。
+  `13 条 noDescendingSpecificity` warning 是顺序 85 在 `biome.json` 里给 `**/*.css` 加 override 关掉的。
+
 
 #### 每一项怎么做（改哪里 / 怎么改 / 怎么验）
 

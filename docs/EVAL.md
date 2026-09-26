@@ -3948,4 +3948,44 @@ Core **709** 条 / 63 文件、Web **12** 条 / 4 文件全绿；build ✓（495
 4. **`extraTokens`（工具定义等）仍没有生产调用方**——B12 的结构开销那一半已覆盖，但「按 tools 数量加 token」这条口子还没接（顺序 82 已记为待办）。
 5. 这一批**未 push、未部署**。
 
+## 七十六、顺序 84 / 85 合入 main 与 lint 收尾（审计那 58 条全部落进 main）
+
+**来源**：审计 58 条的最后两批分支（`worktree-agent-a5ef9d3cfc346aade` = 顺序 84，`audit/integration` = 顺序 85）一直因为「另一条会话有 24 项未提交改动」而合不进去。
+用户 2026-09-26 裁定**由我代提交那批脏改动**（`dirty-commit` → 「我代提交，解开 84/85（推荐）」）与**原图不进仓**（`art-track` → 「原图不进仓，其余都提（推荐）」）。
+
+**四条 commit 的顺序与内容**：
+
+| commit | 内容 | 规模 |
+| --- | --- | --- |
+| `3c2859f` | 代提交另一条会话的 24 项脏改动（图标、角色卡头像裁剪、立绘资源；提交信息里写明是别人的成果、由我代提交、未经逐行审阅） | 170 文件 742+/14- |
+| `0ad316d` | 顺序 84：合 `worktree-agent-a5ef9d3cfc346aade` | 21 文件 805+/135- |
+| `554d5d2` | 顺序 85：合 `audit/integration` | 21 文件 |
+| `655230c` | 顺序 85 收尾：合并后 lint 全绿 | 7 文件 41+/21- |
+
+- **代提交前的两道检查**：① 对 `git diff -U0` 全量与 8 个新文本文件扫凭据 / 域名 / API Key / 私钥 / 内网地址 → 零命中；② 按用户裁定把 48 张 1024×1536 原图（`art/source/`，~114 MB）写进 `.gitignore`，`git check-ignore -v art/source/portraits/01.png` 确认未入库，仓库只留 `art/README.md` 与两张总览图。
+- **合并结果**：84 **零冲突**；85 唯一冲突是 `.gitignore`（HEAD 侧已有 `art/source/` 段，对方侧新增 `tmp-test-cards/` 与 `.claude/` 两段）→ **两边都要，合成一段**，全程没用 `--ours/--theirs`、没 reset/restore/stash。
+- **合并后核对旧成果没被冲掉**（逐条 grep）：`useTurnRunner.ts` 的 `promptEstimate`、`turn-bookkeeping.ts` 的 `promptEstimate`、`admin.ts` 的 `baseUpdatedAt` 与 `cards: session.library.cards`、`sw.js` 的 `STATIC_PREFIXES = ['/assets/', '/portraits/', '/brand/']` 都还在。
+- **依赖插曲**：`package.json`/`pnpm-workspace.yaml` 变过之后，非 TTY 下 `pnpm` 的 `verify-deps-before-run` 直接中止并报 `ERR_PNPM_ABORTED_REMOVE_MODULES_DIR_NO_TTY`；`$env:CI='true'; pnpm install` 之后 `Recreating node_modules`、`Packages: +142`、2.5s 完成，**`pnpm-lock.yaml` 未被改动**（biome 2.5.14、typescript 7.0.2、vitest 5.0.1 不变）。
+- **lint 的三处修法**（`655230c`）：
+  1. 6 个文件（`App.tsx`、`components/{AvatarCropper,CardDesigner,CastDetail,CastRail,StreamingBubble}.tsx`）的 `format` + `organizeImports` → `biome check --write` 自动修；
+  2. 两条 `a11y/useAriaPropsSupportedByRole`：带 `aria-label` 的 `div` 改成 `<section>`。**试过两条弯路**：直接删 `aria-label` 会丢语义；补 `role="group"` 会触发 `a11y/useSemanticElements`（「该用 `<fieldset>`」）——`section` + `aria-label` 才是两边都过的写法，且 `styles.css` 的 `.avatar-crop-window`/`.portrait-grid` 都是纯类选择器，换元素不影响样式；
+  3. `useExhaustiveDependencies`（`CardDesigner.tsx` 那个换卡清草稿的 `useEffect`）→ 加 `biome-ignore` 并写明「`selectedId` 是触发器，不需要读它的值」（与全仓既有 14 处抑制注释同惯例）；合并残留的未用 import（`sync.ts` 的 `parseSnapshot`）删掉。
+
+**五项门禁（`655230c` 上实跑）**：
+
+- `pnpm typecheck` ✓（core 与 apps/web 的 `tsc --noEmit` + `tsc -p tsconfig.tools.json` 都过）；
+- `pnpm lint` ✓ —— **`Checked 279 files`，0 error / 0 warning**（本仓第一次全绿；13 条 `noDescendingSpecificity` warning 是顺序 85 在 `biome.json` 给 `**/*.css` 加 override 关掉的）；
+- `pnpm test` ✓ —— Core **68 文件 / 780 条**、Web **13 文件 / 45 条**（web 从 8/29 涨到 13/45，新增 `db`/`providers`/`scroll`/`task-queue`/`sw-policy` 五组测试）；
+- `pnpm build` ✓（`dist/assets/index-9bjwPXDa.js` **649.25 kB / gzip 204.58 kB**；500 kB chunk 警告是既有项）；
+- `pnpm build:sync-server` ✓。
+
+**没验的 / 已知遗留（别当成已解决）**：
+
+1. **服务端那批改动仍未部署**：配额 50 000 条 / 256 MB、限流 120 次·分、`spaces.epoch`、`heads.record_count/byte_count` 与两条受保护的 `ALTER TABLE` 都要重新部署才生效。用户裁定「等 84/85 合完一起上」——**现在 84/85 已合完，条件满足，但还没动线上**。
+2. **`tools/*` 仍不在 `pnpm-workspace.yaml`**（顺序 85 动过这个文件但没补），所以 `tools/local-bridge/policy.test.mjs` 那 15 条断言仍不在任何门禁里，只能手动 `node --test` 跑。
+3. **B10（流式失败边角）仍未做**：`a6adfa` 的 worktree 里那批未提交的 `provider/openai-compatible.ts` + 新测试本批没碰。
+4. **B11 / B12 只接了一半**（顺序 82/83 留的账）：`loadRoom(roomId, { conversationId })` 生产调用方一个没改；`AssembleInput.budget.extraTokens` 仍无调用方。
+5. **代提交那批没有逐行审阅**：只做过敏感信息排查与「旧成果没被冲掉」的 grep 核对；那批界面改动（头像裁剪、立绘选择）的真机表现归 Codex。
+6. 四个提交都**未 push、未部署**；顺序 87（预算总额按币种）还没开。
+
 

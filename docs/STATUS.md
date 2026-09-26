@@ -21,6 +21,20 @@
 
 ## 新会话从这里接（2026-09-23）
 
+### 2026-09-26：顺序 84 / 85 合入 main（审计第三、四批全落）+ 代提交另一条会话的成果
+
+审计那 58 条现在**全部进了 main**（顺序 81/82/83/84/85/86 + 顺序 71 的 B12 半条）：
+
+- **代提交 `3c2859f`**（用户裁定「我代提交，解开 84/85」）：另一条会话写完却闲置约两小时的 24 项未提交改动，170 文件 742+/14- ——
+  图标换新、`AvatarCropper.tsx` 与 `lib/{avatar-crop,portraits}.ts`（含测试）、`CardDesigner` 等 8 个组件与 `styles.css`、144 张 `/portraits/*.webp`、`brand/icon-master.png`、`tools/art/prepare-assets.py`、`art/` 的 README 与两张总览图。
+  提交信息里写明**这是别人的成果、由我代提交、未经逐行审阅**（只做了敏感信息排查：凭据/域名/API Key/私钥/内网地址零命中）。48 张原图（~114 MB）按用户裁定**不进仓**（`.gitignore` 新增 `art/source/`）。
+- **`0ad316d` 顺序 84**：合 `worktree-agent-a5ef9d3cfc346aade`（A2/A4/A9/A10/B1/B2/B3/B5/B7/B13/B17/C3/C13/C17/C18 + 分支上补的 B3 原子认领与 SW 静态白名单），21 文件 805+/135-，**零冲突**。
+- **`554d5d2` 顺序 85**：合 `audit/integration`（A14/A15/B19/B20/B21/C16/C21/C22 与本地助手 A1/A13/C19/C20），唯一冲突是 `.gitignore`（两边条目都留，没动 `--ours/--theirs`）；CI 里 actions 固定到 SHA、加 `build:sync-server` 步骤、engines 提到 `node: >=22.5`。
+- **`655230c` 顺序 85 收尾**：lint 从 13 error 收到 **0 error / 0 warning**（本仓第一次），门禁五项全绿：
+  typecheck ✓、lint ✓（279 文件）、test ✓（Core 68 文件/780 条、Web 13 文件/45 条）、build ✓（`dist/assets/index-9bjwPXDa.js` 649.25 kB / gzip 204.58 kB）、build:sync-server ✓。
+- **仍未做**：`tools/*` 不在 `pnpm-workspace.yaml`（顺序 85 没补，缺口仍在）；B10 流式失败边角；B11/B12 只接了一半；顺序 87 的预算币种；**服务端那批改动的重新部署**（用户裁定「等 84/85 合完一起上」，条件已满足，等下一步动手）。四个提交都**未 push**。
+- 合并插曲：`package.json`/`pnpm-workspace.yaml` 变过之后，非 TTY 下 `pnpm` 会因 `verify-deps-before-run` 报 `ERR_PNPM_ABORTED_REMOVE_MODULES_DIR_NO_TTY`；解法是 `$env:CI='true'; pnpm install`（`pnpm-lock.yaml` 未被改动）。
+
 ### 2026-09-26：顺序 71 落进 main（token 估算校准：先把实测数据通路打通，口径等真机数字）
 
 审计 B12 里「结构开销 + 5% 余量」那一半**早在顺序 82** 就落在 `packages/core/src/prompt/assemble.ts`（`BUDGET_SAFETY_MARGIN = 0.05`），

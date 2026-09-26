@@ -1163,7 +1163,7 @@ TASKS 第〇节顺序 68。用户裁定「A+B 推进」；原方案里的 `limit
 | `docs/TASKS.md` | 改 | 83 行改 ✅；归属表三行更新；「重叠实现」补写「A9/B1 的重叠已在顺序 83 消掉」；新增「顺序 83 带出来的遗留」四条与**顺序 84 的只读复核回执**（可信 12 / 有疑 3 / 合并前 5 项） |
 | `docs/EVAL.md` | 改 | 新增**第七十三节**：分支带进来的东西、三条有疑的改法表、为什么采用 `a5ef9` 的模块、五项门禁、七条「没验的 / 已知遗留」 |
 | `docs/STATUS.md` | 改 | 新增「2026-09-26：顺序 83 落进 main」一段与下一步（84 真正只看两条、部署等 84/85 一起上） |
-| `docs/FILE-LOG.md` | 改 | 本节；「几点注意」顺延为**六十三**（顺序 86、顺序 71 之后又两次顺延，现为**六十四**） |
+| `docs/FILE-LOG.md` | 改 | 本节；「几点注意」顺延为**六十三**（顺序 86、顺序 71 之后又两次顺延，顺序 84/85 收尾后现为**六十五**） |
 
 > 本批**没有 push、没有部署**（服务端那批要重新部署才生效，用户裁定等 84/85 合完一起上）。
 
@@ -1220,12 +1220,41 @@ TASKS 第〇节顺序 68。用户裁定「A+B 推进」；原方案里的 `limit
 | `docs/TASKS.md` | 改 | 71 行改 ✅（写明「口径本身仍等真机样本」）+ 明细段落追加结论 |
 | `docs/EVAL.md` | 改 | 新增**第七十五节**：为什么不动公式、三条落点、测试、两个实现坑、五项门禁、遗留 |
 | `docs/STATUS.md` | 改 | 新增「2026-09-26：顺序 71 落进 main」一段 |
-| `docs/FILE-LOG.md` | 改 | 本节；「几点注意」顺延为**六十四** |
+| `docs/FILE-LOG.md` | 改 | 本节；「几点注意」顺延为**六十四**（顺序 84/85 收尾后现为**六十五**） |
 
 > **没 push、没部署。** 校准比例本身**仍是待验证**：本机没有真实 Key、也没有服务端 `usage` 可对照，
 > 所以「低估多少」要等用户在真机上跑够 10 轮生成之后看那一行提示（或 `usageCalibration` 的返回值）。
 
-## 六十四、几点注意
+## 六十四、2026-09-26：顺序 84 / 85 合入 main 与 lint 收尾（含代提交）
+
+审计那 58 条的最后两批分支这一天才进得来——卡点不是代码，是**另一条会话的 24 项未提交改动**（`App.tsx`/`styles.css`/`components/*.tsx`）。
+用户裁定「我代提交，解开 84/85」+「原图不进仓」之后，按 `3c2859f`（代提交）→ `0ad316d`（顺序 84）→ `554d5d2`（顺序 85）→ `655230c`（lint 收尾）四条落盘。做法、门禁与遗留见 EVAL 第七十六节。
+
+| 文件 | 改 / 新增 | 说明 |
+| --- | --- | --- |
+| `.gitignore` | 改 | 新增 `art/source/`（48 张原图 ~114 MB 只留本机，用户裁定）；顺序 85 那侧还带来 `tmp-test-cards/`、`.claude/` 两段，冲突处**两边都留** |
+| `apps/web/public/{favicon,icon-192,icon-512,icon-maskable-192,icon-maskable-512}.png` | 改 | 代提交：图标换新（二进制） |
+| `apps/web/public/brand/icon-master.png`、`tools/art/prepare-assets.py` | **新增** | 代提交：图标母版与生成脚本（重跑它可再生成 icons / WebP / 缩略图） |
+| `apps/web/public/portraits/**`（144 个 `.webp` + `thumbs` / `avatars`） | **新增** | 代提交：角色立绘与头像（21.7 MB）；`apps/web/src/lib/portraits.ts` 映射到稳定路径 `/portraits/<NN>.webp` |
+| `apps/web/src/lib/{portraits.ts,portraits.test.ts,avatar-crop.ts,avatar-crop.test.ts,portrait-catalog.json}`、`apps/web/src/components/AvatarCropper.tsx` | **新增** | 代提交：立绘目录、裁切算法与裁切界面（用户上传图与裁切头像随卡存本地库） |
+| `apps/web/src/components/{CardDesigner,CastDetail,CastRail,MainChat,MessageBody,MessageItem,StreamingBubble}.tsx`、`apps/web/src/App.tsx`、`apps/web/src/styles.css` | 改 | 代提交：立绘选择、角色展示与聊天界面调整 + 样式 |
+| `art/README.md`、`art/review-faces.jpg`、`art/review-portraits.jpg` | **新增** | 代提交：立绘候选集说明（`19`/`21` 已删、编号留空）与两张总览图；原图目录不入仓 |
+| `apps/web/public/sw.js` | 改（顺序 84） | 静态白名单加上 `/portraits/`、`/brand/`（否则装到桌面后立绘/头像离线破图） |
+| `apps/web/src/lib/task-queue.ts` | 改（顺序 84） | `claim()` 改成 `updateEntity` 原子 CAS（原来 get→put 有 TOCTOU；不再绕开 core 的 `take()`） |
+| `.github/workflows/ci.yml` | 改（顺序 85） | actions 固定到 SHA、加 `build:sync-server` 步骤、`contents: read` 权限 |
+| `apps/web/package.json`、`apps/web/tsconfig.tools.json`、`package.json`、`pnpm-workspace.yaml`、`biome.json` | 改（顺序 85） | `typecheck` 多跑 `tsc -p tsconfig.tools.json`；engines `node: >=22.5`；删掉冷静期的 `minimumReleaseAgeExclude`；`linter.preset`；给 `**/*.css` 关掉 `noDescendingSpecificity` |
+| `deploy/{Caddyfile.example,README.md,install-server.sh,nginx-8443.conf.example}`、`deploy/nginx-security-headers.conf` | 改 / **新增** | 顺序 85：部署配置与安全响应头 |
+| `apps/web/src/lib/sync.ts` | 改（收尾） | 去掉合并残留的未用 import `parseSnapshot` |
+| `apps/web/src/components/{AvatarCropper,CardDesigner}.tsx` | 改（收尾） | 两个带 `aria-label` 的 `div` 改 `<section>`（`div` 不支持 `aria-label`，`role="group"` 又会撞 `useSemanticElements`）；换卡清草稿的 `useEffect` 加 `biome-ignore` |
+| `docs/TASKS.md` | 改 | 84 / 85 两行改 ✅；新增「当天那批脏改动怎么处理的」段；两条结构性缺口更新（lint 已全绿、`tools/*` 仍未补） |
+| `docs/EVAL.md` | 改 | 新增**第七十六节**：四条 commit、代提交的两道检查、合并与 `.gitignore` 冲突解法、依赖插曲、lint 三处修法、五项门禁、六条遗留 |
+| `docs/STATUS.md` | 改 | 新增「2026-09-26：顺序 84 / 85 合入 main」一段 |
+| `docs/FILE-LOG.md` | 改 | 本节；「几点注意」顺延为**六十五** |
+
+> 四个提交都**未 push、未部署**。审计那 58 条至此全部在 main；但 `tools/*` 仍不在 `pnpm-workspace.yaml`、B10 未做、B11/B12 只接一半，
+> 服务端那批（配额 / 限流 / `spaces.epoch`）**要重新部署才生效**——用户裁定「等 84/85 合完一起上」，条件已满足，等下一步。
+
+## 六十五、几点注意
 
 ---
 

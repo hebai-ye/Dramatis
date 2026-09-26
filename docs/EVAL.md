@@ -4038,4 +4038,39 @@ Core **709** 条 / 63 文件、Web **12** 条 / 4 文件全绿；build ✓（495
 4. `tools/*` 仍不在 `pnpm-workspace.yaml`（顺序 85 没补，与本轮无关）。
 5. 服务器上仍留着 6 个历史 `dist.bak-*` 与 3 个 `dramatis.bak-*`（磁盘 42G 可用，暂不清理）。
 
+## 七十八、顺序 88：审计 B10 流式失败边角（取回别人 worktree 里的半成品，审校后落地）
+
+**来源**：`docs/AUDIT-2026-09-26.md` 的 B10（第 257–263 行）。它是审计 58 条里**最后一条 ⬜**：顺序 86 时故意没做——`.claude/worktrees/agent-a6adfa051fc0cc2bd` 里有未提交的 `packages/core/src/provider/openai-compatible.ts`（相对它自己的 HEAD 是 86+/21-）与一份未跟踪的新测试，动了会撞车。那条分支的 3 个提交早已随顺序 82 进 main（`5014509`），脏改动却一直没提交；顺序 84/85 合完、整批上线之后，挡它的条件解除。
+
+**本批怎么落地**：把那两份文件**取回 main**（`Copy-Item`，不是 merge——那条分支上没有这次提交），逐条对照审计的 5 个点审校，改掉两处类型/文档上的小问题，并补了 4 条测试。
+
+| 审计点 | 改动 | 位置 |
+| --- | --- | --- |
+| 非流式回退未检查 `json.error`；非 JSON 响应抛 `SyntaxError` 而非 `ProviderError`（有些网关 200 返回错误体，会落库空回复） | 先 `res.text()` 再 `JSON.parse`：解析失败抛「不是可识别的 JSON」的 `ProviderError`；`errorMessageOf()` 认 `{error:{message}}`、`{error:"…"}`，`error:false`/`null`/`undefined` 视为无错；200 但 `choices[0]` 缺失也抛错（不落空回复） | `packages/core/src/provider/openai-compatible.ts`（非流式回退分支、`errorMessageOf()`） |
+| 未知 `finish_reason` 一律当失败（`eos`、`end_turn`、`STOP` 等会丢掉正常回复） | `assertComplete(reason, warn)`：比较前 `trim().toLowerCase()`；只拦 `length`/`max_tokens`/`content_filter`/`insufficient_system_resource`/`aborted`，其余只记一条警告后按正常完成处理；流式与非流式共用 | 同上（`assertComplete`） |
+| `finally` 只 `releaseLock` 不 `cancel()`（上层提前退出时服务端继续生成并计费） | `finally` 里 `await reader.cancel().catch(() => undefined)` 再 `releaseLock()`；正常读完时是空操作 | 同上（`iterateSse`） |
+| 多行 `data:` 逐行解析不合规范 | 新增 `dataPayloadsOf(event)`：一个事件里多行 `data:`，若每行自己就能 `JSON.parse`（或是 `[DONE]`）→ 逐行处理（保住老网关「单换行、每行一个 JSON」的写法），否则按规范拼成一份 | 同上 |
+| 空回复在落库前统一拦截，作为兜底 | **provider 里不重复加**：三处落库点本来就拦了 —— `apps/web/src/hooks/useTurnRunner.ts:629`（主生成）、`:809`（重抽）、`apps/web/src/lib/admin.ts:304`（世界管理员空回复给占位句）；provider 层的「200 无 choice」已经堵住另一个入口 | —— |
+
+**新增注入点**：`ProviderConfig.onWarning?: (message: string) => void`，缺省 `console.warn`（与 `apps/web/src/lib/session.ts:97` 的既有做法一致）。生产代码目前没人传，接到顶部提示留作遗留。
+
+**测试**：新增 `packages/core/src/provider/openai-compatible.test.ts`，实跑 **16 条**（与调用方视角的 `tools.test.ts` 14 条一起跑，共 30 条）：
+
+- 非流式：`200 + {error:{message}}` 抛该消息、`{error:"…"}` 抛 `ProviderError`、HTML 错误页抛 `ProviderError`（且带「不是可识别的 JSON」）、正常 JSON 照旧、`{}`（没有 `choices`）抛「没有返回任何回复内容」。
+- 流里夹错误体：流到一半来一条 `{"error":{"message":"额度用完了"}}` 抛错（不落半条回复）、`{"error":"网关挂了"}` 也认。
+- 未知 `finish_reason`：`eos` / `end_turn` / `STOP` / `stop_sequence` 回复照常保存且**只警告一次**（`STOP` 归一成已知的 `stop`，不警告）；`LENGTH` 与别名 `max_tokens` 仍拦下；非流式的未知状态同样只警告。
+- 多行 `data:`：规范写法（一个事件里跨行拼 JSON）能拼回来；非规范写法（单换行、每行一个 JSON）照旧逐行处理。
+- 提前退出：上层 `break` 之后底层流的 `cancel` 被调用。
+
+**五项门禁（实跑）**：`pnpm typecheck` ✓、`pnpm lint` ✓（`Checked 280 files`，0 error / 0 warning）、`pnpm test` ✓（Core **69 文件 / 796 条**、Web 13 文件 / 45 条）、`pnpm build` ✓（`dist/assets/index-DWZKOBjr.js` 650.20 kB / gzip 204.91 kB、`dist/assets/index-aDHWLtbR.css` 38.39 kB，500 kB chunk 警告是既有项）、`pnpm build:sync-server` ✓。
+
+**没验的 / 已知遗留**：
+
+1. **`onWarning` 只落到 `console.warn`**，没接到界面顶部提示（`useNotices`）→ 用户在真机上看不到「模型以未识别状态结束，已按完成处理」。
+2. **原 worktree 里那份改动仍未提交**：`.claude/worktrees/agent-a6adfa051fc0cc2bd` 的 `provider/openai-compatible.ts` 与未跟踪测试仍在原处（本批只取副本），那条分支上没有顺序 88。
+3. **真机与真模型一律没验（归 Codex）**：各家网关 `finish_reason` 的实际取值（`eos`/`end_turn` 之外还有什么）、`cancel()` 是否真让服务端停止生成与计费、HTML 错误页的真实形态。
+4. **非流式回退只按 `content-type` 判别**：返回 `text/event-stream` 却给一整个 JSON 的服务端仍未覆盖（目前没有这种服务商的例子）。
+5. **`dataPayloadsOf` 的判据是启发式**：规范的跨行 JSON 若恰好每行都能单独解析，会走逐行分支（现实中没遇到，属于病态输入）。
+6. **本批未 push、未部署**：纯内核改动，已部署的服务端与网页产物不受影响；要跟着下次上线一起走。
+
 

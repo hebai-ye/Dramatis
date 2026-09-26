@@ -98,6 +98,7 @@
 | 85 | **审计第五批：CI 与部署加固（A14/A15/B19/B20/B21/C16/C21/C22）** `[审][数]` | **P2** | CI 不跑 `build:sync-server`、nginx 缺安全头、systemd 无隔离、依赖冷静期例外、`.gitignore` 漏 `.claude/` | ✅ 2026-09-26（合并提交 `554d5d2`；唯一冲突 `.gitignore` 两边条目都留；CI 固定 actions 到 SHA 并加 `build:sync-server`；**服务端与 nginx 已在 2026-09-26 重新部署，见 `docs/STATUS.md` 最上面的「整批上线」一节**） |
 | 86 | **审计遗留补做：B6 / B9 / B15（B10、B18 见下）** `[审][数]` | **P2** | 五条**没有任何分支在修**：管理员草稿整条替换会清空未传字段、多币种金额直接相加、PNG 解压无上限（压缩炸弹）、默认档位 Key 明文存 localStorage | ✅ 2026-09-26（B6/B9/B15 已修 + 采纳过期拒绝；B18 用户裁定「保持默认、不加提示」；**B10 留给正在改它的那条分支**，见 EVAL 第七十四节） |
 | 87 | **额度上限按币种比较（顺序 86 带出来的）** `[审][数]` | **P3** | `packages/core/src/storage/budget.ts:43` 拿 `summary.total.cost` 与 `limits.maxCost` 比，而 `maxCost` 没有币种字段；混币种时现在比的是**主币种**的小计（B9 之前是所有币种乱加）。要做严谨得给 `BudgetLimits` 加币种，或按 `summary.total.costs` 逐个比 | ⬜ 等拍板 |
+| 88 | **审计 B10：流式失败边角（200+error 体 / 未知 finish_reason / 不 cancel reader）** `[审][数]` | **P2** | 非流式回退不看 `json.error`、非 JSON 抛 SyntaxError 而非 `ProviderError`、`eos`/`end_turn`/大写 `STOP` 等正常结束被当失败（丢回复）、上层提前退出只 `releaseLock` 不 `cancel()`（服务端继续生成照样计费）、多行 `data:` 逐行解析不合规范 | ✅ 2026-09-26（取回 `a6adfa` worktree 里那份未提交的改动 + 逐条审校 + 4 条新测试；见 EVAL 第七十八节） |
 | 28 / 29 / 30 / 56 | 语音归属模型侧根治 / 平板横屏 / 备案切 443 等 / 服务器管理台 | **P4** | 原有条目，等条件或等拍板，不变 | ⬜ |
 
 依赖关系：58 复用 57 的「按关键词取回」；66 在 59 之后；65 可以插在任何两批之间；80 依赖 68 已经落下的 `updatedAt` 不变量与迁移 11。
@@ -119,7 +120,7 @@
 | A14、A15、B19、B20、B21、C16、C21、C22（8 条）+ 已合入的 4 条 | 分支 `integration`（`a0ff3d8995c3dd432` + `96120d9`） | 顺序 85 | ✅ **已在 main**（`554d5d2`）；唯一冲突 `.gitignore`，两边条目都留；CI 固定 actions 到 SHA 并加 `build:sync-server` 步骤 |
 | **B6、B9、B15（3 条）** | **已在 main**（顺序 86，本机提交） | 顺序 86 | ✅ |
 | **B18** | 用户 2026-09-26 裁定：**保持默认档位不变、不加提示**（理由见 EVAL 第七十四节） | 顺序 86 | ✅ 已裁定，不做改动 |
-| **B10** | **仍然没人修**：`a6adfa` 的 worktree 里有未提交的 `provider/openai-compatible.ts` + 新测试，本批故意不碰 | 待那批提交后单独做 | ⬜ |
+| **B10** | **已在 main**（顺序 88）：挡它的条件（那条分支提交）在顺序 82 就满足了，脏改动一直没提交；本批把它取回 main 并逐条审校 | 顺序 88 | ✅ |
 
 **84 / 85 合并当天那批脏改动的处理（2026-09-26，用户裁定「我代提交，解开 84/85」）**：
 
@@ -150,7 +151,7 @@ A4 的 core 侧（`packages/core/src/sync/loop.ts:153-162` 的 `serverHead < pul
 | B9 多币种相加 | **按币种分别累计**，不换算汇率 | `packages/core/src/storage/usage.ts`（`CurrencyCost`、`UsageTotals.costs`、`byCurrencyRank`、`finalizeTotals`）、`apps/web/src/lib/usage.ts`（`formatCost` 主币种后面「另计 …」） |
 | B15 PNG 压缩炸弹 + 坏块连坐 | **边读边数 8 MB 上限 + 单块失败只警告** | `packages/core/src/compat/sillytavern/inflate.ts`（`MAX_INFLATED_BYTES`、`InflateTooLargeError`、`readAllWithLimit`）、`png.ts`（`InflateUnavailableError` 仍上抛，其余推 `png.chunk-failed` 警告）、`card.ts`（导入 `reason` 里如实说「另有 N 个数据块读不出来」） |
 | B18 Key 默认档位 | **不动**（用户裁定「不必写提示」） | `apps/web/src/lib/providers.ts:102` 仍是 `'device'`；三档切换与既有说明照旧 |
-| B10 流式失败边角 | **本批不做**（别人那条分支正在改，碰了会撞车） | 待那批提交后单独做 |
+| B10 流式失败边角 | **顺序 88 补上**（取回那条分支未提交的改动 + 逐条审校 + 4 条新测试） | `packages/core/src/provider/openai-compatible.ts`、新 `packages/core/src/provider/openai-compatible.test.ts` |
 
 **顺序 86 自己带出来的遗留（别当成已解决）**：
 
@@ -158,6 +159,24 @@ A4 的 core 侧（`packages/core/src/sync/loop.ts:153-162` 的 `serverHead < pul
 - **冲突拒绝后看不到两版差异**：草稿卡只显示一句话（「又被改过」+ 两个时间戳），没有逐字段 diff；管理员要按现在的版本重起草。
 - **世界书条目复用按 `title` 匹配**：改了名（同名不再）的条目会被当成新条目，id 会变 → 将来若有东西按条目 id 引用就会断（当前没有这种引用）。
 - **B15 只挡住「解压后过大」，不挡「PNG 本身很大」**：`readPngTextChunks` 之前仍要先把整张图读完（正常卡几百 KB，但 100 MB 的 PNG 仍会占内存）。
+
+**顺序 88（审计 B10 流式失败边角）怎么处理的**（报告见 `docs/AUDIT-2026-09-26.md` 第 257–263 行）：
+
+| 审计点 | 处理 | 落点 |
+| --- | --- | --- |
+| 非流式回退不看 `json.error`、非 JSON 抛 SyntaxError | 先 `res.text()` 再 `JSON.parse`：解析失败与 `{error:…}`（含字符串形式、`error:false`/`null` 视为无错）都抛 `ProviderError`；200 但 `choices[0]` 缺失也报错，不落空回复 | `packages/core/src/provider/openai-compatible.ts`（非流式回退分支 + `errorMessageOf()`） |
+| 未知 `finish_reason` 一律当失败 | `assertComplete(reason, warn)`：比较前 `trim().toLowerCase()`；只拦 `length`/`max_tokens`/`content_filter`/`insufficient_system_resource`/`aborted`，其余（`eos`/`end_turn`/`stop_sequence` 等）记一条警告后按正常完成处理 | 同上（`assertComplete`） |
+| `finally` 只 `releaseLock` 不 `cancel()` | `finally` 里先 `await reader.cancel().catch(() => undefined)` 再 `releaseLock()` | 同上（`iterateSse`） |
+| 多行 `data:` 逐行解析不合规范 | 新增 `dataPayloadsOf(event)`：一个事件里的多行 `data:` 若每行自己就是完整 JSON（或 `[DONE]`）就逐行处理（兼容单换行的老网关），否则按规范拼成一份 | 同上 |
+| 空回复落库兜底 | **provider 里不重复加**：三处落库点本来就拦了 —— `apps/web/src/hooks/useTurnRunner.ts:629`、`:809`、`apps/web/src/lib/admin.ts:304` | —— |
+
+新增注入点 `ProviderConfig.onWarning?: (message: string) => void`（缺省 `console.warn`），给测试与将来的界面提示留口子。
+
+**顺序 88 自己带出来的遗留（别当成已解决）**：
+
+- **`onWarning` 没接到界面**：只落到 `console.warn`，用户看不到「模型以未识别状态结束」；要接得挂到 `apps/web/src/hooks/useNotices.ts` 那套顶部提示上。
+- **原 worktree 里的那份改动仍未提交**：`.claude/worktrees/agent-a6adfa051fc0cc2bd` 里的 `provider/openai-compatible.ts` 与未跟踪测试仍在原处（本批只取了副本，没动那条分支）。
+- **真机/真模型没验**：各家网关 `finish_reason` 的实际取值、`cancel()` 是否真让服务端停止计费，都归 Codex；仓库里一律「待验证」。
 
 **顺序 82 合并前必须先改的三处 —— 已改完（2026-09-26，随 `5014509` 落进 main）**：
 

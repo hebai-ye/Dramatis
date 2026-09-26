@@ -47,6 +47,8 @@ export interface ProviderConfig {
   includeUsage?: boolean;
   /** 注入 fetch 便于测试。 */
   fetchImpl?: typeof fetch;
+  /** 非致命的异常情况（例如认不出的 finish_reason）；缺省打到 console.warn。 */
+  onWarning?: (message: string) => void;
 }
 
 export class ProviderError extends Error {
@@ -116,7 +118,8 @@ interface DeltaPayload {
     message?: { content?: unknown; tool_calls?: unknown };
   }>;
   usage?: unknown;
-  error?: { message?: unknown };
+  /** 有的网关直接给字符串、给 `false`，所以这里不收窄形状，交给 `errorMessageOf` 判。 */
+  error?: unknown;
 }
 
 interface RawToolCall {
@@ -179,10 +182,8 @@ function parseChunk(
     throw new ProviderError('模型返回了损坏的数据片段，本轮未保存不完整的回复。', null, raw);
   }
 
-  if (json.error) {
-    const message = typeof json.error.message === 'string' ? json.error.message : '服务端返回了错误';
-    throw new ProviderError(message, null, raw);
-  }
+  const errorMessage = errorMessageOf(json);
+  if (errorMessage !== null) throw new ProviderError(errorMessage, null, raw);
 
   const choice = json.choices?.[0];
   const delta = choice?.delta;
@@ -211,20 +212,70 @@ function parseChunk(
   };
 }
 
-/** A partial or filtered completion must never be stored as a finished character reply. */
-function assertComplete(reason: string | null): void {
-  if (reason === 'length') {
+/**
+ * 半截或被过滤的回复绝不能当成完整的角色回复落盘。
+ *
+ * 只拦**已知的失败状态**（审计 B10）：`length`、`content_filter`，以及 DeepSeek 的资源不足 /
+ * 中止。认不出来的状态（`eos`、`end_turn`、大写的 `STOP` 等各家网关的写法）只记一条警告，
+ * 回复照常保存——以前一律当失败，会把正常回复整条丢掉。
+ */
+function assertComplete(reason: string | null, warn: (message: string) => void): void {
+  const normalized = reason === null ? null : reason.trim().toLowerCase();
+  if (normalized === 'length' || normalized === 'max_tokens') {
     throw new ProviderError('模型输出达到长度上限，本轮未保存不完整的回复。请调整模型配置后重试。', null, '');
   }
-  if (reason === 'content_filter') {
+  if (normalized === 'content_filter') {
     throw new ProviderError('模型服务拦截了本轮内容，本轮没有生成完整回复。', null, '');
   }
-  if (reason === 'insufficient_system_resource' || reason === 'aborted') {
+  if (normalized === 'insufficient_system_resource' || normalized === 'aborted') {
     throw new ProviderError('模型服务中止了本轮生成，请稍后重试。', null, '');
   }
-  if (reason !== null && reason !== 'stop' && reason !== 'tool_calls') {
-    throw new ProviderError(`模型服务以未知状态结束（${reason}），本轮未保存回复。`, null, '');
+  if (normalized !== null && normalized !== 'stop' && normalized !== 'tool_calls') {
+    warn(`模型服务以未识别的状态结束（${String(reason)}），已按正常完成处理。`);
   }
+}
+
+/** 服务端在 200 响应里塞了一个错误体（有些网关就是这么干的）。 */
+function errorMessageOf(json: unknown): string | null {
+  if (typeof json !== 'object' || json === null) return null;
+  const error = (json as { error?: unknown }).error;
+  if (error === undefined || error === null || error === false) return null;
+  if (typeof error === 'string') return error;
+  if (typeof error === 'object') {
+    const message = (error as { message?: unknown }).message;
+    return typeof message === 'string' && message !== '' ? message : '服务端返回了错误';
+  }
+  return '服务端返回了错误';
+}
+
+/**
+ * 从一个 SSE 事件里取出要解析的数据（审计 B10）。
+ *
+ * 规范写法是：一个事件里多行 `data:` 按换行拼成一份数据。但不少服务端把多个 JSON 各写成
+ * 一行 `data:`、事件之间只用单个换行——那种情况每行本身就是完整 JSON。所以：多行里每行都能
+ * 单独解析（或是 `[DONE]`）就逐行处理（老行为），否则按规范拼起来当一份。
+ */
+function dataPayloadsOf(event: string): string[] {
+  const lines: string[] = [];
+  for (const line of event.split('\n')) {
+    if (line.trim() === '' || line.startsWith(':')) continue;
+    const trimmedStart = line.trimStart();
+    if (!trimmedStart.startsWith('data:')) continue;
+    const value = trimmedStart.slice(5);
+    lines.push(value.startsWith(' ') ? value.slice(1) : value);
+  }
+  if (lines.length <= 1) return lines.map((line) => line.trim());
+  const standalone = lines.every((line) => {
+    const trimmed = line.trim();
+    if (trimmed === '[DONE]') return true;
+    try {
+      JSON.parse(trimmed);
+      return true;
+    } catch {
+      return false;
+    }
+  });
+  return standalone ? lines.map((line) => line.trim()) : [lines.join('\n').trim()];
 }
 
 async function* iterateSse(res: Response): AsyncIterable<string> {
@@ -251,6 +302,11 @@ async function* iterateSse(res: Response): AsyncIterable<string> {
 
     if (buffer.trim() !== '') yield buffer;
   } finally {
+    /*
+     * 上层提前退出（出错、用户点停止、拿够了）时要**取消**这条流，而不只是松开锁（审计 B10）：
+     * 只 releaseLock 的话连接还开着，服务端继续生成，照样计费。正常读完时 cancel 是空操作。
+     */
+    await reader.cancel().catch(() => undefined);
     reader.releaseLock();
   }
 }
@@ -264,6 +320,7 @@ async function* iterateSse(res: Response): AsyncIterable<string> {
 export function createOpenAICompatibleProvider(config: ProviderConfig): ModelProvider {
   const endpoints = resolveEndpoints(config.baseUrl);
   const fetchImpl = config.fetchImpl ?? globalThis.fetch.bind(globalThis);
+  const warn = config.onWarning ?? ((message: string) => console.warn(`[provider] ${message}`));
 
   const buildHeaders = (): Record<string, string> => {
     const headers: Record<string, string> = {
@@ -332,9 +389,22 @@ export function createOpenAICompatibleProvider(config: ProviderConfig): ModelPro
 
       // 部分本地服务会忽略 stream 参数，这里做一次非流式回退
       if (!contentType.includes('text/event-stream')) {
-        const json = (await res.json()) as DeltaPayload;
+        const raw = await res.text();
+        let json: DeltaPayload;
+        try {
+          json = JSON.parse(raw) as DeltaPayload;
+        } catch {
+          // 网关返回了 HTML 错误页之类的东西：给出可读的错误，而不是一句 SyntaxError（审计 B10）
+          throw new ProviderError('模型服务返回的不是可识别的 JSON，本轮未保存回复。', res.status, raw.slice(0, 2000));
+        }
+        const errorMessage = errorMessageOf(json);
+        if (errorMessage !== null) throw new ProviderError(errorMessage, res.status, raw.slice(0, 2000));
         const choice = json.choices?.[0];
-        assertComplete(typeof choice?.finish_reason === 'string' ? choice.finish_reason : null);
+        // 没有任何 choice 的 200：不是一条「空回复」，是服务端没按协议回（兜底，别落一条空消息）
+        if (choice === undefined) {
+          throw new ProviderError('模型服务没有返回任何回复内容，本轮未保存。', res.status, raw.slice(0, 2000));
+        }
+        assertComplete(typeof choice.finish_reason === 'string' ? choice.finish_reason : null, warn);
         const text = typeof choice?.message?.content === 'string' ? choice.message.content : '';
         const nonStreamCalls: ToolCallBuffer = new Map();
         mergeToolCalls(nonStreamCalls, choice?.message?.tool_calls);
@@ -352,14 +422,10 @@ export function createOpenAICompatibleProvider(config: ProviderConfig): ModelPro
       const toolCallBuffer: ToolCallBuffer = new Map();
 
       for await (const event of iterateSse(res)) {
-        for (const line of event.split('\n')) {
-          const trimmed = line.trim();
-          if (trimmed === '' || trimmed.startsWith(':')) continue;
-          if (!trimmed.startsWith('data:')) continue;
-
-          const payload = trimmed.slice(5).trim();
+        for (const payload of dataPayloadsOf(event)) {
+          if (payload === '') continue;
           if (payload === '[DONE]') {
-            assertComplete(finishReason);
+            assertComplete(finishReason, warn);
             const calls = finishToolCalls(toolCallBuffer);
             yield { type: 'done' as const, usage, ...(calls.length > 0 ? { toolCalls: calls } : {}) };
             return;
@@ -374,7 +440,7 @@ export function createOpenAICompatibleProvider(config: ProviderConfig): ModelPro
       }
 
       if (finishReason !== null) {
-        assertComplete(finishReason);
+        assertComplete(finishReason, warn);
         const calls = finishToolCalls(toolCallBuffer);
         yield { type: 'done' as const, usage, ...(calls.length > 0 ? { toolCalls: calls } : {}) };
       } else {

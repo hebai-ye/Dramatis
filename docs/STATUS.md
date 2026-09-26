@@ -39,6 +39,15 @@
 - **没验的**：真机 / 真模型一律没动（归 Codex）；`manifest.webmanifest` 的 MIME 仍是 `application/octet-stream`（nginx 的 `mime.types` 里没有 `webmanifest`，本轮没改）；CSP 仍是 Report-Only，要灰度几天再切正式。
 - **教训**：**别把 `deploy/` 整个 `scp` 上服务器**——本轮把 `deploy/LOCAL-NOTES.md`（本地私有、含敏感内容）一起拷上去了，发现后已从服务器删除，并把旧的 `deploy.old-*` 备份目录一并清掉。
 
+### 2026-09-26：顺序 88 落进 main（审计 B10 流式失败边角 —— 58 条里最后一条 ⬜）
+
+- **来源与处理**：B10 在顺序 86 时故意不碰（`a6adfa` 的 worktree 里有未提交的 `packages/core/src/provider/openai-compatible.ts` + 未跟踪的新测试）。那条分支的提交已随顺序 82 进 main（`5014509`），脏改动一直没提交；顺序 84/85 合完、整批上线之后挡它的条件解除，本批把**那两份文件取回 main**（不是 merge，那条分支上没有这次提交），逐条对照审计的 5 个点审校，并补了 4 条测试。
+- **改法**：非流式回退改成先 `res.text()` 再 `JSON.parse`（非 JSON 与 `{error:…}` 体都抛 `ProviderError`，200 但 `choices[0]` 缺失也算失败、不落空回复）；`assertComplete` 只拦 `length`/`max_tokens`/`content_filter`/`insufficient_system_resource`/`aborted`（比较前统一小写去空白），其余 `finish_reason`（`eos`/`end_turn`/大写 `STOP` 等）记一条警告后按正常完成处理；`iterateSse` 的 `finally` 先 `await reader.cancel()`（吞异常）再 `releaseLock()`，上层提前退出不再让服务端继续生成计费；新增 `dataPayloadsOf()` 兼容规范的「一个事件多行 `data:`」与老网关的「单换行、每行一个 JSON」；`ProviderConfig` 新增 `onWarning`（缺省 `console.warn`，与 `apps/web/src/lib/session.ts:97` 的既有做法一致）。
+- **空回复兜底不重复加**：三处落库点本来就拦了——`apps/web/src/hooks/useTurnRunner.ts:629`（主生成）、`:809`（重抽）、`apps/web/src/lib/admin.ts:304`（世界管理员空回复给占位句）。
+- **测试**：新增 `packages/core/src/provider/openai-compatible.test.ts` **16 条**（非流式错误体 / HTML 错误页 / 200 无 choice / 流里夹 error / 未知 `finish_reason` 只警告（`eos`、`end_turn`、`STOP`、`stop_sequence`、非流式）/ `LENGTH` 与 `max_tokens` 拦下 / 多行 `data:` 两种写法 / 提前 `break` 后 `cancel` 被调用），与调用方视角的 `tools.test.ts`（14 条）一起跑。
+- **五项门禁全绿**：typecheck ✓、lint ✓（280 文件，0 error / 0 warning）、test ✓（Core **69 文件 / 796 条**、Web 13 文件 / 45 条）、build ✓（`dist/assets/index-DWZKOBjr.js` 650.20 kB / gzip 204.91 kB，css `index-aDHWLtbR.css`）、build:sync-server ✓。
+- **遗留**：`onWarning` 目前只落到 `console.warn`，**没接到界面顶部提示**（`useNotices`）→ 用户看不到「模型以未识别状态结束」；取回的那份改动在原 worktree `.claude/worktrees/agent-a6adfa051fc0cc2bd` 里**仍未提交、仍在原处**；各家网关 `finish_reason` 的真实取值、`cancel()` 是否真让服务端停止计费，都要真机/真模型验（归 Codex）。**本批未 push、未部署**（内核改动，已部署的服务端与网页产物不受影响）。
+
 ### 2026-09-26：顺序 84 / 85 合入 main（审计第三、四批全落）+ 代提交另一条会话的成果
 
 审计那 58 条现在**全部进了 main**（顺序 81/82/83/84/85/86 + 顺序 71 的 B12 半条）：
@@ -50,7 +59,7 @@
 - **`554d5d2` 顺序 85**：合 `audit/integration`（A14/A15/B19/B20/B21/C16/C21/C22 与本地助手 A1/A13/C19/C20），唯一冲突是 `.gitignore`（两边条目都留，没动 `--ours/--theirs`）；CI 里 actions 固定到 SHA、加 `build:sync-server` 步骤、engines 提到 `node: >=22.5`。
 - **`655230c` 顺序 85 收尾**：lint 从 13 error 收到 **0 error / 0 warning**（本仓第一次），门禁五项全绿：
   typecheck ✓、lint ✓（279 文件）、test ✓（Core 68 文件/780 条、Web 13 文件/45 条）、build ✓（`dist/assets/index-9bjwPXDa.js` 649.25 kB / gzip 204.58 kB）、build:sync-server ✓。
-- **仍未做**：`tools/*` 不在 `pnpm-workspace.yaml`（顺序 85 没补，缺口仍在）；B10 流式失败边角；B11/B12 只接了一半；顺序 87 的预算币种。**服务端与网页的重新部署已在 2026-09-26 完成**（见本页最上面的「整批上线」一节）。六个提交都已 push。
+- **仍未做**：`tools/*` 不在 `pnpm-workspace.yaml`（顺序 85 没补，缺口仍在）；B11/B12 只接了一半；顺序 87 的预算币种。**B10 已在顺序 88 补上**（见本节上面那一节）。**服务端与网页的重新部署已在 2026-09-26 完成**（见本页最上面的「整批上线」一节）。六个提交都已 push。
 - 合并插曲：`package.json`/`pnpm-workspace.yaml` 变过之后，非 TTY 下 `pnpm` 会因 `verify-deps-before-run` 报 `ERR_PNPM_ABORTED_REMOVE_MODULES_DIR_NO_TTY`；解法是 `$env:CI='true'; pnpm install`（`pnpm-lock.yaml` 未被改动）。
 
 ### 2026-09-26：顺序 71 落进 main（token 估算校准：先把实测数据通路打通，口径等真机数字）

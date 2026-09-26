@@ -1106,7 +1106,27 @@ TASKS 第〇节顺序 68。用户裁定「A+B 推进」；原方案里的 `limit
 > 本批还有一个**不进仓库**的产物：`secrets/unlimited-prompt.txt`（`.gitignore` 已挡住）——
 > 用户粘贴的正文从代码里取出来存这儿，用作泄露复核的参照物。**不要提交它。**
 
-## 五十九、几点注意
+## 六十、2026-09-26：审计第一批（顺序 81，本机助手加固）+ 审计 58 条归账
+
+审计报告 `docs/AUDIT-2026-09-26.md`（提交 `71a26be`）里的 A1/A13/C19/C20 四条 P0 写在分支提交 `96120d9` 上，
+本批**合入 main**（合并提交 `acb93dd`，无冲突），另补 `.gitignore` 两行与四处文档。做法与验证见 EVAL 第七十一节。
+
+| 文件 | 改 / 新增 | 说明 |
+| --- | --- | --- |
+| `tools/local-bridge/policy.mjs` | 新增（`96120d9`） | 155 行**纯函数**：`DEFAULT_ALLOWED_ORIGINS`、`parseOriginList`/`parsePort`、`isAllowedHost`、`isAllowedOrigin`、`isAuthorized`（常量时间）、`checkAccess`、`clampTimeout`、`readLimitedBody`（超限 413）、`createSerialQueue`（排队上限 429） |
+| `tools/local-bridge/policy.test.mjs` | 新增（`96120d9`） | 299 行 / **15 条断言 / 5 suites**，其中 3 条真起进程（外来 Origin 被拒、令牌必带 Bearer、非法端口启动即退出）；**`pnpm test` 跑不到它**（`tools/*` 不在 workspace），要手动 `node --test` |
+| `tools/local-bridge/server.mjs` | 改（`96120d9`） | 每个请求先 `checkAccess`（Host 必须 127.0.0.1/localhost:PORT，Origin 走白名单，可选令牌）；`cors()` 改成回显白名单 + `vary: Origin` + `access-control-allow-private-network`，**不再回 `*`**；被拒的请求不回 CORS 头；`--port`/`--cdp` 走 `parsePort` |
+| `tools/local-bridge/README.md` | 新增（`96120d9`） | 白名单/令牌怎么配；**9222 调试端口的风险**（本机任何进程都能完全控制那个 Chrome，必须独立 `--user-data-dir`） |
+| `tools/fake-model/server.mjs` | 改（`96120d9`） | 只放行本机来源（任意端口），不再回 `*` |
+| `tools/desktop/launch.mjs` | 改（`96120d9`） | `DRAMATIS_PORT` 必须 1–65535 整数，否则启动即报错 |
+| `.gitignore` | 改 | 追加 `.claude/`（agent worktree，各带一份 node_modules）与 `tmp-test-cards/`（真实角色卡）——不忽略的话一次 `git add -A` 会把它们提交进去；`.claude/` 之前只写在 `.git/info/exclude` 里，是**本机私有**的绕法（biome 会因 worktree 里的嵌套 `biome.json` 直接报错退出，挡住 `pnpm lint`） |
+| `docs/TASKS.md` | 改 | 新增顺序 **81–86** 六行；新增「审计遗留」小节：58 条的归属表、4 条重复实现、**5 条没人修**、**2 条只接了一半**、顺序 82 的三处必须先改 |
+| `docs/EVAL.md` | 改 | 新增**第七十一节**：审计第一批的原状→现状对照、五项门禁、手动 15 条测试、行为变更（白名单从「谁都能调」收紧）、没验的三条、以及 `tools/*` 不在门禁里的结构性缺口 |
+| `docs/STATUS.md` | 改 | 新增「2026-09-26：审计遗留归账 + 顺序 81 落地」一段与下一步（82–86，其中 84/85 必须等脏文件提交） |
+
+> 本批**没有 push、没有部署**（用户只说了做主集成）。合并进来的 `96120d9` 是别人写的，本批只做集成 + 补漏 + 文档。
+
+## 六十一、几点注意
 
 ---
 

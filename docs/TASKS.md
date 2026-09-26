@@ -91,9 +91,60 @@
 | 78 | **一轮内多个角色作答（不是所有角色都必须回答）** `[用]` | **P3** | 2026-09-25 用户拍板方向：不给角色加权，改成允许一轮里有多个角色接话——由这一轮的意图判断挑出该开口的人，其余保持沉默或只做动作 | ⬜ 待排期 |
 | 79 | **跨角色串线检测（同一段身世/同一件道具出现在第二个角色名下）** `[用][测]` | **P3** | 178 轮长跑里 46/178 条非掌柜角色用了掌柜道具；秦娘还复用了陈九的「八岁雷砸船」。用户 2026-09-25 决定暂缓 | ⬜ 暂缓 |
 | 80 | **账单汇总增量缓存（顺序 68 拆出来的那一半）** `[审][数]` | **P2** | 68 实测：`since` 下推能少读 93% 的行，但**不带 `since` 的 `summary({roomId})` 仍要把该世界账单全读一遍**——而后台队列每取一条任务就调一次（`worker.ts:548`），长对话里一轮好几次。前置：把「删世界绕开 ledger 直接删账单」收口，否则缓存会漏掉删除路径 | ⬜ |
+| 81 | **审计第一批：本地助手公网暴露面（A1/A13/C19/C20）** `[审][数]` | **P0** | `tools/local-bridge` 的 CORS 回 `*`、不校验 Host/Origin、请求体无上限；假模型同样回 `*`；桌面启动器不校验端口 | ✅ 2026-09-26（`96120d9` 合入为 `acb93dd`；手动 `node --test` 15 条全过，见 EVAL 第七十一节） |
+| 82 | **审计第二批：同步正确性与存储原子性（A5/A11/A12/B3/B4/B8/B11/B12/B14/C1/C2/C4/C5/C6/C7）** `[审][数]` | **P1** | 归档与同步水位线互卡、后台任务非事务 CAS、IDB 读改写不原子、导入中断无回滚、预算守卫 O(n²)、世界书块 id 撞名 | 🟡 分支 `a6adfa` 就绪（Core 717 全绿），**只读复核判出 3 处必须先改 + 1 处不许宣称已完成**，见「审计遗留」小节 |
+| 83 | **审计第三批：同步/加密/上传与文档漂移（A3/A4/A6/A7/A8/A9/B1/B16/C8–C12/C14/C15）** `[审][数]` | **P1** | 主密码与密钥派生、会话过期、上传体积上限、导出遗漏、SYNC.md 与实现不一致 | 🟡 分支 `a063c` 就绪待只读复核（复核子代理在跑） |
+| 84 | **审计第四批：前端稳定与缓存（A2/A10/B2/B5/B7/B13/B17/C3/C13/C17/C18）** `[审]` | **P1** | SW 缓存名与更新、流式取消、错误处理、隐私边界 | ⬜ **必须等另一条会话提交**：分支 `a5ef9` 改了 `apps/web/src/App.tsx` 与 `styles.css`，这两个文件现在是别人的未提交改动，此刻合并会被 git 拒绝 |
+| 85 | **审计第五批：CI 与部署加固（A14/A15/B19/B20/B21/C16/C21/C22）** `[审][数]` | **P2** | CI 不跑 `build:sync-server`、nginx 缺安全头、systemd 无隔离、依赖冷静期例外、`.gitignore` 漏 `.claude/` | ⬜ 等另一条会话提交后合 `audit/integration`（它也改 `styles.css`） |
+| 86 | **审计遗留补做：B6 / B9 / B10 / B15 / B18** `[审][数]` | **P2** | 五条**没有任何分支在修**：管理员草稿整条替换会清空未传字段、多币种金额直接相加、流式失败边角（200+error 体 / 未知 finish_reason / 不 cancel reader）、PNG 解压无上限（压缩炸弹）、默认档位 Key 明文存 localStorage | ⬜（B10 有人在 `a6adfa` 的 worktree 里改到一半，未提交） |
 | 28 / 29 / 30 / 56 | 语音归属模型侧根治 / 平板横屏 / 备案切 443 等 / 服务器管理台 | **P4** | 原有条目，等条件或等拍板，不变 | ⬜ |
 
 依赖关系：58 复用 57 的「按关键词取回」；66 在 59 之后；65 可以插在任何两批之间；80 依赖 68 已经落下的 `updatedAt` 不变量与迁移 11。
+
+#### 审计遗留（2026-09-26 深度审计的 58 条，现在在哪）
+
+审计报告：[`AUDIT-2026-09-26.md`](./AUDIT-2026-09-26.md)（提交 `71a26be`，**尚未 push**）。编号 A1–A15 / B1–B21 / C1–C22，共 58 条；
+报告第 6 节自己给的八批修复顺序（安全止血 → CI → 同步正确性 → 前端稳定 → 公网加固 → 数据完整性 → 性能兼容）。
+
+**为什么会有这一节**：那份报告写完之后，**58 条一条都没进 TASKS**（`grep` 全 `docs/` 只命中报告自身），
+而修复散在五条分支/worktree 上，没有任何地方写清「哪条修了哪几条、哪些根本没人修」。上面的顺序 81–86 就是补出来的账。
+
+| 编号 | 现在在哪 | 谁修 | 可合状态 |
+| --- | --- | --- | --- |
+| A1、A13、C19、C20 | **已在 main**（顺序 81，`acb93dd`） | 分支 `96120d9` | ✅ |
+| A5、A11、A12、B3、B4、B8、B11、B12、B14、C1、C2、C4、C5、C6、C7（15 条） | 分支 `worktree-agent-a6adfa051fc0cc2bd`（3 提交，Core 717 全绿） | 顺序 82 | 🟡 **先改 3 处再合** |
+| A3、A4、A6、A7、A8、A9、B1、B16、C8、C9、C10、C11、C12、C14、C15（15 条） | 分支 `worktree-agent-a063c593632cf9c7c`（7 提交，Core 699 全绿） | 顺序 83 | 🟡 待只读复核回执 |
+| A2、A4、A9、A10、B1、B2、B3、B5、B7、B13、B17、C3、C13、C17、C18（15 条） | 分支 `worktree-agent-a5ef9d3cfc346aade`（10 提交，Web 29 测试全绿） | 顺序 84 | ⬜ 等脏文件提交 |
+| A14、A15、B19、B20、B21、C16、C21、C22（8 条）+ 已合入的 4 条 | 分支 `integration`（`a0ff3d8995c3dd432` + `96120d9`） | 顺序 85 | ⬜ 等脏文件提交（它改 `styles.css`） |
+| **B6、B9、B10、B15、B18（5 条）** | **没有任何分支在修** | 顺序 86 | ⬜ |
+
+**重叠实现（合并时要逐条对账，不能两份都留）**：A4、A9、B1（`a063c` 与 `a5ef9` 各一份）；B3（`a6adfa` 与 `a5ef9` 各一份）。
+其余 41 条只有一条分支在修。清单是 `git log main..<分支>` 抽取提交信息里的编号核出来的，不是照报告抄的。
+
+**顺序 82 合并前必须先改的三处（只读复核的结论，2026-09-26）**：
+
+1. `recoverInterruptedImports`（`packages/core/src/storage/archive.ts`）**没有任何生产调用方**——`apps/web/src/lib/archive.ts` 只 import 了 `importWorldArchive`。
+   后果：导入中途崩了，标记永远留着、半个世界不会回滚，还会污染下一次导入的判断。要在 web 启动路径（`apps/web/src/lib/session.ts` 那一串初始化）调用。
+2. `IMPORT_PENDING_META_KEY` 是**模块级单键**：两个标签页同时导入，A 成功清标记会把 B 的待回滚信息一起擦掉。要按导入实例分键。
+3. C1 的守卫（`packages/core/src/storage/repository.ts:228`）判据是 `room.activeConversationId`，而那个字段**在最后一步（`repository.ts:268`）才写**；
+   顺序是 251 建 conversation → 263–265 把 scenes/messages/memories 改挂新线 → 268 写 room。所以「conversation 已建、assign 途中失败」重跑仍会再建一条空主线。
+   守则应改成「该 room 是否已存在 `kind === 'main'` 的 conversation」。现有测试只覆盖「成功连跑两次」，覆盖不到中断窗口。
+
+**不许宣称已完成的两条**（功能在、接线只接了一半，文档别写成已解决）：
+
+- **B11**：`loadRoom(roomId, { conversationId })` 的筛法有了、测试有了，但生产调用方一个都没改（`apps/web/src/lib/session.ts` 8 处、`storage/archive.ts:77` 全是一参）→ 每轮多次全量读**仍会发生**。
+- **B12**：`structuralOverhead` 已接线，但 `AssembleInput.budget.extraTokens`（工具定义那部分）无人传（唯一生产调用点 `session/turn.ts:295`）→ 审计说的那半没生效。
+
+**这一批实测出来的两个结构性缺口**：
+
+- `tools/*` **不在** `pnpm-workspace.yaml` 的 packages 里（只有 `packages/*`、`apps/*`），而 `pnpm test` = `pnpm -r test`
+  → `tools/local-bridge/policy.test.mjs`（顺序 81 的 15 条断言，含真起进程的集成测试）**不在任何门禁里**，只能在根目录手动 `node --test tools/local-bridge/policy.test.mjs`。
+  顺序 85 的 `integration` 分支动了 `pnpm-workspace.yaml`，合并时确认它是否顺手补上了；没补就在顺序 86 里补。
+- 全仓 `pnpm lint` 现在**是红的（13 error）**，逐条经 `biome check --reporter=json` 归因，**全部来自另一条会话未提交**的
+  `apps/web/src/App.tsx` 与 `components/{AvatarCropper,CardDesigner,CastDetail,CastRail,StreamingBubble}.tsx`
+  （5×`organizeImports`、5×`format`、2×`a11y/useAriaPropsSupportedByRole`、1×`useExhaustiveDependencies`）。
+  另有一条 info 级 `biome.json:15`（`linter` 键在 Biome 2.5.14 已废弃，属顺序 85 的迁移项）与 `apps/web/public/sw.js` 的两条 info 级 `useTemplate`。
+  **归因方法**：本批只动 `tools/`，`pnpm exec biome check tools/local-bridge tools/desktop tools/fake-model` → `Checked 5 files. No fixes applied.`
 
 #### 每一项怎么做（改哪里 / 怎么改 / 怎么验）
 

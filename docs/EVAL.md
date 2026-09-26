@@ -3703,3 +3703,55 @@ B = `since` 下推；原方案里的「`summary` 增量缓存」按实测拆出�
 上线后**把线上那份 JS 下载回来扫过**：`live_bundle_has_secret: false`，
 而 `无限制模式` / `清空旧提示` 两个标记都在——**部署的是新包，且不含用户正文**。
 没验的：真机浏览器里的实际交互（归 Codex）。
+
+## 七十一、顺序 81：审计第一批——本机助手（local-bridge）的公网暴露面（2026-09-26）
+
+**来源**：用户 2026-09-26 说用 opus5.5 做了一轮深度审计（报告 [`AUDIT-2026-09-26.md`](./AUDIT-2026-09-26.md)，
+提交 `71a26be`，58 条），要我把遗留查清、定出下一步。查下来发现：**58 条一条都没进 TASKS**，修复散在五条分支/worktree 上，
+而 A1/A13/C19/C20 这四条 P0 已经写在一个提交里（`96120d9`）。这一节记**第一批落地**（顺序 81）的做法与验证；
+其余批次的归属、重叠与「先改再合」结论记在 TASKS 第〇节「审计遗留」小节。
+
+**这批修的是什么**（原状 → 现状）：
+
+| 位置 | 原状（审计发现） | 现状 |
+| --- | --- | --- |
+| `tools/local-bridge/server.mjs` 的 CORS | `access-control-allow-origin: *`——**任何网页**都能调用用户的本机助手 | 只回显白名单来源（默认 `https://dramatissync.com` / `:8443`、`http://127.0.0.1:5273`、`http://localhost:5273`），加 `vary: Origin`；被拒的请求**一个 CORS 头都不回**（脚本连错误内容都读不到）；新增 `access-control-allow-private-network`（Chrome 的公网页面访问 127.0.0.1 预检要求） |
+| 同上：Host / Origin / 令牌 | 完全不校验（可被 DNS rebinding 打） | 每个请求先过 `checkAccess`：Host 必须是 `127.0.0.1:PORT` 或 `localhost:PORT`；Origin 不在白名单 → 403；支持可选配对令牌 `--token` / `DRAMATIS_BRIDGE_TOKEN`（常量时间比较） |
+| 同上：请求体 / 超时 / 并发 | 请求体不限长；`timeoutMs` 不夹；`/ask` 能并发任意多 | 请求体 ≤ 1MB（413）；`timeoutMs` 夹在 5–600 秒；`/ask` 串行，最多再排 2 个（429） |
+| 同上：端口参数 | `Number(args[...])`，`--port abc` 变 `NaN` 后行为不明 | `parsePort` 校验 1–65535，非法**启动即退出**并说明原因 |
+| `tools/fake-model/server.mjs` | CORS 回 `*` | 只放行本机来源（任意端口） |
+| `tools/desktop/launch.mjs` | `DRAMATIS_PORT` 不校验 | 校验 1–65535 整数 |
+
+新增 `tools/local-bridge/policy.mjs`（155 行**纯函数**，便于单测）+ `policy.test.mjs`（299 行）；
+`tools/local-bridge/README.md` 新增，写清 **9222 调试端口的风险**（开着 `--remote-debugging-port` 的 Chrome，
+本机任何进程都能完全控制它、读它所有 Cookie，必须用独立的 `--user-data-dir`，只登模型网页，用完即关）。
+
+**验证（本机能做的都做了）**：
+
+- 五项门禁（合并提交 `acb93dd` 之后跑）：typecheck ✓；Core **671** + Web **12** ✓；build ✓（997 ms）；build:sync-server ✓；
+  **lint 本批路径干净**（`pnpm exec biome check tools/local-bridge tools/desktop tools/fake-model` → `Checked 5 files. No fixes applied.`）。
+  全仓 `pnpm lint` 的 13 个 error **全部**落在另一条会话未提交的文件上（用 `biome check . --reporter=json` 逐条归因，清单见 TASKS 第〇节）。
+- **手动跑 `node --test tools/local-bridge/policy.test.mjs`：15 tests / 5 suites 全过**（`duration_ms 2345`）。
+  其中 3 条是**真起进程**的集成测试：外来 Origin 被拒、设了令牌后必须带 `Authorization: Bearer`、非法端口启动即退出；
+  另两条覆盖假模型（C19）与桌面启动器（C20）。
+- **这 15 条不在任何门禁里**（实测）：`pnpm test` 是 `pnpm -r test`，而 `pnpm-workspace.yaml` 只列了 `packages/*` 与 `apps/*`
+  → `tools/*` 的测试不会被跑到。这是审计没提、本批自己撞出来的**结构性缺口**，已记入 TASKS。
+
+**行为变更（用户需要知道的一条）**：本机助手**从「谁都能调」变成白名单**。如果你的应用不是从
+`https://dramatissync.com`（或 `:8443`）与本机 `:5273` 打开的，调用会被 403——用 `--allow-origin <你的来源>`
+或 `DRAMATIS_BRIDGE_ORIGINS=a,b` 追加。**没有 Origin 头的本机脚本（curl 等）仍然可用**（Host 校验还在），
+这是刻意的：要挡的是**网页**，不是用户自己敲的命令。
+
+**没验的（归 Codex 真机）**：
+
+1. 真实浏览器里「应用 → 本机助手」这条路的端到端（白名单回显、`Private-Network` 预检、可选令牌）——只有真 Chrome + 真站点上跑才算数。
+2. `--allow-origin` 追加来源的真实行为（本机只测了「白名单来源放行 / 外来来源拒绝 / 非法令牌拒绝」）。
+3. 桌面启动器在新校验下的真机启动（本机只测了非法端口退出）。
+
+**同一批拿到的复核证据（属顺序 82 的证据，等那批落地时展开）**：对分支 `a6adfa` 的 15 条做了只读复核
+（逐条查审计原文 → 看 diff → 必要时读改后文件）。判定：A5、B3、B14、C2、C4、C5、A12、B4、B8 **可信**（B14 残留「计数器丢了按库里最大号续上」在事务外，低风险）；
+C1、C6、A11、B11、B12、C7 **有疑**。其中三处必须在合并前改、两处不许宣称已完成（详见 TASKS 第〇节「审计遗留」小节里的清单）。
+
+**一条协作事实（写下来避免以后重复踩）**：`docs/AUDIT-2026-09-26.md`（`71a26be`）**没有 push**，
+58 条也从未登记进 TASKS——`grep` 全 `docs/` 只命中报告自身。所以「审计过」这件事在清单上曾经等于不存在。
+本批把它归了账：五条分支的覆盖、4 条重复实现、**5 条没人修**（B6/B9/B10/B15/B18）、**2 条只接了一半**（B11/B12）。

@@ -81,3 +81,51 @@ export function IconMenu({ size }: IconProps) {
     </Frame>
   );
 }
+
+/** 关闭、移除；具体危险语义仍由按钮文字与颜色表达。 */
+export function IconClose({ size }: IconProps) {
+  return (
+    <Frame size={size}>
+      <path d="M4.2 4.2 11.8 11.8M11.8 4.2 4.2 11.8" />
+    </Frame>
+  );
+}
+
+/** 世界与对话树的层级方向。 */
+export function IconChevron({ size }: IconProps) {
+  return (
+    <Frame size={size}>
+      <path d="m6.1 3.8 4.2 4.2-4.2 4.2" />
+    </Frame>
+  );
+}
+
+/** 世界管理员与设置入口。 */
+export function IconSettings({ size }: IconProps) {
+  return (
+    <Frame size={size}>
+      <circle cx="8" cy="8" r="2.3" />
+      <path d="M6.6 2.1h2.8l.4 1.3 1.2.7 1.3-.3 1.4 2.4-.9 1v1.6l.9 1-1.4 2.4-1.3-.3-1.2.7-.4 1.3H6.6l-.4-1.3-1.2-.7-1.3.3-1.4-2.4.9-1V7.2l-.9-1 1.4-2.4 1.3.3 1.2-.7.4-1.3Z" />
+    </Frame>
+  );
+}
+
+/** 归档对话。 */
+export function IconArchive({ size }: IconProps) {
+  return (
+    <Frame size={size}>
+      <rect x="2.3" y="3.1" width="11.4" height="3.1" rx=".8" />
+      <path d="M3.5 6.2v6.6h9V6.2M6.3 9.1h3.4" />
+    </Frame>
+  );
+}
+
+/** 编辑名称或内容。 */
+export function IconEdit({ size }: IconProps) {
+  return (
+    <Frame size={size}>
+      <path d="m10.5 2.8 2.7 2.7-7.7 7.7-3.1.4.4-3.1 7.7-7.7Z" />
+      <path d="m8.9 4.4 2.7 2.7" />
+    </Frame>
+  );
+}

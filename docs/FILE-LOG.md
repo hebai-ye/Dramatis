@@ -1394,6 +1394,23 @@ TASKS 第〇节顺序 68。用户裁定「A+B 推进」；原方案里的 `limit
 
 这次改口的提交本身也一并 `git push`（`1cf1eab..4769268`），所以文档里不再写死「`origin/main` = 某个 hash」，一律写「**以远端为准**」；真机 / 真实模型验证仍归 Codex。
 
+## 顺序 93、2026-09-27：界面视觉系统与 SVG 图标（进行中）
+
+本批在隔离分支 `codex/ui-visual-refresh` 上进行，尚未 push 或部署。方案、计划与阶段验收分别见 `UI-VISUAL-OPTIMIZATION-PROPOSAL-2026-09-27.md`、`superpowers/plans/2026-09-27-ui-visual-refresh.md` 和 EVAL 第八十二节。
+
+| 文件 | 动作 | 本阶段内容 |
+| --- | --- | --- |
+| `docs/UI-VISUAL-OPTIMIZATION-PROPOSAL-2026-09-27.md` | 新增 | 用户批准的叙事剧场视觉方案，后补 SVG 图标与微动效范围 |
+| `docs/superpowers/plans/2026-09-27-ui-visual-refresh.md` | 新增 | 分批实施、浏览器视觉验收、五项门禁与四份文档随代码更新的清单 |
+| `apps/web/src/styles.css` | 改 | 三主题语义令牌、字级与焦点环；后续分区调整继续记在本节 |
+| `apps/web/src/lib/appearance.ts` | 改 | 三张主题卡的色板与文案对齐新配色 |
+| `apps/web/src/components/Icons.tsx` | 改 | 在原有 5 个 SVG 上增加关闭、层级方向、设置、归档、编辑图标 |
+| `packages/core/src/prompt/budget-equivalence.test.ts` | 改 | 现有 3000 条历史等价性用例稳定运行超过默认 5 秒；诊断确认断言通过后仅将该用例等待上限设为 15 秒，详见 EVAL 第八十二节 |
+| `docs/TASKS.md` | 改 | 总表增加顺序 93，记录阶段状态 |
+| `docs/STATUS.md` | 改 | 顶部记录本次隔离开发的接续点 |
+| `docs/EVAL.md` | 改 | 新增第八十二节，逐批写实测与未验证项 |
+| `docs/FILE-LOG.md` | 改 | 本节 |
+
 ## 七十、几点注意
 
 ---

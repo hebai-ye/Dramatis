@@ -172,7 +172,7 @@ describe('预算守卫 O(n) 改写与旧实现等价（审计 A12）', () => {
     const next = applyBudget(historyBlocks(3000), { maxTokens: 20_000 });
     expect(next.report).toEqual(legacy.report);
     expect(next.blocks.map((block) => block.id)).toEqual(legacy.blocks.map((block) => block.id));
-  });
+  }, 15_000);
 
   it('3000 条历史、要丢两千多块：远快于旧实现', () => {
     const started = performance.now();

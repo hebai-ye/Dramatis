@@ -34,9 +34,9 @@ export const DEFAULT_APPEARANCE: Appearance = {
 };
 
 export const THEME_LABELS: Record<ThemeName, { label: string; hint: string; swatch: [string, string] }> = {
-  tavern: { label: '酒馆', hint: '当前的暖棕色调', swatch: ['#14110f', '#d9a441'] },
-  light: { label: '浅色', hint: '白底 + 蓝（DeepSeek 官方那套）', swatch: ['#f7f8fa', '#4d6bfe'] },
-  dark: { label: '深色', hint: '黑底 + 蓝', swatch: ['#0b0d10', '#4d6bfe'] },
+  tavern: { label: '酒馆', hint: '暖色舞台与黄铜强调', swatch: ['#121010', '#d9aa68'] },
+  light: { label: '浅色', hint: '明亮阅读与蓝色强调', swatch: ['#f5f4f1', '#4564de'] },
+  dark: { label: '深色', hint: '深色阅读与蓝色强调', swatch: ['#0e1117', '#8fa8ff'] },
 };
 
 function read(): Appearance {

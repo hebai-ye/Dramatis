@@ -1,12 +1,19 @@
 :root {
-  --bg: #14110f;
-  --panel: #1e1a17;
-  --panel-soft: #262120;
-  --line: #38302b;
-  --text: #ebe2d8;
-  --muted-text: #a29284;
-  --accent: #d9a441;
-  --accent-soft: #6b5224;
+  --bg: #121010;
+  --panel: #1b1817;
+  --panel-soft: #26211f;
+  --line: #40362f;
+  --text: #f2e9df;
+  --muted-text: #b7a99a;
+  --accent: #d9aa68;
+  --accent-soft: #765637;
+  --surface-raised: #302824;
+  --surface-hover: #342b27;
+  --line-strong: #675342;
+  --focus-ring: #e9bb7d;
+  --shadow-panel: 0 18px 48px rgb(0 0 0 / 18%);
+  --motion-fast: 160ms;
+  --motion-normal: 220ms;
   /* 强调色上的文字：酒馆色偏亮，用深色字；蓝底那两套用白字 */
   --on-accent: #241b0b;
   --danger: #d9705f;
@@ -21,28 +28,38 @@
  * `tavern` 就是上面 :root 的那套（默认值即酒馆色，不额外声明）。
  */
 html[data-theme="light"] {
-  --bg: #f7f8fa;
+  --bg: #f5f4f1;
   --panel: #ffffff;
-  --panel-soft: #f0f2f5;
-  --line: #e3e6eb;
-  --text: #1b1f24;
-  --muted-text: #6b7280;
-  --accent: #4d6bfe;
-  --accent-soft: #c9d4ff;
+  --panel-soft: #f1f2f3;
+  --line: #dededc;
+  --text: #24282d;
+  --muted-text: #626b75;
+  --accent: #4564de;
+  --accent-soft: #c9d3ff;
+  --surface-raised: #ffffff;
+  --surface-hover: #e9ecf2;
+  --line-strong: #b5becb;
+  --focus-ring: #4668ee;
+  --shadow-panel: 0 18px 48px rgb(30 44 70 / 9%);
   --on-accent: #ffffff;
   --danger: #d64545;
   color-scheme: light;
 }
 
 html[data-theme="dark"] {
-  --bg: #0b0d10;
-  --panel: #12151a;
-  --panel-soft: #171b22;
-  --line: #232a35;
-  --text: #e6ebf2;
-  --muted-text: #8b97a8;
-  --accent: #4d6bfe;
-  --accent-soft: #2b3a7a;
+  --bg: #0e1117;
+  --panel: #171c24;
+  --panel-soft: #202734;
+  --line: #35404e;
+  --text: #ebf0f7;
+  --muted-text: #a5b0bf;
+  --accent: #8fa8ff;
+  --accent-soft: #35467b;
+  --surface-raised: #293241;
+  --surface-hover: #303b4b;
+  --line-strong: #59677b;
+  --focus-ring: #acc0ff;
+  --shadow-panel: 0 18px 48px rgb(0 0 0 / 23%);
   --on-accent: #ffffff;
   --danger: #e06c75;
   color-scheme: dark;
@@ -70,8 +87,8 @@ body {
   background: var(--bg);
   color: var(--text);
   font-family: "PingFang SC", "Microsoft YaHei", "Segoe UI", system-ui, sans-serif;
-  font-size: 14px;
-  line-height: 1.6;
+  font-size: 15px;
+  line-height: 1.65;
   overflow: hidden;
 }
 
@@ -249,7 +266,7 @@ label {
   display: flex;
   flex-direction: column;
   gap: 4px;
-  font-size: 12px;
+  font-size: 13px;
   color: var(--muted-text);
 }
 
@@ -290,8 +307,9 @@ textarea {
 input:focus,
 select:focus,
 textarea:focus {
-  outline: 1px solid var(--accent-soft);
-  border-color: var(--accent-soft);
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 1px;
+  border-color: var(--focus-ring);
 }
 
 button {
@@ -314,7 +332,7 @@ button:disabled {
 button:focus-visible,
 summary:focus-visible,
 a:focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--focus-ring);
   outline-offset: 2px;
 }
 

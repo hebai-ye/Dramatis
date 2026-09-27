@@ -2373,11 +2373,34 @@ details summary {
   position: relative;
 }
 
+.mode-trigger {
+  transition:
+    background-color var(--motion-fast) ease,
+    color var(--motion-fast) ease;
+}
+
+.mode-trigger.open {
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  color: var(--accent);
+}
+
+.mode-trigger-icon {
+  display: inline-flex;
+  transform-origin: center;
+  transition: transform var(--motion-normal) cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+
+.mode-trigger.open .mode-trigger-icon {
+  transform: rotate(45deg);
+}
+
 .mode-menu {
-  background: var(--panel-soft);
-  border: 1px solid var(--line);
-  border-radius: 8px;
+  animation: mode-menu-enter var(--motion-normal) cubic-bezier(0.2, 0.7, 0.2, 1) both;
+  background: var(--surface-raised);
+  border: 1px solid var(--line-strong);
+  border-radius: 12px;
   bottom: calc(100% + 6px);
+  box-shadow: var(--shadow-panel);
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -2389,6 +2412,29 @@ details summary {
   padding: 10px 12px;
   position: absolute;
   z-index: 5;
+}
+
+@keyframes mode-menu-enter {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mode-trigger,
+  .mode-trigger-icon {
+    transition: none;
+  }
+
+  .mode-menu {
+    animation: none;
+  }
 }
 
 /*

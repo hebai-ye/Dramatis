@@ -13,7 +13,17 @@ import {
   type Scene,
   unlimitedModeOf,
 } from '@dramatis/core';
-import { type MouseEvent, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import {
+  type MouseEvent,
+  memo,
+  useCallback,
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import { createPortal } from 'react-dom';
 import { countRender } from '../lib/render-count';
 import { isNearBottom } from '../lib/scroll';
@@ -251,6 +261,18 @@ function MainChatImpl({
   const [input, setInput] = useState('');
   const [editingId, setEditingId] = useState<MessageId | null>(null);
   const [modeMenuOpen, setModeMenuOpen] = useState(false);
+  const modeMenuId = useId();
+  const modeTriggerRef = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    if (!modeMenuOpen) return;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      setModeMenuOpen(false);
+      modeTriggerRef.current?.focus();
+    };
+    window.addEventListener('keydown', closeOnEscape);
+    return () => window.removeEventListener('keydown', closeOnEscape);
+  }, [modeMenuOpen]);
   /**
    * 无限制模式的正文是**仓库里固定的一份**（顺序 92），而且用户 2026-09-26 明说了两件事：
    * 词已经设定好、**不可更改**；内容**不可阅读**。
@@ -744,17 +766,22 @@ function MainChatImpl({
           <>
             <div className="mode-anchor">
               <button
+                ref={modeTriggerRef}
                 type="button"
-                className="composer-chip"
+                className={modeMenuOpen ? 'composer-chip mode-trigger open' : 'composer-chip mode-trigger'}
                 disabled={archived}
                 title="设置当前对话的模式"
                 aria-label="对话模式"
+                aria-expanded={modeMenuOpen}
+                aria-controls={modeMenuId}
                 onClick={() => setModeMenuOpen((open) => !open)}
               >
-                <IconPlus />
+                <span className="mode-trigger-icon">
+                  <IconPlus />
+                </span>
               </button>
               {modeMenuOpen ? (
-                <div className="mode-menu">
+                <div id={modeMenuId} className="mode-menu">
                   <p className="hint">对话模式（只影响这条对话）</p>
                   {MODE_OPTIONS.map((mode) => (
                     <label key={mode.key} className="mode-option">

@@ -10,6 +10,9 @@ from PIL import Image, ImageDraw, ImageFont, ImageOps
 ROOT = Path(__file__).resolve().parents[2]
 PUBLIC = ROOT / "apps" / "web" / "public"
 MASTER = PUBLIC / "brand" / "icon-master.png"
+# Keep the character and goblet legible at 60px launcher size. The original
+# 1254px master remains untouched so this crop can be revised later.
+HOME_ICON_CROP = (202, 325, 1052, 1175)
 PORTRAIT_SOURCES = ROOT / "art" / "source" / "portraits"
 CATALOG = json.loads((ROOT / "apps" / "web" / "src" / "lib" / "portrait-catalog.json").read_text(encoding="utf-8"))
 NAMES_BY_NUMBER = {entry["number"]: entry["name"] for entry in CATALOG}
@@ -17,23 +20,17 @@ NAMES_BY_NUMBER = {entry["number"]: entry["name"] for entry in CATALOG}
 
 def app_icon(size: int, maskable: bool = False) -> Image.Image:
     art = Image.open(MASTER).convert("RGBA")
-    # Use the selected image's corner color for any transparent pixels.
-    # This keeps the supplied artwork unchanged in the standard icon variants.
-    edge = art.getpixel((0, 0))[:3]
-    background = Image.new("RGBA", art.size, (*edge, 255))
+    if art.size != (1254, 1254):
+        raise ValueError(f"Unexpected app icon master dimensions: {art.size}")
+    art = art.crop(HOME_ICON_CROP)
+    background = Image.new("RGBA", art.size, "#fff")
     background.alpha_composite(art)
     image = background.convert("RGB")
     if maskable:
-        # Keep the cup silhouette within Android's central adaptive-icon area.
+        # Reserve space for Android's circle/squircle launcher masks.
         inner = image.resize((round(size * 0.9), round(size * 0.9)), Image.Resampling.LANCZOS)
         canvas = Image.new("RGB", (size, size), "#fff")
-        # The master has black pixels outside its white rounded-square field.
-        # Clip only those corners so circular launcher masks stay white.
-        clip = Image.new("L", inner.size, 0)
-        ImageDraw.Draw(clip).rounded_rectangle(
-            (0, 0, inner.width - 1, inner.height - 1), radius=round(inner.width * 0.14), fill=255
-        )
-        canvas.paste(inner, ((size - inner.width) // 2, (size - inner.height) // 2), clip)
+        canvas.paste(inner, ((size - inner.width) // 2, (size - inner.height) // 2))
         return canvas
     return image.resize((size, size), Image.Resampling.LANCZOS)
 
@@ -43,6 +40,11 @@ for pixels, filename, maskable in [
     (192, "icon-192.png", False),
     (512, "icon-maskable-512.png", True),
     (192, "icon-maskable-192.png", True),
+    (512, "icon-home-512.png", False),
+    (192, "icon-home-192.png", False),
+    (512, "icon-home-maskable-512.png", True),
+    (192, "icon-home-maskable-192.png", True),
+    (180, "apple-touch-icon.png", False),
     (64, "favicon.png", False),
 ]:
     app_icon(pixels, maskable).save(PUBLIC / filename, optimize=True)
@@ -96,4 +98,4 @@ if sources:
     sheet.save(ROOT / "art" / "review-portraits.jpg", quality=92)
     faces.save(ROOT / "art" / "review-faces.jpg", quality=92)
 
-print(f"Prepared five app icons and {len(list(thumbs.glob('*.webp')))} portrait, thumbnail and avatar sets.")
+print(f"Prepared ten app icons and {len(list(thumbs.glob('*.webp')))} portrait, thumbnail and avatar sets.")

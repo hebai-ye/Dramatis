@@ -21,6 +21,10 @@
 
 ## 新会话从这里接（2026-09-23）
 
+### 2026-09-27：顺序 95 手机桌面图标近景修正
+
+用户在手机安装后发现图标主体过小。已确认上一版直接缩放整张 1254 × 1254 母版，且 maskable 又缩至 90%，导致角色在约 60 像素桌面图标里难以辨认。本轮改为从原图裁出 850 × 850 近景，母版保持不变；iPhone 使用新的 180 像素 Apple touch icon 路径，Android manifest 使用新的普通和 maskable 图标路径，Service Worker 升 v4。多组近景与圆形裁切预览已比较；验收见 EVAL 第八十四节。
+
 ### 2026-09-27：顺序 94 用户定稿应用图标
 
 用户选择自己提供的 1254 × 1254 PNG 作为最终应用图标。母版原样保存于 `apps/web/public/brand/icon-master.png`，普通尺寸、favicon 与 Android maskable 图标从它派生。maskable 只做启动器安全区域与白色边缘适配。Service Worker 缓存版本升为 v3，确保同路径旧图标被替换。`8e6551d` 已推送 `origin/main` 并仅部署网页静态产物；线上母版 SHA-256 与用户附件一致，首页、图标、Service Worker、同步健康接口均返回 200。旧网页留在 `/var/www/dramatis.bak-icon-8e6551d`，同步服务未更新。资源约定见 `docs/APP-ICON-SELECTED-2026-09-27.md`；门禁及真机验收边界见 EVAL 第八十三节。

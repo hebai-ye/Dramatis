@@ -35,6 +35,9 @@ describe('sw.js 缓存策略（审计 A2）', () => {
     expect(get('/assets/index-abc123.js')).toBe('cache');
     expect(get('/assets/index-abc123.css')).toBe('cache');
     expect(get('/icon-192.png')).toBe('cache');
+    expect(get('/icon-home-192.png')).toBe('cache');
+    expect(get('/icon-home-maskable-512.png')).toBe('cache');
+    expect(get('/apple-touch-icon.png')).toBe('cache');
     expect(get('/manifest.webmanifest')).toBe('cache');
     expect(get('/index.html')).toBe('cache');
   });
@@ -61,6 +64,6 @@ describe('sw.js 缓存策略（审计 A2）', () => {
   });
 
   it('缓存版本已升级以刷新应用图标', () => {
-    expect(CACHE).toBe('dramatis-shell-v3');
+    expect(CACHE).toBe('dramatis-shell-v4');
   });
 });

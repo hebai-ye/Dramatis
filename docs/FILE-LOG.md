@@ -1430,6 +1430,17 @@ TASKS 第〇节顺序 68。用户裁定「A+B 推进」；原方案里的 `limit
 
 代码及首轮文档提交为 `8e6551d`，已推送 `origin/main`；本段追加部署验收记录。仅替换线上网页静态目录，旧目录留为 `/var/www/dramatis.bak-icon-8e6551d`。
 
+## 顺序 95、2026-09-27：手机桌面图标近景修正
+
+| 文件 | 动作 | 本批内容 |
+| --- | --- | --- |
+| `tools/art/prepare-assets.py` | 改 | 母版近景裁切坐标、Android 留白与新安装入口图标生成 |
+| `apps/web/public/{icon-192,icon-512,icon-maskable-192,icon-maskable-512,favicon}.png` | 改 | 近景图标替换上一版全画布缩放产物 |
+| `apps/web/public/{icon-home-192,icon-home-512,icon-home-maskable-192,icon-home-maskable-512,apple-touch-icon}.png` | 新增 | 新 URL 的 Android 和 iPhone 安装图标 |
+| `apps/web/public/manifest.webmanifest`、`apps/web/index.html` | 改 | Android/iPhone 桌面安装改用新图标 URL |
+| `apps/web/public/sw.js`、`apps/web/src/pwa/sw-policy.test.ts` | 改 | 缓存版本 v4、新图标静态白名单与断言 |
+| `docs/APP-ICON-SELECTED-2026-09-27.md`、`docs/{TASKS,STATUS,EVAL,FILE-LOG}.md` | 改 | 记录用户真机反馈、近景取舍及验收 |
+
 ## 七十、几点注意
 
 ---

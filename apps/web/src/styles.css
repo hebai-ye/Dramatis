@@ -20,7 +20,7 @@
   --shadow-panel: 0 18px 48px rgb(0 0 0 / 18%);
   --motion-fast: 160ms;
   --motion-normal: 220ms;
-  /* 强调色上的文字：酒馆色偏亮，用深色字；蓝底那两套用白字 */
+  /* 强调色上的文字按底色明度分别设定，保持主按钮可读 */
   --on-accent: #241b0b;
   --danger: #d9705f;
   --radius: 10px;
@@ -78,7 +78,7 @@ html[data-theme="dark"] {
   --line-strong: #59677b;
   --focus-ring: #acc0ff;
   --shadow-panel: 0 18px 48px rgb(0 0 0 / 23%);
-  --on-accent: #ffffff;
+  --on-accent: #101828;
   --danger: #e06c75;
   color-scheme: dark;
 }

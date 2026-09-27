@@ -4351,4 +4351,6 @@ v12 的三个判断都是有意的：
 
 **缓存与安装入口**：新增 `apple-touch-icon.png`（180 × 180）供 iPhone；manifest 改指新的 `icon-home-*` 普通与 maskable PNG，旧图标路径同步生成近景兼容桌面快捷方式。Service Worker 升 v4，将所有新路径加入静态白名单。本轮更新后，已存在的手机桌面快捷方式可能仍由系统保留旧图标；用新网页重新添加到主屏幕才能确定看到新版。
 
-**本地门禁**：逐项验证 manifest 四个新图标路径存在且尺寸与声明一致；新旧路径的同类型图标字节一致，母版 SHA-256 仍为 `a93e29a222fa88b5474231f53c414120a9072745c6f8ef199a264130cc95ee12`。`pnpm typecheck`、`pnpm lint`（282 文件）、`pnpm test`（Core 809/809、Web 45/45）、`pnpm build`、`pnpm build:sync-server` 均通过。主 JS 超过 500 kB 的既有构建提示仍在。待补上线后的 HTTPS 资源核对与真实手机重装观察。
+**本地门禁**：逐项验证 manifest 四个新图标路径存在且尺寸与声明一致；新旧路径的同类型图标字节一致，母版 SHA-256 仍为 `a93e29a222fa88b5474231f53c414120a9072745c6f8ef199a264130cc95ee12`。`pnpm typecheck`、`pnpm lint`（282 文件）、`pnpm test`（Core 809/809、Web 45/45）、`pnpm build`、`pnpm build:sync-server` 均通过。主 JS 超过 500 kB 的既有构建提示仍在。
+
+**推送与上线**：`8e16b90` 已快进推送到 `origin/main`，只上传 `apps/web/dist` 并切换网页静态目录；旧版留在 `/var/www/dramatis.bak-icon-focus-8e16b90`。暂存目录的 Apple 图标、Android 普通与 maskable 图标 SHA-256 与本地构建一致，`sw.js` 包含缓存版本 v4。公网 HTTPS 检查：首页 200 / 1366 B、Apple 图标 200 / 52482 B、Android 192 图标 200 / 58959 B、512 图标 200 / 354766 B、maskable 192 图标 200 / 49362 B、maskable 512 图标 200 / 297175 B、manifest 200 / 852 B、`sw.js` 200 / 9071 B、`/sync/health` 200。公网首页确实引用新的 Apple 图标，manifest 确实引用新的 maskable 图标。同步服务未更新或重启。真实手机重新添加后的系统桌面外观仍待核对，HTTP 200 不能代替这一项。

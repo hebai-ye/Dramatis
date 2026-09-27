@@ -23,7 +23,7 @@
 
 ### 2026-09-27：顺序 95 手机桌面图标近景修正
 
-用户在手机安装后发现图标主体过小。已确认上一版直接缩放整张 1254 × 1254 母版，且 maskable 又缩至 90%，导致角色在约 60 像素桌面图标里难以辨认。本轮改为从原图裁出 850 × 850 近景，母版保持不变；iPhone 使用新的 180 像素 Apple touch icon 路径，Android manifest 使用新的普通和 maskable 图标路径，Service Worker 升 v4。多组近景与圆形裁切预览已比较；验收见 EVAL 第八十四节。
+用户在手机安装后发现图标主体过小。已确认上一版直接缩放整张 1254 × 1254 母版，且 maskable 又缩至 90%，导致角色在约 60 像素桌面图标里难以辨认。本轮改为从原图裁出 850 × 850 近景，母版保持不变；iPhone 使用新的 180 像素 Apple touch icon 路径，Android manifest 使用新的普通和 maskable 图标路径，Service Worker 升 v4。多组近景与圆形裁切预览已比较。修复提交 `8e16b90` 已推送 `origin/main` 并仅部署网页，旧目录留在 `/var/www/dramatis.bak-icon-focus-8e16b90`；公网首页、新图标、manifest、Service Worker 与同步健康接口均返回 200。真实手机删除旧快捷方式并重新添加后的桌面外观仍待用户核对；验收见 EVAL 第八十四节。
 
 ### 2026-09-27：顺序 94 用户定稿应用图标
 

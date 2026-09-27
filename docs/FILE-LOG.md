@@ -1441,6 +1441,8 @@ TASKS 第〇节顺序 68。用户裁定「A+B 推进」；原方案里的 `limit
 | `apps/web/public/sw.js`、`apps/web/src/pwa/sw-policy.test.ts` | 改 | 缓存版本 v4、新图标静态白名单与断言 |
 | `docs/APP-ICON-SELECTED-2026-09-27.md`、`docs/{TASKS,STATUS,EVAL,FILE-LOG}.md` | 改 | 记录用户真机反馈、近景取舍及验收 |
 
+修复提交 `8e16b90` 已推送 `origin/main` 并仅部署网页；本段补充上线后的验收结果。旧网页留在 `/var/www/dramatis.bak-icon-focus-8e16b90`。
+
 ## 七十、几点注意
 
 ---

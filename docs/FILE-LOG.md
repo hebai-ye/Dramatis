@@ -1417,6 +1417,17 @@ TASKS 第〇节顺序 68。用户裁定「A+B 推进」；原方案里的 `limit
 
 样例获批后的产品落地：`apps/web/src/styles.css` 新增三主题阅读表面、消息/空状态/背景遮罩和图标布局，浅色与深色蓝色强调值不变；`apps/web/src/components/MainChat.tsx` 把主对话空态改成审阅通过的舞台引导；`apps/web/src/components/MessageItem.tsx` 给玩家消息加头像；`apps/web/src/components/Icons.tsx` 扩充外观、账户、数据、记忆、用量和文档 SVG；`apps/web/src/components/TopBar.tsx`、`WorldTree.tsx`、`SettingsDialog.tsx`、`RuntimePanel.tsx` 接入共用图标并保留文字/可访问名称。方案文档、TASKS、STATUS、EVAL 和本日志同步记录用户批准与浏览器验收边界。产品改动提交为 `84690e8`；审阅后 `apps/web/src/styles.css` 又在 `8cf9419` 将深色主按钮字改深，修正对比度。两次代码提交均已推送 `origin/main` 并仅部署网页静态产物；最终部署验收见 EVAL 第八十二节。
 
+## 顺序 94、2026-09-27：用户定稿应用图标
+
+| 文件 | 动作 | 本批内容 |
+| --- | --- | --- |
+| `apps/web/public/brand/icon-master.png` | 改 | 用户提供的 1254 × 1254 PNG 原样成为图标母版 |
+| `apps/web/public/{icon-192,icon-512,icon-maskable-192,icon-maskable-512,favicon}.png` | 改 | 由母版生成的四个安装图标及浏览器图标 |
+| `tools/art/prepare-assets.py` | 改 | 支持只生成图标；maskable 使用白色留白和圆角裁切 |
+| `apps/web/public/sw.js`、`apps/web/src/pwa/sw-policy.test.ts` | 改 | 缓存版本升至 v3 并测试，刷新同路径图标 |
+| `docs/APP-ICON-SELECTED-2026-09-27.md` | 新增 | 用户定稿、母版哈希、衍生规格与验收边界 |
+| `docs/{TASKS,STATUS,EVAL,FILE-LOG}.md` | 改 | 顺序 94 的任务、状态、验证和文件记录 |
+
 ## 七十、几点注意
 
 ---

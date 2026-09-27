@@ -15,7 +15,8 @@
  */
 // v2（审计 A2）：v1 会把同源 GET 的同步接口（/sync/...）也缓存下来，版本号一换，
 // activate 时旧缓存整体删除，被污染的 head / pull 响应随之清掉。
-const CACHE = 'dramatis-shell-v2';
+// v3：替换应用图标，淘汰旧缓存中的同路径 PNG。
+const CACHE = 'dramatis-shell-v3';
 
 /**
  * 白名单：只有这些**静态**路径允许进缓存（审计 A2）。

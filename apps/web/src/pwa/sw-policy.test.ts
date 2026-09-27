@@ -60,7 +60,7 @@ describe('sw.js 缓存策略（审计 A2）', () => {
     expect(classifyRequest('GET', 'https://api.deepseek.com/v1/models', 'cors', origin)).toBe('pass');
   });
 
-  it('缓存版本已升级以清除被污染的 v1', () => {
-    expect(CACHE).not.toBe('dramatis-shell-v1');
+  it('缓存版本已升级以刷新应用图标', () => {
+    expect(CACHE).toBe('dramatis-shell-v3');
   });
 });

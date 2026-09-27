@@ -1,6 +1,7 @@
 """Prepare Dramatis app icons, portrait thumbnails, and review sheets."""
 
 import json
+import sys
 from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFont, ImageOps
@@ -16,16 +17,23 @@ NAMES_BY_NUMBER = {entry["number"]: entry["name"] for entry in CATALOG}
 
 def app_icon(size: int, maskable: bool = False) -> Image.Image:
     art = Image.open(MASTER).convert("RGBA")
-    # Generated master has a feathered transparent border. Compositing against
-    # the app's own brown avoids black fringes on desktop and Android launchers.
-    background = Image.new("RGBA", art.size, "#2a160f")
+    # Use the selected image's corner color for any transparent pixels.
+    # This keeps the supplied artwork unchanged in the standard icon variants.
+    edge = art.getpixel((0, 0))[:3]
+    background = Image.new("RGBA", art.size, (*edge, 255))
     background.alpha_composite(art)
     image = background.convert("RGB")
     if maskable:
-        # Keep the cup and flame within the central safe area of adaptive icons.
-        inner = image.resize((round(size * 0.76), round(size * 0.76)), Image.Resampling.LANCZOS)
-        canvas = Image.new("RGB", (size, size), "#2a160f")
-        canvas.paste(inner, ((size - inner.width) // 2, (size - inner.height) // 2))
+        # Keep the cup silhouette within Android's central adaptive-icon area.
+        inner = image.resize((round(size * 0.9), round(size * 0.9)), Image.Resampling.LANCZOS)
+        canvas = Image.new("RGB", (size, size), "#fff")
+        # The master has black pixels outside its white rounded-square field.
+        # Clip only those corners so circular launcher masks stay white.
+        clip = Image.new("L", inner.size, 0)
+        ImageDraw.Draw(clip).rounded_rectangle(
+            (0, 0, inner.width - 1, inner.height - 1), radius=round(inner.width * 0.14), fill=255
+        )
+        canvas.paste(inner, ((size - inner.width) // 2, (size - inner.height) // 2), clip)
         return canvas
     return image.resize((size, size), Image.Resampling.LANCZOS)
 
@@ -38,6 +46,9 @@ for pixels, filename, maskable in [
     (64, "favicon.png", False),
 ]:
     app_icon(pixels, maskable).save(PUBLIC / filename, optimize=True)
+
+if "--icons-only" in sys.argv:
+    raise SystemExit(0)
 
 portraits = PUBLIC / "portraits"
 thumbs = portraits / "thumbs"

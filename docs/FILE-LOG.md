@@ -1415,7 +1415,7 @@ TASKS 第〇节顺序 68。用户裁定「A+B 推进」；原方案里的 `limit
 
 第三批审批样例：新增 `docs/visual-samples/main-chat-prototype.html`，展示桌面与手机主对话、空状态、亮背景和输入焦点；更新 `docs/UI-VISUAL-OPTIMIZATION-PROPOSAL-2026-09-27.md` 的已批准状态，以及 `docs/TASKS.md`、`docs/STATUS.md`、`docs/EVAL.md` 和本日志的样例审阅接续点。产品主阅读组件尚未批量修改。
 
-样例获批后的产品落地：`apps/web/src/styles.css` 新增三主题阅读表面、消息/空状态/背景遮罩和图标布局，浅色与深色蓝色强调值不变；`apps/web/src/components/MainChat.tsx` 把主对话空态改成审阅通过的舞台引导；`apps/web/src/components/MessageItem.tsx` 给玩家消息加头像；`apps/web/src/components/Icons.tsx` 扩充外观、账户、数据、记忆、用量和文档 SVG；`apps/web/src/components/TopBar.tsx`、`WorldTree.tsx`、`SettingsDialog.tsx`、`RuntimePanel.tsx` 接入共用图标并保留文字/可访问名称。方案文档、TASKS、STATUS、EVAL 和本日志同步记录用户批准与浏览器验收边界。产品改动提交为 `84690e8`，已推送 `origin/main` 并仅部署网页静态产物；部署验收见 EVAL 第八十二节。
+样例获批后的产品落地：`apps/web/src/styles.css` 新增三主题阅读表面、消息/空状态/背景遮罩和图标布局，浅色与深色蓝色强调值不变；`apps/web/src/components/MainChat.tsx` 把主对话空态改成审阅通过的舞台引导；`apps/web/src/components/MessageItem.tsx` 给玩家消息加头像；`apps/web/src/components/Icons.tsx` 扩充外观、账户、数据、记忆、用量和文档 SVG；`apps/web/src/components/TopBar.tsx`、`WorldTree.tsx`、`SettingsDialog.tsx`、`RuntimePanel.tsx` 接入共用图标并保留文字/可访问名称。方案文档、TASKS、STATUS、EVAL 和本日志同步记录用户批准与浏览器验收边界。产品改动提交为 `84690e8`；审阅后 `apps/web/src/styles.css` 又在 `8cf9419` 将深色主按钮字改深，修正对比度。两次代码提交均已推送 `origin/main` 并仅部署网页静态产物；最终部署验收见 EVAL 第八十二节。
 
 ## 七十、几点注意
 

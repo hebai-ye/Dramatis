@@ -1413,6 +1413,8 @@ TASKS 第〇节顺序 68。用户裁定「A+B 推进」；原方案里的 `limit
 
 第二批（输入区加号与菜单）：`apps/web/src/components/MainChat.tsx` 增加按钮与菜单关联、Esc 关闭后的焦点返回；`apps/web/src/styles.css` 增加加号旋转、打开态和菜单入场反馈及减少动效覆盖；四份项目记录同步追加浏览器样例、验证边界和阶段状态。`docs/UI-VISUAL-OPTIMIZATION-PROPOSAL-2026-09-27.md` 清理日期行末空格。
 
+第三批审批样例：新增 `docs/visual-samples/main-chat-prototype.html`，展示桌面与手机主对话、空状态、亮背景和输入焦点；更新 `docs/UI-VISUAL-OPTIMIZATION-PROPOSAL-2026-09-27.md` 的已批准状态，以及 `docs/TASKS.md`、`docs/STATUS.md`、`docs/EVAL.md` 和本日志的样例审阅接续点。产品主阅读组件尚未批量修改。
+
 ## 七十、几点注意
 
 ---

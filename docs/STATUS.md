@@ -23,7 +23,7 @@
 
 ### 2026-09-27：顺序 94 用户定稿应用图标
 
-用户选择自己提供的 1254 × 1254 PNG 作为最终应用图标。母版原样保存于 `apps/web/public/brand/icon-master.png`，普通尺寸、favicon 与 Android maskable 图标从它派生。maskable 只做启动器安全区域与白色边缘适配。Service Worker 缓存版本升为 v3，确保同路径旧图标被替换。资源约定见 `docs/APP-ICON-SELECTED-2026-09-27.md`；自动化、部署与真机验收边界见 EVAL 第八十三节。
+用户选择自己提供的 1254 × 1254 PNG 作为最终应用图标。母版原样保存于 `apps/web/public/brand/icon-master.png`，普通尺寸、favicon 与 Android maskable 图标从它派生。maskable 只做启动器安全区域与白色边缘适配。Service Worker 缓存版本升为 v3，确保同路径旧图标被替换。`8e6551d` 已推送 `origin/main` 并仅部署网页静态产物；线上母版 SHA-256 与用户附件一致，首页、图标、Service Worker、同步健康接口均返回 200。旧网页留在 `/var/www/dramatis.bak-icon-8e6551d`，同步服务未更新。资源约定见 `docs/APP-ICON-SELECTED-2026-09-27.md`；门禁及真机验收边界见 EVAL 第八十三节。
 
 ### 2026-09-27：顺序 93 已推送并完成前端部署
 

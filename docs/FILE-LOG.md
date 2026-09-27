@@ -1428,6 +1428,8 @@ TASKS 第〇节顺序 68。用户裁定「A+B 推进」；原方案里的 `limit
 | `docs/APP-ICON-SELECTED-2026-09-27.md` | 新增 | 用户定稿、母版哈希、衍生规格与验收边界 |
 | `docs/{TASKS,STATUS,EVAL,FILE-LOG}.md` | 改 | 顺序 94 的任务、状态、验证和文件记录 |
 
+代码及首轮文档提交为 `8e6551d`，已推送 `origin/main`；本段追加部署验收记录。仅替换线上网页静态目录，旧目录留为 `/var/www/dramatis.bak-icon-8e6551d`。
+
 ## 七十、几点注意
 
 ---

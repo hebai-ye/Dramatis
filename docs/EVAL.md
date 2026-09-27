@@ -4339,4 +4339,6 @@ v12 的三个判断都是有意的：
 
 **视觉检查**：制作 192 像素普通图标、512 像素 maskable 圆形裁切及 64 像素 favicon 的并排预览。初版 maskable 使用深色留白，在圆形裁切后形成黑圈；改用白色留白、90% 画面尺寸并裁掉母版圆角外的黑角后，圆形预览中杯底和两侧声波均未被切断。小 favicon 细节降低属尺寸限制。
 
-**技术检查**：`sw-policy.test.ts` 明确断言缓存版本 v3，淘汰同路径旧图标。`pnpm typecheck`、`pnpm lint`（282 文件）、`pnpm test`（Core 809/809、Web 45/45）、`pnpm build`、`pnpm build:sync-server` 全通过。Web 构建保留已有的主 JS 超过 500 kB 提示。构建目录包含原样母版及五张衍生图标，尺寸分别为 1254、192、512、192、512、64 像素；`sw.js` 也已进入产物。待补线上资源与真机桌面安装外观的验收结果。
+**技术检查**：`sw-policy.test.ts` 明确断言缓存版本 v3，淘汰同路径旧图标。`pnpm typecheck`、`pnpm lint`（282 文件）、`pnpm test`（Core 809/809、Web 45/45）、`pnpm build`、`pnpm build:sync-server` 全通过。Web 构建保留已有的主 JS 超过 500 kB 提示。构建目录包含原样母版及五张衍生图标，尺寸分别为 1254、192、512、192、512、64 像素；`sw.js` 也已进入产物。
+
+**推送与上线**：`git fetch origin` 确认主分支没有新增提交后，`8e6551d` 从 `090437c` 快进推送到 `origin/main`。仅上传和切换 `apps/web/dist`；服务器暂存目录中母版、192 图标与 `sw.js` 均核验，旧网页保留为 `/var/www/dramatis.bak-icon-8e6551d`。公网 HTTPS 检查：首页 200 / 1342 B，192 图标 200 / 45117 B，512 图标 200 / 285671 B，maskable 512 图标 200 / 236774 B，favicon 200 / 6143 B，`sw.js` 200 / 8919 B，`/sync/health` 200。公网提供的母版 SHA-256 与用户附件一致：`a93e29a222fa88b5474231f53c414120a9072745c6f8ef199a264130cc95ee12`。未修改或重启同步服务。真实 Android/iOS 安装后的图标外观与系统缓存刷新时机仍待真机核对。

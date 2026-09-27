@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { IconMenu } from './Icons';
+import { IconChevron, IconMenu } from './Icons';
 
 interface Props {
   collapsed: boolean;
@@ -51,7 +51,13 @@ export function TopBar({
         aria-expanded={!collapsed}
         onClick={onToggleCollapsed}
       >
-        {narrow ? <IconMenu size={20} /> : collapsed ? '≫' : '≪'}
+        {narrow ? (
+          <IconMenu size={20} />
+        ) : (
+          <span className={collapsed ? 'rail-toggle-icon' : 'rail-toggle-icon open'}>
+            <IconChevron />
+          </span>
+        )}
       </button>
 
       {/* 手机上不放品牌文字：顶栏的每一像素都留给导航与在场角色 */}

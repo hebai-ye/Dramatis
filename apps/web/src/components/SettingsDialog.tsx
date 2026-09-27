@@ -7,6 +7,7 @@ import type { StorageApi } from '../lib/storage';
 import type { SyncApi } from '../lib/sync';
 import { AccountPanel } from './AccountPanel';
 import { AppearancePanel } from './AppearancePanel';
+import { IconArchive, IconDatabase, IconSettings, IconSliders, IconUser } from './Icons';
 import { ProviderPanel } from './ProviderPanel';
 import { SyncPanel } from './SyncPanel';
 
@@ -30,6 +31,14 @@ const CATEGORIES: { id: SettingsCategory; label: string; hint: string }[] = [
   { id: 'data', label: '数据', hint: '封存导出 / 本机存储' },
   { id: 'archive', label: '已归档', hint: '归档过的对话' },
 ];
+
+const CATEGORY_ICONS = {
+  model: IconSettings,
+  appearance: IconSliders,
+  account: IconUser,
+  data: IconDatabase,
+  archive: IconArchive,
+} as const;
 
 export const SETTINGS_CATEGORY_LABELS: Record<SettingsCategory, string> = {
   model: '模型配置',
@@ -135,18 +144,24 @@ export function SettingsDialog(props: Props) {
 
         <div className="settings-body">
           <nav className="settings-nav" aria-label="设置分类">
-            {CATEGORIES.map((item) => (
-              <button
-                key={item.id}
-                type="button"
-                className={item.id === category ? 'ghost active' : 'ghost'}
-                aria-current={item.id === category ? 'page' : undefined}
-                onClick={() => onCategoryChange(item.id)}
-              >
-                <strong>{item.label}</strong>
-                <span className="hint">{item.hint}</span>
-              </button>
-            ))}
+            {CATEGORIES.map((item) => {
+              const CategoryIcon = CATEGORY_ICONS[item.id];
+              return (
+                <button
+                  key={item.id}
+                  type="button"
+                  className={item.id === category ? 'ghost active' : 'ghost'}
+                  aria-current={item.id === category ? 'page' : undefined}
+                  onClick={() => onCategoryChange(item.id)}
+                >
+                  <strong>
+                    <CategoryIcon />
+                    {item.label}
+                  </strong>
+                  <span className="hint">{item.hint}</span>
+                </button>
+              );
+            })}
           </nav>
 
           <div className="settings-content">

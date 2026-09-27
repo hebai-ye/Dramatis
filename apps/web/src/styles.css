@@ -9,6 +9,12 @@
   --accent-soft: #765637;
   --surface-raised: #302824;
   --surface-hover: #342b27;
+  --reader-bg: #211b17;
+  --reader-glow: #9b713026;
+  --rail-bg: #241d18;
+  --speech-bg: #382b22;
+  --player-bg: #39453c;
+  --narration-bg: #d9ae6b14;
   --line-strong: #675342;
   --focus-ring: #e9bb7d;
   --shadow-panel: 0 18px 48px rgb(0 0 0 / 18%);
@@ -38,6 +44,12 @@ html[data-theme="light"] {
   --accent-soft: #c9d3ff;
   --surface-raised: #ffffff;
   --surface-hover: #e9ecf2;
+  --reader-bg: #f9fafc;
+  --reader-glow: #4564de0d;
+  --rail-bg: #f0f2f7;
+  --speech-bg: #ffffff;
+  --player-bg: #e8edff;
+  --narration-bg: #e8ecf6;
   --line-strong: #b5becb;
   --focus-ring: #4668ee;
   --shadow-panel: 0 18px 48px rgb(30 44 70 / 9%);
@@ -57,6 +69,12 @@ html[data-theme="dark"] {
   --accent-soft: #35467b;
   --surface-raised: #293241;
   --surface-hover: #303b4b;
+  --reader-bg: #151b25;
+  --reader-glow: #8fa8ff14;
+  --rail-bg: #1b2330;
+  --speech-bg: #252e3d;
+  --player-bg: #2e3b58;
+  --narration-bg: #8fa8ff12;
   --line-strong: #59677b;
   --focus-ring: #acc0ff;
   --shadow-panel: 0 18px 48px rgb(0 0 0 / 23%);
@@ -131,8 +149,20 @@ body {
 }
 
 .rail-toggle {
+  align-items: center;
+  display: inline-flex;
   font-size: 14px;
+  justify-content: center;
   padding: 4px 10px;
+}
+
+.rail-toggle-icon {
+  display: inline-flex;
+  transition: transform var(--motion-normal) ease;
+}
+
+.rail-toggle-icon.open {
+  transform: rotate(180deg);
 }
 
 .brand-inline {
@@ -161,15 +191,31 @@ body {
 }
 
 .tab {
+  align-items: center;
   background: transparent;
   border: 1px solid var(--line);
   border-radius: 6px;
   color: var(--muted-text);
   cursor: pointer;
+  display: inline-flex;
   font: inherit;
   font-size: 12px;
-  font-weight: 400;
+  font-weight: 500;
+  gap: 6px;
   padding: 4px 10px;
+}
+
+.tab svg {
+  flex: 0 0 auto;
+}
+
+.runtime-drawer .design-tabs {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.runtime-drawer .tab {
+  justify-content: center;
 }
 
 .tab.active {
@@ -1303,18 +1349,20 @@ button.ghost:focus-visible {
 .chat-body {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 16px;
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding: 12px 14px;
+  padding: 22px clamp(18px, 4vw, 52px);
 }
 
 .bubble {
-  border-radius: var(--radius);
+  border: 1px solid var(--line);
+  border-radius: 4px 14px 14px 14px;
   /* 列宽已经限过一次（.message-column），这里再限一次会让长句提前折行 */
   max-width: 100%;
-  padding: 9px 12px;
+  padding: 11px 14px;
+  box-shadow: 0 6px 22px rgb(0 0 0 / 8%);
 }
 
 .bubble p {
@@ -1332,12 +1380,14 @@ button.ghost:focus-visible {
 
 .bubble.character {
   align-self: flex-start;
-  background: var(--panel-soft);
+  background: var(--speech-bg);
 }
 
 .bubble.player {
   align-self: flex-end;
-  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  background: var(--player-bg);
+  border-color: color-mix(in srgb, var(--accent) 38%, var(--line));
+  border-radius: 14px 4px 14px 14px;
 }
 
 .bubble.narration,
@@ -1374,12 +1424,14 @@ button.ghost:focus-visible {
  * 一眼看上去像三个控件而不是一个输入区。
  */
 .composer {
-  padding: 10px 14px 12px;
+  background: color-mix(in srgb, var(--panel) 90%, var(--reader-bg));
+  border-top: 1px solid var(--line);
+  padding: 12px clamp(14px, 3vw, 30px) 16px;
 }
 
 .composer-box {
-  background: var(--panel-soft);
-  border: 1px solid var(--line);
+  background: var(--surface-raised);
+  border: 1px solid var(--line-strong);
   border-radius: 14px;
   display: flex;
   flex-direction: column;
@@ -1390,8 +1442,8 @@ button.ghost:focus-visible {
 }
 
 .composer-box:focus-within {
-  border-color: var(--accent-soft);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 16%, transparent);
+  border-color: var(--focus-ring);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--focus-ring) 22%, transparent);
 }
 
 /*
@@ -1640,15 +1692,15 @@ details summary {
 /* ---------- 左栏：顶部按钮 / 中部列表 / 底部设置 ---------- */
 
 .left-rail {
-  background: var(--panel);
+  background: linear-gradient(160deg, var(--rail-bg), var(--panel) 62%);
   border: 1px solid var(--line);
   border-radius: var(--radius);
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 12px;
   min-height: 0;
   overflow: hidden;
-  padding: 10px;
+  padding: 12px;
 }
 
 .rail-actions {
@@ -1694,7 +1746,7 @@ details summary {
 }
 
 .rail-foot {
-  border-top: 1px dashed var(--line);
+  border-top: 1px solid var(--line);
   display: flex;
   gap: 6px;
   padding-top: 8px;
@@ -1716,8 +1768,9 @@ details summary {
 
 .rail-caption {
   color: var(--muted-text);
-  font-size: 11px;
-  letter-spacing: 0.08em;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
 }
 
 .rail-empty {
@@ -1748,7 +1801,7 @@ details summary {
 }
 
 .world.active {
-  background: color-mix(in srgb, var(--accent) 6%, transparent);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
   border-color: var(--accent-soft);
 }
 
@@ -1802,7 +1855,8 @@ details summary {
 }
 
 .conversation-list li.active {
-  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  background: color-mix(in srgb, var(--accent) 15%, transparent);
+  box-shadow: inset 3px 0 var(--accent);
 }
 
 .conversation-open {
@@ -1811,23 +1865,44 @@ details summary {
   gap: 6px;
 }
 
-.conversation-open span:first-child {
+.conversation-open .conversation-title {
+  align-items: center;
+  display: inline-flex;
   flex: 1;
+  gap: 5px;
+  min-width: 0;
+}
+
+.conversation-title span {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
+.conversation-title svg {
+  flex: 0 0 auto;
+}
+
 .conversation-list .ghost {
+  align-items: center;
+  display: inline-flex;
   font-size: 11px;
+  gap: 4px;
+  justify-content: center;
   padding: 2px 6px;
+}
+
+.world-row .ghost svg,
+.conversation-list .ghost svg {
+  flex: 0 0 auto;
 }
 
 /* ---------- 主区 ---------- */
 
 .workspace {
   display: grid;
-  gap: 8px;
+  column-gap: 8px;
+  row-gap: 0;
   grid-template-columns: minmax(0, 1fr) auto;
   grid-template-rows: auto minmax(0, 1fr);
   min-height: 0;
@@ -1837,12 +1912,12 @@ details summary {
   align-items: center;
   background: var(--panel);
   border: 1px solid var(--line);
-  border-radius: var(--radius);
+  border-radius: var(--radius) var(--radius) 0 0;
   display: flex;
   flex-wrap: wrap;
   gap: 10px;
   grid-column: 1 / -1;
-  padding: 6px 12px;
+  padding: 10px 16px;
 }
 
 .main-title {
@@ -1853,6 +1928,7 @@ details summary {
 }
 
 .world-name {
+  font-size: 13px;
   font-weight: 600;
 }
 
@@ -1866,6 +1942,7 @@ details summary {
   color: var(--accent);
   font: inherit;
   font-weight: 600;
+  font-size: 17px;
   padding: 2px 4px;
   width: auto;
   min-width: 8rem;
@@ -1898,7 +1975,7 @@ details summary {
 
 .workspace-body {
   display: flex;
-  gap: 8px;
+  gap: 0;
   grid-column: 1;
   grid-row: 2;
   min-height: 0;
@@ -1906,9 +1983,9 @@ details summary {
 }
 
 .chat-surface {
-  background: var(--panel);
+  background: radial-gradient(circle at 52% 6%, var(--reader-glow), transparent 46%), var(--reader-bg);
   border: 1px solid var(--line);
-  border-radius: var(--radius);
+  border-radius: 0 0 var(--radius) var(--radius);
   display: flex;
   flex: 1;
   flex-direction: column;
@@ -1929,10 +2006,20 @@ details summary {
   background-image: var(--chat-bg, none);
   background-position: center;
   background-size: cover;
-  border-radius: var(--radius);
+  border-radius: inherit;
   content: "";
   inset: 0;
   opacity: var(--chat-bg-opacity, 0);
+  pointer-events: none;
+  position: absolute;
+  z-index: 0;
+}
+
+.app.has-bg .chat-surface::after {
+  background: color-mix(in srgb, var(--reader-bg) 76%, transparent);
+  border-radius: inherit;
+  content: "";
+  inset: 0;
   pointer-events: none;
   position: absolute;
   z-index: 0;
@@ -1947,11 +2034,11 @@ details summary {
 }
 
 /*
- * 有自定义背景时给文字加一层薄影子：气泡里的字有底色护着，
- * 但气泡外的动作/旁白是直接压在图上，不加这一层亮图下会读不清。
+ * 有自定义背景时在图上叠一层阅读底色：气泡、动作与旁白都保持可读，
+ * 亮图也不会直接穿到文字下面。背景本身仍固定在不滚动的对话表面。
  */
 .app.has-bg .chat-body {
-  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.45);
+  text-shadow: none;
 }
 
 .chat-surface.empty {
@@ -1959,6 +2046,44 @@ details summary {
   gap: 6px;
   grid-column: 1 / -1;
   padding: 16px;
+}
+
+.chat-empty-state {
+  align-items: center;
+  align-self: center;
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  justify-content: center;
+  max-width: 310px;
+  padding: 24px;
+  text-align: center;
+}
+
+.chat-empty-symbol {
+  align-items: center;
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 40%, var(--line));
+  border-radius: 18px;
+  color: var(--accent);
+  display: flex;
+  height: 56px;
+  justify-content: center;
+  margin-bottom: 16px;
+  width: 56px;
+}
+
+.chat-empty-symbol svg {
+  height: 27px;
+  width: 27px;
+}
+.chat-empty-state strong {
+  font-size: 19px;
+}
+.chat-empty-state p {
+  color: var(--muted-text);
+  font-size: 13px;
+  margin: 7px 0 0;
 }
 
 .chat-surface.drop-active {
@@ -1971,17 +2096,28 @@ details summary {
 .message-row {
   align-items: flex-start;
   display: flex;
-  gap: 8px;
+  gap: 11px;
 }
 
 .message-row.player {
   flex-direction: row-reverse;
 }
 
+.message-row.narration,
+.message-row.system {
+  justify-content: center;
+}
+
+.message-row.narration .message-column,
+.message-row.system .message-column {
+  max-width: min(80%, 650px);
+  width: 100%;
+}
+
 .message-column {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 6px;
   max-width: 78%;
   min-width: 0;
 }
@@ -1991,8 +2127,9 @@ details summary {
 }
 
 .message-name {
-  color: var(--muted-text);
-  font-size: 11px;
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 700;
 }
 
 .avatar {
@@ -2004,6 +2141,14 @@ details summary {
   font-size: 14px;
   justify-content: center;
   overflow: hidden;
+}
+
+.player-avatar {
+  background: color-mix(in srgb, var(--accent) 30%, var(--reader-bg));
+  border: 1px solid var(--accent-soft);
+  color: var(--text);
+  height: 34px;
+  width: 34px;
 }
 
 .avatar img {
@@ -2141,18 +2286,20 @@ details summary {
 .action-line {
   color: var(--muted-text);
   font-style: italic;
-  margin: 0;
-  padding-left: 4px;
+  border-left: 2px solid color-mix(in srgb, var(--accent) 54%, var(--line));
+  margin: 3px 0 4px;
+  padding: 0 0 0 12px;
 }
 
 .narration-line {
   align-self: center;
-  border-top: 1px dashed var(--line);
-  border-bottom: 1px dashed var(--line);
+  background: var(--narration-bg);
+  border: 1px solid color-mix(in srgb, var(--accent) 18%, var(--line));
+  border-radius: 10px;
   color: var(--muted-text);
-  font-size: 12px;
-  margin: 0;
-  padding: 4px 10px;
+  font-size: 13px;
+  margin: 3px 0;
+  padding: 9px 13px;
   text-align: center;
 }
 
@@ -2511,9 +2658,9 @@ details summary {
 /* ---------- 右缘窄栏 ---------- */
 
 .cast-rail {
-  background: var(--panel);
+  background: var(--rail-bg);
   border: 1px solid var(--line);
-  border-radius: var(--radius);
+  border-radius: 0 0 var(--radius) 0;
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -2746,6 +2893,22 @@ details summary {
 
 .settings-nav button .hint {
   font-size: 11px;
+}
+
+.settings-nav button strong {
+  align-items: center;
+  display: inline-flex;
+  gap: 8px;
+}
+
+.settings-nav button strong svg {
+  flex: 0 0 auto;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .rail-toggle-icon {
+    transition: none;
+  }
 }
 
 .settings-content {

@@ -600,11 +600,17 @@ function MainChatImpl({
         ) : null}
 
         {messages.length === 0 && !busy ? (
-          <p className="hint">
-            {conversation.kind === 'side'
-              ? '让管理员帮你起草角色卡、世界书，或者设置当前场景。'
-              : '说点什么。右栏的角色可以直接拖进来。'}
-          </p>
+          conversation.kind === 'side' ? (
+            <p className="hint">让管理员帮你起草角色卡、世界书，或者设置当前场景。</p>
+          ) : (
+            <div className="chat-empty-state">
+              <span className="chat-empty-symbol" aria-hidden="true">
+                <IconScene />
+              </span>
+              <strong>故事从这里开始</strong>
+              <p>选好在场角色，写下第一句话。舞台已经为他们留好了位置。</p>
+            </div>
+          )
         ) : null}
 
         <MessageList

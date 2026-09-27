@@ -1,7 +1,7 @@
 import type { Conversation, ConversationId, RoomId, RoomSummary } from '@dramatis/core';
 import { memo, useEffect, useRef, useState } from 'react';
 import { countRender } from '../lib/render-count';
-import { IconPlus } from './Icons';
+import { IconArchive, IconClose, IconEdit, IconPlus, IconSettings } from './Icons';
 
 interface Props {
   worlds: RoomSummary[];
@@ -109,6 +109,7 @@ function WorldTreeImpl({
                 type="button"
                 className="ghost danger"
                 disabled={disabled}
+                aria-label={`删除世界「${world.title}」`}
                 title="删除这个世界（素材库里的角色卡与世界书会保留）"
                 onClick={() => {
                   if (window.confirm(`确定删除「${world.title}」？全部对话、角色状态与记忆都会被清空。`)) {
@@ -116,7 +117,7 @@ function WorldTreeImpl({
                   }
                 }}
               >
-                ✕
+                <IconClose />
               </button>
             </div>
 
@@ -156,9 +157,9 @@ function WorldTreeImpl({
                         disabled={disabled}
                         onClick={() => onOpenConversation(conversation.id)}
                       >
-                        <span>
-                          {conversation.kind === 'side' ? '⚙ ' : ''}
-                          {conversation.title}
+                        <span className="conversation-title">
+                          {conversation.kind === 'side' ? <IconSettings /> : null}
+                          <span>{conversation.title}</span>
                         </span>
                         <span className="tag">{conversation.kind === 'side' ? '副对话' : '主对话'}</span>
                       </button>
@@ -174,7 +175,7 @@ function WorldTreeImpl({
                         setRenamingId(conversation.id);
                       }}
                     >
-                      改名
+                      <IconEdit />
                     </button>
                     <button
                       type="button"
@@ -183,12 +184,14 @@ function WorldTreeImpl({
                       title="归档：把情绪、关系、记忆回滚到这条对话开始之前，对话本身保留"
                       onClick={() => onArchiveConversation(conversation)}
                     >
-                      归档
+                      <IconArchive />
+                      <span>归档</span>
                     </button>
                     <button
                       type="button"
                       className="ghost danger"
                       disabled={disabled}
+                      aria-label={`删除对话「${conversation.title}」`}
                       title="彻底删除这条对话（不可恢复）"
                       onClick={() => {
                         if (window.confirm(`彻底删除「${conversation.title}」？消息与记忆都会一起消失。`)) {
@@ -196,7 +199,7 @@ function WorldTreeImpl({
                         }
                       }}
                     >
-                      ✕
+                      <IconClose />
                     </button>
                   </li>
                 ))}

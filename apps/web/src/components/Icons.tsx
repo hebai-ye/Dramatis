@@ -72,7 +72,7 @@ export function IconStop({ size }: IconProps) {
 /**
  * 三横：手机顶栏左上角打开左栏（用户要求照 DeepSeek 的样子放这里）。
  *
- * 桌面仍然用 `≫` / `≪` 两个方向字符——那里空间够，文字能直接说明「展开/折叠」。
+ * 桌面栏开合也使用同一套 SVG，避免平台字体改变箭头形状。
  */
 export function IconMenu({ size }: IconProps) {
   return (
@@ -126,6 +126,66 @@ export function IconEdit({ size }: IconProps) {
     <Frame size={size}>
       <path d="m10.5 2.8 2.7 2.7-7.7 7.7-3.1.4.4-3.1 7.7-7.7Z" />
       <path d="m8.9 4.4 2.7 2.7" />
+    </Frame>
+  );
+}
+
+/** 设置中的外观调整。 */
+export function IconSliders({ size }: IconProps) {
+  return (
+    <Frame size={size}>
+      <path d="M2.5 4.5h11M2.5 11.5h11" />
+      <circle cx="6" cy="4.5" r="1.6" fill="currentColor" stroke="none" />
+      <circle cx="10.5" cy="11.5" r="1.6" fill="currentColor" stroke="none" />
+    </Frame>
+  );
+}
+
+/** 账户与个人身份。 */
+export function IconUser({ size }: IconProps) {
+  return (
+    <Frame size={size}>
+      <circle cx="8" cy="5.2" r="2.5" />
+      <path d="M3.2 13.4c.5-2.4 2.1-3.7 4.8-3.7s4.3 1.3 4.8 3.7" />
+    </Frame>
+  );
+}
+
+/** 本机数据与封存。 */
+export function IconDatabase({ size }: IconProps) {
+  return (
+    <Frame size={size}>
+      <ellipse cx="8" cy="3.8" rx="5.2" ry="2" />
+      <path d="M2.8 3.8v8.3c0 1.1 2.3 2 5.2 2s5.2-.9 5.2-2V3.8M2.8 8c0 1.1 2.3 2 5.2 2s5.2-.9 5.2-2" />
+    </Frame>
+  );
+}
+
+/** 记忆。 */
+export function IconMemory({ size }: IconProps) {
+  return (
+    <Frame size={size}>
+      <path d="M8 13.6 3.1 10V4.2L8 2l4.9 2.2V10L8 13.6Z" />
+      <path d="M5.3 6.2h5.4M5.3 8.7h3.8" />
+    </Frame>
+  );
+}
+
+/** 用量趋势。 */
+export function IconChart({ size }: IconProps) {
+  return (
+    <Frame size={size}>
+      <path d="M2.6 12.9h10.8M3.7 10V7.4M7.8 10V3.4M11.9 10V5.4" />
+    </Frame>
+  );
+}
+
+/** Prompt 文档。 */
+export function IconDocument({ size }: IconProps) {
+  return (
+    <Frame size={size}>
+      <path d="M4 2.2h6l2 2v9.6H4V2.2Z" />
+      <path d="M10 2.2v2h2M6 7h4M6 9.5h4" />
     </Frame>
   );
 }

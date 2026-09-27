@@ -20,6 +20,7 @@ import type {
 import { memo, useEffect, useRef, useState } from 'react';
 import { countRender } from '../lib/render-count';
 import { CastPanel } from './CastPanel';
+import { IconChart, IconDocument, IconMemory, IconScene } from './Icons';
 import { MemoryPanel } from './MemoryPanel';
 import { PromptInspector } from './PromptInspector';
 import { ScenePanel } from './ScenePanel';
@@ -85,6 +86,8 @@ const TABS: Array<{ id: Tab; label: string }> = [
   { id: 'prompt', label: 'Prompt' },
 ];
 
+const TAB_ICONS = { scene: IconScene, memory: IconMemory, usage: IconChart, prompt: IconDocument } as const;
+
 /**
  * 运行时面板。
  *
@@ -120,19 +123,23 @@ function RuntimePanelImpl(props: Props) {
       }}
     >
       <nav className="design-tabs" aria-label="运行时内容">
-        {TABS.map((item) => (
-          <button
-            key={item.id}
-            ref={item.id === 'scene' ? firstTabRef : undefined}
-            type="button"
-            className={item.id === tab ? 'tab active' : 'tab'}
-            aria-pressed={item.id === tab}
-            onClick={() => setTab(item.id)}
-          >
-            {item.label}
-            {item.id === 'memory' && props.memories.length > 0 ? ` ${props.memories.length}` : ''}
-          </button>
-        ))}
+        {TABS.map((item) => {
+          const TabIcon = TAB_ICONS[item.id];
+          return (
+            <button
+              key={item.id}
+              ref={item.id === 'scene' ? firstTabRef : undefined}
+              type="button"
+              className={item.id === tab ? 'tab active' : 'tab'}
+              aria-pressed={item.id === tab}
+              onClick={() => setTab(item.id)}
+            >
+              <TabIcon />
+              {item.label}
+              {item.id === 'memory' && props.memories.length > 0 ? ` ${props.memories.length}` : ''}
+            </button>
+          );
+        })}
       </nav>
 
       {tab === 'scene' ? (

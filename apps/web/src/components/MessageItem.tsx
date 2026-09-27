@@ -130,6 +130,10 @@ export const MessageItem = memo(function MessageItem({
     >
       {message.role === 'character' ? (
         <Avatar name={displayName} avatar={avatars[message.speakerInstanceId ?? ''] ?? null} />
+      ) : message.role === 'player' ? (
+        <span className="avatar player-avatar" title="我" aria-hidden="true">
+          我
+        </span>
       ) : null}
 
       <div className="message-column">

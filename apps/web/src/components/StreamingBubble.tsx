@@ -1,7 +1,7 @@
 import { type CastName, type MessageId, renderMessageContent } from '@dramatis/core';
 import { type RefObject, useEffect, useLayoutEffect, useRef } from 'react';
 import { countRender } from '../lib/render-count';
-import { resetStreamState, useStreamState } from '../lib/stream-store';
+import { acknowledgeStreamHandoff, useStreamState } from '../lib/stream-store';
 import { Avatar } from './MessageBody';
 
 interface Props {
@@ -58,9 +58,9 @@ export function StreamingBubble({ busy, lastMessageId, suspendAutoScroll, bottom
    */
   const handedOver = handoffId !== null && handoffId === lastMessageId;
   useEffect(() => {
-    // 真收掉之后把 store 也清干净：留着旧正文的话，下次切对话会把它又画出来
-    if (handedOver) resetStreamState('main');
-  }, [handedOver]);
+    // 确认必须带消息 id；上一位的迟到 effect 不能收掉下一位已开始的流。
+    if (handedOver && handoffId !== null) acknowledgeStreamHandoff('main', handoffId);
+  }, [handedOver, handoffId]);
 
   // 用本次 DOM 长高之前的距离判断是否贴底；大块输出即使一次长高超过 120px，
   // 原本在底部的人仍会跟上。主动上滑的人保持原位，逐 token 不再排 smooth 动画。

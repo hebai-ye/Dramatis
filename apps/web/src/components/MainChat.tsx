@@ -11,6 +11,7 @@ import {
   type ReplyLength,
   replyLengthOf,
   type Scene,
+  speakerLimitOf,
   unlimitedModeOf,
 } from '@dramatis/core';
 import {
@@ -166,6 +167,12 @@ const REPLY_LENGTH_OPTIONS: Array<{ value: ReplyLength; label: string; note: str
   { value: 'normal', label: '标准', note: '三到五句、150 字以内（默认）' },
   { value: 'long', label: '偏长', note: '可以写到 400 字，适合铺陈场景' },
 ];
+
+const SPEAKER_LIMIT_OPTIONS = [
+  { value: 1, label: '1 人' },
+  { value: 2, label: '2 人（默认）' },
+  { value: 3, label: '3 人' },
+] as const;
 
 function shorten(text: string, max: number): string {
   const trimmed = text.trim().replace(/\s*\n\s*/g, ' ');
@@ -807,6 +814,23 @@ function MainChatImpl({
                       <span>
                         <strong>{mode.label}</strong>
                         <span className="hint">{mode.note}</span>
+                      </span>
+                    </label>
+                  ))}
+
+                  <p className="hint">本轮最多回应人数</p>
+                  <p className="hint">这是上限，不是配额；导演只挑该接话的人，每多一人会多一次完整生成。</p>
+                  {SPEAKER_LIMIT_OPTIONS.map((option) => (
+                    <label key={option.value} className="mode-option">
+                      <input
+                        type="radio"
+                        name={`speaker-limit-${conversation.id}`}
+                        checked={speakerLimitOf(conversation.modes) === option.value}
+                        disabled={archived}
+                        onChange={() => onChangeModes({ maxSpeakers: option.value })}
+                      />
+                      <span>
+                        <strong>{option.label}</strong>
                       </span>
                     </label>
                   ))}

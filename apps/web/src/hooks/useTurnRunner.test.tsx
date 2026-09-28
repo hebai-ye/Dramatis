@@ -14,6 +14,7 @@ const runtime = vi.hoisted(() => ({
   generationHistories: [] as string[][],
   observerIds: [] as string[],
   records: [] as Array<{ category: string; speaker?: { name: string } }>,
+  handoffs: [] as string[],
 }));
 
 vi.mock('@dramatis/core', async (importOriginal) => {
@@ -49,6 +50,16 @@ vi.mock('../lib/turn-bookkeeping', () => ({
   enqueueMemoryConsolidation: async () => {},
   enqueueTurnAnalysis: async () => {},
 }));
+
+vi.mock('../lib/stream-store', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../lib/stream-store')>();
+  return {
+    ...actual,
+    waitForStreamHandoff: async (_scope: string, messageId: string) => {
+      runtime.handoffs.push(messageId);
+    },
+  };
+});
 
 function actor(name: string, room: ReturnType<typeof roomId>): CharacterInstance {
   const now = nowIso();
@@ -154,6 +165,7 @@ beforeEach(() => {
   runtime.generationHistories = [];
   runtime.observerIds = [];
   runtime.records = [];
+  runtime.handoffs = [];
 });
 
 describe('一轮多人自动生成', () => {
@@ -166,6 +178,9 @@ describe('一轮多人自动生成', () => {
     expect(runtime.generationHistories[1]).toContain('秦娘');
     expect(saved.map((message) => message.role)).toEqual(['player', 'character', 'character']);
     expect(new Set(saved.map((message) => message.turnId)).size).toBe(1);
+    expect(runtime.handoffs).toEqual(
+      saved.filter((message) => message.role === 'character').map((message) => message.id),
+    );
     expect(
       runtime.records.filter((record) => record.category === 'generation').map((record) => record.speaker?.name),
     ).toEqual(['秦娘', '陈九']);

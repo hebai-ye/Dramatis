@@ -44,7 +44,7 @@ import type { DramatisDb } from '../lib/db';
 import { replyTokenLimit } from '../lib/output-limit';
 import type { ProvidersApi } from '../lib/providers';
 import type { SessionApi } from '../lib/session';
-import { handoffStreamState, resetStreamState, setStreamState } from '../lib/stream-store';
+import { handoffStreamState, resetStreamState, setStreamState, waitForStreamHandoff } from '../lib/stream-store';
 import type { SyncApi } from '../lib/sync';
 import {
   enqueueMemoryConsolidation as enqueueMemoryConsolidationTask,
@@ -739,6 +739,7 @@ export function useTurnRunner({
            * 也仍然不会重影；一轮真结束时 finally 里的 reset 负责清干净。
            */
           handoffStreamState('main', line.id);
+          await waitForStreamHandoff('main', line.id, controller.signal);
         }
 
         // 一轮分析（记忆 + 状态变化）合成一次调用，不阻塞对话；负载只存 id，内容现取

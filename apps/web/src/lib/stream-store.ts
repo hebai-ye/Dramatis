@@ -51,11 +51,12 @@ const IDLE: StreamState = { text: '', speaker: '', reasoning: '', phase: 'idle',
 interface Channel {
   state: StreamState;
   listeners: Set<() => void>;
+  pending: { id: MessageId; promise: Promise<void>; resolve: () => void } | null;
 }
 
 const CHANNELS: Record<StreamScope, Channel> = {
-  main: { state: IDLE, listeners: new Set() },
-  admin: { state: IDLE, listeners: new Set() },
+  main: { state: IDLE, listeners: new Set(), pending: null },
+  admin: { state: IDLE, listeners: new Set(), pending: null },
 };
 
 export function getStreamState(scope: StreamScope = 'main'): StreamState {
@@ -81,6 +82,9 @@ export function setStreamState(scope: StreamScope, patch: Partial<StreamState>):
 
 /** 一轮结束（或开始前）清空。 */
 export function resetStreamState(scope: StreamScope = 'main'): void {
+  const channel = CHANNELS[scope];
+  channel.pending?.resolve();
+  channel.pending = null;
   setStreamState(scope, IDLE);
 }
 
@@ -93,7 +97,63 @@ export function resetStreamState(scope: StreamScope = 'main'): void {
  * 否则下一位角色开流时会误以为自己的流已经交接完了。
  */
 export function handoffStreamState(scope: StreamScope, messageId: MessageId): void {
+  const channel = CHANNELS[scope];
+  if (channel.pending?.id !== messageId) {
+    channel.pending?.resolve();
+    let resolve = () => {};
+    const promise = new Promise<void>((done) => {
+      resolve = done;
+    });
+    channel.pending = { id: messageId, promise, resolve };
+  }
   setStreamState(scope, { phase: 'idle', handoffId: messageId });
+}
+
+/**
+ * 消息列表提交后确认对应 id；迟到的 A 确认绝不能把已开流的 B 清掉。
+ * 界面只在真的画出消息后调用，编排器才开始下一人的流。
+ */
+export function acknowledgeStreamHandoff(scope: StreamScope, messageId: MessageId): void {
+  const channel = CHANNELS[scope];
+  if (channel.pending?.id !== messageId || channel.state.handoffId !== messageId) return;
+  resetStreamState(scope);
+}
+
+/**
+ * 给 React 一次提交的时间。隐藏的聊天列表可能永远不会确认，超时仅收掉当前 id；
+ * 用户点停止则立刻拒绝，免得整轮卡在等待界面上。
+ */
+export function waitForStreamHandoff(
+  scope: StreamScope,
+  messageId: MessageId,
+  signal: AbortSignal,
+  timeoutMs = 2_000,
+): Promise<void> {
+  const channel = CHANNELS[scope];
+  const pending = channel.pending;
+  if (pending?.id !== messageId) return Promise.resolve();
+  return new Promise<void>((resolve, reject) => {
+    let settled = false;
+    const finish = (error?: Error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      signal.removeEventListener('abort', onAbort);
+      if (error) reject(error);
+      else resolve();
+    };
+    const onAbort = () => {
+      if (channel.pending?.id === messageId) resetStreamState(scope);
+      finish(new Error('流交接时停止'));
+    };
+    const timer = setTimeout(() => {
+      if (channel.pending?.id === messageId) resetStreamState(scope);
+      finish();
+    }, timeoutMs);
+    signal.addEventListener('abort', onAbort, { once: true });
+    if (signal.aborted) onAbort();
+    void pending.promise.then(() => finish());
+  });
 }
 
 export function subscribeStream(scope: StreamScope, listener: () => void): () => void {

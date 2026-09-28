@@ -1,6 +1,14 @@
 import type { MessageId } from '@dramatis/core';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { getStreamState, handoffStreamState, resetStreamState, setStreamState, subscribeStream } from './stream-store';
+import {
+  acknowledgeStreamHandoff,
+  getStreamState,
+  handoffStreamState,
+  resetStreamState,
+  setStreamState,
+  subscribeStream,
+  waitForStreamHandoff,
+} from './stream-store';
 
 const IDLE = { text: '', speaker: '', reasoning: '', phase: 'idle', handoffId: null } as const;
 
@@ -166,5 +174,46 @@ describe('流式状态与订阅边界（顺序 59）', () => {
     expect(getStreamState('main')).toEqual(IDLE);
     expect(listener).toHaveBeenCalledTimes(4);
     unsubscribe();
+  });
+
+  it('A 交接确认前不让 B 开流，A 的迟到确认不能清 B', async () => {
+    const a = 'msg-a' as MessageId;
+    const b = 'msg-b' as MessageId;
+    setStreamState('main', { text: '甲的话', speaker: '甲', phase: 'writing' });
+    handoffStreamState('main', a);
+    const wait = waitForStreamHandoff('main', a, new AbortController().signal, 2_000);
+    expect(getStreamState('main').text).toBe('甲的话');
+    acknowledgeStreamHandoff('main', a);
+    await wait;
+    expect(getStreamState('main').text).toBe('');
+    setStreamState('main', { text: '乙的话', speaker: '乙', phase: 'writing', handoffId: null });
+    acknowledgeStreamHandoff('main', a);
+    expect(getStreamState('main').text).toBe('乙的话');
+    handoffStreamState('main', b);
+    const waitB = waitForStreamHandoff('main', b, new AbortController().signal, 2_000);
+    acknowledgeStreamHandoff('main', b);
+    await waitB;
+    expect(getStreamState('main')).toEqual(IDLE);
+  });
+
+  it('列表未提交时超时只清当前交接，停止等待也可释放', async () => {
+    vi.useFakeTimers();
+    try {
+      const id = 'msg-timeout' as MessageId;
+      setStreamState('main', { text: '等待列表', phase: 'writing' });
+      handoffStreamState('main', id);
+      const wait = waitForStreamHandoff('main', id, new AbortController().signal, 2_000);
+      await vi.advanceTimersByTimeAsync(2_000);
+      await wait;
+      expect(getStreamState('main')).toEqual(IDLE);
+
+      handoffStreamState('main', 'msg-stop' as MessageId);
+      const stop = new AbortController();
+      const aborted = waitForStreamHandoff('main', 'msg-stop' as MessageId, stop.signal, 2_000);
+      stop.abort();
+      await expect(aborted).rejects.toThrow('停止');
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

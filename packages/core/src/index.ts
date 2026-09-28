@@ -6,6 +6,7 @@ export * from './compat/sillytavern/index.js';
 export * from './crypto/index.js';
 export * from './director/intent-plan.js';
 export * from './director/scheduler.js';
+export * from './director/turn-speakers.js';
 export * from './memory/affect.js';
 export * from './memory/apply-analysis.js';
 export * from './memory/attachment.js';

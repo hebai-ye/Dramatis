@@ -45,6 +45,7 @@ import { useWebBridge } from './hooks/useWebBridge';
 import { useAdminChat } from './lib/admin';
 import { useAppearance } from './lib/appearance';
 import { useArchive } from './lib/archive';
+import { bridgeReplyBatch, validatePendingBridgeTurn } from './lib/bridge-store';
 import { avatarOf } from './lib/portraits';
 import { useProviders } from './lib/providers';
 import { useDatabase, useSession } from './lib/session';
@@ -74,6 +75,7 @@ export function App() {
   const usage = useUsage(db, {
     roomId: world?.id ?? null,
     conversationId: conversation?.id ?? null,
+    turnId: session.messages.at(-1)?.turnId ?? null,
   });
 
   /**
@@ -252,6 +254,7 @@ export function App() {
     makeCharacterLine,
     enqueueSceneSummary,
     handleSend,
+    prepareBridgeReply,
     handleRegenerate,
     handleReassignMessage,
     stop: handleStop,
@@ -497,10 +500,28 @@ export function App() {
       if (!db || !world || !scene || !conversation || bridge === null || bridge.stage !== 'reply') return;
       if (bridge.turnId === undefined || bridge.speakerInstanceId === undefined) return;
 
+      const pending = bridge.pendingTurn;
+      const savedTurn = session.messages.filter((message) => message.turnId === bridge.turnId);
+      if (pending) {
+        const issue = validatePendingBridgeTurn(
+          pending,
+          { roomId: world.id, conversationId: conversation.id, sceneId: scene.id },
+          savedTurn,
+        );
+        if (issue !== null || pending.speakerIds[pending.nextIndex] !== bridge.speakerInstanceId) {
+          setError(issue ?? '网页版桥接进度与当前发言人不一致，请重新发送这一句。');
+          return;
+        }
+      }
+
       const speaker = instances.find((item) => item.id === bridge.speakerInstanceId);
-      if (speaker === undefined) {
+      if (
+        speaker === undefined ||
+        !scene.cast.includes(speaker.id) ||
+        speaker.presence !== 'onstage' ||
+        speaker.deletedAt !== null
+      ) {
         setError('找不到这一轮该说话的角色（也许它已经离开了这个世界）。');
-        setBridge(null);
         return;
       }
 
@@ -511,13 +532,38 @@ export function App() {
       }
 
       setBusy(true);
+      let committed = false;
       try {
         const line = makeCharacterLine(speaker, text, bridge.turnId, scene);
-        await session.appendMessages([line]);
+        if (line.content.trim() === '') throw new Error('贴回来的内容没有可显示的角色回复。');
+        const batch = bridgeReplyBatch(pending, line, world.playerName);
+        await session.appendMessages(batch);
+        committed = true;
+        const turnMessages = [...savedTurn, ...batch];
+
+        if (pending && pending.nextIndex + 1 < pending.speakerIds.length) {
+          const nextIndex = pending.nextIndex + 1;
+          const nextPending = { ...pending, nextIndex };
+          const nextSpeaker = instances.find((item) => item.id === pending.speakerIds[nextIndex]);
+          if (!nextSpeaker) throw new Error('下一位角色已离开当前世界；已贴回的回复仍然保留。');
+          const prompt = await prepareBridgeReply({
+            pendingTurn: nextPending,
+            history: [...session.messages.filter((message) => message.turnId !== bridge.turnId), ...turnMessages],
+          });
+          setBridge({
+            stage: 'reply',
+            turnId: pending.turnId,
+            speakerInstanceId: nextSpeaker.id,
+            speakerName: nextSpeaker.displayName,
+            prompt,
+            pendingTurn: nextPending,
+          });
+          sync.requestAutoSync();
+          return;
+        }
 
         // 这一轮要说给谁听：名单里在场的那几位，与自动路径的 audience 一致
         const cast = instances.filter((instance) => scene.cast.includes(instance.id));
-        const turnMessages = [...session.messages.filter((message) => message.turnId === bridge.turnId), line];
 
         setBridge({
           stage: 'analysis',
@@ -534,12 +580,27 @@ export function App() {
           ),
         });
       } catch (bridgeError) {
-        setError(bridgeError instanceof Error ? bridgeError.message : String(bridgeError));
+        if (committed && pending) setBridge(null);
+        const detail = bridgeError instanceof Error ? bridgeError.message : String(bridgeError);
+        setError(committed ? `已保存贴回的回复，但下一步未完成：${detail}` : detail);
       } finally {
         setBusy(false);
       }
     },
-    [bridge, conversation, db, instances, makeCharacterLine, scene, session, world, setBridge, setError],
+    [
+      bridge,
+      conversation,
+      db,
+      instances,
+      makeCharacterLine,
+      prepareBridgeReply,
+      scene,
+      session,
+      sync,
+      world,
+      setBridge,
+      setError,
+    ],
   );
 
   /**
@@ -592,7 +653,16 @@ export function App() {
   /** 放弃这一次转接：第一步放弃等于这一轮没有回复，第二步放弃等于这一轮没写记忆。 */
   const handleBridgeSkip = useCallback(() => {
     const stage = bridge?.stage ?? null;
+    const nextIndex = bridge?.pendingTurn?.nextIndex ?? 0;
     setBridge(null);
+    if (stage === 'reply' && nextIndex > 0) {
+      setWarnings([
+        {
+          code: 'bridge.skip-remainder',
+          message: '已保存前面角色的回复；剩余角色本轮不再接话，记忆与情绪推演也已跳过。',
+        },
+      ]);
+    }
     if (stage === 'analysis') {
       setWarnings([
         {
@@ -1002,7 +1072,7 @@ export function App() {
                     prompt={lastPrompt}
                     pending={worker.pending}
                     extraCalls={extraCalls(usage.world)}
-                    usage={{ world: usage.world, conversation: usage.conversation }}
+                    usage={{ world: usage.world, conversation: usage.conversation, latestTurn: usage.latestTurn }}
                     budget={budget}
                     budgetLimits={world?.budget ?? null}
                     onSaveBudget={(limits) => void session.setBudget(limits)}

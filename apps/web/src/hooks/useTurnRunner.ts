@@ -39,7 +39,7 @@ import {
   unlimitedModeOf,
 } from '@dramatis/core';
 import { useCallback, useRef } from 'react';
-import type { WebBridgeState } from '../components/WebBridgePanel';
+import type { PendingBridgeTurn, WebBridgeState } from '../components/WebBridgePanel';
 import type { DramatisDb } from '../lib/db';
 import { replyTokenLimit } from '../lib/output-limit';
 import type { ProvidersApi } from '../lib/providers';
@@ -110,6 +110,7 @@ export interface TurnRunnerApi {
   /** 让后台看一眼这一场要不要压场记（换场时也要用，所以对外返回）。 */
   enqueueSceneSummary: (target: Scene, key: string) => Promise<void>;
   handleSend: (text: string) => Promise<void>;
+  prepareBridgeReply: (input: { pendingTurn: PendingBridgeTurn; history: Message[] }) => Promise<string>;
   handleRegenerate: (id: MessageId) => Promise<void>;
   handleReassignMessage: (id: MessageId, instanceId: InstanceId) => Promise<void>;
   /** 停止这一轮生成（输入区那颗「停止」）。 */
@@ -398,16 +399,31 @@ export function useTurnRunner({
           price: config.price,
         });
         void usage.reload();
-        return parseIntentPlan(completion.text);
+        const parsed = parseIntentPlan(completion.text);
+        if (parsed === null || parsed.length === 0) {
+          setWarnings([
+            { code: 'intent.fallback', message: '导演没有给出有效的在场发言人，本轮已改由规则选一人回应。' },
+          ]);
+          return null;
+        }
+        return parsed;
       } catch {
         // 导演调用失败不该拦下这一轮：退回规则调度，照样能玩
+        if (!input.signal?.aborted) {
+          setWarnings([
+            {
+              code: 'intent.fallback',
+              message: '导演调用失败或超时，本轮已改由规则选一人回应；若模型已开始处理，服务商可能仍会计费。',
+            },
+          ]);
+        }
         return null;
       } finally {
         clearTimeout(timer);
         input.signal?.removeEventListener('abort', onAbort);
       }
     },
-    [burned, conversation, db, providers, usage, world],
+    [burned, conversation, db, providers, setWarnings, usage, world],
   );
 
   /** 当前世界与对话下压一场场记（拼装部分在 lib/turn-bookkeeping.ts，顺序 65）。 */
@@ -469,6 +485,40 @@ export function useTurnRunner({
     [conversation, session.memories],
   );
 
+  const prepareBridgeReply = useCallback(
+    async ({ pendingTurn, history }: { pendingTurn: PendingBridgeTurn; history: Message[] }): Promise<string> => {
+      if (!scene || !needsWebBridge(providers.apiKey)) throw new Error('当前无法准备网页版提示词');
+      const speakerId = pendingTurn.speakerIds[pendingTurn.nextIndex];
+      const speaker = instances.find((item) => item.id === speakerId && scene.cast.includes(item.id));
+      const card = session.cards.find((item) => item.id === speaker?.cardId);
+      if (speaker?.presence !== 'onstage' || speaker.deletedAt !== null || !card) {
+        throw new Error('下一位角色已不在当前场景，无法继续桥接');
+      }
+      const now = new Date().toISOString();
+      const recalled = recallFor({
+        speaker,
+        text: pendingTurn.playerText,
+        history,
+        scene,
+        now,
+      });
+      const generated = await runGeneration({
+        speaker,
+        card,
+        history,
+        playerInput: '',
+        mentionText: pendingTurn.playerText,
+        memories: recalled.map(toPromptMemory),
+        showStream: false,
+        signal: new AbortController().signal,
+        turnPosition: { index: pendingTurn.nextIndex + 1, total: pendingTurn.speakerIds.length },
+      });
+      if (!generated.prompt) throw new Error('下一位角色的网页版提示词装配失败');
+      return renderPromptForWeb(generated.prompt.messages);
+    },
+    [instances, providers.apiKey, recallFor, runGeneration, scene, session.cards],
+  );
+
   const handleSend = useCallback(
     async (text: string) => {
       /*
@@ -511,6 +561,14 @@ export function useTurnRunner({
         setError(`「${unavailableName}」不在当前场景，或目前不能发言；请检查场景名单。`);
         return;
       }
+      // 世界中的 onstage 不等于这场戏的 cast；句首叫到场外人也不能由场内人代答。
+      const addressedInWorld = directAddressees(text, instances);
+      const outside = addressedInWorld.find((id) => !eligibleCast.some((instance) => instance.id === id));
+      if (outside !== undefined) {
+        const name = instances.find((instance) => instance.id === outside)?.displayName ?? '该角色';
+        setError(`「${name}」不在当前场景，或目前不能发言；请检查场景名单。`);
+        return;
+      }
       const maxSpeakers = speakerLimitOf(conversation.modes);
       const addressed = directAddressees(text, eligibleCast);
       if (addressed.length > maxSpeakers) {
@@ -532,7 +590,14 @@ export function useTurnRunner({
 
       setError(null);
       setBusy(true);
-      setStreamState('main', { text: '', speaker: '', reasoning: '', phase: 'planning', handoffId: null });
+      setStreamState('main', {
+        text: '',
+        speaker: '',
+        reasoning: '',
+        progress: '',
+        phase: 'planning',
+        handoffId: null,
+      });
       setBridge(null);
 
       /*
@@ -561,8 +626,10 @@ export function useTurnRunner({
       let activeIndex = 0;
 
       try {
-        await session.appendMessages([playerMessage]);
-        playerPersisted = true;
+        if (!manual) {
+          await session.appendMessages([playerMessage]);
+          playerPersisted = true;
+        }
         // 只有真的说了话的那一轮才算「发言」：全程只做动作的角色不该被冷却压住
         const spokeHistory = history.filter((message) => message.role !== 'character' || hasSpeech(message.content));
         const since = turnsSinceLastSpoke(spokeHistory, turnId);
@@ -642,6 +709,8 @@ export function useTurnRunner({
             text: '',
             reasoning: '',
             speaker: speaker.displayName,
+            progress:
+              selection.speakers.length > 1 ? `第 ${String(index + 1)}/${String(selection.speakers.length)} 位` : '',
             phase: 'writing',
             handoffId: null,
           });
@@ -695,8 +764,7 @@ export function useTurnRunner({
            */
           if (manual) {
             if (generation.prompt === null) {
-              setError('提示词装配失败，这一轮没法转到网页版。');
-              continue;
+              throw new Error('提示词装配失败，这一轮没法转到网页版。');
             }
             setBridge({
               stage: 'reply',
@@ -704,8 +772,17 @@ export function useTurnRunner({
               speakerInstanceId: speaker.id,
               speakerName: speaker.displayName,
               prompt: renderPromptForWeb(generation.prompt.messages),
+              pendingTurn: {
+                roomId: world.id,
+                conversationId: conversation.id,
+                sceneId: scene.id,
+                turnId,
+                playerText: text,
+                speakerIds: selection.speakers.map((item) => item.instance.id),
+                nextIndex: 0,
+              },
             });
-            continue;
+            return;
           }
 
           if (reply.trim() === '') {
@@ -771,6 +848,7 @@ export function useTurnRunner({
         });
       } catch (sendError) {
         const message = sendError instanceof Error ? sendError.message : String(sendError);
+        if (message.includes('显示确认超时')) await session.reloadWorld();
         let fallbackError = '';
         if (playerPersisted && characterCount === 0 && !manual) {
           try {
@@ -783,7 +861,7 @@ export function useTurnRunner({
           }
         }
         setError(
-          `第 ${String(Math.max(1, activeIndex))} 位「${activeSpeaker.displayName}」${controller.signal.aborted ? '已停止' : '生成失败'}：${message}${fallbackError}`,
+          `第 ${String(Math.max(1, activeIndex))} 位「${activeSpeaker.displayName}」${controller.signal.aborted ? '已停止' : '生成失败'}：${message}${fallbackError}；若模型已开始处理，用量未知，服务商可能已计费。`,
         );
       } finally {
         resetStreamState('main');
@@ -1054,6 +1132,7 @@ export function useTurnRunner({
     makeCharacterLine,
     enqueueSceneSummary,
     handleSend,
+    prepareBridgeReply,
     handleRegenerate,
     handleReassignMessage,
     stop,

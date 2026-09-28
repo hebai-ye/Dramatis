@@ -43,7 +43,7 @@ function tailOf(text: string, max = 120): string {
  */
 export function StreamingBubble({ busy, lastMessageId, suspendAutoScroll, bottomRef, cast, avatars }: Props) {
   countRender('StreamingBubble');
-  const { text, speaker, reasoning, phase, handoffId } = useStreamState();
+  const { text, speaker, reasoning, progress, phase, handoffId } = useStreamState();
   const speakerId = cast.find((member) => member.displayName === speaker)?.id;
   const avatar = speakerId ? avatars[speakerId] : null;
   const previousHeight = useRef<number | null>(null);
@@ -101,7 +101,11 @@ export function StreamingBubble({ busy, lastMessageId, suspendAutoScroll, bottom
             <span className="message-name">{speaker === '' ? '正在准备' : speaker}</span>
             <p className="pending-line">
               <span className="pending-dot" />
-              {phase === 'planning' ? '正在判断这一轮谁开口…' : '正在写…'}
+              {phase === 'planning'
+                ? '正在判断这一轮谁开口…'
+                : progress === ''
+                  ? '正在写…'
+                  : `正在由${speaker}回应（${progress}）…`}
             </p>
             {reasoning === '' ? null : <p className="reasoning-peek">{tailOf(reasoning)}</p>}
           </div>

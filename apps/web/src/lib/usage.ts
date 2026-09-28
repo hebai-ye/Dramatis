@@ -13,6 +13,8 @@ export interface UsageApi {
   world: UsageSummary | null;
   /** 当前这条对话的账。 */
   conversation: UsageSummary | null;
+  /** 最近一轮，按 turnId 从现有流水汇总。 */
+  latestTurn: UsageSummary | null;
   reload: () => Promise<void>;
 }
 
@@ -25,30 +27,37 @@ export interface UsageApi {
  */
 export function useUsage(
   db: DramatisDb | null,
-  scope: { roomId: RoomId | null; conversationId: ConversationId | null },
+  scope: { roomId: RoomId | null; conversationId: ConversationId | null; turnId?: string | null },
 ): UsageApi {
   const [world, setWorld] = useState<UsageSummary | null>(null);
   const [conversation, setConversation] = useState<UsageSummary | null>(null);
-  const { roomId, conversationId } = scope;
+  const [latestTurn, setLatestTurn] = useState<UsageSummary | null>(null);
+  const { roomId, conversationId, turnId } = scope;
 
   const reload = useCallback(async () => {
     if (!db) return;
     if (roomId === null) {
       setWorld(null);
       setConversation(null);
+      setLatestTurn(null);
       return;
     }
 
     setWorld(await db.ledger.summary({ roomId }));
     setConversation(conversationId === null ? null : await db.ledger.summary({ roomId, conversationId }));
-  }, [conversationId, db, roomId]);
+    setLatestTurn(
+      conversationId === null || turnId === null || turnId === undefined
+        ? null
+        : await db.ledger.summary({ roomId, conversationId, turnId }),
+    );
+  }, [conversationId, db, roomId, turnId]);
 
   useEffect(() => {
     void reload();
   }, [reload]);
 
   // 返回对象要稳定（顺序 59）：它是 App 里一串 useCallback 的依赖，每次渲染新造一个就等于没 memo
-  return useMemo(() => ({ world, conversation, reload }), [world, conversation, reload]);
+  return useMemo(() => ({ world, conversation, latestTurn, reload }), [world, conversation, latestTurn, reload]);
 }
 
 /** 生成之外的所有调用（意图、后台分析、副对话的旧任务）。 */

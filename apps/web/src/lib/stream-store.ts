@@ -30,6 +30,8 @@ export interface StreamState {
   speaker: string;
   /** 推理模型先流出来的那段盘算。 */
   reasoning: string;
+  /** 本轮多人接话的当前位次，只用于流式占位；不进入消息或同步。 */
+  progress: string;
   /**
    * 这一轮正在做什么：生成之前还有一次「谁开口」的便宜调用，推理模型会先流一段推理流，
    * 没有阶段名的话用户看到的是「气泡一直空着，过一会儿整段话砸下来」。
@@ -46,7 +48,7 @@ export interface StreamState {
   handoffId: MessageId | null;
 }
 
-const IDLE: StreamState = { text: '', speaker: '', reasoning: '', phase: 'idle', handoffId: null };
+const IDLE: StreamState = { text: '', speaker: '', reasoning: '', progress: '', phase: 'idle', handoffId: null };
 
 interface Channel {
   state: StreamState;
@@ -71,6 +73,7 @@ export function setStreamState(scope: StreamScope, patch: Partial<StreamState>):
     next.text === channel.state.text &&
     next.speaker === channel.state.speaker &&
     next.reasoning === channel.state.reasoning &&
+    next.progress === channel.state.progress &&
     next.phase === channel.state.phase &&
     next.handoffId === channel.state.handoffId
   ) {
@@ -148,7 +151,7 @@ export function waitForStreamHandoff(
     };
     const timer = setTimeout(() => {
       if (channel.pending?.id === messageId) resetStreamState(scope);
-      finish();
+      finish(new Error('消息已保存但显示确认超时'));
     }, timeoutMs);
     signal.addEventListener('abort', onAbort, { once: true });
     if (signal.aborted) onAbort();

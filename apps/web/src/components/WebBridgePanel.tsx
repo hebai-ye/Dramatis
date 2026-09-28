@@ -1,4 +1,4 @@
-import { WEB_BRIDGE_TARGET } from '@dramatis/core';
+import { type ConversationId, type InstanceId, type RoomId, type SceneId, WEB_BRIDGE_TARGET } from '@dramatis/core';
 import { useEffect, useState } from 'react';
 import { askLocalBridge, type LocalBridgeStatus, probeLocalBridge } from '../lib/local-bridge';
 
@@ -14,6 +14,16 @@ import { askLocalBridge, type LocalBridgeStatus, probeLocalBridge } from '../lib
  * 跳过只是「这一轮没被记住」）；副对话收世界管理员起草的素材（带工具调用的 JSON 块）。
  */
 
+export interface PendingBridgeTurn {
+  roomId: RoomId;
+  conversationId: ConversationId;
+  sceneId: SceneId;
+  turnId: string;
+  playerText: string;
+  speakerIds: InstanceId[];
+  nextIndex: number;
+}
+
 export interface WebBridgeState {
   /**
    * `reply` 收角色回复；`analysis` 收这一轮的记忆与情绪；
@@ -28,6 +38,8 @@ export interface WebBridgeState {
   speakerName?: string;
   /** 要贴进网页版的那段文本。 */
   prompt: string;
+  /** 首位贴回前还不是已提交回合；刷新后凭它核对场景并接着逐人贴回。 */
+  pendingTurn?: PendingBridgeTurn;
 }
 
 interface Props {
@@ -79,9 +91,10 @@ export function WebBridgePanel({ bridge, busy, disabled, onReply, onAnalysis, on
    * 用「渲染时对账」而不是 effect：effect 要等一次提交才生效，中间那一帧
    * 粘贴框里还留着上一步的内容，手快的人会点错。
    */
-  const [stage, setStage] = useState(bridge.stage);
-  if (stage !== bridge.stage) {
-    setStage(bridge.stage);
+  const bridgeStep = `${bridge.stage}:${bridge.pendingTurn?.nextIndex ?? 0}`;
+  const [stage, setStage] = useState(bridgeStep);
+  if (stage !== bridgeStep) {
+    setStage(bridgeStep);
     setPaste('');
     setCopied(false);
   }
@@ -161,7 +174,7 @@ export function WebBridgePanel({ bridge, busy, disabled, onReply, onAnalysis, on
           {isAdmin
             ? `让 ${WEB_BRIDGE_TARGET.name} 替世界管理员起草`
             : isReply
-              ? `① 让 ${WEB_BRIDGE_TARGET.name} 写「${bridge.speakerName ?? ''}」这一轮`
+              ? `① 让 ${WEB_BRIDGE_TARGET.name} 写「${bridge.speakerName ?? ''}」（第 ${String((bridge.pendingTurn?.nextIndex ?? 0) + 1)}/${String(bridge.pendingTurn?.speakerIds.length ?? 1)} 位）`
               : '② 顺手把这一轮的记忆也写一下'}
         </strong>
         <span className="hint">
@@ -251,7 +264,13 @@ export function WebBridgePanel({ bridge, busy, disabled, onReply, onAnalysis, on
           {busy ? '处理中…' : isAdmin ? '收下这次起草' : isReply ? '收下这条回复' : '收下这段记忆'}
         </button>
         <button type="button" className="ghost" disabled={disabled || busy} onClick={onSkip}>
-          {isAdmin ? '放弃这次起草' : isReply ? '放弃这一轮' : '跳过（这一轮先不记）'}
+          {isAdmin
+            ? '放弃这次起草'
+            : isReply
+              ? (bridge.pendingTurn?.nextIndex ?? 0) === 0
+                ? '放弃这一轮'
+                : '跳过剩余回复'
+              : '跳过（这一轮先不记）'}
         </button>
       </div>
     </section>

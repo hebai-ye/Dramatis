@@ -10,7 +10,7 @@ import {
   waitForStreamHandoff,
 } from './stream-store';
 
-const IDLE = { text: '', speaker: '', reasoning: '', phase: 'idle', handoffId: null } as const;
+const IDLE = { text: '', speaker: '', reasoning: '', progress: '', phase: 'idle', handoffId: null } as const;
 
 describe('流式状态与订阅边界（顺序 59）', () => {
   beforeEach(() => {
@@ -54,6 +54,7 @@ describe('流式状态与订阅边界（顺序 59）', () => {
       text: '先坐。',
       speaker: '秦娘',
       reasoning: '他决定开口',
+      progress: '',
       phase: 'writing',
       handoffId: null,
     });
@@ -114,6 +115,7 @@ describe('流式状态与订阅边界（顺序 59）', () => {
       text: '主对话在流',
       speaker: '秦娘',
       reasoning: '',
+      progress: '',
       phase: 'writing',
       handoffId: null,
     });
@@ -155,6 +157,7 @@ describe('流式状态与订阅边界（顺序 59）', () => {
       text: '先坐。',
       speaker: '秦娘',
       reasoning: '他决定开口',
+      progress: '',
       phase: 'idle',
       handoffId: 'msg-1',
     });
@@ -203,8 +206,9 @@ describe('流式状态与订阅边界（顺序 59）', () => {
       setStreamState('main', { text: '等待列表', phase: 'writing' });
       handoffStreamState('main', id);
       const wait = waitForStreamHandoff('main', id, new AbortController().signal, 2_000);
+      const timedOut = expect(wait).rejects.toThrow('显示确认超时');
       await vi.advanceTimersByTimeAsync(2_000);
-      await wait;
+      await timedOut;
       expect(getStreamState('main')).toEqual(IDLE);
 
       handoffStreamState('main', 'msg-stop' as MessageId);

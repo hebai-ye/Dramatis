@@ -9,6 +9,7 @@ const runtime = vi.hoisted(() => ({
   plan: '{"speakers":[{"key":"C1","name":"秦娘","intent":"先回答","mode":"reply"},{"key":"C2","name":"陈九","intent":"补充","mode":"reply"}]}',
   failFirst: false,
   hangDirector: false,
+  manual: false,
   directorCalls: 0,
   generationSpeakers: [] as string[],
   generationHistories: [] as string[][],
@@ -34,6 +35,14 @@ vi.mock('@dramatis/core', async (importOriginal) => {
     runTurn: async function* (input: { instance: CharacterInstance; history: Message[] }) {
       runtime.generationSpeakers.push(input.instance.displayName);
       runtime.generationHistories.push(input.history.map((message) => message.speakerName));
+      if (runtime.manual) {
+        yield {
+          type: 'prompt',
+          prompt: { messages: [{ role: 'user', content: `请让${input.instance.displayName}回应` }] },
+        };
+        yield { type: 'done', text: '', usage: null };
+        return;
+      }
       if (runtime.failFirst && runtime.generationSpeakers.length === 1) throw new Error('模拟断网');
       const text = `「${input.instance.displayName}回应。」`;
       yield { type: 'text', text };
@@ -85,7 +94,9 @@ function harness() {
   const b = actor('陈九', room);
   const saved: Message[] = [];
   const errors: Array<string | null> = [];
+  const warnings: unknown[] = [];
   const busy: boolean[] = [];
+  const bridges: unknown[] = [];
   const scene = {
     id: sceneId(newId()),
     roomId: room,
@@ -118,7 +129,7 @@ function harness() {
         price: null,
       },
       background: null,
-      apiKey: 'test-key',
+      apiKey: runtime.manual ? '' : 'test-key',
     },
     usage: { reload: async () => {} },
     worker: { kick: () => {} },
@@ -140,8 +151,12 @@ function harness() {
     setError: (value: string | null) => {
       errors.push(value);
     },
-    setWarnings: () => {},
-    setBridge: () => {},
+    setWarnings: (value: unknown) => {
+      warnings.push(value);
+    },
+    setBridge: (value: unknown) => {
+      bridges.push(value);
+    },
     setLastPrompt: () => {},
   } as unknown as TurnRunnerOptions;
 
@@ -152,7 +167,7 @@ function harness() {
   }
   renderToString(createElement(Capture));
   if (api === null) throw new Error('未取得回合控制器');
-  return { api: api as TurnRunnerApi, saved, errors, busy, a, b, scene };
+  return { api: api as TurnRunnerApi, saved, errors, warnings, busy, bridges, a, b, scene };
 }
 
 beforeEach(() => {
@@ -160,6 +175,7 @@ beforeEach(() => {
     '{"speakers":[{"key":"C1","name":"秦娘","intent":"先回答","mode":"reply"},{"key":"C2","name":"陈九","intent":"补充","mode":"reply"}]}';
   runtime.failFirst = false;
   runtime.hangDirector = false;
+  runtime.manual = false;
   runtime.directorCalls = 0;
   runtime.generationSpeakers = [];
   runtime.generationHistories = [];
@@ -204,11 +220,19 @@ describe('一轮多人自动生成', () => {
     expect(errors.at(-1)).toContain('不在当前场景');
   });
 
+  it('句首称呼场外但 onstage 的角色也在发送前拒绝', async () => {
+    const { api, saved, errors, scene, a } = harness();
+    scene.cast = [a.id];
+    await api.handleSend('陈九，你看见了吗？');
+    expect(saved).toHaveLength(0);
+    expect(errors.at(-1)).toContain('不在当前场景');
+  });
+
   it('导演超时即使供应商不响应取消也回规则保底一人', async () => {
     vi.useFakeTimers();
     runtime.hangDirector = true;
     try {
-      const { api, saved } = harness();
+      const { api, saved, warnings } = harness();
       let completed = false;
       const send = api.handleSend('你们觉得呢？').then(() => {
         completed = true;
@@ -218,8 +242,38 @@ describe('一轮多人自动生成', () => {
       await send;
       expect(runtime.directorCalls).toBe(1);
       expect(saved.filter((message) => message.role === 'character')).toHaveLength(1);
+      expect(warnings.flat().some((item) => (item as { code?: string }).code === 'intent.fallback')).toBe(true);
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it('网页版两人桥接先只准备第一份提示词，玩家输入尚不落盘', async () => {
+    runtime.manual = true;
+    const { api, saved, bridges, a, b } = harness();
+    await api.handleSend('@秦娘 @陈九，你们怎么看？');
+    expect(saved).toHaveLength(0);
+    expect(runtime.generationSpeakers).toEqual(['秦娘']);
+    expect(bridges.at(-1)).toMatchObject({
+      stage: 'reply',
+      pendingTurn: {
+        playerText: '@秦娘 @陈九，你们怎么看？',
+        speakerIds: [a.id, b.id],
+        nextIndex: 0,
+      },
+    });
+    const pendingTurn = (bridges.at(-1) as { pendingTurn: import('../components/WebBridgePanel').PendingBridgeTurn })
+      .pendingTurn;
+    const prompt = await api.prepareBridgeReply({
+      pendingTurn: { ...pendingTurn, nextIndex: 1 },
+      history: [
+        { role: 'player', speakerName: '旅人', content: pendingTurn.playerText } as Message,
+        { role: 'character', speakerName: '秦娘', content: '「先听我说。」' } as Message,
+      ],
+    });
+    expect(runtime.generationSpeakers).toEqual(['秦娘', '陈九']);
+    expect(runtime.observerIds).toEqual([a.id, b.id]);
+    expect(runtime.generationHistories[1]).toContain('秦娘');
+    expect(prompt).toContain('陈九');
   });
 });

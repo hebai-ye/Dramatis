@@ -53,7 +53,7 @@ interface Props {
   /** 生成之外的调用次数（意图判断 + 后台分析），来自落盘的账单。 */
   extraCalls: number;
   /** 账单：整个世界与当前对话各一份。 */
-  usage: { world: UsageSummary | null; conversation: UsageSummary | null };
+  usage: { world: UsageSummary | null; conversation: UsageSummary | null; latestTurn: UsageSummary | null };
   /** 本局的调用预算与熔断状态（P1-9）。 */
   budget: BudgetState;
   /** 已经保存的上限（草稿初值）。 */
@@ -258,6 +258,7 @@ function RuntimePanelImpl(props: Props) {
         <UsagePanel
           world={props.usage.world}
           conversation={props.usage.conversation}
+          latestTurn={props.usage.latestTurn}
           conversationTitle={props.conversationTitle}
           budget={props.budget}
           limits={props.budgetLimits}

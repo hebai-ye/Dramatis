@@ -6,6 +6,7 @@ import { CATEGORY_LABELS, formatCalibrationNote, formatCost, formatMoney, format
 interface Props {
   world: UsageSummary | null;
   conversation: UsageSummary | null;
+  latestTurn: UsageSummary | null;
   /** 本局的调用预算与熔断状态（P1-9）。 */
   budget: BudgetState;
   /** 已经保存的上限（草稿的初值）。 */
@@ -184,7 +185,15 @@ function GroupList({
  *
  * 花费只在配了单价时出现：没配就只报 token，绝不用一个编出来的价格糊弄。
  */
-export function UsagePanel({ world, conversation, conversationTitle, budget, limits, onSaveBudget }: Props) {
+export function UsagePanel({
+  world,
+  conversation,
+  latestTurn,
+  conversationTitle,
+  budget,
+  limits,
+  onSaveBudget,
+}: Props) {
   const calibrationNote = world === null ? null : formatCalibrationNote(world.total);
 
   if (world === null || world.total.calls === 0) {
@@ -227,6 +236,35 @@ export function UsagePanel({ world, conversation, conversationTitle, budget, lim
         </p>
         {calibrationNote === null ? null : <p className="hint">{calibrationNote}</p>}
       </section>
+
+      {latestTurn === null || latestTurn.total.calls === 0 ? null : (
+        <section className="panel">
+          <h2>最近一轮</h2>
+          <ul className="usage-list">
+            <li>
+              <span className="usage-name">导演判断</span>
+              <span className="usage-figure">
+                {latestTurn.byCategory.find((group) => group.key === 'intent')?.totals.calls ?? 0} 次
+              </span>
+            </li>
+            <li>
+              <span className="usage-name">角色生成</span>
+              <span className="usage-figure">
+                {latestTurn.byCategory.find((group) => group.key === 'generation')?.totals.calls ?? 0} 次
+              </span>
+            </li>
+            <li>
+              <span className="usage-name">已记录用量</span>
+              <span className="usage-figure">{figure(latestTurn.total)}</span>
+            </li>
+          </ul>
+          {latestTurn.byCategory.some(
+            (group) => group.key === 'generation' && group.totals.calls > 0 && group.totals.tokens === 0,
+          ) ? (
+            <p className="hint">生成用量为 0 可能是服务商没有返回用量，不能据此判断这次免费。</p>
+          ) : null}
+        </section>
+      )}
 
       <section className="panel">
         <h2>按用途</h2>

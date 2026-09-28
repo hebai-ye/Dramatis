@@ -1459,6 +1459,8 @@ TASKS 第〇节顺序 68。用户裁定「A+B 推进」；原方案里的 `limit
 | `apps/web/src/lib/stream-store.test.ts` | 改 | 新增「交接」用例；两条老用例的 `toEqual` 补 `handoffId: null` |
 | `docs/{TASKS,STATUS,EVAL,FILE-LOG}.md` | 改 | 顺序 91 的计划行、处理表与遗留、状态接续点、EVAL 第八十五节与本节 |
 
+推送与上线（2026-09-28 补）：`cff5149` 已快进推送到 `origin/main`（`f3be8c4..cff5149`）；`tools/` 与 `packages/core/src/sync/` 无改动 ⇒ 只上传并切换 `apps/web/dist`，旧网页留为 `/var/www/dramatis.bak-20260928-202632`。线上首页 200 / 1366 B 且引用新的 `assets/index-C5Ydp3Hw.js`（200 / 659406 B），`/sync/health` 200，同步服务未重启。真机与真实模型验证仍归 Codex。
+
 ## 七十一、几点注意
 
 ---

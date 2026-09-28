@@ -4367,4 +4367,6 @@ v12 的三个判断都是有意的：
 
 **测试与门禁**：`apps/web/src/lib/stream-store.test.ts` 新增「交接（顺序 91）」用例（落盘后正文与推理流保留、只多一个 `handoffId`、重复交接不通知、写回 `null` 与 `reset` 都会通知），两条老用例的 `toEqual` 补上 `handoffId`（Web 从 45 条增至 **46** 条）。`pnpm typecheck`、`pnpm lint`（**283 文件，0 error / 0 warning**）、`pnpm test`（Core **70 文件 / 809 条**、Web **13 文件 / 46 条**）、`pnpm build`（`apps/web/dist/assets/index-C5Ydp3Hw.js` **659406 B** / gzip 210.78 kB；比顺序 92 线上那版 `index-BBkcTtuN.js` 655347 B 多 **4059 B**，就是这批新组件与 context 的量级；CSS 未动，仍是 `index-BDv279kC.css` 42459 B）、`pnpm build:sync-server` 五项全部通过；主 JS 超过 500 kB 的既有构建提示仍在。
 
-**未验证（归 Codex）**：真机笔画输入法（组合期是否真的不落库、最后几个字是否保得住）、真实长对话里流式结束的观感与整表重画次数（顺序 62 那套 `countRender('MessageItem')` 计数可复测，预期每轮只剩两次落盘带来的渲染）。本轮只做了本机静态检查与单元测试，没有真机、没有真实模型调用。
+**推送与上线（2026-09-28 补）**：`git fetch` 后确认 `origin/main` 是本分支祖先，`cff5149` 从 `f3be8c4` 快进推送（`f3be8c4..cff5149  HEAD -> main`）。本批 `git log f3be8c4..cff5149 -- tools/ packages/core/src/sync/` 为空 ⇒ 同步服务端源码没变，只按前端单独部署流程上传切换 `apps/web/dist`（先在服务器上清掉暂存目录，`scp` 上传后确认 `index.html` 与两个资源都在，再把旧 `/var/www/dramatis` 改名为 `/var/www/dramatis.bak-20260928-202632`、换上新目录并 `chown root:root` + `chmod -R a+rX`，全程不删）。线上自查：首页 200 / 1366 B 且引用新的 `assets/index-C5Ydp3Hw.js`；该 JS 200 / **659406 B**（与本机构建字节数一致）；`index-BDv279kC.css` 200 / 42459 B；`/sync/health` 200（`{"ok":true}`，同步服务未重启）。这一步只验证了静态资源与健康检查；真机笔画输入法与真实模型观感仍待 Codex。
+
+**未验证（归 Codex）**：真机笔画输入法（组合期是否真的不落库、最后几个字是否保得住）、真实长对话里流式结束的观感与整表重画次数（顺序 62 那套 `countRender('MessageItem')` 计数可复测，预期每轮只剩两次落盘带来的渲染）。本轮只做了本机静态检查、单元测试与线上静态资源核对，没有真机、没有真实模型调用。

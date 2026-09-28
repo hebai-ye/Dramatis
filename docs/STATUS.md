@@ -21,9 +21,9 @@
 
 ## 新会话从这里接（2026-09-23）
 
-### 2026-09-27：顺序 91 两个体验反馈 bug 已修（本地提交，未 push 未部署）
+### 2026-09-27：顺序 91 两个体验反馈 bug 已修（已 push 并只重新部署前端）
 
-用户 2026-09-26 反馈的两条都落地了。① 场景设定输入区在笔画输入法下逐笔落库：`SceneDialog.tsx` 那个 `textarea` 漏了顺序 63 的草稿 hook，现在改成 `useDraftField`（停手 300ms 或失焦才落库、输入法组合期一个字节都不写），关闭弹窗的每一条通路都先 `flush()`。② 流式结束到消息出现之间的空窗与卡顿：落盘后不再同步清掉流式副本，改成 `handoffStreamState('main', line.id)`，`StreamingBubble` 一直画到消息列表里真的出现这条消息，并在同一次提交里收掉自己；同时把 `busy` 从 `MessageList`/`MessageItem` 的 prop 改成 context（新增 `apps/web/src/lib/busy-context.ts`），开关翻转不再让整张消息表重画（顺序 62 量到的「一轮 4 次整表重画」里有两次是它）。五项门禁与未验证项见 EVAL 第八十五节；本批只在本地提交，未 push、未部署，真机笔画输入法与真实模型观感仍归 Codex。
+用户 2026-09-26 反馈的两条都落地了。① 场景设定输入区在笔画输入法下逐笔落库：`SceneDialog.tsx` 那个 `textarea` 漏了顺序 63 的草稿 hook，现在改成 `useDraftField`（停手 300ms 或失焦才落库、输入法组合期一个字节都不写），关闭弹窗的每一条通路都先 `flush()`。② 流式结束到消息出现之间的空窗与卡顿：落盘后不再同步清掉流式副本，改成 `handoffStreamState('main', line.id)`，`StreamingBubble` 一直画到消息列表里真的出现这条消息，并在同一次提交里收掉自己；同时把 `busy` 从 `MessageList`/`MessageItem` 的 prop 改成 context（新增 `apps/web/src/lib/busy-context.ts`），开关翻转不再让整张消息表重画（顺序 62 量到的「一轮 4 次整表重画」里有两次是它）。五项门禁与未验证项见 EVAL 第八十五节。`cff5149` 已推送 `origin/main`（`f3be8c4..cff5149`）；本批没动 `tools/` 与 `packages/core/src/sync/`，所以**只重新部署前端**：线上首页 200 / 1366 B 且引用新的 `assets/index-C5Ydp3Hw.js`，该 JS 200 / 659406 B，`/sync/health` 200，旧目录留为 `/var/www/dramatis.bak-20260928-202632`，同步服务未重启。真机笔画输入法与真实模型观感仍归 Codex。
 
 ### 2026-09-27：顺序 95 手机桌面图标近景修正
 

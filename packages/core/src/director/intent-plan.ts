@@ -1,27 +1,16 @@
 import { extractJsonObject } from '../memory/extract.js';
+import type { InstanceId } from '../model/ids.js';
 import type { CharacterInstance } from '../model/instance.js';
 import type { Message } from '../model/message.js';
 import type { Scene } from '../model/room.js';
 import type { ChatMessage } from '../prompt/types.js';
 import { asRecord } from '../util/json.js';
 
-/**
- * 生成前的意图（ROADMAP P1-6）。
- *
- * 这一步是**真的多一次调用**——预算从哪来见 `memory/turn-analysis.ts`：把记忆抽取与
- * 情绪推演合并成一次后台调用，腾出的那一格正好给它，总额仍是「每回合额外调用 ≤ 2」。
- *
- * 它做三件事：
- * 1. **决定谁开口**：规则调度器再准也读不懂「这句话其实是在刺秦娘」，导演调用能。
- * 2. **给出这一轮的打算**：把意图写进生成提示词，角色据此落笔（欲言又止、抢话、主动发起）。
- * 3. **把意图留在消息上**：用户能看到「他这一轮想做什么」，出戏时也好判断是谁的问题。
- *
- * 它给的是**建议而不是命令**：模型给的名字不在当前名单里就丢弃并退回规则调度，
- * 绝不让一个看不见的角色上台。
- */
+/** 导演只建议当轮参与者；名单与 presence、至少一人均由纯选择器复核。 */
 export type IntentMode = 'reply' | 'cut_in' | 'hold_back' | 'initiate';
 
 export interface IntentPlanEntry {
+  key?: string;
   name: string;
   intent: string;
   mode: IntentMode;
@@ -32,66 +21,67 @@ export interface IntentPlanInput {
   cast: readonly CharacterInstance[];
   playerName: string;
   playerInput: string;
-  /** 最近几条消息，按时间正序。不需要全量历史。 */
   recentMessages: readonly Message[];
-  /** 最多让几个人开口，默认 1。 */
+  /** 旧调用点升级期间缺省为空；发送路径必须传真实上一条意图。 */
+  lastIntentByInstance?: ReadonlyMap<InstanceId, string>;
+  playerActionOnly?: boolean;
+  actionsOnly?: boolean;
   maxSpeakers?: number;
 }
 
 const SYSTEM_PROMPT = [
-  '你是这场多角色戏的导演。读刚发生的对话，判断这一轮谁最该开口、他此刻想做什么。',
-  '只输出一个 JSON 对象，不要解释，不要写台词。',
-].join('\n');
-
-const MODE_GUIDE = [
-  'mode 取四种之一：',
-  '- reply：正常接话',
-  '- cut_in：抢在别人之前插话，情绪上来了',
-  '- hold_back：想说但没说出来（欲言又止），这一轮只做动作',
-  '- initiate：没人问他，他主动开口或主动做点什么',
+  '你是多角色互动故事的一轮发言导演。你的工作是在当前场景中选出这一轮真正参与回应的角色，并按戏剧发生顺序安排他们；你不写台词，也不平均分配发言机会。',
+  '',
+  '只可选输入名单中的角色。角色的 presence 与场景名单都已由程序检查，但你仍必须照抄名单里的临时编号和显示名。玩家在句首以称呼叫到的人，或用 @显示名 直接叫到的人，必须在本轮参与；句中作为事件人物被提到，不等于被叫到。玩家问全场时，挑最有理由回应的一至数人，不必让全场轮流说话。玩家只做动作而没有台词时，判断谁会对动作作出有意义的反应。不要为了凑满人数而选人。',
+  '',
+  'mode 只能是 reply、cut_in、hold_back、initiate。reply 是正常接话；cut_in 是抢话；hold_back 是只用动作或神态回应、不说台词；initiate 是主动开启新的话头。hold_back 也占一个回应名额，因为程序仍会为他生成一条动作消息。输入要求只许动作时，所有入选者都必须用 hold_back。',
+  '',
+  'speakers 至少给一项、最多给输入指定的上限；每个角色最多出现一次。按建议的剧情顺序排列，同等条件下把 cut_in 排在普通接话之前。每项 intent 用一句中文写此刻想做什么，不写台词、不写其他角色的私有想法。只输出符合格式的 JSON 对象，不要代码围栏、注释或解释。即使你输出空项或错误项，程序也会独立执行保底选择。',
 ].join('\n');
 
 export function buildIntentPlanMessages(input: IntentPlanInput): ChatMessage[] {
-  const scene = input.scene;
-  const maxSpeakers = Math.max(0, input.maxSpeakers ?? 1);
-
-  const context = [
-    `地点：${scene === null || scene.location.trim() === '' ? '未指定' : scene.location.trim()}`,
+  const maxSpeakers = Math.min(3, Math.max(1, Math.floor(input.maxSpeakers ?? 1)));
+  const location = input.scene?.location.trim() || '未指定';
+  const cast =
+    input.cast
+      .map(
+        (member, index) =>
+          `C${String(index + 1)}｜${member.displayName}｜上一条意图：${input.lastIntentByInstance?.get(member.id) || '无'}｜激动程度：${member.affect.arousal.toFixed(2)}`,
+      )
+      .join('\n') || '无';
+  const recent =
+    input.recentMessages
+      .slice(-8)
+      .map((message) => `${message.speakerName}：${message.content.replace(/\s*\n\s*/g, ' ')}`)
+      .join('\n') || '无';
+  const user = [
+    `地点：${location}`,
     `玩家扮演：${input.playerName}`,
-    `在场角色：${input.cast.map((member) => member.displayName).join('、')}`,
+    `本轮最多参与人数：${String(maxSpeakers)}`,
+    `本轮回复形式：${input.actionsOnly === true ? '只许动作' : '允许台词与动作'}`,
+    `玩家这次是否只有动作：${input.playerActionOnly === true ? '是' : '否'}`,
+    '',
+    '当前场景可发言名单（临时编号、显示名、上一条意图、情绪激动程度）：',
+    cast,
+    '',
+    '最近 8 条对话，按发生顺序：',
+    recent,
+    '',
+    '玩家本次输入：',
+    input.playerInput.trim() || '（无台词，仅有动作）',
+    '',
+    '请选出本轮真正参与回应的角色。直接称呼的人必须在名单中；句中被提到的人无需因此发言。没有合适的第二人就只选一人。输出必须严格采用以下 JSON 形状，key 和 name 必须与上方同一人对应：',
+    '{"speakers":[{"key":"C1","name":"秦娘","intent":"想确认玩家刚才所指的那件事","mode":"reply"}]}',
   ].join('\n');
-
-  const recent = input.recentMessages
-    .map((message) => `${message.speakerName}：${message.content.replace(/\s*\n\s*/g, ' ')}`)
-    .join('\n');
-
   return [
     { role: 'system', content: SYSTEM_PROMPT },
-    {
-      role: 'user',
-      content: [
-        context,
-        '',
-        '刚发生的对话：',
-        recent,
-        '',
-        `玩家刚说：${input.playerInput.trim() === '' ? '（什么也没说，只是做了个动作）' : input.playerInput.trim()}`,
-        '',
-        MODE_GUIDE,
-        '',
-        `最多让 ${String(maxSpeakers)} 个人开口；如果此刻没人该开口（冷场是合理的），speakers 给空数组。`,
-        'speakers 的名字必须与「在场角色」里的完全一致。',
-        '',
-        '输出格式：',
-        '{"speakers":[{"name":"角色名","intent":"他此刻想做什么，一句话","mode":"reply"}]}',
-      ].join('\n'),
-    },
+    { role: 'user', content: user },
   ];
 }
 
 const MODES: readonly IntentMode[] = ['reply', 'cut_in', 'hold_back', 'initiate'];
 
-/** 宽松解析：认对象里的 speakers、认裸数组、认单个对象。 */
+/** 宽松解析兼容旧记录：裸数组、代码围栏和没有临时编号的姓名条目仍可读取。 */
 export function parseIntentPlan(raw: string): IntentPlanEntry[] {
   let parsed: unknown;
   try {
@@ -99,7 +89,6 @@ export function parseIntentPlan(raw: string): IntentPlanEntry[] {
   } catch {
     return [];
   }
-
   const record = asRecord(parsed);
   const list = Array.isArray(parsed)
     ? parsed
@@ -113,14 +102,17 @@ export function parseIntentPlan(raw: string): IntentPlanEntry[] {
   for (const item of list) {
     const entry = asRecord(item);
     if (!entry) continue;
-
     const name = typeof entry.name === 'string' ? entry.name.trim() : '';
     if (name === '') continue;
-
+    const key = typeof entry.key === 'string' ? entry.key.trim() : '';
     const intent = typeof entry.intent === 'string' ? entry.intent.trim() : '';
     const rawMode = typeof entry.mode === 'string' ? (entry.mode.trim() as IntentMode) : 'reply';
-
-    entries.push({ name, intent, mode: MODES.includes(rawMode) ? rawMode : 'reply' });
+    entries.push({
+      ...(key === '' ? {} : { key }),
+      name,
+      intent,
+      mode: MODES.includes(rawMode) ? rawMode : 'reply',
+    });
   }
   return entries;
 }
@@ -131,12 +123,40 @@ export interface PlannedSpeaker {
   mode: IntentMode;
 }
 
-/**
- * 从计划里挑出真正可以开口的人。
- *
- * 三道闸，任何一道不过就丢：名字要能对上在场角色、presence 允许发言、
- * `hold_back` 不能真的开口（它只是「想说没说」，留给生成端去做动作）。
- */
+export interface PlannedSpeakerPick {
+  speakers: PlannedSpeaker[];
+  rejectedEntries: number;
+}
+
+/** 编号和姓名必须指向同一位在场者；hold_back 仍需生成一条动作消息。 */
+export function pickPlannedSpeakers(
+  plan: readonly IntentPlanEntry[],
+  eligibleCast: readonly CharacterInstance[],
+  maxSpeakers: 1 | 2 | 3,
+): PlannedSpeakerPick {
+  const speakers: PlannedSpeaker[] = [];
+  const seen = new Set<InstanceId>();
+  let rejectedEntries = 0;
+  for (const entry of plan) {
+    const matches = eligibleCast.filter(
+      (member) =>
+        member.presence === 'onstage' && member.deletedAt === null && member.displayName.trim() === entry.name,
+    );
+    const instance = matches.length === 1 ? matches[0] : undefined;
+    const expectedKey = instance === undefined ? '' : `C${String(eligibleCast.indexOf(instance) + 1)}`;
+    if (!instance || (entry.key !== undefined && entry.key !== expectedKey) || seen.has(instance.id)) {
+      rejectedEntries += 1;
+      continue;
+    }
+    seen.add(instance.id);
+    speakers.push({ instance, intent: entry.intent, mode: entry.mode });
+  }
+  // 先让抢话者前移，再截人数；否则导演超额时末尾的抢话者会被提前丢掉。
+  const ordered = speakers.sort((a, b) => Number(b.mode === 'cut_in') - Number(a.mode === 'cut_in'));
+  return { speakers: ordered.slice(0, maxSpeakers), rejectedEntries };
+}
+
+/** 兼容旧单人调用；新发送路径必须使用 pickPlannedSpeakers 与 selectTurnSpeakers。 */
 export function pickPlannedSpeaker(
   plan: readonly IntentPlanEntry[],
   cast: readonly CharacterInstance[],
@@ -150,7 +170,6 @@ export function pickPlannedSpeaker(
   return null;
 }
 
-/** 这一轮的意图是不是「只做动作」。 */
 export function isHoldBack(mode: IntentMode): boolean {
   return mode === 'hold_back';
 }

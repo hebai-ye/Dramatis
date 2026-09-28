@@ -123,3 +123,40 @@ describe('本轮多人发言选择', () => {
     expect(result).toMatchObject({ kind: 'no-eligible-speaker', speakers: [] });
   });
 });
+
+describe('导演编号进入最终名单前的复核', () => {
+  it('C1 编号却写成 B 的姓名时不让 B 接话', () => {
+    const a = actor('小满');
+    const b = actor('陈九');
+    const result = select({
+      text: '小满，你觉得呢？',
+      cast: [a, b],
+      plan: [{ key: 'C1', name: '陈九', intent: '想回答', mode: 'reply' }],
+    });
+    expect(result.kind).toBe('ready');
+    if (result.kind !== 'ready') return;
+    expect(result.speakers.map((speaker) => speaker.instance.id)).toEqual([a.id]);
+    expect(result.rejectedPlanEntries).toBe(1);
+  });
+});
+
+describe('抢话与人数上限', () => {
+  it('导演超额建议中靠后的 cut_in 仍先于普通接话入选', () => {
+    const a = actor('甲');
+    const b = actor('乙');
+    const c = actor('丙');
+    const result = select({
+      text: '你们觉得呢？',
+      cast: [a, b, c],
+      plan: [
+        { key: 'C1', name: '甲', intent: '回答', mode: 'reply' },
+        { key: 'C2', name: '乙', intent: '回答', mode: 'reply' },
+        { key: 'C3', name: '丙', intent: '抢话', mode: 'cut_in' },
+      ],
+      max: 2,
+    });
+    expect(result.kind).toBe('ready');
+    if (result.kind !== 'ready') return;
+    expect(result.speakers.map((speaker) => speaker.instance.id)).toEqual([c.id, a.id]);
+  });
+});

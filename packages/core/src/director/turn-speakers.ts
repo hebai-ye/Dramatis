@@ -1,6 +1,6 @@
 import type { InstanceId } from '../model/ids.js';
 import type { CharacterInstance } from '../model/instance.js';
-import type { IntentMode, IntentPlanEntry } from './intent-plan.js';
+import { type IntentMode, type IntentPlanEntry, pickPlannedSpeakers } from './intent-plan.js';
 import type { ScheduleResult } from './scheduler.js';
 
 export type TurnSpeakerSource = 'addressed' | 'planned' | 'rule';
@@ -91,21 +91,11 @@ export function selectTurnSpeakers(input: {
     return { kind: 'too-many-addressed', speakers: [], addressed, rejectedPlanEntries: 0 };
   }
 
-  const planned = new Map<
-    InstanceId,
-    { instance: CharacterInstance; intent: string; mode: IntentMode; index: number }
-  >();
-  let rejectedPlanEntries = 0;
-  for (const [index, entry] of (input.plan ?? []).entries()) {
-    const matches = eligible.filter((item) => item.displayName.trim() === entry.name.trim());
-    const instance = matches.length === 1 ? matches[0] : undefined;
-    if (!instance || planned.has(instance.id)) {
-      rejectedPlanEntries += 1;
-      continue;
-    }
-    planned.set(instance.id, { instance, intent: entry.intent, mode: entry.mode, index });
-  }
-
+  const picked = pickPlannedSpeakers(input.plan ?? [], eligible, input.maxSpeakers);
+  const planned = new Map(
+    picked.speakers.map((speaker, index) => [speaker.instance.id, { ...speaker, index }] as const),
+  );
+  const rejectedPlanEntries = picked.rejectedEntries;
   const speakers: SelectedTurnSpeaker[] = [];
   for (const id of addressed) {
     const instance = eligible.find((item) => item.id === id);

@@ -38,6 +38,8 @@ export interface ConversationModes {
    * 想省调用的用户可以在这里关掉（额外调用从 2 次降到 1 次）。
    */
   intentFirst?: boolean;
+  /** 单轮角色生成调用的上限；老对话缺字段时读作 2，不是必须凑满的配额。 */
+  maxSpeakers?: 1 | 2 | 3;
   /**
    * 历史策略（顺序 58）：远处**已被场记覆盖**的原文要不要收起。
    *
@@ -86,6 +88,15 @@ export type ReplyLength = 'short' | 'normal' | 'long';
 
 export const DEFAULT_REPLY_LENGTH: ReplyLength = 'normal';
 
+export const DEFAULT_MAX_SPEAKERS = 2;
+export const HARD_MAX_SPEAKERS = 3;
+
+/** 老数据缺字段或外来数据写坏字段时，不静默放大模型调用数。 */
+export function speakerLimitOf(modes: ConversationModes | undefined): 1 | 2 | 3 {
+  const value = modes?.maxSpeakers;
+  return value === 1 || value === 3 ? value : DEFAULT_MAX_SPEAKERS;
+}
+
 /** 认不出的值一律退回标准——绝不静默放大成偏长。 */
 export function replyLengthOf(modes: ConversationModes | undefined): ReplyLength {
   const value = modes?.replyLength;
@@ -123,6 +134,7 @@ export function defaultConversationModes(): ConversationModes {
     playerFirst: false,
     silent: false,
     intentFirst: true,
+    maxSpeakers: DEFAULT_MAX_SPEAKERS,
     replyLength: DEFAULT_REPLY_LENGTH,
     // 无限制模式缺省关：它是用户自己要打开的开关，不该悄悄替人打开
     unlimited: false,

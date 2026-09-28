@@ -101,6 +101,8 @@ export interface AssembleInput {
   intent?: string;
   /** 意图的模式；`hold_back` 时只写动作。 */
   intentMode?: 'reply' | 'cut_in' | 'hold_back' | 'initiate';
+  /** 同轮有多位参与者时的位置；缺省沿用旧单人提示词。 */
+  turnPosition?: { index: number; total: number };
   /** 当前对话选择的玩家身份；缺省时退回 Room 上的旧字段。 */
   player?: { name: string; description: string };
   budget: {
@@ -907,6 +909,14 @@ export function assemblePrompt(input: AssembleInput): AssembledPrompt {
     .filter((member) => member.id !== input.instance.id && member.presence === 'onstage')
     .map((member) => member.displayName);
   const othersClause = otherSpeakers.length === 0 ? '' : `场景中还有 ${otherSpeakers.join('、')}，不要替他们发言。`;
+  const turnPositionInstruction =
+    input.turnPosition === undefined
+      ? ''
+      : [
+          `\n本回合由你扮演「${input.instance.displayName}」，你是本回合第 ${String(input.turnPosition.index)} 位、共 ${String(input.turnPosition.total)} 位被选中的回应者。`,
+          `只写「${input.instance.displayName}」能说的台词和能做的动作。历史中其他角色本回合刚说过的话，是你可听见的现场经过；不要复述他们已经回答的内容。若没有新的信息、立场或动作，用简短反应推进这一拍。`,
+          '不要替其他角色说话、决定动作或写出其内心。不要把其他角色的经历、私有记忆、道具或身份写成自己的。历史里的【名字】仅用于标明说话者，你的正文仍按现有格式写，不加姓名前缀。',
+        ].join('\n');
 
   blocks.push({
     id: 'instruction',
@@ -934,6 +944,7 @@ export function assemblePrompt(input: AssembleInput): AssembledPrompt {
         ? ''
         : `\n你这一轮打算：${input.intent.trim()}。照着这个打算写，但不要把这一行写进回复。` +
           (input.intentMode === 'hold_back' ? '（想说没说：只写动作与神态，不要开口。）' : '')) +
+      turnPositionInstruction +
       // 意图先行（P1-6 的零额外调用版）：先声明这一轮想做什么，再落笔
       `\n${INTENT_FORMAT_RULE}`,
     priority: PRIORITY.instruction,

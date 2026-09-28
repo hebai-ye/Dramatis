@@ -1188,3 +1188,24 @@ describe('无限制模式（2026-09-25）', () => {
     expect(legacy?.label).toContain('旧');
   });
 });
+
+describe('同轮后发言者的指令', () => {
+  it('第二位只补充自己能知道的内容，不复述前一位或代写他人', () => {
+    const { card, instance, room, scene } = fixtures();
+    const prompt = assemblePrompt({
+      card,
+      instance,
+      room,
+      scene,
+      history: [],
+      playerInput: '',
+      turnPosition: { index: 2, total: 2 },
+      budget: baseBudget,
+    });
+    const instruction = prompt.blocks.find((block) => block.id === 'instruction');
+    expect(instruction?.droppable).toBe(false);
+    expect(instruction?.content).toContain('第 2 位、共 2 位');
+    expect(instruction?.content).toContain('不要复述他们已经回答的内容');
+    expect(instruction?.content).toContain('不要把其他角色的经历、私有记忆、道具或身份写成自己的');
+  });
+});

@@ -12,9 +12,11 @@ import {
   createOpenAICompatibleProvider,
   createPlayerMessage,
   createTurnId,
+  directAddressees,
   hasSpeech,
   historyPolicyOf,
   type InstanceId,
+  type IntentMode,
   type IntentPlanEntry,
   isIntentFirst,
   type Message,
@@ -24,7 +26,6 @@ import {
   needsWebBridge,
   type PromptMemory,
   parseIntentPlan,
-  pickPlannedSpeaker,
   type RecalledForPrompt,
   type Room,
   recallForPrompt,
@@ -32,7 +33,10 @@ import {
   runTurn,
   type Scene,
   scheduleSpeakers,
+  selectTurnSpeakers,
+  speakerLimitOf,
   turnsSinceLastSpoke,
+  unlimitedModeOf,
 } from '@dramatis/core';
 import { useCallback, useRef } from 'react';
 import type { WebBridgeState } from '../components/WebBridgePanel';
@@ -168,7 +172,8 @@ export function useTurnRunner({
       showStream: boolean;
       signal: AbortSignal;
       /** 导演调用给出的这一轮打算（P1-6）；没有就退回让模型自己判断。 */
-      intent?: { intent: string; mode: string } | null;
+      intent?: { intent: string; mode: IntentMode } | null;
+      turnPosition?: { index: number; total: number };
     }): Promise<{
       text: string;
       usage: MessageUsage | null;
@@ -243,9 +248,10 @@ export function useTurnRunner({
           scenes: session.scenes,
           historyPolicy: historyPolicyOf(conversation?.modes),
           mention: { text: mentionText, askingPast: asksAboutPast(mentionText) },
+          ...(options.turnPosition === undefined ? {} : { turnPosition: options.turnPosition }),
           ...(options.intent === undefined || options.intent === null
             ? {}
-            : { intent: options.intent.intent, intentMode: options.intent.mode as 'reply' }),
+            : { intent: options.intent.intent, intentMode: options.intent.mode }),
           budget: { maxTokens: profile.maxTokens, reserveForReply: profile.reserveForReply },
         },
         provider,
@@ -320,7 +326,11 @@ export function useTurnRunner({
       text: string;
       history: Message[];
       scene: Scene;
-      instances: CharacterInstance[];
+      cast: CharacterInstance[];
+      lastIntentByInstance: ReadonlyMap<InstanceId, string>;
+      maxSpeakers: 1 | 2 | 3;
+      playerActionOnly: boolean;
+      actionsOnly: boolean;
       turnId: string;
       /** 用户在规划阶段点「停止」也要能打断这一次调用（审计 C17）。 */
       signal?: AbortSignal;
@@ -341,26 +351,41 @@ export function useTurnRunner({
             });
       if (config === null || config.apiKey.trim() === '') return null;
 
+      const planController = new AbortController();
+      const onAbort = () => planController.abort();
+      input.signal?.addEventListener('abort', onAbort, { once: true });
+      if (input.signal?.aborted) planController.abort();
+      const timer = setTimeout(() => planController.abort(), 8_000);
       try {
-        const completion = await collectCompletionWithTools(
-          createOpenAICompatibleProvider({
-            baseUrl: config.baseUrl,
-            apiKey: config.apiKey,
-            model: config.model,
-          }),
-          buildIntentPlanMessages({
-            scene: input.scene,
-            cast: input.instances.filter(
-              (instance) => instance.presence === 'onstage' && input.scene.cast.includes(instance.id),
-            ),
-            playerName: world?.playerName ?? '玩家',
-            playerInput: input.text,
-            recentMessages: input.history.slice(-8),
-            maxSpeakers: 1,
-          }),
-          { temperature: config.temperature },
-          input.signal,
-        );
+        // 有些兼容 API 在断网时不理会 AbortSignal；只 abort 会把整轮永远卡在导演调用。
+        const interrupted = new Promise<never>((_resolve, reject) => {
+          const rejectAbort = () => reject(new Error('导演调用中止'));
+          if (planController.signal.aborted) rejectAbort();
+          else planController.signal.addEventListener('abort', rejectAbort, { once: true });
+        });
+        const completion = await Promise.race([
+          collectCompletionWithTools(
+            createOpenAICompatibleProvider({
+              baseUrl: config.baseUrl,
+              apiKey: config.apiKey,
+              model: config.model,
+            }),
+            buildIntentPlanMessages({
+              scene: input.scene,
+              cast: input.cast,
+              playerName: world?.playerName ?? '玩家',
+              playerInput: input.text,
+              recentMessages: input.history.slice(-8),
+              lastIntentByInstance: input.lastIntentByInstance,
+              playerActionOnly: input.playerActionOnly,
+              actionsOnly: input.actionsOnly,
+              maxSpeakers: input.maxSpeakers,
+            }),
+            { temperature: config.temperature },
+            planController.signal,
+          ),
+          interrupted,
+        ]);
         // 这一调用的开销也要算进成本：它是每回合固定多出来的一次。
         // 走账单而不是内存计数——刷新之后这笔钱还得在（T7）
         await recordModelCall(db, {
@@ -377,6 +402,9 @@ export function useTurnRunner({
       } catch {
         // 导演调用失败不该拦下这一轮：退回规则调度，照样能玩
         return null;
+      } finally {
+        clearTimeout(timer);
+        input.signal?.removeEventListener('abort', onAbort);
       }
     },
     [burned, conversation, db, providers, usage, world],
@@ -461,6 +489,40 @@ export function useTurnRunner({
         setError('还没有模型配置');
         return;
       }
+      const eligibleCast = instances.filter(
+        (instance) =>
+          scene.cast.includes(instance.id) &&
+          instance.presence === 'onstage' &&
+          instance.deletedAt === null &&
+          session.cards.some((card) => card.id === instance.cardId),
+      );
+      const fallbackSpeaker = eligibleCast[0];
+      if (!fallbackSpeaker) {
+        setError('当前场景没有可回应的角色；请先把有角色卡且允许发言的角色加入场景。');
+        return;
+      }
+      const explicitNames = [...text.matchAll(/(?:^|[\s，,。.!！?？、:：;；])@([^\s，,。.!！?？、:：;；]+)/gu)]
+        .map((match) => match[1])
+        .filter((name): name is string => name !== undefined);
+      const unavailableName = explicitNames.find(
+        (name) => eligibleCast.filter((instance) => instance.displayName.trim() === name).length !== 1,
+      );
+      if (unavailableName !== undefined) {
+        setError(`「${unavailableName}」不在当前场景，或目前不能发言；请检查场景名单。`);
+        return;
+      }
+      const maxSpeakers = speakerLimitOf(conversation.modes);
+      const addressed = directAddressees(text, eligibleCast);
+      if (addressed.length > maxSpeakers) {
+        setError(
+          `你直接叫到了 ${String(addressed.length)} 位角色，本轮上限为 ${String(maxSpeakers)} 位；请减少点名或调高上限。`,
+        );
+        return;
+      }
+      const playerActionOnly = !hasSpeech(text);
+      const actionsOnly =
+        !unlimitedModeOf(conversation.modes) &&
+        (conversation.modes.silent || (conversation.modes.playerFirst && playerActionOnly));
       /*
        * 没有 API Key 不再是死路：走**网页版桥接**——应用把提示词交给你，
        * 你贴进 DeepSeek 网页版，再把回复粘回来。第一次打开这个应用的人
@@ -493,9 +555,14 @@ export function useTurnRunner({
         audience: scene.cast,
       });
       let continuedHistory: Message[] = [...history, playerMessage];
+      let playerPersisted = false;
+      let characterCount = 0;
+      let activeSpeaker = fallbackSpeaker;
+      let activeIndex = 0;
 
       try {
         await session.appendMessages([playerMessage]);
+        playerPersisted = true;
         // 只有真的说了话的那一轮才算「发言」：全程只做动作的角色不该被冷却压住
         const spokeHistory = history.filter((message) => message.role !== 'character' || hasSpeech(message.content));
         const since = turnsSinceLastSpoke(spokeHistory, turnId);
@@ -533,23 +600,38 @@ export function useTurnRunner({
          * 并且**只是建议**：名字不在名单里就退回规则调度，绝不让看不见的人上台。
          * 用户可以在「对话模式」里关掉它，省下这一次调用。
          */
-        const plan = await runIntentPlan({ text, history, scene, instances, turnId, signal: controller.signal });
+        const plan = await runIntentPlan({
+          text,
+          history,
+          scene,
+          cast: eligibleCast,
+          lastIntentByInstance,
+          maxSpeakers,
+          playerActionOnly,
+          actionsOnly,
+          turnId,
+          signal: controller.signal,
+        });
         // 导演调用失败会被吞掉退回规则调度；但若是用户点了停止，这一轮到此为止
         if (controller.signal.aborted) throw new Error('在安排发言时停止');
-        const sceneCast = instances.filter(
-          (instance) => instance.presence === 'onstage' && scene.cast.includes(instance.id),
-        );
-        const planned = plan === null ? null : pickPlannedSpeaker(plan, sceneCast);
-        const speakers = planned === null ? schedule.speakers : [planned.instance.id];
-        const intentByInstance = new Map<InstanceId, { intent: string; mode: string }>();
-        if (planned !== null) intentByInstance.set(planned.instance.id, { intent: planned.intent, mode: planned.mode });
+        const selection = selectTurnSpeakers({
+          playerInput: text,
+          eligibleCast,
+          schedule,
+          plan,
+          maxSpeakers,
+          actionsOnly,
+        });
+        if (selection.kind !== 'ready') throw new Error('当前场景没有可回应的角色；请检查场景名单。');
 
         let first = true;
-        for (const speakerId of speakers) {
-          const speaker = instances.find((item) => item.id === speakerId);
-          if (!speaker) continue;
+        for (const [index, selected] of selection.speakers.entries()) {
+          if (controller.signal.aborted) throw new Error('在角色接话前停止');
+          const speaker = selected.instance;
+          activeSpeaker = speaker;
+          activeIndex = index + 1;
           const speakerCard = session.cards.find((item) => item.id === speaker.cardId);
-          if (!speakerCard) continue;
+          if (!speakerCard) throw new Error('角色卡已不可用，无法继续生成');
 
           // 只召回这个人自己的视角条目
           const now = new Date().toISOString();
@@ -563,7 +645,7 @@ export function useTurnRunner({
             phase: 'writing',
             handoffId: null,
           });
-          const plannedIntent = intentByInstance.get(speaker.id) ?? null;
+          const plannedIntent = selected.intent === null ? null : { intent: selected.intent, mode: selected.mode };
           const generation = await runGeneration({
             speaker,
             card: speakerCard,
@@ -575,7 +657,9 @@ export function useTurnRunner({
             showStream: true,
             signal: controller.signal,
             intent: plannedIntent,
+            turnPosition: { index: index + 1, total: selection.speakers.length },
           });
+          if (controller.signal.aborted) throw new Error('在角色生成时停止');
 
           // 记一笔账。服务商没返回 usage 时 token 记 0，但调用确实发生过，
           // 所以这一条照样记——漏账会让用户低估开销（T7）
@@ -643,6 +727,7 @@ export function useTurnRunner({
               : {}),
           };
           await session.appendMessages([line]);
+          characterCount += 1;
           continuedHistory = [...continuedHistory, line];
           /*
            * 落盘后**不**清流式副本，而是把它交接给刚落库的这条消息（顺序 91）。
@@ -685,7 +770,20 @@ export function useTurnRunner({
         });
       } catch (sendError) {
         const message = sendError instanceof Error ? sendError.message : String(sendError);
-        setError(controller.signal.aborted ? `已停止生成（${message}）` : message);
+        let fallbackError = '';
+        if (playerPersisted && characterCount === 0 && !manual) {
+          try {
+            // 玩家消息已提交却无人回应是半轮；技术故障只留透明动作，不编造剧情或台词。
+            await session.appendMessages([
+              makeCharacterLine(activeSpeaker, `# ${activeSpeaker.displayName}看向你，暂时没有开口。`, turnId, scene),
+            ]);
+          } catch (storageError) {
+            fallbackError = `；动作保底也未能保存：${storageError instanceof Error ? storageError.message : String(storageError)}`;
+          }
+        }
+        setError(
+          `第 ${String(Math.max(1, activeIndex))} 位「${activeSpeaker.displayName}」${controller.signal.aborted ? '已停止' : '生成失败'}：${message}${fallbackError}`,
+        );
       } finally {
         resetStreamState('main');
         setBusy(false);
@@ -784,7 +882,7 @@ export function useTurnRunner({
         });
         const originalIntent =
           target.intentSource === 'planned' && target.intent !== undefined && target.intent.trim() !== ''
-            ? { intent: target.intent, mode: 'reply' }
+            ? { intent: target.intent, mode: 'reply' as const }
             : null;
         const generation = await runGeneration({
           speaker,

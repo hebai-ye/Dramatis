@@ -1,3 +1,4 @@
+import type { MessageId } from '@dramatis/core';
 import { useCallback, useSyncExternalStore } from 'react';
 
 /**
@@ -34,9 +35,18 @@ export interface StreamState {
    * 没有阶段名的话用户看到的是「气泡一直空着，过一会儿整段话砸下来」。
    */
   phase: StreamPhase;
+  /**
+   * 刚落盘、**还在等界面把它画出来**的那条消息（顺序 91）。
+   *
+   * 生成结束到落盘消息出现之间有一段空窗：落盘是 IndexedDB 里的一次写加一次 React 提交，
+   * 而「收掉流式副本」是同步的——于是流式气泡先消失、过一会儿整条消息才出现（用户报的
+   * 「先消失、过一会儿整条出现」）。现在落盘后不再立刻清，而是把流式副本**交接**给这条 id：
+   * `StreamingBubble` 一直画到列表里真的出现它，在**同一次提交**里收掉自己。
+   */
+  handoffId: MessageId | null;
 }
 
-const IDLE: StreamState = { text: '', speaker: '', reasoning: '', phase: 'idle' };
+const IDLE: StreamState = { text: '', speaker: '', reasoning: '', phase: 'idle', handoffId: null };
 
 interface Channel {
   state: StreamState;
@@ -60,7 +70,8 @@ export function setStreamState(scope: StreamScope, patch: Partial<StreamState>):
     next.text === channel.state.text &&
     next.speaker === channel.state.speaker &&
     next.reasoning === channel.state.reasoning &&
-    next.phase === channel.state.phase
+    next.phase === channel.state.phase &&
+    next.handoffId === channel.state.handoffId
   ) {
     return;
   }
@@ -71,6 +82,18 @@ export function setStreamState(scope: StreamScope, patch: Partial<StreamState>):
 /** 一轮结束（或开始前）清空。 */
 export function resetStreamState(scope: StreamScope = 'main'): void {
   setStreamState(scope, IDLE);
+}
+
+/**
+ * 落盘之后把流式副本交给刚落库的那条消息（顺序 91）。
+ *
+ * **不是**清空：正文与推理流照旧留着画，等消息列表里出现这条 id 时由 `StreamingBubble`
+ * 自己收掉。这样空窗期里屏幕上一直有内容，也不会出现同一条回复显示两遍。
+ * 新一轮开流时记得把它写回 `null`（`setStreamState` 的 patch 带上 `handoffId: null`），
+ * 否则下一位角色开流时会误以为自己的流已经交接完了。
+ */
+export function handoffStreamState(scope: StreamScope, messageId: MessageId): void {
+  setStreamState(scope, { phase: 'idle', handoffId: messageId });
 }
 
 export function subscribeStream(scope: StreamScope, listener: () => void): () => void {

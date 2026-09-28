@@ -25,6 +25,7 @@ import {
   useState,
 } from 'react';
 import { createPortal } from 'react-dom';
+import { BusyContext } from '../lib/busy-context';
 import { countRender } from '../lib/render-count';
 import { isNearBottom } from '../lib/scroll';
 import { useCoarsePointer } from '../lib/viewport';
@@ -613,24 +614,30 @@ function MainChatImpl({
           )
         ) : null}
 
-        <MessageList
-          messages={messages}
-          cast={castNames}
-          avatars={avatars}
-          lastCharacterId={lastCharacterId}
-          editingId={editingId}
-          highlightId={highlightId}
-          menuFor={menuFor}
-          showIntent={showIntent}
-          busy={busy}
-          archived={archived}
-          manualMode={manualMode}
-          handlers={handlers}
-        />
+        {/*
+          `busy` 不进消息列表的 prop（顺序 91）：它只走 context，订阅它的只有每条消息下面
+          那排按钮，翻转时几百条消息的 `memo` 才能真的跳过（原因见 lib/busy-context.ts）。
+        */}
+        <BusyContext.Provider value={busy}>
+          <MessageList
+            messages={messages}
+            cast={castNames}
+            avatars={avatars}
+            lastCharacterId={lastCharacterId}
+            editingId={editingId}
+            highlightId={highlightId}
+            menuFor={menuFor}
+            showIntent={showIntent}
+            archived={archived}
+            manualMode={manualMode}
+            handlers={handlers}
+          />
+        </BusyContext.Provider>
 
         <StreamingBubble
           key={conversation.id}
           busy={busy}
+          lastMessageId={messages[messages.length - 1]?.id ?? null}
           suspendAutoScroll={focus !== null}
           bottomRef={bottomRef}
           cast={castNames}

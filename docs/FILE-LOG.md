@@ -1443,7 +1443,23 @@ TASKS 第〇节顺序 68。用户裁定「A+B 推进」；原方案里的 `limit
 
 修复提交 `8e16b90` 已推送 `origin/main` 并仅部署网页；本段补充上线后的验收结果。旧网页留在 `/var/www/dramatis.bak-icon-focus-8e16b90`。
 
-## 七十、几点注意
+## 顺序 91、2026-09-27：两个体验反馈 bug（逐笔落库与流式交接）
+
+本批只动了网页应用，未改 core、未改同步服务端；本地提交，**未 push、未部署**。
+
+| 文件 | 动作 | 本批内容 |
+| --- | --- | --- |
+| `apps/web/src/components/SceneDialog.tsx` | 改 | 「场景设定」改用 `useDraftField`（停手 300ms 或失焦才落库、输入法组合期不写库）；关闭弹窗的每条通路先 `flush()` |
+| `apps/web/src/lib/stream-store.ts` | 改 | `StreamState` 新增 `handoffId`；新增 `handoffStreamState(scope, messageId)`（只写标记、phase 转 idle、正文与推理保留） |
+| `apps/web/src/components/StreamingBubble.tsx` | 改 | 新增 `lastMessageId` prop：消息列表里出现交接的那条 id 时立刻收掉自己并清 store（在同一次 React 提交里完成，不空窗也不重影） |
+| `apps/web/src/components/MainChat.tsx` | 改 | 渲染 `StreamingBubble` 时传 `lastMessageId`；消息列表外面包 `BusyContext.Provider` |
+| `apps/web/src/components/MessageItem.tsx` | 改 | `busy` 不再逐条走 prop：抽出 `RowActions`（订阅 `useBusy()`）与 `BusyButton`；`MessageList` 去掉 `busy`，翻转时不再重画整表 |
+| `apps/web/src/hooks/useTurnRunner.ts` | 改 | 落盘后的 `resetStreamState` 换成 `handoffStreamState('main', line.id)`；三处开流补 `handoffId: null` |
+| `apps/web/src/lib/busy-context.ts` | 新增 | `BusyContext`（默认 `false`）与 `useBusy()`；应用里第一个 context |
+| `apps/web/src/lib/stream-store.test.ts` | 改 | 新增「交接」用例；两条老用例的 `toEqual` 补 `handoffId: null` |
+| `docs/{TASKS,STATUS,EVAL,FILE-LOG}.md` | 改 | 顺序 91 的计划行、处理表与遗留、状态接续点、EVAL 第八十五节与本节 |
+
+## 七十一、几点注意
 
 ---
 

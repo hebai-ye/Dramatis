@@ -1,11 +1,17 @@
-import { type CastName, renderMessageContent } from '@dramatis/core';
-import { type RefObject, useLayoutEffect, useRef } from 'react';
+import { type CastName, type MessageId, renderMessageContent } from '@dramatis/core';
+import { type RefObject, useEffect, useLayoutEffect, useRef } from 'react';
 import { countRender } from '../lib/render-count';
-import { useStreamState } from '../lib/stream-store';
+import { resetStreamState, useStreamState } from '../lib/stream-store';
 import { Avatar } from './MessageBody';
 
 interface Props {
   busy: boolean;
+  /**
+   * 当前对话里最后一条已落盘消息的 id（顺序 91）。
+   *
+   * 用来判断「刚落盘的那条回复是不是已经画出来了」：见下面的 `handedOver`。
+   */
+  lastMessageId: MessageId | null;
   /** 正在跳原句时别把用户拽到底部（T11 的高亮滚动要自己滚到位）。 */
   suspendAutoScroll: boolean;
   /** 对话区底部的锚点：流式内容长出来时滚到它。 */
@@ -35,12 +41,26 @@ function tailOf(text: string, max = 120): string {
  * 它是**唯一**订阅流式状态的组件：每个 token 到达只重画这里，几百条已落盘的消息、
  * 左栏、面板都不动。三块内容与拆出来之前一样：推理流、阶段占位（0ms 就有话说）、流式气泡。
  */
-export function StreamingBubble({ busy, suspendAutoScroll, bottomRef, cast, avatars }: Props) {
+export function StreamingBubble({ busy, lastMessageId, suspendAutoScroll, bottomRef, cast, avatars }: Props) {
   countRender('StreamingBubble');
-  const { text, speaker, reasoning, phase } = useStreamState();
+  const { text, speaker, reasoning, phase, handoffId } = useStreamState();
   const speakerId = cast.find((member) => member.displayName === speaker)?.id;
   const avatar = speakerId ? avatars[speakerId] : null;
   const previousHeight = useRef<number | null>(null);
+
+  /*
+   * 交接完成（顺序 91）：这一轮的回复已经落盘、而且已经画进消息列表了。
+   *
+   * 落盘那一刻（`handoffStreamState`）只记下 id，不清正文——清空是同步的，而消息要等
+   * IndexedDB 写完再提交一次才出现，中间那几帧就是用户看到的「先消失、过一会儿整条出现」。
+   * 现在流式副本留到列表里出现这条 id 为止，并且**在同一次提交里**收掉自己：
+   * 既没有空窗，也不会同一条回复显示两遍。
+   */
+  const handedOver = handoffId !== null && handoffId === lastMessageId;
+  useEffect(() => {
+    // 真收掉之后把 store 也清干净：留着旧正文的话，下次切对话会把它又画出来
+    if (handedOver) resetStreamState('main');
+  }, [handedOver]);
 
   // 用本次 DOM 长高之前的距离判断是否贴底；大块输出即使一次长高超过 120px，
   // 原本在底部的人仍会跟上。主动上滑的人保持原位，逐 token 不再排 smooth 动画。
@@ -56,6 +76,9 @@ export function StreamingBubble({ busy, suspendAutoScroll, bottomRef, cast, avat
     const previousDistance = height - growth - scroller.scrollTop - scroller.clientHeight;
     if (previousDistance <= 120) scroller.scrollTop = height;
   }, [text, reasoning, phase, suspendAutoScroll, bottomRef]);
+
+  // 已交接：这一帧起流式副本不再画任何东西（落盘消息已经在列表里了）
+  if (handedOver) return null;
 
   return (
     <>

@@ -4354,3 +4354,17 @@ v12 的三个判断都是有意的：
 **本地门禁**：逐项验证 manifest 四个新图标路径存在且尺寸与声明一致；新旧路径的同类型图标字节一致，母版 SHA-256 仍为 `a93e29a222fa88b5474231f53c414120a9072745c6f8ef199a264130cc95ee12`。`pnpm typecheck`、`pnpm lint`（282 文件）、`pnpm test`（Core 809/809、Web 45/45）、`pnpm build`、`pnpm build:sync-server` 均通过。主 JS 超过 500 kB 的既有构建提示仍在。
 
 **推送与上线**：`8e16b90` 已快进推送到 `origin/main`，只上传 `apps/web/dist` 并切换网页静态目录；旧版留在 `/var/www/dramatis.bak-icon-focus-8e16b90`。暂存目录的 Apple 图标、Android 普通与 maskable 图标 SHA-256 与本地构建一致，`sw.js` 包含缓存版本 v4。公网 HTTPS 检查：首页 200 / 1366 B、Apple 图标 200 / 52482 B、Android 192 图标 200 / 58959 B、512 图标 200 / 354766 B、maskable 192 图标 200 / 49362 B、maskable 512 图标 200 / 297175 B、manifest 200 / 852 B、`sw.js` 200 / 9071 B、`/sync/health` 200。公网首页确实引用新的 Apple 图标，manifest 确实引用新的 maskable 图标。同步服务未更新或重启。真实手机重新添加后的系统桌面外观仍待核对，HTTP 200 不能代替这一项。
+
+## 八十五、2026-09-27：顺序 91 两个体验反馈 bug（逐笔落库与流式交接）
+
+**来源**：用户 2026-09-26 体验反馈第三批（TASKS 顺序 91）：① 场景设定输入区在笔画输入法下逐笔落库；② 流式结束到消息出现之间「先消失、过一会儿整条出现」+ 卡顿。
+
+**① 根因与改法**：`apps/web/src/components/SceneDialog.tsx` 里「场景设定」那个 `textarea` 是 `value={scene.summary}` + `onChange={(event) => onSave({ summary: event.target.value })}`——落一个笔画写一次库，父组件回写还会打断输入法组合。同一个弹窗里的场景名/地点/世界内时间本来就是本地 `useState`（只在点保存或换场时写库），同名的内嵌面板 `ScenePanel.tsx` 也早就用了顺序 63 的草稿 hook，只有这个弹窗版漏了。现在改成 `useDraftField`：打字只改本地草稿，停手 300ms 或失焦才提交，组合期（`compositionstart`/`compositionend`/`nativeEvent.isComposing`）一个字节都不写。另外把关闭弹窗的每一条通路包成 `close()`，先 `flush()` 再 `onClose()`——`useDraftField.ts:70` 的 `useEffect(() => clearTimer, [clearTimer])` 会在卸载时清掉未到点的计时器，不 flush 就丢掉最后几个字（`Modal` 没有 Esc 处理，关闭只有遮罩、关闭按钮与两个页脚按钮）。
+
+**② 空窗的根因与改法**：落盘那一步（`apps/web/src/hooks/useTurnRunner.ts:645` `await session.appendMessages([line])`）后紧跟的 `resetStreamState('main')` 是**同步**的；而这条消息要等 IndexedDB 写完、`session.ts` 的 `setSnapshot` 再提交一次 React 更新才画出来。中间那几帧屏幕上既没有流式副本、也没有落库消息——这就是「先消失、过一会儿整条出现」。顺序 59（`ef60589`）当初立刻清是为了「避免后台排队/记账期间同一条回复显示两遍」，两难在同一个窗口。改法是**交接**而不是清空：`apps/web/src/lib/stream-store.ts` 的 `StreamState` 新增 `handoffId`，落盘后调 `handoffStreamState('main', line.id)`（只写标记、phase 转 `idle`、正文与推理保留）；`StreamingBubble` 新增 `lastMessageId` prop，一旦消息列表里出现这条 id，就在同一次 React 提交里渲染出落库消息并收掉流式副本、同时清 store——既不空窗、也不重影。新一轮开流的三个入口（主发送、换人开流、重抽）都显式写回 `handoffId: null`，多角色连说时下一位不会误收上一位的流；一轮真结束仍由 `finally` 里的 `resetStreamState('main')` 清干净。
+
+**② 卡顿的根因与改法**：`busy` 原本是 `MessageList` → `MessageItem` 的 prop，每轮翻转两次（开始、结束），两次各让整张消息表重画一遍，几百条消息连同 `renderMessageContent` 一起重跑。顺序 62（第五十一节）量到的一轮「4 次整表重画」里有两次就是它，当时留下的下一步是「把 `busy` 从每条消息的 prop 里拿掉（改成 context 或只让按钮自己订阅）」，顺序 66 拆 App 时没做。本轮照办：新增 `apps/web/src/lib/busy-context.ts`（`BusyContext` 默认 `false` + `useBusy()`，应用里第一个 context），`MainChat` 在消息列表外包 Provider，`MessageItem` 抽出 `RowActions`（订阅 `useBusy()`）与 `BusyButton`，`MessageList` 不再接收 `busy`。四个按钮的 `disabled` 语义与改前逐字一致（`busy || archived`、`busy || archived || manualMode`），翻转时 `MessageItem`/`MessageBody` 的 `memo` 都能真的跳过。
+
+**测试与门禁**：`apps/web/src/lib/stream-store.test.ts` 新增「交接（顺序 91）」用例（落盘后正文与推理流保留、只多一个 `handoffId`、重复交接不通知、写回 `null` 与 `reset` 都会通知），两条老用例的 `toEqual` 补上 `handoffId`（Web 从 45 条增至 **46** 条）。`pnpm typecheck`、`pnpm lint`（**283 文件，0 error / 0 warning**）、`pnpm test`（Core **70 文件 / 809 条**、Web **13 文件 / 46 条**）、`pnpm build`（`apps/web/dist/assets/index-C5Ydp3Hw.js` **659406 B** / gzip 210.78 kB；比顺序 92 线上那版 `index-BBkcTtuN.js` 655347 B 多 **4059 B**，就是这批新组件与 context 的量级；CSS 未动，仍是 `index-BDv279kC.css` 42459 B）、`pnpm build:sync-server` 五项全部通过；主 JS 超过 500 kB 的既有构建提示仍在。
+
+**未验证（归 Codex）**：真机笔画输入法（组合期是否真的不落库、最后几个字是否保得住）、真实长对话里流式结束的观感与整表重画次数（顺序 62 那套 `countRender('MessageItem')` 计数可复测，预期每轮只剩两次落盘带来的渲染）。本轮只做了本机静态检查与单元测试，没有真机、没有真实模型调用。

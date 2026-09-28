@@ -40,7 +40,7 @@ import type { DramatisDb } from '../lib/db';
 import { replyTokenLimit } from '../lib/output-limit';
 import type { ProvidersApi } from '../lib/providers';
 import type { SessionApi } from '../lib/session';
-import { resetStreamState, setStreamState } from '../lib/stream-store';
+import { handoffStreamState, resetStreamState, setStreamState } from '../lib/stream-store';
 import type { SyncApi } from '../lib/sync';
 import {
   enqueueMemoryConsolidation as enqueueMemoryConsolidationTask,
@@ -470,7 +470,7 @@ export function useTurnRunner({
 
       setError(null);
       setBusy(true);
-      setStreamState('main', { text: '', speaker: '', reasoning: '', phase: 'planning' });
+      setStreamState('main', { text: '', speaker: '', reasoning: '', phase: 'planning', handoffId: null });
       setBridge(null);
 
       /*
@@ -555,7 +555,14 @@ export function useTurnRunner({
           const now = new Date().toISOString();
           const recalled = recallFor({ speaker, text, history, scene, now });
 
-          setStreamState('main', { text: '', reasoning: '', speaker: speaker.displayName, phase: 'writing' });
+          // 换人开流：交接标记也要清掉，否则这位角色的流会被当成上一位的交接直接收掉
+          setStreamState('main', {
+            text: '',
+            reasoning: '',
+            speaker: speaker.displayName,
+            phase: 'writing',
+            handoffId: null,
+          });
           const plannedIntent = intentByInstance.get(speaker.id) ?? null;
           const generation = await runGeneration({
             speaker,
@@ -637,9 +644,16 @@ export function useTurnRunner({
           };
           await session.appendMessages([line]);
           continuedHistory = [...continuedHistory, line];
-          // 落盘后立刻收掉流式副本，避免后台排队/记账期间同一条回复显示两遍。
-          // 消息快照只在 appendMessages 更新一次；finally 的 reset 此时是 no-op。
-          resetStreamState('main');
+          /*
+           * 落盘后**不**清流式副本，而是把它交接给刚落库的这条消息（顺序 91）。
+           *
+           * 以前这里直接 `resetStreamState`，理由是「避免后台排队/记账期间同一条回复显示两遍」。
+           * 但清空是同步的，而这条消息要等 IndexedDB 写完、React 再提交一次才画出来：中间
+           * 那几帧屏幕上什么都没有——用户看到的就是「先消失、过一会儿整条出现」。
+           * 现在流式副本留到列表里真的出现这条 id 再收（`StreamingBubble`），既不空窗，
+           * 也仍然不会重影；一轮真结束时 finally 里的 reset 负责清干净。
+           */
+          handoffStreamState('main', line.id);
         }
 
         // 一轮分析（记忆 + 状态变化）合成一次调用，不阻塞对话；负载只存 id，内容现取
@@ -742,7 +756,13 @@ export function useTurnRunner({
 
       setError(null);
       setBusy(true);
-      setStreamState('main', { text: '', reasoning: '', speaker: speaker.displayName, phase: 'writing' });
+      setStreamState('main', {
+        text: '',
+        reasoning: '',
+        speaker: speaker.displayName,
+        phase: 'writing',
+        handoffId: null,
+      });
 
       const earlierHistory = messages.filter((message) => message.turnId !== target.turnId);
       const controller = new AbortController();

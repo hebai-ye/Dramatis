@@ -7,6 +7,7 @@ import {
 } from '@dramatis/core';
 import { useState } from 'react';
 import { CAST_POLICY_OPTIONS } from '../lib/labels';
+import { useDraftField } from '../lib/useDraftField';
 import { Modal } from './Modal';
 
 interface Props {
@@ -40,12 +41,33 @@ export function SceneDialog({ scene, instances, disabled, onClose, onSave, onSta
   // 默认带走此刻在场上的人；换场前可以逐个取消（长跑里秦娘就是这样被误带走的）
   const [travelCast, setTravelCast] = useState<InstanceId[]>(() => defaultTravelCast(scene, instances));
 
+  /*
+   * 「场景设定」是这里唯一的长文本字段，也是唯一会被手写/笔画输入法打断的那个（顺序 91①）。
+   * 以前它 `value={scene.summary}` + `onChange` 直接 `onSave`：落一个笔画写一次库，父组件
+   * 回写还会把组合打断。现在用顺序 63 的草稿 hook——打字只改本地草稿，停手 300ms 或失焦
+   * 才落库，组合期一个字节都不写。同名的内嵌面板（ScenePanel）早就是这种写法。
+   */
+  const summaryField = useDraftField({
+    value: scene?.summary ?? '',
+    commit: (next) => onSave({ summary: next }),
+  });
+
+  /**
+   * 关掉弹窗的每一条通路（遮罩、关闭按钮、两个页脚按钮）都先把没到点的草稿交出去：
+   * `useDraftField` 卸载时会清掉计时器（`useDraftField.ts:70`），不 flush 就丢掉最后几个字。
+   * Modal 没有 Esc 处理，关闭只有这几条路。
+   */
+  const close = (): void => {
+    summaryField.flush();
+    onClose();
+  };
+
   const cast = scene === null ? [] : instances.filter((instance) => scene.cast.includes(instance.id));
 
   return (
     <Modal
       label="场景"
-      onClose={onClose}
+      onClose={close}
       head={
         <>
           <strong>场景</strong>
@@ -64,7 +86,7 @@ export function SceneDialog({ scene, instances, disabled, onClose, onSave, onSta
             disabled={disabled}
             onClick={() => {
               onSave({ title, location, worldTime });
-              onClose();
+              close();
             }}
           >
             保存当前场景
@@ -80,7 +102,7 @@ export function SceneDialog({ scene, instances, disabled, onClose, onSave, onSta
                 worldTime,
                 cast: travelCast,
               });
-              onClose();
+              close();
             }}
           >
             从这里切换场景
@@ -131,12 +153,7 @@ export function SceneDialog({ scene, instances, disabled, onClose, onSave, onSta
 
           <label>
             场景设定
-            <textarea
-              rows={4}
-              value={scene.summary}
-              disabled={disabled}
-              onChange={(event) => onSave({ summary: event.target.value })}
-            />
+            <textarea rows={4} disabled={disabled} {...summaryField.bind} />
           </label>
         </>
       ) : null}

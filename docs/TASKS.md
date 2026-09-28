@@ -102,7 +102,7 @@
 | 28 / 29 / 30 / 56 | 语音归属模型侧根治 / 平板横屏 / 备案切 443 等 / 服务器管理台 | **P4** | 原有条目，等条件或等拍板，不变 | ⬜ |
 | 89 | **用户 2026-09-26 体验反馈第一批：初始好感 / 各模式生效 / 默认系统预设** `[体]` | **P2** | ① 角色一出场好感为 0 → 交流充满敌意（用户要初始 40% 且可手动调）；② 「＋」里几种模式实际只有两条落到提示词，`historyMode`/无限制模式模型看不见；③ 无限制模式正文在界面上可编辑、还显示字数（用户：不可更改、不可阅读） | ✅ 2026-09-26（`INITIAL_PLAYER_AFFINITY = 0.4` + 迁移 v12；`describeModes` 补齐；无限制模式只留开关；见 EVAL 第七十九节） |
 | 90 | **用户 2026-09-26 体验反馈第二批：界面裁剪与「本场场记」** `[体]` | **P2** | 删卡级场景设定 / 开场白 / 高级字段 / 对话示例（用户裁定「彻底删除已有数据」）；「本场场记」整块不显示；玩家可编辑区域不可滑动（裁定「随内容自动长高 + 拖动隔离」两个都要） | ✅ 2026-09-26（`Card` 删 7 字段 + 迁移 v13 + 三条复活通路堵住；场记整块撤下；编辑区 `field-sizing: content`；见 EVAL 第八十节） |
-| 91 | **用户 2026-09-26 体验反馈第三批：两个 bug** `[体]` | **P2** | ① 场景设定输入区在笔画输入法下逐笔落库（`SceneDialog.tsx` 漏了 `useDraftField`）；② 流式结束到消息出现之间「先消失、过一会儿整条出现」+ 卡顿 | ⬜ 下一批 |
+| 91 | **用户 2026-09-26 体验反馈第三批：两个 bug** `[体]` | **P2** | ① 场景设定输入区在笔画输入法下逐笔落库（`SceneDialog.tsx` 漏了 `useDraftField`）；② 流式结束到消息出现之间「先消失、过一会儿整条出现」+ 卡顿 | ✅ 2026-09-27（场景设定改用草稿 hook + 关闭前 flush；流式落盘改成「交接给刚落库的那条消息」再收；`busy` 改走 context、只让按钮订阅，见 EVAL 第八十五节。真机笔画输入法与真模型观感归 Codex） |
 | 92 | **无限制模式的正文改成仓库里固定一份（用户改口径）** `[体]` | **P2** | 用户 2026-09-26 裁定：这份词是固定的、所有无限制模式共用同一份 → 正文落到仓库文件，应用侧两个入口都从它取；老的本机 meta 键 `modes.unlimitedPrompt` 不再读写；界面照旧不可改、不可读、不显示字数 | ✅ 2026-09-26（正文位 `apps/web/src/prompt/unlimited-preset.txt` + `unlimitedPreset.ts`；删 `useUnlimitedPrompt`；见 EVAL 第八十一节）／**2026-09-27 补**：用户粘上正文（9059 B / 102 行）+ 前端单独上线（`14d1b96`；同 EVAL 第八十一节、STATUS 2026-09-27 一节；**push 已完成**：`a1dc78a..1cf1eab`，见 EVAL 第八十一节「补二」） |
 | 93 | **界面视觉系统、SVG 图标与微动效** `[用]` | **P3** | 用户批准“叙事剧场”方案，补充要求统一图标并给加号菜单等状态增加克制动画；先做主对话样例再推广。方案与执行步骤见 `UI-VISUAL-OPTIMIZATION-PROPOSAL-2026-09-27.md` 和 `docs/superpowers/plans/2026-09-27-ui-visual-refresh.md` | ✅ 2026-09-27：桌面/390px 样例获批，产品主阅读界面与浅色/深色完成精修，保留原蓝色强调值；统一 SVG、加号与栏开合动画已落地。`84690e8` 上线后通过审阅修正深色按钮文字对比度（`8cf9419`），再次 push 并仅部署网页；最终线上首页/资源/同步健康检查为 200，见 EVAL 第八十二节。真机软键盘/安全区、长对话、流式与亮背景图仍待逐项实测 |
 | 94 | **用户定稿应用图标接入** `[用]` | **P3** | 用户指定自制 PNG 为最终图标；按原图生成普通、favicon 与 maskable 图标，刷新 PWA 缓存 | ✅ 2026-09-27：`8e6551d` 已推送并仅部署网页；五项门禁与线上图标/健康检查通过，见 EVAL 第八十三节。真机安装外观待核对 |
@@ -221,7 +221,7 @@ A4 的 core 侧（`packages/core/src/sync/loop.ts:153-162` 的 `serverHead < pul
 - **卡上的 `extensions` 仍可能留着这几个字段的名称**：`KNOWN_DATA_KEYS` 保留 7 个 key 是为了「别让解析把它们扫进 `extensions`」，但**更早版本导入的卡**里可能已经有同名副本躺在 `extensions` 里，v13 只剥顶层键、没动 `extensions` 内部。要不要连 `extensions` 里的同名键一起清，等有实际数据再定。
 - **管理员工具不再收这 5 个字段**：模型还在传就会回填成「不认得的参数」，提示里会点名（顺序 86/B6 的机制）；旧草稿里存着这些字段的，采纳时被 `saveCard` 顺手剥掉（不报错）。
 - **老世界若原本靠卡的开场白起头**：导入老卡后新对话是空白的，得由用户先开口（用户要的正是「删掉开场白」，所以这是预期行为，不再是缺陷）。
-- **滚动隔离只在 CSS 层做**：`field-sizing: content` 需要 Chrome 123+；不支持的浏览器只是「不自动长高」，仍不会有内滚动条（`overflow: hidden`）。真机/真输入法（笔画输入法逐笔落库那条属顺序 91）归 Codex。
+- **滚动隔离只在 CSS 层做**：`field-sizing: content` 需要 Chrome 123+；不支持的浏览器只是「不自动长高」，仍不会有内滚动条（`overflow: hidden`）。真机/真输入法归 Codex（**笔画输入法逐笔落库那条已在顺序 91 修掉**：`SceneDialog.tsx` 的场景设定改用 `useDraftField`，见 EVAL 第八十五节）。
 - **顺序 89 的四条遗留仍在**（无限制提示词换设备后无法重配、负好感不能拖、迁移只提「未动过」的关系边、真机没验）。
 
 **顺序 92（无限制模式的正文回到仓库固定一份）怎么处理的**：
@@ -240,6 +240,21 @@ A4 的 core 侧（`packages/core/src/sync/loop.ts:153-162` 的 `serverHead < pul
 - **老库里那份旧副本不会被清**：`modes.unlimitedPrompt` 留下的数据仍在 IndexedDB 里，只是没人读（迁移里没做清理，也没必要——它不进同步、不占提示词）。
 - **换设备/清库的老遗留自动消失**：顺序 89 那条「换设备后无法再配置」因为正文随应用走而不成立了；[ROLEPLAY-PROMPT.md](./ROLEPLAY-PROMPT.md) 里相应的一节已改写。
 - **真机没验**：正文粘贴后在真实模型下的效果归 Codex；本批**跑了五项门禁、前端已单独上线（2026-09-27，`/var/www/dramatis`，旧目录 `dramatis.bak-20260927-005736`）、但没有真机验证**；`git push` 已完成（`a1dc78a..1cf1eab`，`origin/main` = `1cf1eab`；代理要开着，且本仓库本地已设 `http.version=HTTP/1.1`）。
+
+**顺序 91（用户 2026-09-26 体验反馈第三批：两个 bug）怎么处理的**：
+
+| 用户要的 | 处理 | 落点 |
+| --- | --- | --- |
+| ① 场景设定输入区在笔画输入法下逐笔落库 | 「场景设定」那个 `textarea` 以前是 `value={scene.summary}` + `onChange` 直接 `onSave`：落一个笔画写一次库，父组件回写还会打断输入法组合。同文件的名字/地点/世界内时间本来就是本地 `useState`，同名的内嵌面板 `ScenePanel` 早就用了草稿 hook（顺序 63），只有弹窗版漏了。现在改用 `useDraftField`（停手 300ms 或失焦才提交、组合期一个字节都不写）；并把关闭弹窗的每一条通路包成 `close()`，先 `flush()` 再 `onClose()`——`useDraftField` 卸载会清掉未到点的计时器，不 flush 就丢掉最后几个字（Modal 没有 Esc，关闭只有遮罩、关闭按钮、两个页脚按钮） | `apps/web/src/components/SceneDialog.tsx` |
+| ② 流式结束到消息出现之间「先消失、过一会儿整条出现」 | 落盘（`await session.appendMessages([line])`）后紧跟的那句 `resetStreamState('main')` 是**同步**的，而这条消息要等 IndexedDB 写完、React 再提交一次才画出来：中间那几帧屏幕上既没有流式副本、也没有落库消息。改成 `handoffStreamState('main', line.id)`——流式副本留到列表里真的出现这条 id，`StreamingBubble` 在**同一次提交**里收掉自己（既不空窗、也不像顺序 59 担心的那样重影），随后 effect 里 `resetStreamState` 把 store 清干净（否则切对话会把旧正文画出来）；三处开流（主发送、换人开流、重抽）都显式写回 `handoffId: null` | `apps/web/src/lib/stream-store.ts`、`apps/web/src/components/{StreamingBubble,MainChat}.tsx`、`apps/web/src/hooks/useTurnRunner.ts` |
+| ② 同一条里的「卡顿」 | `busy` 是 `MessageList` → `MessageItem` 的 prop，每轮翻转两次（开始/结束），每次都让整张消息表重画——顺序 62 量到的「一轮 4 次整表重画」里有两次就是它，当时留的下一步正是「把 `busy` 从每条消息的 prop 里拿掉（改成 context 或只让按钮自己订阅）」。本轮照办：新增应用里第一个 context，`busy` 只走 context，订阅者只有每条消息下面那排按钮（新抽出的 `RowActions`／`BusyButton`），翻转时 `MessageItem`/`MessageBody` 的 `memo` 都能跳过；`disabled` 语义与改前逐字一致 | `apps/web/src/lib/busy-context.ts`（新增）、`apps/web/src/components/MessageItem.tsx` |
+| 测试 | `stream-store.test.ts` 新增「交接」用例（正文与推理没被清、phase 转 idle、重复交接不通知、写回 null 与 reset 都会通知）；两条老用例的 `toEqual` 补 `handoffId` | `apps/web/src/lib/stream-store.test.ts` |
+
+**顺序 91 自己带出来的遗留（别当成已解决）**：
+
+- **真机没验**：笔画输入法下是否真的不逐笔落库、组合期最后几个字是否保得住，以及真实长对话里「整表重画」到底降了多少（顺序 62 那套 `countRender('MessageItem')` 计数可复测，预期每轮只剩两次落盘带来的渲染），归 Codex。
+- **交接只在「刚落库的那条正好是列表最后一条」时成立**：若以后有别的路径在落盘与渲染之间又追加消息，交接会失效、退回老的「空窗」行为，但不会再重影。
+- **这是应用里第一个 context**：以后新增「只在局部用」的小开关可以照此办理，但别把 `messages` 之类的重数据塞进去。
 
 **顺序 82 合并前必须先改的三处 —— 已改完（2026-09-26，随 `5014509` 落进 main）**：
 

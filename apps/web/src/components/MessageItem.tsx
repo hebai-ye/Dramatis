@@ -1,5 +1,6 @@
 import { assessAttribution, type CastName, type InstanceId, type Message, type MessageId } from '@dramatis/core';
-import { type MouseEvent, memo, type TouchEvent, useMemo, useState } from 'react';
+import { type MouseEvent, memo, type ReactNode, type TouchEvent, useMemo, useState } from 'react';
+import { useBusy } from '../lib/busy-context';
 import { countRender } from '../lib/render-count';
 import { Avatar, MessageBody } from './MessageBody';
 
@@ -40,11 +41,92 @@ interface ItemProps {
   highlighted: boolean;
   menuOpen: boolean;
   showIntent: boolean;
-  busy: boolean;
   archived: boolean;
   manualMode: boolean;
   handlers: MessageHandlers;
 }
+
+/**
+ * 只订阅「正在生成」的小按钮。
+ *
+ * 归属提示里的「改成『×××』说的」是**罕见**分支（只有归属可疑时才画），不值得为它把
+ * 整条消息拖进 `busy` 的重画里，所以单独做成一个订阅者（顺序 91）。
+ */
+function BusyButton({
+  disabled,
+  title,
+  onClick,
+  children,
+}: {
+  disabled?: boolean;
+  title: string;
+  onClick: () => void;
+  children: ReactNode;
+}) {
+  const busy = useBusy();
+  return (
+    <button type="button" className="ghost" disabled={busy || disabled === true} title={title} onClick={onClick}>
+      {children}
+    </button>
+  );
+}
+
+/**
+ * 一条消息下面那排按钮（重抽 / 编辑 / 删除）。
+ *
+ * 顺序 91 从 `MessageItem` 里单拎出来只为一件事：`busy`。它每轮翻转两次，还是
+ * `MessageItem` 的 prop 时，两次翻转各让整张消息表重画一遍（顺序 62 量到的一轮
+ * 「4 次整表重画」里有两次就是它，当时留的活就是「把 busy 从每条消息的 prop 里拿掉」）。
+ * 现在它自己订阅 `BusyContext`，翻转时只有这一小块重画，几百条消息的 `memo` 全都能跳过。
+ */
+const RowActions = memo(function RowActions({
+  id,
+  isLastCharacter,
+  manualMode,
+  archived,
+  handlers,
+}: {
+  id: MessageId;
+  isLastCharacter: boolean;
+  manualMode: boolean;
+  archived: boolean;
+  handlers: MessageHandlers;
+}) {
+  const busy = useBusy();
+  return (
+    <>
+      {isLastCharacter ? (
+        <button
+          type="button"
+          className="ghost"
+          disabled={busy || archived || manualMode}
+          title={
+            manualMode
+              ? '网页版模式下不重抽：删掉这条回复，再发一遍那句话，就会重新给你一段提示词'
+              : '撤销这条回复，让角色重新说一次'
+          }
+          onClick={() => handlers.onRegenerate(id)}
+        >
+          重抽
+        </button>
+      ) : null}
+      <button type="button" className="ghost" disabled={busy || archived} onClick={() => handlers.onStartEdit(id)}>
+        编辑
+      </button>
+      <button
+        type="button"
+        className="ghost danger"
+        disabled={busy || archived}
+        onClick={() => {
+          if (window.confirm('删除这条消息？')) handlers.onDelete(id);
+        }}
+      >
+        删除
+      </button>
+      <span className="row-menu-more">右键看更多</span>
+    </>
+  );
+});
 
 /** 编辑框：草稿只活在这里，打字不会惊动别的消息。 */
 function EditBox({
@@ -87,7 +169,6 @@ export const MessageItem = memo(function MessageItem({
   highlighted,
   menuOpen,
   showIntent,
-  busy,
   archived,
   manualMode,
   handlers,
@@ -166,16 +247,14 @@ export const MessageItem = memo(function MessageItem({
               ⚠ 这条可能不是「{displayName}」说的：{attribution.reasons[0]}
             </span>
             {attribution.candidates.map((candidate) => (
-              <button
+              <BusyButton
                 key={candidate.instanceId}
-                type="button"
-                className="ghost"
-                disabled={busy || archived}
+                disabled={archived}
                 title={candidate.reason}
                 onClick={() => handlers.onReassign(message.id, candidate.instanceId)}
               >
                 改成「{candidate.displayName}」说的
-              </button>
+              </BusyButton>
             ))}
           </div>
         ) : null}
@@ -188,40 +267,13 @@ export const MessageItem = memo(function MessageItem({
           />
         ) : (
           <MessageBody message={message} speakerName={displayName} showSpeaker={false}>
-            {isLastCharacter ? (
-              <button
-                type="button"
-                className="ghost"
-                disabled={busy || archived || manualMode}
-                title={
-                  manualMode
-                    ? '网页版模式下不重抽：删掉这条回复，再发一遍那句话，就会重新给你一段提示词'
-                    : '撤销这条回复，让角色重新说一次'
-                }
-                onClick={() => handlers.onRegenerate(message.id)}
-              >
-                重抽
-              </button>
-            ) : null}
-            <button
-              type="button"
-              className="ghost"
-              disabled={busy || archived}
-              onClick={() => handlers.onStartEdit(message.id)}
-            >
-              编辑
-            </button>
-            <button
-              type="button"
-              className="ghost danger"
-              disabled={busy || archived}
-              onClick={() => {
-                if (window.confirm('删除这条消息？')) handlers.onDelete(message.id);
-              }}
-            >
-              删除
-            </button>
-            <span className="row-menu-more">右键看更多</span>
+            <RowActions
+              id={message.id}
+              isLastCharacter={isLastCharacter}
+              manualMode={manualMode}
+              archived={archived}
+              handlers={handlers}
+            />
           </MessageBody>
         )}
       </div>
@@ -238,7 +290,6 @@ interface ListProps {
   highlightId: MessageId | null;
   menuFor: MessageId | null;
   showIntent: boolean;
-  busy: boolean;
   archived: boolean;
   manualMode: boolean;
   handlers: MessageHandlers;
@@ -263,7 +314,6 @@ export const MessageList = memo(function MessageList(props: ListProps) {
           highlighted={props.highlightId === message.id}
           menuOpen={props.menuFor === message.id}
           showIntent={props.showIntent}
-          busy={props.busy}
           archived={props.archived}
           manualMode={props.manualMode}
           handlers={props.handlers}

@@ -1,7 +1,8 @@
+import type { MessageId } from '@dramatis/core';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { getStreamState, resetStreamState, setStreamState, subscribeStream } from './stream-store';
+import { getStreamState, handoffStreamState, resetStreamState, setStreamState, subscribeStream } from './stream-store';
 
-const IDLE = { text: '', speaker: '', reasoning: '', phase: 'idle' } as const;
+const IDLE = { text: '', speaker: '', reasoning: '', phase: 'idle', handoffId: null } as const;
 
 describe('流式状态与订阅边界（顺序 59）', () => {
   beforeEach(() => {
@@ -46,6 +47,7 @@ describe('流式状态与订阅边界（顺序 59）', () => {
       speaker: '秦娘',
       reasoning: '他决定开口',
       phase: 'writing',
+      handoffId: null,
     });
 
     resetStreamState('main');
@@ -105,6 +107,7 @@ describe('流式状态与订阅边界（顺序 59）', () => {
       speaker: '秦娘',
       reasoning: '',
       phase: 'writing',
+      handoffId: null,
     });
 
     resetStreamState('admin');
@@ -130,5 +133,38 @@ describe('流式状态与订阅边界（顺序 59）', () => {
 
     setStreamState('main', { text: '有变化' });
     expect(getStreamState('main')).toBe(changed);
+  });
+
+  it('交接（顺序 91）：落盘后正文留着，只多一个 handoffId；重复交接不通知', () => {
+    const listener = vi.fn();
+    const unsubscribe = subscribeStream('main', listener);
+    setStreamState('main', { text: '先坐。', speaker: '秦娘', reasoning: '他决定开口', phase: 'writing' });
+
+    handoffStreamState('main', 'msg-1' as MessageId);
+    const handed = getStreamState('main');
+    // 关键：正文与推理流**没被清掉**，空窗期里屏幕上还有东西
+    expect(handed).toEqual({
+      text: '先坐。',
+      speaker: '秦娘',
+      reasoning: '他决定开口',
+      phase: 'idle',
+      handoffId: 'msg-1',
+    });
+    expect(listener).toHaveBeenCalledTimes(2);
+
+    handoffStreamState('main', 'msg-1' as MessageId);
+    expect(getStreamState('main')).toBe(handed);
+    expect(listener).toHaveBeenCalledTimes(2);
+
+    // 新一轮开流把交接写回 null：值真变了才通知
+    setStreamState('main', { text: '', reasoning: '', speaker: '秦娘', phase: 'writing', handoffId: null });
+    expect(getStreamState('main')?.handoffId).toBeNull();
+    expect(listener).toHaveBeenCalledTimes(3);
+
+    // 一轮真结束才清空
+    resetStreamState('main');
+    expect(getStreamState('main')).toEqual(IDLE);
+    expect(listener).toHaveBeenCalledTimes(4);
+    unsubscribe();
   });
 });

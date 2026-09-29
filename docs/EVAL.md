@@ -4370,3 +4370,27 @@ v12 的三个判断都是有意的：
 **推送与上线（2026-09-28 补）**：`git fetch` 后确认 `origin/main` 是本分支祖先，`cff5149` 从 `f3be8c4` 快进推送（`f3be8c4..cff5149  HEAD -> main`）。本批 `git log f3be8c4..cff5149 -- tools/ packages/core/src/sync/` 为空 ⇒ 同步服务端源码没变，只按前端单独部署流程上传切换 `apps/web/dist`（先在服务器上清掉暂存目录，`scp` 上传后确认 `index.html` 与两个资源都在，再把旧 `/var/www/dramatis` 改名为 `/var/www/dramatis.bak-20260928-202632`、换上新目录并 `chown root:root` + `chmod -R a+rX`，全程不删）。线上自查：首页 200 / 1366 B 且引用新的 `assets/index-C5Ydp3Hw.js`；该 JS 200 / **659406 B**（与本机构建字节数一致）；`index-BDv279kC.css` 200 / 42459 B；`/sync/health` 200（`{"ok":true}`，同步服务未重启）。这一步只验证了静态资源与健康检查；真机笔画输入法与真实模型观感仍待 Codex。
 
 **未验证（归 Codex）**：真机笔画输入法（组合期是否真的不落库、最后几个字是否保得住）、真实长对话里流式结束的观感与整表重画次数（顺序 62 那套 `countRender('MessageItem')` 计数可复测，预期每轮只剩两次落盘带来的渲染）。本轮只做了本机静态检查、单元测试与线上静态资源核对，没有真机、没有真实模型调用。
+
+## 八十六、2026-09-30：顺序 78 一轮内多个角色作答（多名角色接话）
+
+**来源**：用户在 TASKS 顺序 78 里要求「一轮里可以有多名角色作答」，先由外部模型（GPT-6-Sol）出设计稿。设计基线 `docs/TASK-78-MULTI-SPEAKER-DESIGN.md`（353 行）与实施计划 `docs/superpowers/plans/2026-09-28-task-78-multi-speaker.md` 随分支落盘；代码在分支 `codex/task-78-multi-speaker` 的 6 个提交里完成，2026-09-30 以 `--ff-only` 快进合入主线（`637672f..28282f4`，27 文件 2396+/159-）。本批**未 push、未部署**。
+
+**人数上限与迁移**：`packages/core/src/model/conversation.ts` 新增 `DEFAULT_MAX_SPEAKERS = 2`、`HARD_MAX_SPEAKERS = 3` 与 `speakerLimitOf(modes)`（`:97` `return value === 1 || value === 3 ? value : DEFAULT_MAX_SPEAKERS;`——运行时脏值也退回 2），`ConversationModes` 增 `maxSpeakers?: 1 | 2 | 3`，新建对话默认 2。老记录缺字段即默认 2，**不需要数据库迁移**。界面在 `apps/web/src/components/MainChat.tsx:171` 的 `SPEAKER_LIMIT_OPTIONS` 给三档（`:822` 文案「本轮最多回应人数」），写回 `onChangeModes({ maxSpeakers })`。
+
+**谁开口：只有一个来源**。新文件 `packages/core/src/director/turn-speakers.ts` 导出纯函数 `directAddressees(playerInput, eligibleCast): InstanceId[]`（`:38`，句首称呼或 `@显示名` 的窄规则）与 `selectTurnSpeakers(input)`（`:75`），结果 `ready` | `no-eligible-speaker` | `too-many-addressed`。合成顺序：直接称呼（强制最前、按出现顺序）→ 导演有效计划（`cut_in` 靠前，其余按原序）→ 规则保底恰好一人；**规则分不拿去补满人数**。合格名单 = 场景 `cast` + `presence: 'onstage'` + 角色卡存在（muted 仍在名单里但不作生成者）。仅一名合格角色时总是选他，冷却为负也不沉默。导演关闭／熔断／无 Key／异常／超时／空数组／全部错配统一退回规则保底，并挂警告 `code: 'intent.fallback'`、文案「导演没有给出有效的在场发言人，本轮已改由规则选一人回应。」（`apps/web/src/hooks/useTurnRunner.ts:415`、`:425`）。
+
+**直接点名超过上限**：在玩家消息落盘**之前**拒绝，文案「你直接叫到了 ${addressed.length} 位角色，本轮上限为 ${maxSpeakers} 位；请减少点名或调高上限。」（`useTurnRunner.ts:590-594`）；@ 到场外姓名或非合格角色同样在发送前拒绝。不截断强制名单、不静默漏人。
+
+**导演仍只调一次**：`packages/core/src/director/intent-plan.ts` 的多人提示词只描述候选项、人数上限与上一条意图，要求严格 JSON `speakers[{key,name,intent,mode}]`（`mode ∈ reply | cut_in | hold_back | initiate`）；`pickPlannedSpeakers`（`:132`）校验编号／姓名／资格、去重、过滤无效项；hold_back 也是入选者（只做动作、占一个名额）。规则打分路径仍按 `maxSpeakers: 1` 取分（`useTurnRunner.ts:677`），不再参与人数决策。
+
+**每人一次生成、互不串视角**：`useTurnRunner.ts` 的循环改成遍历 `selectTurnSpeakers` 的结果。第一人带完整 history + `playerInput`，后续人带 `continuedHistory` + `playerInput: ''`（`mentionText` 仍是玩家原文）；召回**逐人**调用、`observerId` 必须是当前 speaker。`packages/core/src/prompt/assemble.ts` 的生成指令块新增「你是本回合第 X 位、共 N 位被选中的回应者」「历史中其他角色刚说的话是现场经过，不要复述」「不要替其他角色说话／决定动作／写内心」。每人成功各记一次 `category: 'generation'`、各自 `appendMessages`，共用同一 `turnId`；`usage.reload()`、场记摘要、记忆整理仍每轮至多一次；用量面板新增「最近一轮」（`apps/web/src/lib/usage.ts:16`、`apps/web/src/components/UsagePanel.tsx:242`、`RuntimePanel.tsx` 透传 `usage.latestTurn`）。
+
+**流交接（顺序 91 的升级）**：`apps/web/src/lib/stream-store.ts` 新增 `waitForStreamHandoff(scope, messageId, signal, timeoutMs = 2_000)`（`:129-133`）与 `acknowledgeStreamHandoff`（`:119`，守卫 `:121` `if (channel.pending?.id !== messageId || channel.state.handoffId !== messageId) return;`）。第 N 位落盘后（`useTurnRunner.ts:855-856`）必须等 `StreamingBubble` 确认这一条真的进了已提交列表，才开第 N+1 位的流；等待可被 abort／卸载解除，超时报 `'消息已保存但显示确认超时'`（`:152-155`）并停止后续角色、释放忙态。这样多人连说既不空窗、不重影，也不会互相清掉流式副本。
+
+**网页版（没有 Key）逐人贴回**：新增 `apps/web/src/lib/bridge-store.ts` 的 `PendingBridgeTurn` / `WebBridgeState.pendingTurn` 记「这一轮要贴几位、贴到第几位」。首份回贴前不落任何消息（不造只有玩家的半轮）；首份有效回贴时把玩家与首位角色按顺序批量提交（同一 IndexedDB 事务、共用 `createdAt`、`localSeq` 保证玩家在前），之后逐位推进，最后一位贴回才进原有的一轮分析；刷新后按已落盘前缀重建下一份提示词。`WebBridgePanel.tsx` 显示「第 X／N 位」与逐份贴回。
+
+**测试与门禁（主干工作区合并后实跑，2026-09-30 00:54）**：`pnpm typecheck` ✓；`pnpm lint` ✓（**290 文件，0 error / 0 warning**）；`pnpm test` ✓（Core **72 文件 / 824 条**、Web **17 文件 / 68 条**；顺序 91 时是 70/809 与 13/46）；`pnpm build` ✓（`apps/web/dist/assets/index-aDLBA72A.js` **676240 B** / gzip **216.93 kB**、`index-BDv279kC.css` 42459 B / gzip 8.46 kB；比顺序 91 线上那版 `index-C5Ydp3Hw.js` 659406 B 多 **16834 B**）；`pnpm build:sync-server` ✓。新增测试文件：`packages/core/src/director/turn-speakers.test.ts`（8 条）、`packages/core/src/model/conversation.test.ts`、`apps/web/src/hooks/useTurnRunner.test.tsx`（10 条）、`apps/web/src/lib/bridge-store.test.ts`（7 条）、`apps/web/src/components/StreamingBubble.test.tsx`、`UsagePanel.test.tsx`。主 JS 超过 500 kB 的既有构建提示仍在。
+
+**合并与遗留**：合并前把主干工作区里未跟踪的旧版设计稿备份到 `out/design-doc-backups/TASK-78-MULTI-SPEAKER-DESIGN.workspace-20260930.md`（SHA-256 `AF0178A1…`；`out/` 在 `.gitignore:8`）再删除，随后 `git merge --ff-only codex/task-78-multi-speaker`。线上仍是顺序 91 那版 `assets/index-C5Ydp3Hw.js`，Windows 部署包 `bundle/source-revision.txt` 也还是 `637672f`。回滚不是逐字回退：把对话的 `maxSpeakers` 设回 1 只回到「每轮最多一人生成」的成本与展示形态，新的直接称呼保护、空计划保底、失败动作保底与桥接待提交边界仍生效，同时点名两人会在发送前被明确拒绝。
+
+**未验证（归 Codex）**：真机与真实模型下多名角色同轮回答的观感（是否复述、是否串线、动作是否写错人）、一轮 1～3 次的真实账单、网页版逐人贴回的手感、「直接称呼」窄规则在真实输入里的误判率，以及新客户端在 Windows 部署形态上的表现。本轮只做了本机门禁与单元测试。

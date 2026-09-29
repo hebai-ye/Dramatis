@@ -21,9 +21,9 @@
 
 ## 新会话从这里接（2026-09-23）
 
-### 2026-09-30：顺序 78 一轮内多名角色作答（已合入主线，未 push、未部署）
+### 2026-09-30：顺序 78 一轮内多名角色作答（已合入主线、已 push、已只重新部署前端）
 
-顺序 78 的实现在分支 `codex/task-78-multi-speaker`（6 个提交 `f47a8fc` → `28282f4`，设计基线见 [TASK-78-MULTI-SPEAKER-DESIGN.md](./TASK-78-MULTI-SPEAKER-DESIGN.md)）上完成，2026-09-30 以 `--ff-only` 快进合入本分支（`637672f..28282f4`，27 文件 2396+/159-）。要点：合格名单仍由场景 `cast` + `presence: 'onstage'` + 角色卡决定（muted 不生成）；对话级「本轮最多回应人数」三档 1／2（默认）／3（`DEFAULT_MAX_SPEAKERS` / `HARD_MAX_SPEAKERS` / `speakerLimitOf`，老记录与脏值都退回 2，无需迁移）；句首称呼或 `@显示名` 的直接称呼必须参与，超过上限在玩家消息落盘**之前**明确拒绝（不截断、不静默漏人）；导演（`buildIntentPlanMessages` + `pickPlannedSpeakers`）一轮只调用一次并给有序名单，导演关闭／熔断／超时／空名单一律由 `selectTurnSpeakers` 退回规则保底，**任何路径都至少一位**；每人生成一次、各自记账、同 `turnId` 顺序落盘；顺序 91 的流式交接升级为按 messageId 的屏障（`waitForStreamHandoff` / `acknowledgeStreamHandoff`），多人连续流不会互相清掉；网页版桥接改成逐人贴回（首份有效回贴前不落半轮）；用量面板新增「最近一轮」。**本批未 push、未部署**：线上与部署包仍锁定顺序 91 那版 `assets/index-C5Ydp3Hw.js`（部署包 `source-revision.txt` = `637672f`），多人接话在真实站点上还看不到。真机与真实模型下的观感、成本与串线归 Codex，见 EVAL 第八十六节。
+顺序 78 的实现在分支 `codex/task-78-multi-speaker`（6 个提交 `f47a8fc` → `28282f4`，设计基线见 [TASK-78-MULTI-SPEAKER-DESIGN.md](./TASK-78-MULTI-SPEAKER-DESIGN.md)）上完成，2026-09-30 以 `--ff-only` 快进合入本分支（`637672f..28282f4`，27 文件 2396+/159-）。要点：合格名单仍由场景 `cast` + `presence: 'onstage'` + 角色卡决定（muted 不生成）；对话级「本轮最多回应人数」三档 1／2（默认）／3（`DEFAULT_MAX_SPEAKERS` / `HARD_MAX_SPEAKERS` / `speakerLimitOf`，老记录与脏值都退回 2，无需迁移）；句首称呼或 `@显示名` 的直接称呼必须参与，超过上限在玩家消息落盘**之前**明确拒绝（不截断、不静默漏人）；导演（`buildIntentPlanMessages` + `pickPlannedSpeakers`）一轮只调用一次并给有序名单，导演关闭／熔断／超时／空名单一律由 `selectTurnSpeakers` 退回规则保底，**任何路径都至少一位**；每人生成一次、各自记账、同 `turnId` 顺序落盘；顺序 91 的流式交接升级为按 messageId 的屏障（`waitForStreamHandoff` / `acknowledgeStreamHandoff`），多人连续流不会互相清掉；网页版桥接改成逐人贴回（首份有效回贴前不落半轮）；用量面板新增「最近一轮」。**本批已 push、已只重新部署前端**：`4ee7edd` 推到 `origin/main`（`637672f..4ee7edd`）；`git log 637672f..4ee7edd -- tools/ packages/core/src/sync/` 为空 ⇒ 同步服务端源码没变，只换网页。网页由那台 Windows 正式机的 Caddy 从 `D:\Dramatis\web\dist` 提供（腾讯云旧机只做 HTTPS 入口与隧道），换版后线上首页 200 / 1366 B 且引用 `assets/index-aDLBA72A.js`（200 / 676240 B，SHA-256 与本地构建逐字节相同）、`index-BDv279kC.css` 42459 B、`sw.js` 9071 B、`/sync/health` 200 `{"ok":true}`（同步服务未重启）；旧网页目录留成 `D:\Dramatis\web\dist.bak-20260930-005711`。真机与真实模型下的观感、成本与串线归 Codex，见 EVAL 第八十六节。
 
 ### 2026-09-27：顺序 91 两个体验反馈 bug 已修（已 push 并只重新部署前端）
 

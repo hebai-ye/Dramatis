@@ -1494,7 +1494,7 @@ TASKS 第〇节顺序 68。用户裁定「A+B 推进」；原方案里的 `limit
 | `docs/superpowers/plans/2026-09-28-task-78-multi-speaker.md` | **新增** | 五步实施计划 |
 | `docs/{TASKS,STATUS,EVAL,FILE-LOG}.md` | 改 | 顺序 78 的计划行、处理表与遗留、状态接续点、EVAL 第八十六节与本节 |
 
-合并后主干工作区跑完五项门禁（数字见 EVAL 第八十六节）。本批**未 push、未部署**：部署包与线上仍是顺序 91 那版 `assets/index-C5Ydp3Hw.js`。
+合并后主干工作区跑完五项门禁（数字见 EVAL 第八十六节）。随后 `4ee7edd` 推到 `origin/main`（`637672f..4ee7edd`），因同步服务端源码没变（`git log 637672f..4ee7edd -- tools/ packages/core/src/sync/` 为空）只换网页：Windows 正式机的 `D:\Dramatis\web\dist` 换成 `assets/index-aDLBA72A.js`（676240 B，与本地构建逐字节相同），旧目录留成 `dist.bak-20260930-005711`；线上首页 200 且引用新资源，`/sync/health` 200。
 
 ## 七十二、几点注意
 

@@ -220,4 +220,14 @@ describe('流式状态与订阅边界（顺序 59）', () => {
       vi.useRealTimers();
     }
   });
+
+  it('切换对话清理通道时立即解除交接等待', async () => {
+    const id = 'msg-switch' as MessageId;
+    setStreamState('main', { text: '旧对话的流', phase: 'writing' });
+    handoffStreamState('main', id);
+    const wait = waitForStreamHandoff('main', id, new AbortController().signal);
+    resetStreamState('main');
+    await wait;
+    expect(getStreamState('main')).toEqual(IDLE);
+  });
 });

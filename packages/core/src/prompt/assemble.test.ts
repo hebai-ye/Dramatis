@@ -1208,4 +1208,20 @@ describe('同轮后发言者的指令', () => {
     expect(instruction?.content).toContain('不要复述他们已经回答的内容');
     expect(instruction?.content).toContain('不要把其他角色的经历、私有记忆、道具或身份写成自己的');
   });
+
+  it('hold_back 即使没有导演意图也只能做动作', () => {
+    const { card, instance, room, scene } = fixtures();
+    const prompt = assemblePrompt({
+      card,
+      instance,
+      room,
+      scene,
+      history: [],
+      playerInput: '# 我放下杯子',
+      intent: '',
+      intentMode: 'hold_back',
+      budget: baseBudget,
+    });
+    expect(prompt.blocks.find((block) => block.id === 'instruction')?.content).toContain('只写动作与神态，不要开口');
+  });
 });

@@ -38,7 +38,7 @@ import {
   turnsSinceLastSpoke,
   unlimitedModeOf,
 } from '@dramatis/core';
-import { useCallback, useRef } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 import type { PendingBridgeTurn, WebBridgeState } from '../components/WebBridgePanel';
 import type { DramatisDb } from '../lib/db';
 import { replyTokenLimit } from '../lib/output-limit';
@@ -156,6 +156,16 @@ export function useTurnRunner({
   /** 这一轮生成的取消句柄（「停止」按钮按它）。 */
   const abortRef = useRef<AbortController | null>(null);
   const stop = useCallback(() => abortRef.current?.abort(), []);
+  const scopeRoomId = world?.id;
+  const scopeConversationId = conversation?.id;
+  useEffect(() => {
+    if (scopeRoomId === undefined || scopeConversationId === undefined) return;
+    return () => {
+      // App 不卸载但切换世界/对话时，旧回合也必须立刻撤销等待。
+      abortRef.current?.abort();
+      resetStreamState('main');
+    };
+  }, [scopeRoomId, scopeConversationId]);
 
   /** 跑一次生成，返回角色说出的完整内容。 */
   const runGeneration = useCallback(
@@ -374,7 +384,7 @@ export function useTurnRunner({
             buildIntentPlanMessages({
               scene: input.scene,
               cast: input.cast,
-              playerName: world?.playerName ?? '玩家',
+              playerName: conversation?.playerName ?? world?.playerName ?? '玩家',
               playerInput: input.text,
               recentMessages: input.history.slice(-8),
               lastIntentByInstance: input.lastIntentByInstance,
@@ -511,6 +521,14 @@ export function useTurnRunner({
         memories: recalled.map(toPromptMemory),
         showStream: false,
         signal: new AbortController().signal,
+        intent: pendingTurn.speakerPlans?.[pendingTurn.nextIndex]
+          ? {
+              intent: pendingTurn.speakerPlans[pendingTurn.nextIndex]?.intent ?? '',
+              mode: pendingTurn.speakerPlans[pendingTurn.nextIndex]?.mode ?? 'reply',
+            }
+          : pendingTurn.actionsOnly === true
+            ? { intent: '', mode: 'hold_back' }
+            : null,
         turnPosition: { index: pendingTurn.nextIndex + 1, total: pendingTurn.speakerIds.length },
       });
       if (!generated.prompt) throw new Error('下一位角色的网页版提示词装配失败');
@@ -714,7 +732,11 @@ export function useTurnRunner({
             phase: 'writing',
             handoffId: null,
           });
-          const plannedIntent = selected.intent === null ? null : { intent: selected.intent, mode: selected.mode };
+          const plannedIntent =
+            selected.intent === null && selected.mode !== 'hold_back'
+              ? null
+              : { intent: selected.intent ?? '', mode: selected.mode };
+          const hasPlannedIntent = selected.intent !== null && selected.intent.trim() !== '';
           const generation = await runGeneration({
             speaker,
             card: speakerCard,
@@ -780,6 +802,8 @@ export function useTurnRunner({
                 playerText: text,
                 speakerIds: selection.speakers.map((item) => item.instance.id),
                 nextIndex: 0,
+                speakerPlans: selection.speakers.map((item) => ({ intent: item.intent, mode: item.mode })),
+                actionsOnly,
               },
             });
             return;
@@ -788,18 +812,31 @@ export function useTurnRunner({
           if (reply.trim() === '') {
             throw new Error('模型没有返回可显示的角色回复。玩家消息已保留，请检查模型设置后重试。');
           }
-          const created = makeCharacterLine(speaker, reply, turnId, scene);
+          let created = makeCharacterLine(speaker, reply, turnId, scene);
           if (created.content.trim() === '') {
             throw new Error('模型只返回了格式标记，没有可显示的角色回复。玩家消息已保留，请重试。');
+          }
+          if (selected.mode === 'hold_back' && hasSpeech(created.content)) {
+            // 模型可能违背“想说没说”仍写对白；不能把台词落盘后再称作静默。
+            const actions = created.content
+              .split('\n')
+              .filter((row) => row.trimStart().startsWith('#'))
+              .join('\n');
+            created = makeCharacterLine(
+              speaker,
+              actions.trim() === '' ? `# ${speaker.displayName}看向你，暂时没有开口。` : actions,
+              turnId,
+              scene,
+            );
           }
           const line: Message = {
             ...created,
             // 用量挂在消息上：刷新之后仍然能看见这一轮花了多少
             ...(generation.usage === null ? {} : { usage: generation.usage }),
             // 导演调用给出的意图挂在消息上：用户能看到「他这一轮想做什么」
-            ...(plannedIntent === null ? {} : { intent: plannedIntent.intent, intentSource: 'planned' as const }),
+            ...(hasPlannedIntent ? { intent: selected.intent ?? '', intentSource: 'planned' as const } : {}),
             // 没按格式声明意图时，用它自己的推理首句当盘算（有推理流的模型才有）
-            ...(plannedIntent === null && created.intent === undefined && generation.reasoning.trim() !== ''
+            ...(!hasPlannedIntent && created.intent === undefined && generation.reasoning.trim() !== ''
               ? { intent: firstSentence(generation.reasoning), intentSource: 'reasoning' as const }
               : {}),
           };
@@ -848,7 +885,14 @@ export function useTurnRunner({
         });
       } catch (sendError) {
         const message = sendError instanceof Error ? sendError.message : String(sendError);
-        if (message.includes('显示确认超时')) await session.reloadWorld();
+        let reloadError = '';
+        if (message.includes('显示确认超时')) {
+          try {
+            await session.reloadWorld();
+          } catch (error) {
+            reloadError = `；消息列表重载失败：${error instanceof Error ? error.message : String(error)}`;
+          }
+        }
         let fallbackError = '';
         if (playerPersisted && characterCount === 0 && !manual) {
           try {
@@ -861,7 +905,7 @@ export function useTurnRunner({
           }
         }
         setError(
-          `第 ${String(Math.max(1, activeIndex))} 位「${activeSpeaker.displayName}」${controller.signal.aborted ? '已停止' : '生成失败'}：${message}${fallbackError}；若模型已开始处理，用量未知，服务商可能已计费。`,
+          `第 ${String(Math.max(1, activeIndex))} 位「${activeSpeaker.displayName}」${controller.signal.aborted ? '已停止' : '生成失败'}：${message}${fallbackError}${reloadError}；若模型已开始处理，用量未知，服务商可能已计费。`,
         );
       } finally {
         resetStreamState('main');

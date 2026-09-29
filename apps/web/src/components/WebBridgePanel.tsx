@@ -1,4 +1,11 @@
-import { type ConversationId, type InstanceId, type RoomId, type SceneId, WEB_BRIDGE_TARGET } from '@dramatis/core';
+import {
+  type ConversationId,
+  type InstanceId,
+  type IntentMode,
+  type RoomId,
+  type SceneId,
+  WEB_BRIDGE_TARGET,
+} from '@dramatis/core';
 import { useEffect, useState } from 'react';
 import { askLocalBridge, type LocalBridgeStatus, probeLocalBridge } from '../lib/local-bridge';
 
@@ -22,6 +29,10 @@ export interface PendingBridgeTurn {
   playerText: string;
   speakerIds: InstanceId[];
   nextIndex: number;
+  /** 每位的导演意图随桥接进度保存；第二份提示词不能丢掉其 hold_back 判断。旧状态可无。 */
+  speakerPlans?: { intent: string | null; mode: IntentMode }[];
+  /** 静默/动作回合贴回时也不能让网页版的台词混入。旧状态缺省 false。 */
+  actionsOnly?: boolean;
 }
 
 export interface WebBridgeState {

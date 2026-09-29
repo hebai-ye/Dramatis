@@ -1,7 +1,13 @@
 import type { ConversationId, InstanceId, Message, MessageId, RoomId, SceneId } from '@dramatis/core';
 import { describe, expect, it } from 'vitest';
 import type { PendingBridgeTurn } from '../components/WebBridgePanel';
-import { bridgeReplyBatch, validatePendingBridgeTurn } from './bridge-store';
+import {
+  bridgeReplyBatch,
+  readPendingBridgeProgress,
+  recoverPendingBridgeState,
+  validateBridgeReplyContent,
+  validatePendingBridgeTurn,
+} from './bridge-store';
 
 const pending: PendingBridgeTurn = {
   roomId: 'room-a' as RoomId,
@@ -63,11 +69,70 @@ describe('网页版桥接恢复校验', () => {
     expect(first.map((item) => item.role)).toEqual(['player', 'character']);
     expect(first.map((item) => item.turnId)).toEqual([pending.turnId, pending.turnId]);
     expect(first[0]?.content).toBe(pending.playerText);
+    expect(first[0]?.createdAt).toBe(first[1]?.createdAt);
     const second = bridgeReplyBatch(
       { ...pending, nextIndex: 1 },
       message('character', pending.speakerIds[1] ?? null),
       '旅人',
     );
     expect(second.map((item) => item.role)).toEqual(['character']);
+  });
+
+  it('刷新时状态还在第一份，但库里已有第一人，按已保存前缀恢复第二份', () => {
+    const committed = [message('player', null), message('character', pending.speakerIds[0] ?? null)];
+    expect(readPendingBridgeProgress(pending, pending, committed)).toEqual({ committed: 1 });
+    expect(validatePendingBridgeTurn(pending, pending, committed)).toContain('进度');
+    const complete = [...committed, message('character', pending.speakerIds[1] ?? null)];
+    expect(readPendingBridgeProgress(pending, pending, complete)).toEqual({ committed: 2 });
+  });
+
+  it('恢复流程准备第二份提示词；末位已保存则转一轮分析', async () => {
+    const history = [message('player', null), message('character', pending.speakerIds[0] ?? null)];
+    const speakers = [
+      { id: pending.speakerIds[0] as InstanceId, displayName: '秦娘' },
+      { id: pending.speakerIds[1] as InstanceId, displayName: '陈九' },
+    ];
+    const next = await recoverPendingBridgeState({
+      pending,
+      committed: 1,
+      history,
+      speakers,
+      preparePrompt: async (state) => `下一份：${String(state.nextIndex)}`,
+      analysisPrompt: () => '一轮分析',
+    });
+    expect(next).toMatchObject({
+      stage: 'reply',
+      speakerName: '陈九',
+      prompt: '下一份：1',
+      pendingTurn: { nextIndex: 1 },
+    });
+    const done = await recoverPendingBridgeState({
+      pending,
+      committed: 2,
+      history,
+      speakers,
+      preparePrompt: async () => '不应调用',
+      analysisPrompt: () => '一轮分析',
+    });
+    expect(done).toMatchObject({ stage: 'analysis', prompt: '一轮分析', turnId: pending.turnId });
+  });
+
+  it('静默桥接拒绝贴回的台词，允许动作', () => {
+    const silent = { ...pending, actionsOnly: true };
+    expect(validateBridgeReplyContent(silent, '「我来回答。」')).toContain('只许动作');
+    expect(validateBridgeReplyContent(silent, '# 秦娘点头。')).toBeNull();
+  });
+
+  it('第二位被导演安排 hold_back 时，桥接仍拒绝贴回台词', () => {
+    const planned = {
+      ...pending,
+      nextIndex: 1,
+      speakerPlans: [
+        { intent: '先回答', mode: 'reply' as const },
+        { intent: '欲言又止', mode: 'hold_back' as const },
+      ],
+    };
+    expect(validateBridgeReplyContent(planned, '「我也同意。」')).toContain('只许动作');
+    expect(validateBridgeReplyContent(planned, '# 陈九移开目光。')).toBeNull();
   });
 });

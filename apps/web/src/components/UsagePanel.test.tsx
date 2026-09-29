@@ -44,6 +44,7 @@ describe('最近一轮用量', () => {
     expect(html).toContain('导演判断');
     expect(html).toContain('角色生成');
     expect(html.replaceAll('<!-- -->', '')).toContain('2 次');
+    expect(html).toContain('汇总可能低估');
     expect(html).not.toContain('¥0');
   });
 });

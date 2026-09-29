@@ -242,13 +242,13 @@ export function UsagePanel({
           <h2>最近一轮</h2>
           <ul className="usage-list">
             <li>
-              <span className="usage-name">导演判断</span>
+              <span className="usage-name">已记录导演判断</span>
               <span className="usage-figure">
                 {latestTurn.byCategory.find((group) => group.key === 'intent')?.totals.calls ?? 0} 次
               </span>
             </li>
             <li>
-              <span className="usage-name">角色生成</span>
+              <span className="usage-name">已记录角色生成</span>
               <span className="usage-figure">
                 {latestTurn.byCategory.find((group) => group.key === 'generation')?.totals.calls ?? 0} 次
               </span>
@@ -258,11 +258,10 @@ export function UsagePanel({
               <span className="usage-figure">{figure(latestTurn.total)}</span>
             </li>
           </ul>
-          {latestTurn.byCategory.some(
-            (group) => group.key === 'generation' && group.totals.calls > 0 && group.totals.tokens === 0,
-          ) ? (
-            <p className="hint">生成用量为 0 可能是服务商没有返回用量，不能据此判断这次免费。</p>
-          ) : null}
+          <p className="hint">
+            服务商未返回用量时该次记为 0
+            token；即使其他调用有用量，汇总可能低估。失败或中止的调用不计入上述次数，服务商仍可能计费。
+          </p>
         </section>
       )}
 

@@ -178,4 +178,22 @@ describe('多人导演计划', () => {
       pickPlannedSpeakers([{ name: '秦娘', intent: '回答', mode: 'reply' }], [a], 2).speakers[0]?.instance.id,
     ).toBe(a.id);
   });
+
+  it('同名角色有正确编号时可区分，无编号时仍拒绝歧义', () => {
+    const a = actor('阿青');
+    const b = actor('阿青');
+    expect(
+      pickPlannedSpeakers(
+        [
+          { key: 'C2', name: '阿青', intent: '回应', mode: 'reply' },
+          { name: '阿青', intent: '插话', mode: 'cut_in' },
+        ],
+        [a, b],
+        2,
+      ),
+    ).toEqual({
+      speakers: [{ instance: b, intent: '回应', mode: 'reply' }],
+      rejectedEntries: 1,
+    });
+  });
 });

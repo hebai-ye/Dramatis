@@ -942,11 +942,13 @@ export function assemblePrompt(input: AssembleInput): AssembledPrompt {
       // 导演调用已经判断过「这一轮他该做什么」，把结论给它，别让它再猜一遍
       (input.intent === undefined || input.intent.trim() === ''
         ? ''
-        : `\n你这一轮打算：${input.intent.trim()}。照着这个打算写，但不要把这一行写进回复。` +
-          (input.intentMode === 'hold_back' ? '（想说没说：只写动作与神态，不要开口。）' : '')) +
+        : `\n你这一轮打算：${input.intent.trim()}。照着这个打算写，但不要把这一行写进回复。`) +
       turnPositionInstruction +
       // 意图先行（P1-6 的零额外调用版）：先声明这一轮想做什么，再落笔
-      `\n${INTENT_FORMAT_RULE}`,
+      `\n${INTENT_FORMAT_RULE}` +
+      (input.intentMode === 'hold_back'
+        ? '\n本轮例外：想说没说，只写动作与神态，不要开口；上面的通用「对白与动作」要求在此按纯动作执行。'
+        : ''),
     priority: PRIORITY.instruction,
     droppable: false,
   });

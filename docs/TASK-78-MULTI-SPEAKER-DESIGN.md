@@ -1,6 +1,6 @@
 # 顺序 78：一轮内按意图选择多名角色接话
 
-> 状态：设计稿，供熟悉 Dramatis 仓库的编码代理实施。本文不包含实现代码。依据：docs/TASKS.md 第 78 项及 2026-09-28 仓库现状。
+> 状态：已实施的设计基线。本文不包含实现代码。依据：docs/TASKS.md 第 78 项及 2026-09-28 仓库现状；实施时补齐了桥接恢复与每位角色的动作约束。
 
 ## 方案摘要与关键取舍
 
@@ -292,6 +292,8 @@ export interface PendingBridgeTurn {
   playerText: string;
   speakerIds: InstanceId[];
   nextIndex: number;
+  speakerPlans?: { intent: string | null; mode: IntentMode }[];
+  actionsOnly?: boolean;
 }
 
 export interface WebBridgeState {
@@ -304,7 +306,7 @@ export interface WebBridgeState {
 }
 ~~~
 
-新桥接先显示“第 1/N 位”的第一份提示词；首份有效贴回时才批量提交玩家和首位角色。接下来用已落盘消息装配第二人的提示词，逐份推进；最后一位贴回后才进入原有一轮分析。apps/web/src/App.tsx 的 handleBridgeReply、handleBridgeSkip 必须按 pendingTurn.nextIndex 处理。刷新恢复时核对 roomId、conversationId、sceneId、已贴回的消息和 nextIndex；错配不写到当前新场景。
+新桥接先显示“第 1/N 位”的第一份提示词；首份有效贴回时才批量提交玩家和首位角色，并让两条消息共用 createdAt，由 localSeq 保证玩家在前。接下来用已落盘消息和对应 speakerPlans 装配第二人的提示词，逐份推进；hold_back 和全轮只许动作都拒绝贴回台词。最后一位贴回后才进入原有一轮分析。apps/web/src/App.tsx 的 handleBridgeReply、handleBridgeSkip 按 pendingTurn.nextIndex 处理。刷新恢复时核对 roomId、conversationId、sceneId、已贴回的角色前缀；若 sessionStorage 的 nextIndex 落后于 IndexedDB，按已落盘前缀重建下一份提示词或分析提示词，不能重复收下同一位回复；身份或场景错配仍拒绝写入。
 
 ## 7. 成本与记账
 

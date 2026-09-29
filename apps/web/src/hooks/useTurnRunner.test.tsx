@@ -10,9 +10,13 @@ const runtime = vi.hoisted(() => ({
   failFirst: false,
   hangDirector: false,
   manual: false,
+  timeoutHandoff: false,
+  reloads: 0,
+  reloadFails: false,
   directorCalls: 0,
   generationSpeakers: [] as string[],
   generationHistories: [] as string[][],
+  intentModes: [] as Array<string | undefined>,
   observerIds: [] as string[],
   records: [] as Array<{ category: string; speaker?: { name: string } }>,
   handoffs: [] as string[],
@@ -32,13 +36,26 @@ vi.mock('@dramatis/core', async (importOriginal) => {
       runtime.observerIds.push(query.observerId);
       return { selected: [] };
     },
-    runTurn: async function* (input: { instance: CharacterInstance; history: Message[] }) {
+    runTurn: async function* (input: {
+      instance: CharacterInstance;
+      history: Message[];
+      intent?: string;
+      intentMode?: string;
+    }) {
       runtime.generationSpeakers.push(input.instance.displayName);
       runtime.generationHistories.push(input.history.map((message) => message.speakerName));
+      runtime.intentModes.push(input.intentMode);
       if (runtime.manual) {
         yield {
           type: 'prompt',
-          prompt: { messages: [{ role: 'user', content: `请让${input.instance.displayName}回应` }] },
+          prompt: {
+            messages: [
+              {
+                role: 'user',
+                content: `请让${input.instance.displayName}回应；意图：${input.intent ?? '无'}；模式：${input.intentMode ?? '无'}`,
+              },
+            ],
+          },
         };
         yield { type: 'done', text: '', usage: null };
         return;
@@ -66,6 +83,7 @@ vi.mock('../lib/stream-store', async (importOriginal) => {
     ...actual,
     waitForStreamHandoff: async (_scope: string, messageId: string) => {
       runtime.handoffs.push(messageId);
+      if (runtime.timeoutHandoff) throw new Error('消息已保存但显示确认超时');
     },
   };
 });
@@ -88,7 +106,7 @@ function actor(name: string, room: ReturnType<typeof roomId>): CharacterInstance
   };
 }
 
-function harness() {
+function harness(withBackground = false) {
   const room = roomId(newId());
   const a = actor('秦娘', room);
   const b = actor('陈九', room);
@@ -118,6 +136,10 @@ function harness() {
         saved.push(...batch);
       },
       markRecalled: async () => {},
+      reloadWorld: async () => {
+        runtime.reloads += 1;
+        if (runtime.reloadFails) throw new Error('模拟重载失败');
+      },
     },
     providers: {
       active: {
@@ -128,7 +150,15 @@ function harness() {
         temperature: 0,
         price: null,
       },
-      background: null,
+      background: withBackground
+        ? {
+            baseUrl: 'https://example.invalid',
+            apiKey: 'director-key',
+            model: 'director-model',
+            temperature: 0,
+            price: null,
+          }
+        : null,
       apiKey: runtime.manual ? '' : 'test-key',
     },
     usage: { reload: async () => {} },
@@ -167,7 +197,7 @@ function harness() {
   }
   renderToString(createElement(Capture));
   if (api === null) throw new Error('未取得回合控制器');
-  return { api: api as TurnRunnerApi, saved, errors, warnings, busy, bridges, a, b, scene };
+  return { api: api as TurnRunnerApi, saved, errors, warnings, busy, bridges, a, b, scene, options };
 }
 
 beforeEach(() => {
@@ -176,9 +206,13 @@ beforeEach(() => {
   runtime.failFirst = false;
   runtime.hangDirector = false;
   runtime.manual = false;
+  runtime.timeoutHandoff = false;
+  runtime.reloads = 0;
+  runtime.reloadFails = false;
   runtime.directorCalls = 0;
   runtime.generationSpeakers = [];
   runtime.generationHistories = [];
+  runtime.intentModes = [];
   runtime.observerIds = [];
   runtime.records = [];
   runtime.handoffs = [];
@@ -275,5 +309,56 @@ describe('一轮多人自动生成', () => {
     expect(runtime.observerIds).toEqual([a.id, b.id]);
     expect(runtime.generationHistories[1]).toContain('秦娘');
     expect(prompt).toContain('陈九');
+  });
+
+  it('网页版第二人保留导演的 hold_back 意图与纯动作提示词', async () => {
+    runtime.manual = true;
+    runtime.plan =
+      '{"speakers":[{"key":"C1","name":"秦娘","intent":"先回答","mode":"reply"},{"key":"C2","name":"陈九","intent":"欲言又止","mode":"hold_back"}]}';
+    const { api, bridges } = harness(true);
+    await api.handleSend('你们觉得呢？');
+    const pendingTurn = (bridges.at(-1) as { pendingTurn: import('../components/WebBridgePanel').PendingBridgeTurn })
+      .pendingTurn;
+    expect(pendingTurn.speakerPlans?.[1]).toEqual({ intent: '欲言又止', mode: 'hold_back' });
+    const prompt = await api.prepareBridgeReply({
+      pendingTurn: { ...pendingTurn, nextIndex: 1 },
+      history: [
+        { role: 'player', speakerName: '旅人', content: pendingTurn.playerText } as Message,
+        { role: 'character', speakerName: '秦娘', content: '「先听我说。」' } as Message,
+      ],
+    });
+    expect(runtime.intentModes).toEqual(['reply', 'hold_back']);
+    expect(prompt).toContain('欲言又止');
+    expect(prompt).toContain('模式：hold_back');
+  });
+
+  it('首位消息交接超时后保留首位、停止第二位并重载列表', async () => {
+    runtime.timeoutHandoff = true;
+    runtime.reloadFails = true;
+    const { api, saved, errors, busy } = harness();
+    await expect(api.handleSend('你们觉得呢？')).resolves.toBeUndefined();
+    expect(saved.map((message) => message.role)).toEqual(['player', 'character']);
+    expect(runtime.generationSpeakers).toEqual(['秦娘']);
+    expect(runtime.reloads).toBe(1);
+    expect(errors.at(-1)).toContain('显示确认超时');
+    expect(errors.at(-1)).toContain('重载失败');
+    expect(busy.at(-1)).toBe(false);
+  });
+
+  it('导演选择 hold_back 时即使模型违令说话也只落动作', async () => {
+    runtime.plan = '{"speakers":[{"key":"C1","name":"秦娘","intent":"","mode":"hold_back"}]}';
+    const { api, saved } = harness();
+    await api.handleSend('# 我推开门');
+    const reply = saved.find((message) => message.role === 'character');
+    expect(reply?.content).toContain('# 秦娘看向你');
+    expect(reply?.content).not.toContain('回应');
+  });
+
+  it('无导演的静默模式保底仍向生成器声明 hold_back', async () => {
+    runtime.plan = '{"speakers":[]}';
+    const { api, options } = harness();
+    (options.conversation as { modes: { silent: boolean } }).modes.silent = true;
+    await api.handleSend('你们怎么看？');
+    expect(runtime.intentModes).toEqual(['hold_back']);
   });
 });

@@ -138,13 +138,18 @@ export function pickPlannedSpeakers(
   const seen = new Set<InstanceId>();
   let rejectedEntries = 0;
   for (const entry of plan) {
-    const matches = eligibleCast.filter(
-      (member) =>
-        member.presence === 'onstage' && member.deletedAt === null && member.displayName.trim() === entry.name,
-    );
-    const instance = matches.length === 1 ? matches[0] : undefined;
-    const expectedKey = instance === undefined ? '' : `C${String(eligibleCast.indexOf(instance) + 1)}`;
-    if (!instance || (entry.key !== undefined && entry.key !== expectedKey) || seen.has(instance.id)) {
+    // C 编号能区分同名角色；只有旧格式没编号时才要求显示名在名单里唯一。
+    const keyMatch = entry.key === undefined ? null : /^C([1-9]\d*)$/.exec(entry.key);
+    const numbered = keyMatch === null ? undefined : eligibleCast[Number(keyMatch[1]) - 1];
+    const matches =
+      entry.key === undefined ? eligibleCast.filter((member) => member.displayName.trim() === entry.name) : [];
+    const instance = entry.key === undefined ? (matches.length === 1 ? matches[0] : undefined) : numbered;
+    if (
+      instance?.presence !== 'onstage' ||
+      instance.deletedAt !== null ||
+      instance.displayName.trim() !== entry.name ||
+      seen.has(instance.id)
+    ) {
       rejectedEntries += 1;
       continue;
     }

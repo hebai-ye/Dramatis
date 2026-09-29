@@ -644,6 +644,7 @@ function MainChatImpl({
         <StreamingBubble
           key={conversation.id}
           busy={busy}
+          onStop={onStop}
           lastMessageId={messages[messages.length - 1]?.id ?? null}
           suspendAutoScroll={focus !== null}
           bottomRef={bottomRef}

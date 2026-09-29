@@ -45,7 +45,13 @@ import { useWebBridge } from './hooks/useWebBridge';
 import { useAdminChat } from './lib/admin';
 import { useAppearance } from './lib/appearance';
 import { useArchive } from './lib/archive';
-import { bridgeReplyBatch, validatePendingBridgeTurn } from './lib/bridge-store';
+import {
+  bridgeReplyBatch,
+  readPendingBridgeProgress,
+  recoverPendingBridgeState,
+  validateBridgeReplyContent,
+  validatePendingBridgeTurn,
+} from './lib/bridge-store';
 import { avatarOf } from './lib/portraits';
 import { useProviders } from './lib/providers';
 import { useDatabase, useSession } from './lib/session';
@@ -536,29 +542,33 @@ export function App() {
       try {
         const line = makeCharacterLine(speaker, text, bridge.turnId, scene);
         if (line.content.trim() === '') throw new Error('贴回来的内容没有可显示的角色回复。');
+        const contentIssue = validateBridgeReplyContent(pending, line.content);
+        if (contentIssue !== null) throw new Error(contentIssue);
         const batch = bridgeReplyBatch(pending, line, world.playerName);
         await session.appendMessages(batch);
         committed = true;
+        sync.requestAutoSync();
         const turnMessages = [...savedTurn, ...batch];
 
-        if (pending && pending.nextIndex + 1 < pending.speakerIds.length) {
-          const nextIndex = pending.nextIndex + 1;
-          const nextPending = { ...pending, nextIndex };
-          const nextSpeaker = instances.find((item) => item.id === pending.speakerIds[nextIndex]);
-          if (!nextSpeaker) throw new Error('下一位角色已离开当前世界；已贴回的回复仍然保留。');
-          const prompt = await prepareBridgeReply({
-            pendingTurn: nextPending,
-            history: [...session.messages.filter((message) => message.turnId !== bridge.turnId), ...turnMessages],
-          });
-          setBridge({
-            stage: 'reply',
-            turnId: pending.turnId,
-            speakerInstanceId: nextSpeaker.id,
-            speakerName: nextSpeaker.displayName,
-            prompt,
-            pendingTurn: nextPending,
-          });
-          sync.requestAutoSync();
+        if (pending) {
+          setBridge(
+            await recoverPendingBridgeState({
+              pending,
+              committed: pending.nextIndex + 1,
+              history: [...session.messages.filter((message) => message.turnId !== bridge.turnId), ...turnMessages],
+              speakers: instances,
+              preparePrompt: async (state, history) => prepareBridgeReply({ pendingTurn: state, history }),
+              analysisPrompt: () =>
+                renderPromptForWeb(
+                  buildTurnAnalysisMessages({
+                    scene,
+                    cast: instances.filter((instance) => scene.cast.includes(instance.id)),
+                    playerName: world.playerName,
+                    messages: turnMessages,
+                  }),
+                ),
+            }),
+          );
           return;
         }
 
@@ -580,9 +590,10 @@ export function App() {
           ),
         });
       } catch (bridgeError) {
-        if (committed && pending) setBridge(null);
         const detail = bridgeError instanceof Error ? bridgeError.message : String(bridgeError);
-        setError(committed ? `已保存贴回的回复，但下一步未完成：${detail}` : detail);
+        setError(
+          committed ? `已保存贴回的回复，但下一步未完成：${detail}。桥接进度会按已保存消息恢复；刷新可重试。` : detail,
+        );
       } finally {
         setBusy(false);
       }
@@ -673,6 +684,85 @@ export function App() {
       ]);
     }
   }, [bridge, setWarnings, setBridge]);
+
+  /*
+   * 桥接状态存在 sessionStorage，而首份消息写在 IndexedDB：两份存储不能跨库做同一个
+   * 事务。刷新恰落在“首人已保存、下一份提示词尚未持久化”之间时，以消息前缀为准
+   * 恢复到下一位，绝不让旧面板把首人的回复再贴一遍。
+   */
+  useEffect(() => {
+    const pending = bridge?.pendingTurn;
+    if (
+      busy ||
+      bridge?.stage !== 'reply' ||
+      !pending ||
+      !db ||
+      !world ||
+      !conversation ||
+      !scene ||
+      pending.roomId !== world.id ||
+      pending.conversationId !== conversation.id ||
+      pending.sceneId !== scene.id
+    ) {
+      return;
+    }
+    const turnMessages = session.messages.filter((message) => message.turnId === pending.turnId);
+    const progress = readPendingBridgeProgress(
+      pending,
+      { roomId: world.id, conversationId: conversation.id, sceneId: scene.id },
+      turnMessages,
+    );
+    if ('error' in progress) {
+      setError(progress.error);
+      return;
+    }
+    if (progress.committed === pending.nextIndex) return;
+    if (progress.committed < pending.nextIndex) {
+      setError('网页版桥接进度领先于已保存消息，请刷新并检查原对话后再继续。');
+      return;
+    }
+    let cancelled = false;
+    const recover = async () => {
+      const next = await recoverPendingBridgeState({
+        pending,
+        committed: progress.committed,
+        history: session.messages,
+        speakers: instances,
+        preparePrompt: async (state, history) => prepareBridgeReply({ pendingTurn: state, history }),
+        analysisPrompt: () =>
+          renderPromptForWeb(
+            buildTurnAnalysisMessages({
+              scene,
+              cast: instances.filter((instance) => scene.cast.includes(instance.id)),
+              playerName: world.playerName,
+              messages: turnMessages,
+            }),
+          ),
+      });
+      if (cancelled) return;
+      setBridge(next);
+    };
+    void recover().catch((error: unknown) => {
+      if (!cancelled) {
+        setError(`网页版桥接恢复失败：${error instanceof Error ? error.message : String(error)}；刷新可重试。`);
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    bridge,
+    busy,
+    conversation,
+    db,
+    instances,
+    prepareBridgeReply,
+    scene,
+    session.messages,
+    setBridge,
+    setError,
+    world,
+  ]);
 
   const handleChangeModes = useCallback(
     (patch: Partial<ConversationModes>) => {

@@ -1,11 +1,12 @@
 import { type CastName, type MessageId, renderMessageContent } from '@dramatis/core';
 import { type RefObject, useEffect, useLayoutEffect, useRef } from 'react';
 import { countRender } from '../lib/render-count';
-import { acknowledgeStreamHandoff, useStreamState } from '../lib/stream-store';
+import { acknowledgeStreamHandoff, resetStreamState, useStreamState } from '../lib/stream-store';
 import { Avatar } from './MessageBody';
 
 interface Props {
   busy: boolean;
+  onStop: () => void;
   /**
    * 当前对话里最后一条已落盘消息的 id（顺序 91）。
    *
@@ -41,7 +42,7 @@ function tailOf(text: string, max = 120): string {
  * 它是**唯一**订阅流式状态的组件：每个 token 到达只重画这里，几百条已落盘的消息、
  * 左栏、面板都不动。三块内容与拆出来之前一样：推理流、阶段占位（0ms 就有话说）、流式气泡。
  */
-export function StreamingBubble({ busy, lastMessageId, suspendAutoScroll, bottomRef, cast, avatars }: Props) {
+export function StreamingBubble({ busy, onStop, lastMessageId, suspendAutoScroll, bottomRef, cast, avatars }: Props) {
   countRender('StreamingBubble');
   const { text, speaker, reasoning, progress, phase, handoffId } = useStreamState();
   const speakerId = cast.find((member) => member.displayName === speaker)?.id;
@@ -61,6 +62,14 @@ export function StreamingBubble({ busy, lastMessageId, suspendAutoScroll, bottom
     // 确认必须带消息 id；上一位的迟到 effect 不能收掉下一位已开始的流。
     if (handedOver && handoffId !== null) acknowledgeStreamHandoff('main', handoffId);
   }, [handedOver, handoffId]);
+  useEffect(
+    () => () => {
+      // 换对话会卸载这一颗气泡：立即中止并清主通道，不能把旧角色的流带到新对话。
+      onStop();
+      resetStreamState('main');
+    },
+    [onStop],
+  );
 
   // 用本次 DOM 长高之前的距离判断是否贴底；大块输出即使一次长高超过 120px，
   // 原本在底部的人仍会跟上。主动上滑的人保持原位，逐 token 不再排 smooth 动画。

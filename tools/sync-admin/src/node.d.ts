@@ -11,6 +11,9 @@ declare module 'node:sqlite' {
   }
 }
 declare module 'node:crypto' {
+  export function randomUUID(): string;
+  export function randomBytes(size: number): { toString(encoding: 'base64url'): string };
+  export function createHash(name: string): { update(text: string): { digest(encoding: 'hex'): string } };
   export function timingSafeEqual(a: Uint8Array, b: Uint8Array): boolean;
 }
 declare module 'node:fs' {
@@ -18,6 +21,11 @@ declare module 'node:fs' {
   export function readFileSync(path: string, encoding: 'utf8'): string;
   export function mkdirSync(path: string, options: { recursive: true }): void;
   export function appendFileSync(path: string, text: string, options: { encoding: 'utf8'; mode: number }): void;
+  export function openSync(path: string, flags: string, mode?: number): number;
+  export function writeFileSync(fd: number, data: string, options: { encoding: 'utf8' }): void;
+  export function fsyncSync(fd: number): void;
+  export function closeSync(fd: number): void;
+  export function renameSync(from: string, to: string): void;
   export function readdirSync(path: string): string[];
   export function lstatSync(path: string): {
     size: number;
@@ -25,6 +33,7 @@ declare module 'node:fs' {
     ino: number;
     dev: number;
     isFile(): boolean;
+    isDirectory(): boolean;
     isSymbolicLink(): boolean;
   };
 }
@@ -48,7 +57,7 @@ declare module 'node:process' {
   export default process;
 }
 declare module 'node:http' {
-  interface IncomingMessage {
+  interface IncomingMessage extends AsyncIterable<Uint8Array> {
     url?: string;
     method?: string;
     headers: Record<string, string | string[] | undefined>;

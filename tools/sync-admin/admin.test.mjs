@@ -192,4 +192,11 @@ test('启动配置拒绝公网监听、短token和将审计写入生产库', () 
   assert.throws(() => readAdminConfig({ ...env, DRAMATIS_ADMIN_HOST: '0.0.0.0' }));
   assert.throws(() => readAdminConfig({ ...env, DRAMATIS_ADMIN_TOKEN: 'short' }));
   assert.throws(() => readAdminConfig({ ...env, DRAMATIS_ADMIN_AUDIT: env.DRAMATIS_ADMIN_DATA }));
+  assert.throws(() => readAdminConfig({ ...env, DRAMATIS_ADMIN_WRITE: '1' }));
+  assert.throws(() => readAdminConfig({ ...env, DRAMATIS_ADMIN_WRITE: 'true' }));
+  assert.throws(() => readAdminConfig({ ...env, DRAMATIS_ADMIN_DEFAULT_MAX_MB: 'NaN' }));
+  assert.equal(
+    readAdminConfig({ ...env, DRAMATIS_ADMIN_WRITE: '1', DRAMATIS_ADMIN_BACKUPS: '/fixture/backups' }).writeEnabled,
+    true,
+  );
 });

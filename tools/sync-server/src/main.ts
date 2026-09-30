@@ -13,6 +13,7 @@ import {
   type SyncServerLimits,
 } from '../../../packages/core/src/index.js';
 import { createAccountProfileHandler } from './accounts.js';
+import { createSpaceQuotaResolver } from './storage-policy.js';
 
 /**
  * 独立同步服务端（P2-6 第四步·部署）。
@@ -178,7 +179,9 @@ export function startServer(config: ServerConfig): RunningServer {
   const db = new DatabaseSync(config.dataPath);
   // WAL + busy_timeout（顺序 61）：服务端写入与 6 小时一次的备份不再互相顶掉
   applySqlitePragmas(db);
-  const store = createSqliteSyncStore(db);
+  let resolveQuota: ReturnType<typeof createSpaceQuotaResolver>;
+  const store = createSqliteSyncStore(db, { resolveQuota: (handle, base, usage) => resolveQuota(handle, base, usage) });
+  resolveQuota = createSpaceQuotaResolver(db);
   const server = createSyncServer(store, { limits: config.limits });
   const accountProfiles = createAccountProfileHandler(db);
   const startedAt = Date.now();

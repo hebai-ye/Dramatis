@@ -8,7 +8,7 @@
     <script type="module" src="/app.js"></script>
   </head>
   <body>
-    <header><div><span class="eyebrow">DRAMATIS · 管理台</span><h1>账户与同步空间</h1></div><span class="badge">只读</span></header>
+    <header><div><span class="eyebrow">DRAMATIS · 管理台</span><h1>账户与同步空间</h1></div><span id="mode" class="badge">只读</span></header>
     <main>
       <p id="notice" role="status" aria-live="polite"></p>
       <section id="login" class="panel login">
@@ -27,7 +27,7 @@
         </section>
         <section id="details" class="panel" hidden><h2 tabindex="-1">空间详情</h2><div id="detail-content"></div></section>
         <section class="panel"><h2>备份状态</h2><p class="hint">仅显示文件元数据。文件存在不代表恢复已验证；本批未提供恢复或下载入口。</p><div id="backups"></div></section>
-        <p class="hint">未认领的空间需由所有者登录并同意登记账户资料。配额调整、VIP 权益和托管服务留待后续批次。</p>
+        <p class="hint">未认领的空间需由所有者登录并同意登记账户资料。编辑仅限运营显示名与服务器存储容量；每次保存都需完整句柄确认和前置备份。VIP 与托管服务尚未接入。</p>
       </div>
     </main>
   </body>

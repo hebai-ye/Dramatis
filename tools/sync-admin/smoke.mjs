@@ -1,6 +1,6 @@
 /** 本机真浏览器验收：只在临时目录造测试库，三个监听均绑定回环。 */
 import { spawn } from 'node:child_process';
-import { mkdtempSync, readFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { dirname, extname, join, resolve } from 'node:path';
@@ -9,6 +9,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { fileURLToPath } from 'node:url';
 import { SYNC_SCHEMA_SQL } from '../sync-server/dist/packages/core/src/index.js';
 import { createAccountProfileHandler } from '../sync-server/dist/tools/sync-server/src/accounts.js';
+import { createSpaceQuotaResolver } from '../sync-server/dist/tools/sync-server/src/storage-policy.js';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const data = mkdtempSync(join(tmpdir(), 'dramatis-admin-smoke-'));
@@ -16,6 +17,8 @@ const dbPath = join(data, 'sync.db');
 const db = new DatabaseSync(dbPath);
 db.exec(SYNC_SCHEMA_SQL);
 createAccountProfileHandler(db);
+createSpaceQuotaResolver(db);
+mkdirSync(join(data, 'backups'));
 db.prepare('INSERT INTO spaces VALUES (?, ?, ?, ?, ?, ?)').run(
   'fixture-unclaimed',
   'fixture-hash',
@@ -50,6 +53,7 @@ const children = [
       DRAMATIS_ADMIN_AUDIT: join(data, 'audit.jsonl'),
       DRAMATIS_ADMIN_TOKEN: token,
       DRAMATIS_ADMIN_BACKUPS: join(data, 'backups'),
+      DRAMATIS_ADMIN_WRITE: '1',
     },
     stdio: ['ignore', 'pipe', 'pipe'],
   }),

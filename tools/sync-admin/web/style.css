@@ -146,9 +146,27 @@ input:focus-visible {
   overflow-x: auto;
 }
 table {
+  min-width: 650px;
   width: 100%;
   border-collapse: collapse;
   text-align: left;
+}
+.editor {
+  border-top: 1px solid #d9e1dc;
+  margin-top: 24px;
+  padding-top: 16px;
+}
+.editor input:not([type="checkbox"]) {
+  width: 100%;
+  max-width: 640px;
+  display: block;
+  margin-bottom: 16px;
+}
+.confirmation {
+  margin-top: 20px;
+}
+.confirmation button {
+  margin-right: 12px;
 }
 th {
   font-size: 13px;

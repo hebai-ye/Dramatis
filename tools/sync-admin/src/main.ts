@@ -5,6 +5,7 @@ import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 import { appendAudit } from './audit.js';
 import { type BackupStatus, createAdminHandler } from './http.js';
+import { createAdminOperations } from './operations.js';
 import { createAdminStore } from './store.js';
 
 export function readAdminConfig(env: Record<string, string | undefined>) {
@@ -20,6 +21,13 @@ export function readAdminConfig(env: Record<string, string | undefined>) {
     throw new Error('必须配置 DRAMATIS_ADMIN_DATA / TOKEN / AUDIT。');
   }
   if (!/^[A-Za-z0-9_-]{43,128}$/.test(env.DRAMATIS_ADMIN_TOKEN)) throw new Error('管理 token 格式不安全。');
+  if (env.DRAMATIS_ADMIN_WRITE !== undefined && !['0', '1'].includes(env.DRAMATIS_ADMIN_WRITE))
+    throw new Error('写开关无效。');
+  const writeEnabled = env.DRAMATIS_ADMIN_WRITE === '1';
+  const defaultMaxBytes = Number(env.DRAMATIS_ADMIN_DEFAULT_MAX_MB ?? '256') * 1024 ** 2;
+  if (!Number.isSafeInteger(defaultMaxBytes) || defaultMaxBytes <= 0 || defaultMaxBytes > 1024 ** 4)
+    throw new Error('默认配额无效。');
+  if (writeEnabled && !env.DRAMATIS_ADMIN_BACKUPS) throw new Error('可编辑管理台必须配置备份目录。');
   const dataPath = resolve(env.DRAMATIS_ADMIN_DATA);
   const auditPath = resolve(env.DRAMATIS_ADMIN_AUDIT);
   const databasePaths = [dataPath, `${dataPath}-wal`, `${dataPath}-shm`, `${dataPath}-journal`];
@@ -46,6 +54,8 @@ export function readAdminConfig(env: Record<string, string | undefined>) {
     token: env.DRAMATIS_ADMIN_TOKEN,
     auditPath,
     backupPath: env.DRAMATIS_ADMIN_BACKUPS ? resolve(env.DRAMATIS_ADMIN_BACKUPS) : null,
+    writeEnabled,
+    defaultMaxBytes,
   };
 }
 
@@ -70,13 +80,22 @@ export function backupStatus(path: string | null, dbName: string): BackupStatus 
 }
 
 export function startAdmin(config: ReturnType<typeof readAdminConfig>) {
-  const store = createAdminStore(config.dataPath);
+  const store = createAdminStore(config.dataPath, config.defaultMaxBytes);
+  let operations: ReturnType<typeof createAdminOperations> | undefined;
   try {
     mkdirSync(dirname(config.auditPath), { recursive: true });
     appendAudit(config.auditPath, { action: 'startup', status: 200, durationMs: 0 });
+    if (config.writeEnabled && config.backupPath)
+      operations = createAdminOperations({
+        dataPath: config.dataPath,
+        backupPath: config.backupPath,
+        defaultMaxBytes: config.defaultMaxBytes,
+        audit: (event) => appendAudit(config.auditPath, event),
+      });
     const web = fileURLToPath(new URL('../web/', import.meta.url));
     const handler = createAdminHandler({
       store,
+      ...(operations ? { operations } : {}),
       token: config.token,
       port: config.port,
       assets: {
@@ -108,10 +127,31 @@ export function startAdmin(config: ReturnType<typeof readAdminConfig>) {
           if (value !== undefined) headers.set(name, Array.isArray(value) ? value.join(', ') : value);
         }
         // Host 由处理器检查；构造 URL 固定来源以免攻击者把服务端变成代理。
+        let body: Uint8Array<ArrayBuffer> | undefined;
+        if (request.method === 'POST') {
+          const parts: Uint8Array[] = [];
+          let size = 0;
+          for await (const chunk of request) {
+            size += chunk.byteLength;
+            if (size > 4096) {
+              response.statusCode = 413;
+              response.end('请求体过大。');
+              return;
+            }
+            parts.push(chunk);
+          }
+          body = new Uint8Array(size);
+          let offset = 0;
+          for (const part of parts) {
+            body.set(part, offset);
+            offset += part.byteLength;
+          }
+        }
         const handled = await handler(
           new Request(`http://127.0.0.1:${config.port}${request.url ?? '/'}`, {
             method: request.method ?? 'GET',
             headers,
+            ...(body ? { body } : {}),
           }),
         );
         response.statusCode = handled.status;
@@ -125,23 +165,26 @@ export function startAdmin(config: ReturnType<typeof readAdminConfig>) {
       });
     });
     server.on('error', () => {
+      operations?.close();
       store.close();
       process.stderr.write('管理服务监听失败。\n');
       process.exit(1);
     });
     server.listen(config.port, '127.0.0.1', () => {
-      process.stdout.write(`Dramatis 只读管理台：http://127.0.0.1:${config.port}\n`);
+      process.stdout.write(`Dramatis 管理台：http://127.0.0.1:${config.port}\n`);
     });
     return {
       stop: () =>
         new Promise<void>((done) => {
           server.close(() => {
+            operations?.close();
             store.close();
             done();
           });
         }),
     };
   } catch (error) {
+    operations?.close();
     store.close();
     throw error;
   }

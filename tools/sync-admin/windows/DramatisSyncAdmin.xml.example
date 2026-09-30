@@ -1,15 +1,16 @@
 <service>
   <id>DramatisSyncAdmin</id>
-  <name>Dramatis 只读管理台</name>
+  <name>Dramatis 管理台</name>
   <description>仅监听回环地址的账户与同步空间元数据管理台。</description>
-  <!-- 将 node.exe 放在服务目录，或改成已核验的绝对路径。秘密配置只放在 secrets。 -->
-  <executable>%BASE%\node.exe</executable>
-  <arguments>--env-file="%BASE%\secrets\admin.env" "%BASE%\start.mjs"</arguments>
-  <workingdirectory>%BASE%</workingdirectory>
+  <!-- 替换为核验后的绝对路径；WinSW 可放统一服务目录。秘密配置不入仓库。 -->
+  <executable>__NODE_EXE__</executable>
+  <arguments>--env-file="__SECRET_ENV__" "__ADMIN_DIR__\start.mjs"</arguments>
+  <workingdirectory>__ADMIN_DIR__</workingdirectory>
   <serviceaccount>
-    <username>__SERVICE_USER__</username>
+    <domain>NT AUTHORITY</domain>
+    <user>LocalService</user>
   </serviceaccount>
-  <logpath>%BASE%\logs</logpath>
+  <logpath>__LOG_DIR__</logpath>
   <log mode="roll-by-size"><sizeThreshold>10240</sizeThreshold><keepFiles>5</keepFiles></log>
   <onfailure action="restart" delay="10 sec" />
 </service>

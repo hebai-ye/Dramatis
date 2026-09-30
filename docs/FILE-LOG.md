@@ -1535,6 +1535,27 @@ TASKS 第〇节顺序 68。用户裁定「A+B 推进」；原方案里的 `limit
 
 Windows 本机临时库／真实浏览器完成同意登记、不登记注册、登录、元数据查询、HTML 名称纯文本、token 拒绝与退出；正式主机没有连接。五门禁最终数字见 EVAL 第九十一节。配额修改、VIP／托管服务／其它服务目录与桌面壳均不在本批实现。
 
+
+## 顺序 100、2026-09-30：管理台显示名／存储配额与正式接入
+
+用户批准正式连接和所选编辑范围，续于顺序99；未push，未合入主仓。正式生产接入和回滚事实见EVAL第九十二节，真实地址／身份／token仅存忽略的LOCAL-NOTES。
+
+| 文件 | 动作 | 内容 |
+| --- | --- | --- |
+| packages/core/src/sync/sqlite.ts | 改 | 配额resolver在IMMEDIATE写事务内执行，保持现有接口默认与记录数护栏 |
+| tools/sync-server/src/storage-policy.ts／main.ts | 新增／改 | epoch绑定的空间额度表与宿主接线；降低及恢复默认后只拒增长 |
+| tools/sync-admin/src/operations.ts／backup.ts | 新增 | 白名单预览、2分钟单次票据、完整句柄、唯一一致性快照校验、事务内重检与原子修改 |
+| tools/sync-admin/src/{audit,http,main,node.d,store}.ts | 改 | fsync追加写审计、精确Origin／4KB写路由、可选写连接、安全有效配额投影与配置防护 |
+| tools/sync-admin/web/{app.js,index.html,style.css} | 改 | 名称／容量编辑、前后值及确认、超额提示、请求版本与会话隔离 |
+| tools/sync-admin/{policy,operations,admin}.test.mjs | 新增／改 | 18条专项，真实SQLite／HTTP，审查问题先红后绿 |
+| tools/sync-admin/smoke.mjs／.env.example | 改 | 临时假库可编辑验收、备份目录与写开关／默认额度 |
+| tools/sync-admin/README.md／windows/DramatisSyncAdmin.xml.example | 改 | 已验证Windows运维、受限ACL、独立操作备份、正确服务账户字段、泛化绝对路径与回滚 |
+| docs/ADMIN-CONSOLE.md | 改 | 真实策略schema、已完成阶段、写边界、审计、备份与真实运维风险 |
+| docs/superpowers/specs/2026-09-30-sync-admin-editable-design.md／plans/2026-09-30-sync-admin-editable.md | 新增 | 用户已批准规格、顺序100实施与执行证据 |
+| docs/{STATUS,TASKS,EVAL,FILE-LOG}.md | 改 | 顺序100进度、任务56阶段、门禁／正式真机证据与限制；任务73仍待办 |
+
+正式网页基于已上线4ee7edd仅叠账户登记所需文件；未上线无关顺序96提示词。原程序与生产快照保留。真实编辑仅在假库，生产只查元数据。五门禁916条全部通过；正式Node22专项18条全部通过。
+
 ## 七十二、几点注意
 
 ---

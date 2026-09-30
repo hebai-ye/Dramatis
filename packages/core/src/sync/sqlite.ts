@@ -194,7 +194,16 @@ export interface SqliteStoreStats {
   head: number;
 }
 
-export function createSqliteSyncStore(db: SqliteDatabase): SyncServerStore & { stats(): SqliteStoreStats } {
+export function createSqliteSyncStore(
+  db: SqliteDatabase,
+  options: {
+    resolveQuota?: (
+      spaceHandle: string,
+      base: SyncAppendQuota,
+      usage: { records: number; bytes: number },
+    ) => SyncAppendQuota;
+  } = {},
+): SyncServerStore & { stats(): SqliteStoreStats } {
   ensureSyncSchema(db);
 
   const getHead = (spaceHandle: string): number => {
@@ -250,7 +259,7 @@ export function createSqliteSyncStore(db: SqliteDatabase): SyncServerStore & { s
         }
       }
       const projected = projectUsage(usage.records, usage.bytes, records, (key) => seen.get(key));
-      if (quota !== null) assertWithinQuota(projected, quota);
+      if (quota !== null) assertWithinQuota(projected, options.resolveQuota?.(spaceHandle, quota, usage) ?? quota);
 
       const upsert = db.prepare(
         `INSERT INTO records (space_handle, collection, id, server_rev, updated_at, deleted_at, sealed, device_id)

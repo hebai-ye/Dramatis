@@ -8,8 +8,8 @@
 > 本文是工作清单（条目可勾选、可拆、做完就删）。每条都尽量带上**来源**——
 > 是路线图里的既定任务，还是真实使用/真实模型验证里冒出来的问题。
 >
-> 最后更新：2026-09-30（顺序 97 收口：重抽改成只重生成被点的那一位、同一轮里其他角色的回复原样保留，
-> 并把该轮的后台回滚改成「回复已换新」与「后台没收拾干净」分开报；顺序 96 的人设表达收敛同一天完成，
+> 最后更新：2026-09-30（顺序 77 收口：重抽与改归属的那批写入改成**一个事务**，失败就整批回滚、内存后端退化成
+> 「能跑的弱保证」，见 `docs/EVAL.md` 第八十九节；顺序 97 的重抽语义、顺序 96 的人设表达收敛同一天完成，
 > 真模型效果仍归 Codex；处理顺序仍是第〇节「2026-09-23 总排期」，下面各个带日期的小节是历史排期，只作上下文）
 
 ## 图例
@@ -88,7 +88,7 @@
 | 74 | **local-bridge 加固** `[审]` | **P3** | 注释说只允许本机但 CORS 是 `*`；选择器 `[class*="message"]` 会读到用户自己的消息 | ⬜ |
 | 75 | **供应商流剩余兼容项** `[审]` | **P3** | 坏 JSON 帧与角色空正文已在 67c 修复；仍需审阅 `ProviderError` 的安全错误摘要、assistant 空 `content` + `tool_calls` 的网关兼容 | ⬜ |
 | 76 | **App.tsx 布局壳拆组件（把 66 的「< 600 行」做到底）** `[审]` | **P3** | 66 只搬走了四个 hook，剩下的 1090 行几乎全是布局 JSX（左栏 / 工作区 / 顶栏 / 四个弹窗）；再往下要按区域拆组件 | ⬜ |
-| 77 | **重抽成功后的多步写入事务化** `[审][数]` | **P2** | 67c 已保证模型失败时不先删旧回复；但成功后清队列、撤情绪/记忆、追加新回复、删旧回复分多次写入，极端存储故障可留下部分状态 | ⬜ |
+| 77 | **重抽成功后的多步写入事务化** `[审][数]` | **P2** | 67c 已保证模型失败时不先删旧回复；成功后清队列、撤情绪/记忆、换新回复、删旧回复分多次写入，极端存储故障可留下部分状态 | ✅ 2026-09-30（`EntityStore` 新增可选 `transaction`，IndexedDB 侧是真 `readwrite` 事务、内存后端是快照回滚；重抽与「改归属」的 消息改写＋清任务键＋撤记忆/情绪 收进一个事务，`session.rewriteTurn` / `session.revertTurn` 换成它；只把「重排这一轮的分析」留在事务外、单独报；见 EVAL 第八十九节） |
 | 78 | **一轮内多个角色作答（不是所有角色都必须回答）** `[用]` | **P3** | 2026-09-25 用户拍板方向：不给角色加权，改成允许一轮里有多个角色接话——由这一轮的意图判断挑出该开口的人，其余保持沉默或只做动作 | ✅ 2026-09-28（默认最多 2 人、硬上限 3 人；导演一次、规则保底；网页版逐人桥接与按 ID 流交接；见 docs/TASK-78-MULTI-SPEAKER-DESIGN.md）／**2026-09-30 合入主线并上线**：`--ff-only` 快进 `28282f4`，随后 push（`637672f..4ee7edd`）并只重新部署前端（线上 `assets/index-aDLBA72A.js` 676 240 B，同步服务端源码没变、未重启；见 EVAL 第八十六节） |
 | 79 | **跨角色串线检测（同一段身世/同一件道具出现在第二个角色名下）** `[用][测]` | **P3** | 178 轮长跑里 46/178 条非掌柜角色用了掌柜道具；秦娘还复用了陈九的「八岁雷砸船」。用户 2026-09-25 决定暂缓 | ⬜ 暂缓 |
 | 80 | **账单汇总增量缓存（顺序 68 拆出来的那一半）** `[审][数]` | **P2** | 68 实测：`since` 下推能少读 93% 的行，但**不带 `since` 的 `summary({roomId})` 仍要把该世界账单全读一遍**——而后台队列每取一条任务就调一次（`worker.ts:548`），长对话里一轮好几次。前置：把「删世界绕开 ledger 直接删账单」收口，否则缓存会漏掉删除路径 | ⬜ |
@@ -110,9 +110,9 @@
 | 95 | **手机桌面图标近景修正** `[用][测]` | **P1** | 用户在手机“保存至本地”后发现角色与圣杯缩得看不清；原图整幅留白和 maskable 二次缩小造成主体占比不足 | ✅ 2026-09-27：近景裁切、iPhone/Android 新图标 URL 与 v4 缓存已推送并仅部署网页；五项门禁与公网资源核对通过，见 EVAL 第八十四节。重新添加后的真实手机桌面外观待用户核对 |
 
 | 96 | **人设表达收敛（用户 2026-09-30 体验反馈：角色执着于人设）** `[体][质]` | **P1** | 用户观察「人设一多，角色就每轮都彰显人设、不管什么处境」，并猜「问题在于人设的提示词过多」。查下来**一半对**：人设确实每轮都在场且是唯一没有长度上限的块，但根因不是字数，而是**没有任何一条约束管「什么时候不该提人设」**——跟人设有关的指令全是「加大力度」。178 轮实录里「至少提一次自己招牌元素」的回复：小满 100% / 秦娘 91% / 陈九 70% | ✅ 2026-09-30（`reply-style` 块新增 `PERSONA_RESTRAINT_RULE`；不可丢弃的指令块加一句同向兜底；卡预设「结尾尽量反问」降级。见 EVAL 第八十七节）／真模型效果归 Codex |
-| 97 | **重抽只重生成被点的那一位（用户 2026-09-30 拍板的语义）** `[体][质]` | **P2** | 以前重抽是「删掉同一轮**全部**角色回复再整轮重排」：顺序 78 一轮可以有两三个人接话，点最后一条会把前面那位刚说的话一起抹掉（而且五步写入零事务，删除之后任何一步失败都不留退路）。用户已定语义：只换被点的那位、同轮其他人原样保留 | ✅ 2026-09-30（改成原地改写那一条 `session.updateMessage`：id／位置／时间戳不变、不删不补；重抽的那位拿到的历史与发送路径完全一致——同轮先开口的人算历史、前面有人说过话时 `playerInput` 留空；该轮的后台回滚逐步收账，失败只报「回复已换新、后台没收拾干净」，不再冒充整次失败。见 EVAL 第八十八节）／真模型与真机观感归 Codex |
+| 97 | **重抽只重生成被点的那一位（用户 2026-09-30 拍板的语义）** `[体][质]` | **P2** | 以前重抽是「删掉同一轮**全部**角色回复再整轮重排」：顺序 78 一轮可以有两三个人接话，点最后一条会把前面那位刚说的话一起抹掉（而且五步写入零事务，删除之后任何一步失败都不留退路）。用户已定语义：只换被点的那位、同轮其他人原样保留 | ✅ 2026-09-30（改成原地改写那一条 `session.rewriteTurn`——id／位置／时间戳不变、不删不补，`updatedAt` 照盖供同步推送；重抽的那位拿到的历史与发送路径完全一致——同轮先开口的人算历史、前面有人说过话时 `playerInput` 留空；该轮的后台回滚与改写本身**同一个事务**（顺序 77 当天收口），只有「重排这一轮的分析」留在事务外、失败只报警告 `regenerate.rollback`。见 EVAL 第八十八、八十九节）／真模型与真机观感归 Codex |
 
-依赖关系：58 复用 57 的「按关键词取回」；66 在 59 之后；65 可以插在任何两批之间；80 依赖 68 已经落下的 `updatedAt` 不变量与迁移 11；**97 独立**（只动重抽与一轮内的落盘顺序，不依赖 96）。
+依赖关系：58 复用 57 的「按关键词取回」；66 在 59 之后；65 可以插在任何两批之间；80 依赖 68 已经落下的 `updatedAt` 不变量与迁移 11；**97 独立**（只动重抽与一轮内的落盘顺序，不依赖 96）；**77 已收口**（它给 `EntityStore` 加的可选 `transaction` 之后可被别的多步写入复用）。
 
 #### 审计遗留（2026-09-26 深度审计的 58 条，现在在哪）
 
@@ -357,14 +357,40 @@ A4 的 core 侧（`packages/core/src/sync/loop.ts:153-162` 的 `serverHead < pul
   `13 条 noDescendingSpecificity` warning 是顺序 85 在 `biome.json` 里给 `**/*.css` 加 override 关掉的。
 
 
+**顺序 77（重抽成功后的多步写入事务化）怎么处理的**：
+
+来源：2026-09-26 深度审计里「存储原子性」那一族（A12/B4），在顺序 97 的落点表里被点名两次；2026-09-30 用户点头把它放在顺序 97 之后、同一天做掉。动手前先只读勘查落盘路径（只读子代理 + 本地读代码），确认四件事：① 全库只有**一张** object store（`apps/web/src/lib/db.ts:543`，`keyPath: ['collection','id']`），逻辑集合全靠 `collection` 字段区分（清单在 `packages/core/src/storage/repository.ts:48-64`）；② 重抽与「改归属」各碰 4 个集合——messages / backgroundTasks / memories / instances，其中 instances 原本是每条一次独立事务；③ `EntityStore` 只有单条 CAS `update?`，**没有任何跨记录原语**，扩接口的硬约束是「`mutate` 必须同步：IDB 事务里不能等别的 Promise，否则事务提前提交」；④ 同步没有 outbox，靠 `updatedAt > 水位线` 推（`packages/core/src/sync/loop.ts`），所以**事务必须覆盖 `updatedAt` 盖章**，否则改写会静默丢同步——结论：同步侧不用一起改。
+
+| 用户要的 | 处理 | 落点 |
+| --- | --- | --- |
+| 一批写入要么全成、要么全不成 | `EntityStore` 新增**可选**成员 `transaction<T>(run: (scope: EntityStore) => Promise<T>)`，并加 `withStoreTransaction(store, run)`：有实现就走、没有就 `return run(store)`（内存后端与降级运行照跑，行为与改动前一致） | `packages/core/src/platform/entity-store.ts:80`（声明）、`:109-113`（`withStoreTransaction`） |
+| IndexedDB 侧必须是真事务 | `createIndexedDbEntityStore` 拆成「库连接来源 `dbSource`」+「`createStoreFromSource(source, runTransaction?)`」，值层语义（`matchesWhere` / `applyQuery` / `listSince` 的 `IDBKeyRange.bound` / `structuredClone`）只写一遍；事务版开 `db.transaction(STORE, 'readwrite')`，作用域内读写全走 `tx.store`，成功 `await tx.done`，出错 `tx.abort()` + 吞掉 `tx.done` 的二次拒绝后原样抛。三条硬约束写在注释里：`run` 里只能 await 存储操作、事务里不能再开事务、`worker.kick()` 必须等事务结束 | `apps/web/src/lib/db.ts`；`DramatisDb` 顺带暴露 `store`（只为了让调用方拿到 `store.transaction`） |
+| 内存后端（测试与降级）也要能回滚 | `memory-store` 的 `transaction`：跑之前快照所有集合 Map，`run` 出错就清空后按快照恢复再重抛；注释写明**不隔离并发事务**（并发时后失败的那个会把先提交的一起带回快照） | `packages/core/src/platform/memory-store.ts:101-111` |
+| 重抽的那四步别再各写各的 | 新模块 `apps/web/src/lib/turn-write.ts`：`rewriteTurnWrites(store, input)` 在**一个事务**里依次 `updateMessage` → `createBackgroundRunner(scope).clearTurn(turnId)` → `deleteMemoriesByTurn`（软删 + `undoConsolidation`）→ 逐条 `revertAffectForTurn` 且只写真的变了的 instances；消息已不在库里时立即返回 `message: null` 且**不撤任何东西** | `apps/web/src/lib/turn-write.ts`（`rewriteTurnWrites` / `revertTurnWrites`） |
+| 改归属也不能「一半改了一半没改」 | `handleReassignMessage` 原来的 `updateMessage` + `clearTurn` + `revertTurn` 三步（**完全无 catch**）换成同一个 `session.rewriteTurn`；失败文案「改归属没有落盘：…这条回复与这一轮的后台记录都保持原样。」消息不在库里时「这条回复已经不在库里（可能已被删掉或被同步覆盖），改归属没有落盘。」 | `apps/web/src/hooks/useTurnRunner.ts` 的 `handleReassignMessage` |
+| 界面状态不能和库里不一致 | `session.rewriteTurn` 成功后 `setSnapshot` 同时更新 messages（按 id 换）、memories（过滤该轮）、instances（套用真的回滚过的那些）；`session.revertTurn` 改成走 `revertTurnWrites`，`apps/web/src/App.tsx:305` 的独立入口一起受益 | `apps/web/src/lib/session.ts`（`rewriteTurn` / `revertTurn`） |
+| 测试要证明「整批回滚」 | 新增 `apps/web/src/lib/turn-write.test.ts` 6 条（内存 store）：成功路径；中途失败整批回滚（连 `remove` 一起撤销）；没有 `transaction` 的后端退化成顺序执行（保证变弱）；消息不存在时任务与记忆都不动；`revertTurnWrites` 单跑一轮也走事务；`withStoreTransaction` 抛错时整批不落 | `apps/web/src/lib/turn-write.test.ts` |
+| hook 层 | `useTurnRunner.test.tsx` 夹具补 `session.rewriteTurn` 桩与 `analysisFails` / `rewriteReturnsNull` 两个开关；原有「后台回滚失败」那条改成两条——事务失败时那句话按整次失败报，重排分析失败只发警告且 `setError` 为空 | `apps/web/src/hooks/useTurnRunner.test.tsx` |
+
+五项门禁（2026-09-30，工作区）：`pnpm typecheck` 0、`pnpm lint` `Checked 293 files` 0 error / 0 warning、`pnpm test` Core 73 文件 / 833 条 + Web 18 文件 / 82 条全过、`pnpm build` 0（`dist/assets/index-CuPsB7O6.js` 680.10 kB / gzip 218.26 kB，仍有 >500 kB 告警）、`pnpm build:sync-server` 0。
+
+**顺序 77 自己带出来的遗留（别当成已解决）**：
+
+- **IndexedDB 那段真事务没有自动化测试**：Node 里没有 `indexedDB`（仓库也没装 `fake-indexeddb`），6 条测试全跑在内存后端上；`db.transaction` 那段只有类型检查与代码审读。浏览器里的原子性归 Codex 真机验。
+- **内存后端的 `transaction` 不隔离并发事务**：并发时后失败的那个会把先提交的一起带回快照。它只服务测试与降级运行，真机走 IndexedDB 事务。
+- **`transaction` 是可选成员**：后端不实现就退化成顺序执行（保证变弱、与改动前一致）；写测试时得先取出再判空（`TS2722`/`TS18048` 的教训）。
+- **三件事故意不进事务**：模型调用与用量记账（钱花了不能回滚）、`worker.kick()`（必须在事务之后）、以及重新排分析（`enqueueTurnAnalysis`）——所以「事务成功、分析没排上」仍是一条要如实告诉用户的中间态。
+- **事务提交与同步推送之间的顺序没有专门测试**：`updatedAt` 盖章、软删墓碑都在事务内，但「同一毫秒一组一起越过水位线」只覆盖到既有逻辑。
+- **`session.updateMessage` 仍被别处使用**（`apps/web/src/App.tsx:799` 等），本批没有把那些单条写入也收进事务——它们本来就是一条记录、单次 put。
+
 **顺序 97（重抽只重生成被点的那一位）怎么处理的**：
 
 用户 2026-09-30 拍板的语义。动手前先确认两件事：这条路径现在到底动了几条消息、分几步写（`useTurnRunner.ts:977` 的 `handleRegenerate`），以及发送路径给「同轮第二个开口的人」的历史口径（`handleSend` 里 `continuedHistory` 逐条追加，第二名角色的 `playerInput` 留空、`mentionText` 仍是玩家那一句）。
 
 | 用户要的 | 处理 | 落点 |
 | --- | --- | --- |
-| 只重生成被点的那一位、同轮其他角色原样保留 | 把「删掉这一轮全部角色回复 + 另起一条新消息」换成**原地改写**那一条：`session.updateMessage(target.id, {…})`，消息 id、位置、`createdAt` 都不变，库里只是多一次 `updatedAt` 盖章（同步据此把这条改动推出去）。同轮其他角色的回复不再被碰——旧实现那段 `for (const message of turnMessages) session.deleteMessage(message.id)` 整段删掉 | `apps/web/src/hooks/useTurnRunner.ts:1095` |
-| （顺带，顺序 77 的遗留）五步写入零事务、报错自相矛盾 | 顺序改成：**先把新回复落地**（一条记录、单次 put；服务商过滤／截断／断流时根本不写）→ 清这一轮任务幂等键 → 回滚该轮记忆与情绪变化 → 重新排分析。后三步各自 try/catch 收账，失败时只报「新回复已经换好了，但这一轮的后台记录没收拾干净：…（再点一次重抽会把这一轮重新算一遍）」，**不再把整次重抽说成失败**（那种文案会让用户以为回复没变）。只有 `updateMessage` 返回 `null`（消息已被删或被同步覆盖）才算真正的失败并抛出 | `apps/web/src/hooks/useTurnRunner.ts:1142`（警告码 `regenerate.rollback`） |
+| 只重生成被点的那一位、同轮其他角色原样保留 | 把「删掉这一轮全部角色回复 + 另起一条新消息」换成**原地改写**那一条：`session.rewriteTurn({ messageId, turnId, patch })`（内部就是 `repository.updateMessage`，顺序 77 起与后台回滚同一个事务），消息 id、位置、`createdAt` 都不变，库里只是多一次 `updatedAt` 盖章（同步据此把这条改动推出去）。同轮其他角色的回复不再被碰——旧实现那段 `for (const message of turnMessages) session.deleteMessage(message.id)` 整段删掉 | `apps/web/src/hooks/useTurnRunner.ts:1095`、`apps/web/src/lib/session.ts` 的 `rewriteTurn` |
+| （原来是顺序 77 的遗留）多步写入怎么收口 | 顺序 77 当天把它收口了：**消息改写 + 清这一轮任务幂等键 + 回滚该轮记忆与情绪**四个集合的写入收进**一个事务**（`session.rewriteTurn` → `rewriteTurnWrites`，后端不支持 `transaction` 时退化成顺序执行、保证变弱）；事务整体成功之后，才在事务外做「重新排这一轮的分析」——它失败只报警告「新回复已经换好了，但这一轮的分析没能重新排队（…）。再点一次重抽会把这一轮重新算一遍。」（警告码 `regenerate.rollback`），**不再把整次重抽说成失败**（那种文案会让用户以为回复没变）。消息不在库里（`rewriteTurn` 返回 `null`）时**什么都不撤**，直接报「原回复已经不在库里（可能已被删掉或被同步覆盖），这次重抽没有落盘。」 | `apps/web/src/hooks/useTurnRunner.ts:1095`（`regenerate.rollback`）、`apps/web/src/lib/turn-write.ts` |
 | 重抽出来的那位不能「失忆」、也不能看不到刚开口的人 | 历史与发送路径对齐：`historyForTurn` = 这一轮之前的历史 + 同轮排在他前面的消息（玩家那句 + 先开口的别人）；同轮已经有人说过话时 `playerInput: ''`（玩家那句已经在历史里，再当一次「本轮输入」会在提示词里出现两遍），`mentionText` 仍是玩家那一句 | `apps/web/src/hooks/useTurnRunner.ts:1014-1019`、`:1050` |
 | 这一轮的记忆／关系不能留着上一版的 | 保留别人的回复 ≠ 保留照着旧内容抽出来的记忆：`clearTurn` + `revertTurn` + 重新 `enqueueTurnAnalysis` 全部照旧执行（`revertTurn` 按 `sourceTurnIds` 删该轮记忆并反向还原情绪） | 同上 |
 | 界面上那句老注释已经不准了 | 「只有最后一条角色回复可以重抽」的理由改成「更早的回复换掉后，后面那些是照着旧版本说的」，并写明顺序 97 只保证**同一轮**里其他人的回复不再被连带删掉、不改这条入口限制 | `apps/web/src/components/MainChat.tsx:486-490` |
@@ -374,7 +400,7 @@ A4 的 core 侧（`packages/core/src/sync/loop.ts:153-162` 的 `serverHead < pul
 
 - **真模型与真机没验**（归 Codex）：本批只有单测。真实模型下「保留同轮其他人」读起来是否连贯（后面那位是照着旧版本接的话）要真机跑一轮才知道。
 - **更早的消息仍然不能重抽**：入口还是「只有最后一条角色回复」（`MainChat.tsx` 的 `lastCharacterId`）。数据层现在其实支持只换任意一条，但「换掉更早的回复之后，后面那些照着旧版本说的话要不要一起重算」是产品决定，用户没拍板。
-- **同轮多步写入仍不是真事务**：只是把「哪一步失败」如实分开报，跨集合的原子提交（消息 + 记忆 + 任务队列）没有——顺序 77 继续挂着。
+- **同轮多步写入现在已经是一个事务**（顺序 77 同一天收口）：`session.rewriteTurn` 把消息改写、清任务键、撤记忆与情绪收进一个 `EntityStore.transaction`；剩下仍不在事务里的是**重新排分析**（要调 `worker.kick()`，IDB 事务里不能 await 网络与别的 Promise）和模型调用／用量记账（钱花了不能回滚）。真机上的极端故障路径仍归 Codex。
 - **`deleteMessage` 的重抽用法没了**：`repository.deleteMessage` / `deleteTurnMessages` 仍在（消息编辑、删除单条、归档仍用），只是重抽不再走它。
 - **`recallCount` 与召回副作用照旧**：重抽会再 `markRecalled` 一次（召回计数继续累加），顺序 96 查到的记忆自激四条通路里这一条没动。
 

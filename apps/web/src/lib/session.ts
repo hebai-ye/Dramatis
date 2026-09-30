@@ -31,7 +31,6 @@ import {
   recoverInterruptedImports,
   reuseUnchangedCollections,
   revertAffectChange as revertAffectChangeForInstance,
-  revertAffectForTurn,
   type Scene,
   setRelationshipField as setRelationshipFieldForInstance,
   syncPresenceForScene,
@@ -40,6 +39,7 @@ import {
 } from '@dramatis/core';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { type DramatisDb, openDramatisDb } from './db';
+import { revertTurnWrites, rewriteTurnWrites } from './turn-write';
 import { createInstanceFor, createSceneFor } from './world';
 
 export interface BootReport {
@@ -285,6 +285,13 @@ export interface SessionApi {
    * 只删记忆是不够的——重抽五次而每次都叠加情绪，关系会单向漂移。
    */
   revertTurn: (turnId: string) => Promise<void>;
+  /**
+   * 顺序 77：原地改写一条回复，并把这一轮的写入（任务键、记忆、情绪）一起撤掉。
+   *
+   * 一个事务里落地（要么都成、要么都不成），界面状态在提交后对齐。返回 `null`
+   * 表示这条回复已经不在库里。usage 记账与模型调用仍在调用方。
+   */
+  rewriteTurn: (input: { messageId: MessageId; patch: Partial<Message>; turnId: string }) => Promise<Message | null>;
   /** 把一本世界书挂到当前世界。core 早就实现了匹配，这里补上入口。 */
   attachWorldBook: (book: WorldBook) => Promise<void>;
   /** 只解绑，不删库——世界书可能被别的世界共用。 */
@@ -1201,22 +1208,51 @@ export function useSession(db: DramatisDb | null): SessionApi {
       const current = snapshotRef.current;
       if (!db || !current) return;
 
-      await db.repository.deleteMemoriesByTurn(current.room.id, turnId);
-
-      const stored = await db.repository.listInstances(current.room.id);
-      const reverted = stored.map((instance) => revertAffectForTurn(instance, turnId));
-      for (let index = 0; index < reverted.length; index += 1) {
-        if (reverted[index] !== stored[index]) {
-          const next = reverted[index];
-          if (next) await db.repository.saveInstance(next);
-        }
-      }
+      // 顺序 77：记忆与情绪在一个事务里撤（见 turn-write.ts），撤完再对齐界面状态。
+      const { revertedInstances } = await revertTurnWrites(db.store, current.room.id, turnId);
 
       setSnapshot({
         ...current,
         memories: current.memories.filter((memory) => !memory.sourceTurnIds.includes(turnId)),
-        instances: current.instances.map((instance) => reverted.find((item) => item.id === instance.id) ?? instance),
+        instances: current.instances.map(
+          (instance) => revertedInstances.find((item) => item.id === instance.id) ?? instance,
+        ),
       });
+    },
+    [db, setSnapshot],
+  );
+
+  /**
+   * 顺序 77：原地改写一条已存在的回复，并把这一轮的后台写入（任务键、记忆、情绪）
+   * 一起撤掉——**全在一个事务里**，要么都成、要么一条都不落。
+   *
+   * 之前这四步各写各的，中间失败会留下「回复换了、上一轮的情绪还在」这种半截状态。
+   * 返回 `null` 表示这条回复已经不在库里（被删掉或被同步覆盖）；界面状态在事务提交
+   * 之后才对，模型调用与用量账单仍由调用方（`useTurnRunner.ts`）负责。
+   */
+  const rewriteTurn = useCallback(
+    async (input: { messageId: MessageId; patch: Partial<Message>; turnId: string }): Promise<Message | null> => {
+      const current = snapshotRef.current;
+      if (!db || !current) return null;
+
+      const { message, reverted } = await rewriteTurnWrites(db.store, {
+        messageId: input.messageId,
+        patch: input.patch,
+        roomId: current.room.id,
+        turnId: input.turnId,
+      });
+      if (message === null) return null;
+
+      setSnapshot({
+        ...current,
+        messages: current.messages.map((item) => (item.id === message.id ? message : item)),
+        memories: current.memories.filter((memory) => !memory.sourceTurnIds.includes(input.turnId)),
+        instances: current.instances.map(
+          (instance) => reverted.revertedInstances.find((item) => item.id === instance.id) ?? instance,
+        ),
+      });
+
+      return message;
     },
     [db, setSnapshot],
   );
@@ -1544,6 +1580,7 @@ export function useSession(db: DramatisDb | null): SessionApi {
       deleteMemory,
       markRecalled,
       revertTurn,
+      rewriteTurn,
       attachWorldBook,
       detachWorldBook,
       saveCard,
@@ -1594,6 +1631,7 @@ export function useSession(db: DramatisDb | null): SessionApi {
     renameWorld,
     revertAffectChange,
     revertTurn,
+    rewriteTurn,
     revokeArtifact,
     saveCard,
     savePersona,

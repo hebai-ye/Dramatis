@@ -21,11 +21,19 @@
 
 ## 新会话从这里接（2026-09-23）
 
+### 2026-09-30：顺序 77 重抽/改归属的一批写入事务化（未 push、未部署）
+
+来源是 2026-09-26 深度审计的存储原子性条目，2026-09-30 在顺序 97 之后同一天做掉。动手前先只读勘查：全库只有一张 object store（`apps/web/src/lib/db.ts:543`，`keyPath: ['collection','id']`），逻辑集合靠 `collection` 字段区分（清单 `packages/core/src/storage/repository.ts:48-64`）；重抽与「改归属」各碰 4 个集合（messages / backgroundTasks / memories / instances），`EntityStore` 却只有单条 CAS、没有任何跨记录原语；同步没有 outbox，靠 `updatedAt > 水位线` 推，所以事务必须覆盖 `updatedAt` 盖章，否则改写会静默丢同步——**同步侧不用一起改**。
+
+改法：`EntityStore` 新增**可选**成员 `transaction<T>(run: (scope: EntityStore) => Promise<T>)` 与 `withStoreTransaction`（`packages/core/src/platform/entity-store.ts:80` / `:109-113`，没实现就 `return run(store)`）；`apps/web/src/lib/db.ts` 的 `createIndexedDbEntityStore` 拆成「库连接来源」+「`createStoreFromSource(source, runTransaction?)`」，事务版开真 `readwrite` 事务、作用域内全走 `tx.store`、成功 `await tx.done`、出错 `tx.abort()`；`packages/core/src/platform/memory-store.ts:101-111` 的内存后端用快照回滚（注释写明不隔离并发事务）。新模块 `apps/web/src/lib/turn-write.ts` 把「改写消息 → 清这一轮任务幂等键 → 撤该轮记忆（软删 + `undoConsolidation`）→ 逐条还原情绪」收进一个事务，消息已不在库里时**什么都不撤**；`session.rewriteTurn` / `session.revertTurn` 走它并同时对齐界面快照。`useTurnRunner.ts` 的 `handleRegenerate` 与 `handleReassignMessage`（后者原来是**完全无 catch** 的三步写入）都换成这一个调用，只剩「重新排这一轮的分析」在事务外、失败发警告 `regenerate.rollback`；`rewriteTurn` 返回 `null` 才算整次失败。
+
+测试新增 `apps/web/src/lib/turn-write.test.ts` 6 条（内存后端证明整批回滚、无 `transaction` 的后端退化成顺序执行、消息不存在时不动任何东西），`useTurnRunner.test.tsx` 夹具补 `session.rewriteTurn` 桩与 `analysisFails` / `rewriteReturnsNull` 开关。五项门禁：typecheck 0、lint `Checked 293 files` 0 error / 0 warning、test Core 73 文件 / 833 条 + Web 18 文件 / 82 条全过、build 0、build:sync-server 0。**IndexedDB 那段真事务在 Node 里没有测试基建（无 `indexedDB`、无 `fake-indexeddb`），浏览器里的原子性归 Codex 真机验**；本批**未 push、未部署**，细节与遗留见 [EVAL.md](./EVAL.md) 第八十九节。
+
 ### 2026-09-30：顺序 97 重抽只重生成被点的那一位（未 push、未部署）
 
 用户 2026-09-30 拍板的语义：重抽**只换被点的那一位**，同一轮里其他角色的回复原样保留。以前（顺序 78 上线「一轮内多名角色作答」之后）一轮可以有两三个人接话，而重抽是「把这一轮的角色回复**全部**删掉再另起一条」——点最后一条会把前面那位刚说的话一起抹掉；而且那五步写入零事务、删除之后任何一步失败都不留退路，报错还会说成「重抽失败」，让用户以为回复没变。
 
-改法（`apps/web/src/hooks/useTurnRunner.ts:977` 的 `handleRegenerate`）：`session.appendMessages` + 删除整轮 → **原地改写**那一条 `session.updateMessage(target.id, {…})`（`:1095`），id、位置、`createdAt` 都不变，只多一次 `updatedAt` 盖章供同步推送；同轮其他人的回复一个字不碰。重抽的那位拿到的历史与**发送路径完全一致**：`historyForTurn` = 这一轮之前的历史 + 同轮排在他前面的消息（`:1014-1019`），同轮已经有人说过话时 `playerInput` 留空（玩家那句已在历史里，不能塞两遍，`:1050`），`mentionText` 仍是玩家那一句。该轮的后台写入照旧全部重算（清任务幂等键 → 回滚记忆与情绪 → 重新排分析），但后三步改成逐步收账：失败时只报「新回复已经换好了，但这一轮的后台记录没收拾干净：…再点一次重抽会把这一轮重新算一遍」（警告码 `regenerate.rollback`，`:1142`），**不再冒充整次重抽失败**。入口限制不变——重抽按钮仍只挂在最后一条角色回复上，只是注释改成了准确理由（`apps/web/src/components/MainChat.tsx:486-490`）。
+改法（`apps/web/src/hooks/useTurnRunner.ts:977` 的 `handleRegenerate`）：`session.appendMessages` + 删除整轮 → **原地改写**那一条 `session.updateMessage(target.id, {…})`（`:1095`），id、位置、`createdAt` 都不变，只多一次 `updatedAt` 盖章供同步推送；同轮其他人的回复一个字不碰。重抽的那位拿到的历史与**发送路径完全一致**：`historyForTurn` = 这一轮之前的历史 + 同轮排在他前面的消息（`:1014-1019`），同轮已经有人说过话时 `playerInput` 留空（玩家那句已在历史里，不能塞两遍，`:1050`），`mentionText` 仍是玩家那一句。该轮的后台写入照旧全部重算（清任务幂等键 → 回滚记忆与情绪 → 重新排分析），但后三步改成逐步收账：失败时只报「新回复已经换好了，但这一轮的后台记录没收拾干净：…再点一次重抽会把这一轮重新算一遍」（警告码 `regenerate.rollback`，`:1142`），**不再冒充整次重抽失败**。入口限制不变——重抽按钮仍只挂在最后一条角色回复上，只是注释改成了准确理由（`apps/web/src/components/MainChat.tsx:486-490`）。**顺序 77 同日收口**：上面那句 `session.updateMessage` 与「后三步逐步收账」已经合并成 `session.rewriteTurn` 的**一个事务**，见上一节。
 
 测试加在 `apps/web/src/hooks/useTurnRunner.test.tsx:480`（三条）：第二轮被重抽时第一条一个字没动且生成历史里看得到先开口的人；第一位被重抽时看不到同轮后面的人；回滚失败报警告而 `setError` 为空。五项门禁与真模型未验的边界见 [EVAL.md](./EVAL.md) 第八十八节。本批**未 push、未部署**。
 

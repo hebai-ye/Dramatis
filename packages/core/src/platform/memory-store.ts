@@ -18,7 +18,7 @@ export function createMemoryEntityStore(): EntityStore {
     return existing;
   };
 
-  return {
+  const store: EntityStore = {
     kind: 'memory',
 
     async get<T>(collection: string, id: string): Promise<T | null> {
@@ -87,5 +87,29 @@ export function createMemoryEntityStore(): EntityStore {
     async clear(collection: string): Promise<void> {
       table(collection).clear();
     },
+
+    /**
+     * 顺序 77：整批提交或整批回滚。
+     *
+     * 内存实现的每次写都是「克隆后整条替换」，**从不原地修改已存对象**，所以各集合
+     * Map 的浅拷贝就是一份正确的快照——回滚时把 Map 换回快照即可，不需要深拷值。
+     *
+     * 已知边界（写在这里免得被当成真事务）：这个实现**不隔离并发事务**。两个事务
+     * 交错跑时，后失败的那个会把先提交的那批一起带回快照。它服务的是测试与
+     * 「IndexedDB 不可用」时的降级运行，不是并发正确性模型。
+     */
+    async transaction<T>(run: (scope: EntityStore) => Promise<T>): Promise<T> {
+      const snapshot = new Map<string, Map<string, unknown>>();
+      for (const [collection, rows] of collections) snapshot.set(collection, new Map(rows));
+      try {
+        return await run(store);
+      } catch (error) {
+        collections.clear();
+        for (const [collection, rows] of snapshot) collections.set(collection, rows);
+        throw error;
+      }
+    },
   };
+
+  return store;
 }

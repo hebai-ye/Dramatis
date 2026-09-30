@@ -510,6 +510,99 @@ interface DramatisSchema extends DBSchema {
 }
 
 /**
+ * 一个「记录来源」（顺序 77）：要么是库连接本身（每次写各自成事务），要么是某个
+ * 父事务里的作用域（所有读写都落在那个事务上）。
+ *
+ * 抽出来是因为同一个门面要服务这两种来源，而它们的**语义必须一字不差**——测试跑
+ * 内存实现、线上跑这个实现，两边行为对不上时最难查的就是这种地方。所以值层面的
+ * 逻辑（matchesWhere / applyQuery / 结构化克隆）只写一遍。
+ */
+interface RecordSource {
+  read(collection: string, where?: Record<string, unknown>): Promise<EntityRecord[]>;
+  readSince(range: IDBKeyRange): Promise<EntityRecord[]>;
+  get(collection: string, id: string): Promise<EntityRecord | undefined>;
+  put(record: EntityRecord): Promise<void>;
+  bulkPut(records: readonly EntityRecord[]): Promise<void>;
+  delete(collection: string, id: string): Promise<void>;
+  update<T extends { id: string }>(
+    collection: string,
+    id: string,
+    mutate: (current: T | null) => T | undefined,
+  ): Promise<T | null>;
+  clear(collection: string): Promise<void>;
+}
+
+/**
+ * 用某个记录来源拼出一个 `EntityStore`（顺序 77）。
+ *
+ * `runTransaction` 只有「库连接」那一侧才有：事务作用域里不能再开事务（IndexedDB
+ * 不支持嵌套），所以作用域自己的 `transaction` 是 `undefined`。
+ */
+function createStoreFromSource(
+  source: RecordSource,
+  runTransaction?: <T>(run: (scope: EntityStore) => Promise<T>) => Promise<T>,
+): EntityStore {
+  const store: EntityStore = {
+    kind: 'indexeddb',
+
+    async get<T>(collection: string, id: string): Promise<T | null> {
+      const record = await source.get(collection, id);
+      return record === undefined ? null : (structuredClone(record.value) as T);
+    },
+
+    async put<T extends { id: string }>(collection: string, value: T): Promise<void> {
+      await source.put({ collection, id: value.id, value: structuredClone(value) });
+    },
+
+    async bulkPut<T extends { id: string }>(collection: string, values: readonly T[]): Promise<void> {
+      await source.bulkPut(values.map((value) => ({ collection, id: value.id, value: structuredClone(value) })));
+    },
+
+    async remove(collection: string, id: string): Promise<void> {
+      await source.delete(collection, id);
+    },
+
+    async list<T>(collection: string, query?: EntityQuery): Promise<T[]> {
+      const records = await source.read(collection, query?.where);
+      const values = records.map((record) => record.value).filter((value) => matchesWhere(value, query?.where));
+      return applyQuery(values, query) as T[];
+    },
+
+    async count(collection: string, where?: Record<string, unknown>): Promise<number> {
+      const records = await source.read(collection, where);
+      return records.filter((record) => matchesWhere(record.value, where)).length;
+    },
+
+    /**
+     * 增量读（顺序 62 / 68）：走 `updatedAt` 索引，只把新写的那几条拿出来。
+     *
+     * `inclusive` 决定下界含不含等于：同步水位线不含（默认），账单的 `since` 含。
+     */
+    async listSince<T>(collection: string, updatedAt: string, options?: { inclusive?: boolean }): Promise<T[]> {
+      const lowerOpen = !(options?.inclusive ?? false);
+      const range = IDBKeyRange.bound([collection, updatedAt], [collection, LAST_TIMESTAMP], lowerOpen, false);
+      const records = await source.readSince(range);
+      return records.map((record) => record.value) as T[];
+    },
+
+    async update<T extends { id: string }>(
+      collection: string,
+      id: string,
+      mutate: (current: T | null) => T | undefined,
+    ): Promise<T | null> {
+      return source.update<T>(collection, id, mutate);
+    },
+
+    async clear(collection: string): Promise<void> {
+      await source.clear(collection);
+    },
+  };
+
+  if (runTransaction !== undefined) store.transaction = runTransaction;
+  return store;
+}
+
+/**
  * IndexedDB 实现（ROADMAP P0-1）。
  *
  * 用「单一对象仓库 + 集合字段」而不是每个集合一个仓库：集合是运行时概念，
@@ -561,69 +654,46 @@ export async function createIndexedDbEntityStore(
   });
 
   /**
-   * 取这个集合里**可能相关**的那批记录（顺序 62）。
+   * 库连接来源（顺序 77）：每次写各自成事务。
    *
-   * 关键是 `where.roomId` 有值时走 `byCollectionRoom` 复合索引：以前无论查什么
-   * 都先把这个集合整表读出来再逐条过滤，于是「一个世界的 600 条消息」在一次
-   * `listRooms` 里要被读三遍（消息 / 角色 / 对话各一次），而同步每 20 秒还会
+   * 读取口径（顺序 62）：`where.roomId` 有值时走 `byCollectionRoom` 复合索引——以前
+   * 无论查什么都会把这个集合整表读出来再逐条过滤，于是「一个世界的 600 条消息」在
+   * 一次 `listRooms` 里要被读三遍（消息 / 角色 / 对话各一次），而同步每 20 秒还会
    * 把 12 个集合整表读一遍。
    *
-   * 拿到的这批仍然要过 `matchesWhere`：索引只能按 `roomId` 缩小范围，
-   * `deletedAt` 之类的条件还得逐条判——**语义与内存实现保持一字不差**。
+   * 拿到的这批仍然要过 `matchesWhere`：索引只能按 `roomId` 缩小范围，`deletedAt`
+   * 之类的条件还得逐条判——**语义与内存实现、与下面的事务作用域来源都一字不差**。
    */
-  const readRecords = async (collection: string, where?: Record<string, unknown>): Promise<EntityRecord[]> => {
-    const roomIdValue = where?.roomId;
-    if (typeof roomIdValue === 'string') {
-      return db.getAllFromIndex(STORE, 'byCollectionRoom', [collection, roomIdValue]);
-    }
-    return db.getAllFromIndex(STORE, 'byCollection', collection);
-  };
-
-  const store: EntityStore = {
-    kind: 'indexeddb',
-
-    async get<T>(collection: string, id: string): Promise<T | null> {
-      const record = await db.get(STORE, [collection, id]);
-      return record === undefined ? null : (structuredClone(record.value) as T);
-    },
-
-    async put<T extends { id: string }>(collection: string, value: T): Promise<void> {
-      await db.put(STORE, { collection, id: value.id, value: structuredClone(value) });
-    },
-
-    async bulkPut<T extends { id: string }>(collection: string, values: readonly T[]): Promise<void> {
-      const tx = db.transaction(STORE, 'readwrite');
-      for (const value of values) {
-        void tx.store.put({ collection, id: value.id, value: structuredClone(value) });
+  const dbSource: RecordSource = {
+    async read(collection, where) {
+      const roomIdValue = where?.roomId;
+      if (typeof roomIdValue === 'string') {
+        return db.getAllFromIndex(STORE, 'byCollectionRoom', [collection, roomIdValue]);
       }
+      return db.getAllFromIndex(STORE, 'byCollection', collection);
+    },
+
+    async readSince(range) {
+      return db.getAllFromIndex(STORE, 'byCollectionUpdated', range);
+    },
+
+    async get(collection, id) {
+      return db.get(STORE, [collection, id]);
+    },
+
+    async put(record) {
+      await db.put(STORE, record);
+    },
+
+    /** 顺序 77：一批写只开**一个**事务（原来就是这样，别退回逐条写）。 */
+    async bulkPut(records) {
+      const tx = db.transaction(STORE, 'readwrite');
+      for (const record of records) void tx.store.put(record);
       await tx.done;
     },
 
-    async remove(collection: string, id: string): Promise<void> {
+    async delete(collection, id) {
       await db.delete(STORE, [collection, id]);
-    },
-
-    async list<T>(collection: string, query?: EntityQuery): Promise<T[]> {
-      const records = await readRecords(collection, query?.where);
-      const values = records.map((record) => record.value).filter((value) => matchesWhere(value, query?.where));
-      return applyQuery(values, query) as T[];
-    },
-
-    async count(collection: string, where?: Record<string, unknown>): Promise<number> {
-      const records = await readRecords(collection, where);
-      return records.filter((record) => matchesWhere(record.value, where)).length;
-    },
-
-    /**
-     * 增量读（顺序 62 / 68）：走 `updatedAt` 索引，只把新写的那几条拿出来。
-     *
-     * `inclusive` 决定下界含不含等于：同步水位线不含（默认），账单的 `since` 含。
-     */
-    async listSince<T>(collection: string, updatedAt: string, options?: { inclusive?: boolean }): Promise<T[]> {
-      const lowerOpen = !(options?.inclusive ?? false);
-      const range = IDBKeyRange.bound([collection, updatedAt], [collection, LAST_TIMESTAMP], lowerOpen, false);
-      const records = await db.getAllFromIndex(STORE, 'byCollectionUpdated', range);
-      return records.map((record) => record.value) as T[];
     },
 
     /**
@@ -637,7 +707,7 @@ export async function createIndexedDbEntityStore(
       collection: string,
       id: string,
       mutate: (current: T | null) => T | undefined,
-    ): Promise<T | null> {
+    ) {
       const tx = db.transaction(STORE, 'readwrite');
       const record = await tx.store.get([collection, id]);
       const current = record === undefined ? null : (structuredClone(record.value) as T);
@@ -651,7 +721,7 @@ export async function createIndexedDbEntityStore(
       return next;
     },
 
-    async clear(collection: string): Promise<void> {
+    async clear(collection) {
       const tx = db.transaction(STORE, 'readwrite');
       const index = tx.store.index('byCollection');
       let cursor = await index.openCursor(collection);
@@ -663,11 +733,97 @@ export async function createIndexedDbEntityStore(
     },
   };
 
+  /*
+   * 顺序 77：把「一轮内的一批写入」放进同一个 readwrite 事务。
+   *
+   * 之所以真能原子：所有集合都睡在同一张 object store（`STORE`）上，一次事务就能
+   * 跨 messages / memories / instances / backgroundTasks 一起提交或整批回滚。
+   *
+   * 两条硬约束（写在这里，因为违反它们不会报错、只会静默失去原子性）：
+   * - `run` 里只能 await 存储操作——IndexedDB 的事务在没有待处理请求时会自动提交，
+   *   网络调用或定时器之类的别的 Promise 会让后续写入落到事务外；
+   * - 事务里不要再开事务（IndexedDB 不支持嵌套），所以作用域的 `transaction`
+   *   是 `undefined`；`worker.kick()` 这类「通知」必须等这里返回之后再发。
+   */
+  const store = createStoreFromSource(dbSource, async (run) => {
+    const tx = db.transaction(STORE, 'readwrite');
+    try {
+      const result = await run(
+        createStoreFromSource({
+          async read(collection, where) {
+            const roomIdValue = where?.roomId;
+            if (typeof roomIdValue === 'string') {
+              return tx.store.index('byCollectionRoom').getAll([collection, roomIdValue]);
+            }
+            return tx.store.index('byCollection').getAll(collection);
+          },
+
+          async readSince(range) {
+            return tx.store.index('byCollectionUpdated').getAll(range);
+          },
+
+          async get(collection, id) {
+            return tx.store.get([collection, id]);
+          },
+
+          async put(record) {
+            await tx.store.put(record);
+          },
+
+          async bulkPut(records) {
+            for (const record of records) await tx.store.put(record);
+          },
+
+          async delete(collection, id) {
+            await tx.store.delete([collection, id]);
+          },
+
+          async update<T extends { id: string }>(
+            collection: string,
+            id: string,
+            mutate: (current: T | null) => T | undefined,
+          ) {
+            const record = await tx.store.get([collection, id]);
+            const current = record === undefined ? null : (structuredClone(record.value) as T);
+            const next = mutate(current);
+            if (next === undefined) return current;
+            await tx.store.put({ collection, id, value: structuredClone({ ...next, id }) });
+            return next;
+          },
+
+          async clear(collection) {
+            const index = tx.store.index('byCollection');
+            let cursor = await index.openCursor(collection);
+            while (cursor) {
+              await cursor.delete();
+              cursor = await cursor.continue();
+            }
+          },
+        }),
+      );
+      // 事务在没有待处理请求时会自动提交，`tx.done` 只是等它落地、接住写失败。
+      await tx.done;
+      return result;
+    } catch (error) {
+      tx.abort();
+      await tx.done.catch(() => undefined);
+      throw error;
+    }
+  });
+
   return { store, db };
 }
 
 export interface DramatisDb {
   backendKind: string;
+  /**
+   * 底层存储（顺序 77）。
+   *
+   * 暴露出来只为一件事：把「一轮内的一批写入」放进同一个事务（`store.transaction`，
+   * 见 `turn-write.ts`）。日常读写仍走 `repository` / `queue` / `ledger` / `tasks`
+   * 这几个门面，别绕过它们。
+   */
+  store: EntityStore;
   repository: Repository;
   queue: BackgroundRunner;
   /**
@@ -710,6 +866,7 @@ export async function openDramatisDb(): Promise<DramatisDb> {
 
   return {
     backendKind: store.kind,
+    store,
     repository: new Repository(store),
     queue: createBackgroundRunner(store),
     ledger: createUsageLedger(store),

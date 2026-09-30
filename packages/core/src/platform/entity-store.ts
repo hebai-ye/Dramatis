@@ -56,6 +56,28 @@ export interface EntityStore {
     id: string,
     mutate: (current: T | null) => T | undefined,
   ): Promise<T | null>;
+  /**
+   * 可选：把一组写入放进**同一个**存储事务（顺序 77）。
+   *
+   * `run` 拿到的是一个「作用域里的 store」：它读写的都是同一个事务，外面在事务
+   * 结束前看不到其中任何一条。`run` 抛异常 = 整批回滚；正常返回 = 一起提交。
+   *
+   * 为什么需要它：重抽成功后的收拾是「改这条消息 + 清这一轮的任务键 + 撤这一轮的
+   * 记忆与情绪」三步跨三个集合的写。以前每一步各自一个事务，中间断电/写失败就会
+   * 留下「回复换新了、记忆还挂着旧的」这种对不上的状态。所有集合都落在同一张
+   * 对象仓库里，所以物理上一次事务就能覆盖它们。
+   *
+   * 两条硬约束（实现侧与调用侧都要守）：
+   * 1. `run` 里**只能 await 存储操作**。IndexedDB 的事务在「没有请求在飞」时会自动
+   *    提交，中间插一个定时器或网络请求，后面的写入就落到事务外面去了——那比不做
+   *    更糟：看起来是原子的，其实不是。
+   * 2. 网络调用、账目流水（钱花了不能因为回滚就不记账）、唤醒后台（`kick`）都必须
+   *    留在事务外。
+   *
+   * 不实现也能跑：调用方走 `withStoreTransaction`，退回「直接跑、不保证原子」——
+   * 语义不变，保证变弱（与 `updateEntity` 同一套话术）。
+   */
+  transaction?<T>(run: (scope: EntityStore) => Promise<T>): Promise<T>;
   clear(collection: string): Promise<void>;
 }
 
@@ -76,6 +98,17 @@ export async function updateEntity<T extends { id: string }>(
   if (next === undefined) return current;
   await store.put(collection, next);
   return next;
+}
+
+/**
+ * `transaction` 的统一入口：后端实现了就真事务，否则把同一个 store 直接交回去。
+ *
+ * 退回路径上每一步仍然各自成事务，批量写入中途失败会留下**部分状态**。调用方不该
+ * 依赖「一定有原子性」，但可以依赖「一定跑得通」——这条与 `updateEntity` 一致。
+ */
+export async function withStoreTransaction<T>(store: EntityStore, run: (scope: EntityStore) => Promise<T>): Promise<T> {
+  if (store.transaction !== undefined) return store.transaction(run);
+  return run(store);
 }
 
 /** 顶层字段的浅比较匹配，null 与 undefined 视为等价。 */

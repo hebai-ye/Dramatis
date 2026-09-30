@@ -1496,6 +1496,25 @@ TASKS 第〇节顺序 68。用户裁定「A+B 推进」；原方案里的 `limit
 
 合并后主干工作区跑完五项门禁（数字见 EVAL 第八十六节）。随后 `4ee7edd` 推到 `origin/main`（`637672f..4ee7edd`），因同步服务端源码没变（`git log 637672f..4ee7edd -- tools/ packages/core/src/sync/` 为空）只换网页：Windows 正式机的 `D:\Dramatis\web\dist` 换成 `assets/index-aDLBA72A.js`（676240 B，与本地构建逐字节相同），旧目录留成 `dist.bak-20260930-005711`；线上首页 200 且引用新资源，`/sync/health` 200。
 
+## 顺序 77、2026-09-30：重抽与改归属的一批写入事务化（IndexedDB 真事务、内存后端快照回滚）
+
+来源是 2026-09-26 深度审计的存储原子性条目，2026-09-30 在顺序 97 之后同一天做掉。动手前先只读勘查：全库只有一张 object store（`keyPath: ['collection','id']`），逻辑集合靠 `collection` 字段区分；重抽与「改归属」各碰 4 个集合，而 `EntityStore` 只有单条 CAS、没有任何跨记录原语，且同步没有 outbox（靠 `updatedAt > 水位线` 推）⇒ 事务必须覆盖 `updatedAt` 盖章，同步侧不用一起改。改法是把 `EntityStore` 的事务扩成**可选**原语，IndexedDB 侧接上真 `readwrite` 事务、内存后端用快照回滚，再把重抽／改归属那批写入收进一个事务。
+
+| 文件 | 动作 | 本批内容 |
+| --- | --- | --- |
+| `packages/core/src/platform/entity-store.ts` | 改 | `EntityStore` 新增可选 `transaction?<T>(run: (scope: EntityStore) => Promise<T>)`；新导出 `withStoreTransaction(store, run)`（没实现就 `return run(store)`） |
+| `apps/web/src/lib/db.ts` | 改 | `createIndexedDbEntityStore` 拆成「库连接来源」+ `createStoreFromSource(source, runTransaction?)`；事务版 `db.transaction(STORE,'readwrite')`、作用域内读写走 `tx.store`、成功 `await tx.done`、出错 `tx.abort()`；`DramatisDb` 暴露 `store` |
+| `packages/core/src/platform/memory-store.ts` | 改 | `transaction` = 快照所有集合 Map → run → 出错清空后按快照恢复再重抛（注释：不隔离并发事务） |
+| `apps/web/src/lib/turn-write.ts` | **新增** | `rewriteTurnWrites`（一个事务里「改写消息 → 清任务键 → 软删该轮记忆 + `undoConsolidation` → 逐条还原情绪」，消息不在库里就什么都不撤）与 `revertTurnWrites` |
+| `apps/web/src/lib/session.ts` | 改 | 新增 `rewriteTurn`（返回 `Message \| null`）；`revertTurn` 改走 `revertTurnWrites`；两者成功后 `setSnapshot` 对齐 messages / memories / instances |
+| `apps/web/src/hooks/useTurnRunner.ts` | 改 | `handleRegenerate` 落盘换成 `session.rewriteTurn`、删掉三步 try/catch 汇总；`handleReassignMessage` 原先**无 catch** 的三步写入换成同一个调用；只有「重新排这一轮的分析」留在事务外并单独报 |
+| `packages/core/src/platform/memory-store.test.ts` | **新增** | 内存后端 `update` / `transaction` 与回滚（7 条） |
+| `apps/web/src/lib/turn-write.test.ts` | **新增** | 6 条：成功路径、中途失败整批回滚（含 `remove` 被撤销）、无 `transaction` 的后端退化成顺序执行、消息不存在时不动任何东西、`revertTurnWrites` 单跑、`withStoreTransaction` 抛错整批不落 |
+| `apps/web/src/hooks/useTurnRunner.test.tsx` | 改 | 夹具补 `session.rewriteTurn` 桩与 `analysisFails` / `rewriteReturnsNull` 开关；原「后台回滚失败」一条拆成「事务失败按整次失败报」与「重排分析失败只发警告」两条 |
+| `docs/{TASKS,STATUS,EVAL,FILE-LOG}.md` | 改 | 顺序 77 计划行改成已完成并写清做法、状态接续点、EVAL 第八十九节与本节；顺序 96/97 相关小节里「真事务仍然没有」的说法一并改成「顺序 77 当天收口」 |
+
+五项门禁：`pnpm typecheck` 0；`pnpm lint` `Checked 293 files` 0 error / 0 warning；`pnpm test` Core 73 文件 / 833 条 + Web 18 文件 / 82 条全过；`pnpm build` 0（`dist/assets/index-CuPsB7O6.js` 680.10 kB / gzip 218.26 kB）；`pnpm build:sync-server` 0。本批**未 push、未部署**；IndexedDB 真事务在 Node 里没有测试基建（无 `indexedDB`、无 `fake-indexeddb`），浏览器里的原子性与并发归 Codex 真机验，边界见 EVAL 第八十九节。
+
 ## 顺序 97、2026-09-30：重抽只重生成被点的那一位（同轮其他人原样保留）
 
 用户 2026-09-30 拍板的语义。改之前重抽是「删掉这一轮**全部**角色回复、再另起一条新消息，然后整轮重排」——顺序 78 之后一轮可以有两三条角色回复，点最后一条会把前面那位刚说的话一起抹掉；新回复还会换 id、换位置，而且那五步写入零事务，任何一步失败都报成「重抽失败」（其实前三步之后回复已经换新）。本批把落盘改成**原地改写**，并把后台回滚的失败与回复本身的失败分开报。
@@ -1507,7 +1526,7 @@ TASKS 第〇节顺序 68。用户裁定「A+B 推进」；原方案里的 `limit
 | `apps/web/src/components/MainChat.tsx` | 改 | `lastCharacterId` 上方注释（`:486-490`）改成准确理由：更早的回复换掉后后面那些是照着旧版本说的；写明顺序 97 只保证**同一轮**里其他人的回复不再被连带删掉，入口限制不变 |
 | `docs/{TASKS,STATUS,EVAL,FILE-LOG}.md` | 改 | 顺序 97 计划行改成已完成并写清做法、状态接续点、EVAL 第八十八节与本节 |
 
-测试先单跑：`useTurnRunner.test.tsx` 13 条全过（原 10 + 新增 3）。本批**未 push、未部署**；五项门禁数字与「真模型、真机都没验」的边界见 EVAL 第八十八节。
+测试先单跑：`useTurnRunner.test.tsx` 13 条全过（原 10 + 新增 3）。本批**未 push、未部署**；五项门禁数字与「真模型、真机都没验」的边界见 EVAL 第八十八节。（**顺序 77 同一天收口**：上面那张表里的 `session.updateMessage` 与「逐步 try/catch 收账」已经换成 `session.rewriteTurn` 的**一个事务**，见上一节。）
 
 ## 顺序 96、2026-09-30：人设表达收敛与结尾反问降级（提示词层最小干预）
 

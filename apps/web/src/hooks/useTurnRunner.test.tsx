@@ -26,6 +26,10 @@ const runtime = vi.hoisted(() => ({
   reverted: [] as string[],
   analyses: [] as string[],
   revertFails: false,
+  /** 顺序 77：模拟「重排这一轮的分析」失败（事务外的那一步）。 */
+  analysisFails: false,
+  /** 顺序 77：模拟改写时那条回复已经在库里找不到了（改写返回空、事务不动）。 */
+  rewriteReturnsNull: false,
 }));
 
 vi.mock('@dramatis/core', async (importOriginal) => {
@@ -81,6 +85,7 @@ vi.mock('../lib/turn-bookkeeping', () => ({
   enqueueSceneSummary: async () => {},
   enqueueMemoryConsolidation: async () => {},
   enqueueTurnAnalysis: async (_db: unknown, _worker: unknown, input: { turnId: string }) => {
+    if (runtime.analysisFails) throw new Error('模拟排队失败');
     runtime.analyses.push(input.turnId);
   },
 }));
@@ -156,6 +161,22 @@ function harness(
         runtime.updates.push({ id, patch });
         return { ...(seeded.find((message) => message.id === id) ?? {}), ...patch, id } as Message;
       },
+      /*
+       * 顺序 77：hook 现在走 `rewriteTurn`——改写、清任务键、撤记忆在一个事务里。
+       * 桩把它记回原来的两个数组，老断言不用改；`revertFails` 模拟「事务失败」，
+       * 此时改写也得当成没发生（真实现会整批回滚）。
+       */
+      rewriteTurn: async (input: { messageId: string; patch: Record<string, unknown>; turnId: string }) => {
+        if (runtime.revertFails) throw new Error('模拟回滚失败');
+        if (runtime.rewriteReturnsNull) return null;
+        runtime.updates.push({ id: input.messageId, patch: input.patch });
+        runtime.reverted.push(input.turnId);
+        return {
+          ...(seeded.find((message) => message.id === input.messageId) ?? {}),
+          ...input.patch,
+          id: input.messageId,
+        } as Message;
+      },
       deleteMessage: async (id: string) => {
         runtime.deletes.push(id);
       },
@@ -164,6 +185,8 @@ function harness(
         if (runtime.revertFails) throw new Error('模拟回滚失败');
       },
       markRecalled: async () => {},
+      /* 改归属要用它找「换给谁」（顺序 77 补的桩）。 */
+      instances: [a, b],
       reloadWorld: async () => {
         runtime.reloads += 1;
         if (runtime.reloadFails) throw new Error('模拟重载失败');
@@ -265,6 +288,8 @@ beforeEach(() => {
   runtime.reverted = [];
   runtime.analyses = [];
   runtime.revertFails = false;
+  runtime.analysisFails = false;
+  runtime.rewriteReturnsNull = false;
 });
 
 describe('一轮多人自动生成', () => {
@@ -504,16 +529,80 @@ describe('重抽只重生成被点的那一位（顺序 97）', () => {
     expect(runtime.generationHistories.at(-1)).toEqual([]);
   });
 
-  it('后台回滚失败时报「回复已换新、后台没收拾干净」，不说整次重抽失败', async () => {
+  it('顺序 77：改写与后台回滚在同一个事务里——它失败就整批不落地，报的是重抽失败', async () => {
     runtime.revertFails = true;
-    const { api, updates, warnings, errors } = harness(false, twoSpeakerTurn);
+    const { api, updates, reverted, analyses, warnings, errors } = harness(false, twoSpeakerTurn);
+
+    await api.handleRegenerate(CHEN_LINE_ID);
+
+    // 要么全成、要么全不成：回复没换、这一轮也没撤
+    expect(updates).toEqual([]);
+    expect(reverted).toEqual([]);
+    expect(analyses).toEqual([]);
+    expect(errors.at(-1)).toContain('模拟回滚失败');
+    expect(warnings).toEqual([]);
+  });
+
+  it('顺序 77：只有「重排分析」失败时报警告（回复已换新，不说整次重抽失败）', async () => {
+    runtime.analysisFails = true;
+    const { api, updates, reverted, warnings, errors } = harness(false, twoSpeakerTurn);
 
     await api.handleRegenerate(CHEN_LINE_ID);
 
     expect(updates.map((item) => item.id)).toEqual([CHEN_LINE_ID]);
+    expect(reverted).toEqual(['T1']);
     expect(errors.at(-1)).toBeNull();
     const notices = warnings.flat() as Array<{ code?: string; message?: string }>;
     expect(notices.some((notice) => notice.code === 'regenerate.rollback')).toBe(true);
+    expect(notices.at(-1)?.message).toContain('重新排队');
     expect(notices.at(-1)?.message).toContain('再点一次重抽');
+  });
+});
+
+describe('改归属：与重抽同一个事务（顺序 77）', () => {
+  it('一次落地：改写归属 + 撤这一轮的后台写入，然后重排分析', async () => {
+    const { api, updates, reverted, analyses, errors, a } = harness(false, twoSpeakerTurn);
+
+    await api.handleReassignMessage(CHEN_LINE_ID, a.id);
+
+    expect(updates.map((item) => item.id)).toEqual([CHEN_LINE_ID]);
+    expect(updates[0]?.patch.speakerInstanceId).toBe(a.id);
+    expect(reverted).toEqual(['T1']);
+    expect(analyses).toEqual(['T1']);
+    expect(errors.at(-1)).toBeNull();
+  });
+
+  it('事务失败时一条都不落地，并给出可读的错误（不再让异常冒出去）', async () => {
+    runtime.revertFails = true;
+    const { api, updates, reverted, errors, a } = harness(false, twoSpeakerTurn);
+
+    await api.handleReassignMessage(CHEN_LINE_ID, a.id);
+
+    expect(updates).toEqual([]);
+    expect(reverted).toEqual([]);
+    expect(errors.at(-1)).toContain('改归属没有落盘');
+    expect(errors.at(-1)).toContain('模拟回滚失败');
+  });
+
+  it('回复已经不在库里（改写返回空）时给出可读提示，不动任何东西', async () => {
+    runtime.rewriteReturnsNull = true;
+    const { api, updates, reverted, errors, a } = harness(false, twoSpeakerTurn);
+
+    await api.handleReassignMessage(CHEN_LINE_ID, a.id);
+
+    expect(updates).toEqual([]);
+    expect(reverted).toEqual([]);
+    expect(errors.at(-1)).toContain('已经不在库里');
+  });
+
+  it('要改的那条根本不在当前列表里时什么都不做，也不报错', async () => {
+    const { api, updates, reverted, errors, a } = harness(false, twoSpeakerTurn);
+    const missing = messageId(newId());
+
+    await api.handleReassignMessage(missing, a.id);
+
+    expect(updates).toEqual([]);
+    expect(reverted).toEqual([]);
+    expect(errors).toEqual([]);
   });
 });

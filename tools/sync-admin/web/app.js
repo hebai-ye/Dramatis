@@ -191,6 +191,16 @@ function addEditor(content, space, version) {
   const form = node('form');
   form.className = 'editor';
   form.append(node('h3', '编辑运营资料与存储配额'));
+  const accountLabel = node('label', space.profile ? '已关联账户 ID' : '关联账户 ID');
+  accountLabel.htmlFor = 'edit-account';
+  const account = node('input');
+  account.id = 'edit-account';
+  account.value = space.profile?.accountId ?? '';
+  account.maxLength = 128;
+  account.readOnly = !!space.profile;
+  account.autocomplete = 'off';
+  account.spellcheck = false;
+  form.append(accountLabel, account);
   const nameLabel = node('label', '服务器登记显示名');
   nameLabel.htmlFor = 'edit-name';
   const name = node('input');
@@ -215,13 +225,21 @@ function addEditor(content, space, version) {
   quota.disabled = inherit.checked;
   inherit.addEventListener('change', () => {
     quota.disabled = inherit.checked;
-    confirmation.replaceChildren();
+    clear();
   });
   const save = node('button', '预览修改');
   save.type = 'submit';
   const confirmation = node('div');
   confirmation.className = 'confirmation';
-  const clear = () => confirmation.replaceChildren();
+  let editVersion = 0;
+  const clear = () => {
+    editVersion++;
+    confirmation.replaceChildren();
+  };
+  account.addEventListener('input', () => {
+    name.disabled = !space.profile && account.value.trim() === '';
+    clear();
+  });
   name.addEventListener('input', clear);
   quota.addEventListener('input', clear);
   form.append(
@@ -234,7 +252,7 @@ function addEditor(content, space, version) {
       'p',
       space.profile
         ? '名称仅修改服务器登记资料，设备本地名称可能在下次登记登录时更新。'
-        : '此空间未认领，管理员只能配置容量；不能代填账户归属或名称。',
+        : '填写原账户 ID。服务器会校验它对应此空间；空显示名默认使用 ID。关联仅登记运营资料，不赋予登录或解密权限。',
       'hint',
     ),
     node('p', '0 表示禁止新增用量。降低配额不会删除数据；保存前先自动创建完整一致性备份。', 'hint'),
@@ -245,6 +263,7 @@ function addEditor(content, space, version) {
     event.preventDefault();
     void perform(async () => {
       clear();
+      const requestVersion = editVersion;
       save.disabled = true;
       try {
         const maxBytes = inherit.checked ? null : Math.round(Number(quota.value) * 1024 ** 3);
@@ -254,14 +273,23 @@ function addEditor(content, space, version) {
           spaceHandle: space.spaceHandle,
           maxBytes,
           ...(space.profile ? { displayName: name.value } : {}),
+          ...(!space.profile && account.value.trim() !== ''
+            ? { accountId: account.value, ...(name.value.trim() === '' ? {} : { displayName: name.value }) }
+            : {}),
         });
-        if (version !== detailVersion) return;
+        if (version !== detailVersion || requestVersion !== editVersion) return;
         confirmation.append(
           node('h3', '二次确认'),
           node('p', `容量：${bytes(preview.before.quotaLimitBytes)} → ${bytes(preview.after.quotaLimitBytes)}`),
         );
+        if (preview.before.accountId !== preview.after.accountId)
+          confirmation.append(
+            node('p', `账户 ID：${preview.before.accountId ?? '未关联'} → ${preview.after.accountId}`),
+          );
         if (preview.before.displayName !== preview.after.displayName)
-          confirmation.append(node('p', `显示名：${preview.before.displayName} → ${preview.after.displayName}`));
+          confirmation.append(
+            node('p', `显示名：${preview.before.displayName ?? '未登记'} → ${preview.after.displayName}`),
+          );
         confirmation.append(
           node('p', `目标空间：${space.spaceHandle}`, 'handle'),
           node('p', '确认 2 分钟内有效。请输入完整空间句柄：'),

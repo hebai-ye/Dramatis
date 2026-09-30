@@ -13,6 +13,13 @@ declare module 'node:sqlite' {
 declare module 'node:crypto' {
   export function randomUUID(): string;
   export function randomBytes(size: number): { toString(encoding: 'base64url'): string };
+  export function pbkdf2Sync(
+    secret: string,
+    salt: string,
+    iterations: number,
+    length: number,
+    digest: string,
+  ): { toString(encoding: 'base64url'): string };
   export function createHash(name: string): { update(text: string): { digest(encoding: 'hex'): string } };
   export function timingSafeEqual(a: Uint8Array, b: Uint8Array): boolean;
 }

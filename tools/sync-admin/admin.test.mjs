@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
-import { SYNC_SCHEMA_SQL } from '../sync-server/dist/packages/core/src/index.js';
+import { deriveSpaceHandle, SYNC_SCHEMA_SQL } from '../sync-server/dist/packages/core/src/index.js';
 import { appendAudit } from './dist/audit.js';
 import { createAdminHandler } from './dist/http.js';
 import { readAdminConfig } from './dist/main.js';
@@ -123,6 +123,27 @@ test('重新创建的空间不会错误关联旧纪元账户资料', () => {
     writer.close();
     assert.equal(f.store.overview().accounts, 0);
     assert.equal(f.store.detail('fixture-handle').space.profile, null);
+  } finally {
+    f.close();
+  }
+});
+
+test('已知ID按客户端身份协议找到未登记空间，搜索不写账户资料', async () => {
+  const f = fixture();
+  try {
+    const handle = await deriveSpaceHandle('fixture owner');
+    const writer = new DatabaseSync(f.path);
+    writer.prepare("UPDATE spaces SET space_handle=? WHERE space_handle='unclaimed-handle'").run(handle);
+    writer.prepare("UPDATE heads SET space_handle=? WHERE space_handle='unclaimed-handle'").run(handle);
+    writer.close();
+    for (const search of ['fixture owner', '  FIXTURE   OWNER  ']) {
+      const result = f.store.list({ offset: 0, limit: 50, search });
+      assert.equal(result.total, 1);
+      assert.equal(result.spaces[0].spaceHandle, handle);
+      assert.equal(result.spaces[0].profile, null);
+    }
+    assert.equal(f.store.overview().accounts, 1);
+    assert.equal(f.store.list({ offset: 0, limit: 50, search: 'fixture-unknown' }).total, 0);
   } finally {
     f.close();
   }

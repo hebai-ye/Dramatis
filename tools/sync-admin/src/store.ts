@@ -1,5 +1,6 @@
 import { existsSync } from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
+import { accountSpaceHandle, normalizeAccountId } from './identity.js';
 
 interface SpaceRow {
   space_handle: string;
@@ -93,11 +94,13 @@ export function createAdminStore(path: string, defaultMaxBytes = 256 * 1024 ** 2
         });
       },
       list(options: { offset: number; limit: number; search: string }) {
+        const accountId = normalizeAccountId(options.search);
+        const derivedHandle = accountId === null ? '' : accountSpaceHandle(accountId);
         return snapshot(() => {
           const pattern = `%${options.search.replace(/[\\%_]/g, '\\$&')}%`;
-          const where = `WHERE s.space_handle LIKE ? ESCAPE '\\'
+          const where = `WHERE s.space_handle=? OR s.space_handle LIKE ? ESCAPE '\\'
             ${profiles ? "OR p.account_id LIKE ? ESCAPE '\\' OR p.display_name LIKE ? ESCAPE '\\'" : ''}`;
-          const params = profiles ? [pattern, pattern, pattern] : [pattern];
+          const params = profiles ? [derivedHandle, pattern, pattern, pattern] : [derivedHandle, pattern];
           const total = (db.prepare(`SELECT COUNT(*) AS n ${join} ${where}`).get(...params) as { n: number }).n;
           const rows = db
             .prepare(`SELECT ${projection} ${join} ${where}

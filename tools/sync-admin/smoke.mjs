@@ -7,7 +7,7 @@ import { dirname, extname, join, resolve } from 'node:path';
 import process from 'node:process';
 import { DatabaseSync } from 'node:sqlite';
 import { fileURLToPath } from 'node:url';
-import { SYNC_SCHEMA_SQL } from '../sync-server/dist/packages/core/src/index.js';
+import { deriveSpaceHandle, SYNC_SCHEMA_SQL } from '../sync-server/dist/packages/core/src/index.js';
 import { createAccountProfileHandler } from '../sync-server/dist/tools/sync-server/src/accounts.js';
 import { createSpaceQuotaResolver } from '../sync-server/dist/tools/sync-server/src/storage-policy.js';
 
@@ -19,15 +19,16 @@ db.exec(SYNC_SCHEMA_SQL);
 createAccountProfileHandler(db);
 createSpaceQuotaResolver(db);
 mkdirSync(join(data, 'backups'));
+const fixtureHandle = await deriveSpaceHandle('fixture-smoke-owner');
 db.prepare('INSERT INTO spaces VALUES (?, ?, ?, ?, ?, ?)').run(
-  'fixture-unclaimed',
+  fixtureHandle,
   'fixture-hash',
   'fixture-recovery-hash',
   '{}',
   '2026-01-01',
   'fixture-epoch',
 );
-db.prepare('INSERT INTO heads VALUES (?, 0, 0, 0)').run('fixture-unclaimed');
+db.prepare('INSERT INTO heads VALUES (?, 0, 0, 0)').run(fixtureHandle);
 db.close();
 // 明确的测试凭证，只能用于此一次性回环验收环境。
 const token = 'fixture-admin-token-for-test-only-012345678901234567890';

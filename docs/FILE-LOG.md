@@ -1556,6 +1556,19 @@ Windows 本机临时库／真实浏览器完成同意登记、不登记注册、
 
 正式网页基于已上线4ee7edd仅叠账户登记所需文件；未上线无关顺序96提示词。原程序与生产快照保留。真实编辑仅在假库，生产只查元数据。五门禁916条全部通过；正式Node22专项18条全部通过。
 
+## 顺序101、2026-09-30：管理员关联未登记空间与密码恢复指引
+
+| 文件 | 动作 | 内容 |
+| --- | --- | --- |
+| tools/sync-admin/src/identity.ts／node.d.ts | 新增／改 | 与core一致的已知ID规范化及句柄定位，不涉及凭证或解密材料 |
+| tools/sync-admin/src/store.ts／operations.ts | 改 | 已知ID搜索未登记空间；受控关联、事务防并发、最小资料及独立关联审计 |
+| tools/sync-admin/web/app.js／index.html | 改 | 关联输入与前后值确认、编辑期间过期预览取消；用户自助密码恢复指引，无密码接收 |
+| tools/sync-admin/admin.test.mjs／operations.test.mjs／smoke.mjs | 改 | 客户端协议对照查询、关联／拒绝／失败／并发／凭证密文不变；假ID真浏览器验收 |
+| tools/sync-admin/README.md／docs/ADMIN-CONSOLE.md | 改 | 关联与所有权证明区别、ID匹配要求、密码补救限制、管理程序单独回滚 |
+| docs/{STATUS,TASKS,EVAL,FILE-LOG}.md | 改 | 顺序101范围、门禁与真机证据；任务73仍开着 |
+
+无schema迁移或同步／客户端代码修改。真实ID、地址、token与运维细节只在忽略的LOCAL-NOTES；此批未push。
+
 ## 七十二、几点注意
 
 ---

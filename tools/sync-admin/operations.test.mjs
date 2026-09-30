@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
-import { SYNC_SCHEMA_SQL } from '../sync-server/dist/packages/core/src/index.js';
+import { deriveSpaceHandle, SYNC_SCHEMA_SQL } from '../sync-server/dist/packages/core/src/index.js';
 import { createAdminHandler } from './dist/http.js';
 import { createAdminOperations } from './dist/operations.js';
 import { createAdminStore } from './dist/store.js';
@@ -202,5 +202,108 @@ test('未认领空间只能配置配额，恢复默认保留默认口径', () =>
     assert.equal(f.db.prepare('SELECT max_bytes FROM space_policies').get().max_bytes, null);
   } finally {
     f.close();
+  }
+});
+
+async function unclaimedFixture(options = {}) {
+  const f = fixture(options);
+  const handle = await deriveSpaceHandle('fixture owner');
+  f.db.exec('DELETE FROM account_profiles');
+  f.db.prepare('UPDATE spaces SET space_handle=?').run(handle);
+  f.db.prepare('UPDATE heads SET space_handle=?').run(handle);
+  f.db
+    .prepare('INSERT INTO records VALUES (?,?,?,?,?,?,?,?)')
+    .run(handle, 'messages', 'fixture-record', 1, '2026-01-01', null, 'fixture-device', 'forbidden-sealed');
+  return { ...f, handle };
+}
+
+test('管理员关联先备份，再原子登记规范化ID与显示名，凭证和密文保持原样', async () => {
+  const f = await unclaimedFixture();
+  try {
+    const originalSpace = f.db.prepare('SELECT * FROM spaces').get();
+    const originalRecords = f.db.prepare('SELECT * FROM records').all();
+    const preview = f.ops.prepare({
+      spaceHandle: f.handle,
+      accountId: '  FIXTURE   OWNER  ',
+      displayName: 'fixture-name',
+    });
+    assert.equal(preview.before.accountId, null);
+    assert.equal(preview.after.accountId, 'fixture owner');
+    assert.equal(f.db.prepare('SELECT COUNT(*) AS n FROM account_profiles').get().n, 0);
+    assert.equal(readdirSync(f.backupPath).length, 0);
+    const result = f.commit(preview, f.handle);
+    const profile = f.db.prepare('SELECT * FROM account_profiles').get();
+    assert.equal(profile.account_id, 'fixture owner');
+    assert.equal(profile.display_name, 'fixture-name');
+    assert.equal(profile.space_epoch, originalSpace.epoch);
+    const saved = new DatabaseSync(join(f.backupPath, result.backupFile), { readOnly: true });
+    assert.equal(saved.prepare('SELECT COUNT(*) AS n FROM account_profiles').get().n, 0);
+    saved.close();
+    assert.deepEqual(f.db.prepare('SELECT * FROM spaces').get(), originalSpace);
+    assert.deepEqual(f.db.prepare('SELECT * FROM records').all(), originalRecords);
+    assert.deepEqual(
+      f.events.map((event) => event.action),
+      ['account-link-intent', 'account-link-applied'],
+    );
+    for (const secret of ['fixture owner', 'fixture-name', 'forbidden-hash', 'forbidden-wraps', 'forbidden-sealed'])
+      assert.equal(JSON.stringify(f.events).includes(secret), false);
+    assert.throws(() => f.commit(preview, f.handle));
+    assert.throws(() =>
+      f.ops.prepare({ spaceHandle: f.handle, accountId: 'fixture owner', displayName: 'replacement' }),
+    );
+  } finally {
+    f.close();
+  }
+});
+
+test('关联拒绝不匹配ID、控制字符与密码字段，错误确认不写且不备份', async () => {
+  const f = await unclaimedFixture();
+  try {
+    for (const accountId of ['fixture-other', '', 'fixture\nowner', 'a'.repeat(129)]) {
+      assert.throws(() => f.ops.prepare({ spaceHandle: f.handle, accountId, displayName: 'fixture-name' }), {
+        code: accountId === 'fixture-other' ? 'account-mismatch' : 'bad-account-id',
+      });
+    }
+    assert.throws(() =>
+      f.ops.prepare({ spaceHandle: f.handle, accountId: 'fixture owner', password: 'fixture-password' }),
+    );
+    const p = f.ops.prepare({ spaceHandle: f.handle, accountId: 'fixture owner' });
+    assert.equal(p.after.displayName, 'fixture owner');
+    assert.throws(() => f.commit(p, 'wrong-handle'));
+    assert.equal(f.db.prepare('SELECT COUNT(*) AS n FROM account_profiles').get().n, 0);
+    assert.equal(readdirSync(f.backupPath).length, 0);
+  } finally {
+    f.close();
+  }
+});
+
+test('关联遇到备份/审计失败或并发用户登记均不覆盖资料', async () => {
+  for (const failure of ['backup', 'audit', 'claim']) {
+    const f = await unclaimedFixture(
+      failure === 'audit'
+        ? {
+            audit() {
+              throw new Error('fixture-audit-failure');
+            },
+          }
+        : {},
+    );
+    try {
+      const preview = f.ops.prepare({ spaceHandle: f.handle, accountId: 'fixture owner', maxBytes: 1024 ** 3 });
+      if (failure === 'backup') rmSync(f.backupPath, { recursive: true });
+      if (failure === 'claim')
+        f.db
+          .prepare('INSERT INTO account_profiles VALUES (?,?,?,?,?)')
+          .run(f.handle, 'fixture owner', 'owner-name', '2026-01-02', 'fixture-epoch');
+      assert.throws(() => f.commit(preview, f.handle));
+      assert.equal(f.db.prepare('SELECT COUNT(*) AS n FROM space_policies').get().n, 0);
+      const profiles = f.db
+        .prepare('SELECT display_name FROM account_profiles')
+        .all()
+        .map((row) => row.display_name);
+      assert.deepEqual(profiles, failure === 'claim' ? ['owner-name'] : []);
+    } finally {
+      f.close();
+    }
   }
 });

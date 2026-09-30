@@ -12,6 +12,7 @@ import {
   resolveClientKey,
   type SyncServerLimits,
 } from '../../../packages/core/src/index.js';
+import { createAccountProfileHandler } from './accounts.js';
 
 /**
  * 独立同步服务端（P2-6 第四步·部署）。
@@ -149,16 +150,19 @@ class BodyTooLargeError extends Error {
   override readonly name = 'BodyTooLargeError';
 }
 
-async function readBody(request: IncomingMessage): Promise<Uint8Array<ArrayBuffer> | undefined> {
+async function readBody(
+  request: IncomingMessage,
+  maximum = MAX_BODY_BYTES,
+): Promise<Uint8Array<ArrayBuffer> | undefined> {
   if (request.method === 'GET' || request.method === 'HEAD') return undefined;
   // 声明了长度就先看一眼：明摆着超的不必读进内存
   const declared = Number(request.headers['content-length']);
-  if (Number.isFinite(declared) && declared > MAX_BODY_BYTES) throw new BodyTooLargeError('请求体太大');
+  if (Number.isFinite(declared) && declared > maximum) throw new BodyTooLargeError('请求体太大');
   const chunks: Uint8Array[] = [];
   let size = 0;
   for await (const chunk of request) {
     size += chunk.byteLength;
-    if (size > MAX_BODY_BYTES) throw new BodyTooLargeError('请求体太大');
+    if (size > maximum) throw new BodyTooLargeError('请求体太大');
     chunks.push(chunk);
   }
   return concat(chunks);
@@ -176,6 +180,7 @@ export function startServer(config: ServerConfig): RunningServer {
   applySqlitePragmas(db);
   const store = createSqliteSyncStore(db);
   const server = createSyncServer(store, { limits: config.limits });
+  const accountProfiles = createAccountProfileHandler(db);
   const startedAt = Date.now();
 
   const log = (line: string): void => {
@@ -207,7 +212,8 @@ export function startServer(config: ServerConfig): RunningServer {
           if (value === undefined) continue;
           headers.set(key, Array.isArray(value) ? value.join(', ') : value);
         }
-        const body = await readBody(request);
+        const isClaim = path.split('?')[0] === '/accounts/claim';
+        const body = await readBody(request, isClaim ? 4096 : MAX_BODY_BYTES);
 
         /*
          * 给公开接口限流用的「来源」（顺序 61，审计 A8）。
@@ -223,21 +229,24 @@ export function startServer(config: ServerConfig): RunningServer {
           trustedProxyHops: config.trustedProxyHops,
         });
 
-        const handled = await handleSyncRequest(
-          new Request(`http://${host}${path}`, {
-            method: request.method ?? 'GET',
-            headers,
-            ...(body === undefined ? {} : { body }),
-          }),
-          {
-            server,
-            cors: { allowedOrigins: config.allowedOrigins },
-            ...(clientKey === '' ? {} : { clientKey }),
-            onInternalError: (error) => {
-              logError(`${request.method ?? 'GET'} ${path.split('?')[0] ?? ''}`, error);
-            },
-          },
-        );
+        const forwarded = new Request(`http://${host}${path}`, {
+          method: request.method ?? 'GET',
+          headers,
+          ...(body === undefined ? {} : { body }),
+        });
+        const handled = isClaim
+          ? await accountProfiles(forwarded, {
+              clientKey: clientKey || 'unknown',
+              allowedOrigins: config.allowedOrigins,
+            })
+          : await handleSyncRequest(forwarded, {
+              server,
+              cors: { allowedOrigins: config.allowedOrigins },
+              ...(clientKey === '' ? {} : { clientKey }),
+              onInternalError: (error) => {
+                logError(`${request.method ?? 'GET'} ${path.split('?')[0] ?? ''}`, error);
+              },
+            });
 
         const text = await handled.text();
         response.statusCode = handled.status;
@@ -253,7 +262,7 @@ export function startServer(config: ServerConfig): RunningServer {
             JSON.stringify({
               error: {
                 code: 'payload-too-large',
-                message: `请求体太大（上限 ${String(MAX_BODY_BYTES / 1024 / 1024)} MB）。`,
+                message: '请求体超过此接口允许的上限。',
               },
             }),
           );
@@ -266,7 +275,9 @@ export function startServer(config: ServerConfig): RunningServer {
       } finally {
         // 只记方法、路径、状态、耗时——**不记 Authorization，也不记请求体**
         const status = response.statusCode;
-        log(`${request.method ?? 'GET'} ${path} → ${String(status)} (${String(Date.now() - started)} ms)`);
+        log(
+          `${request.method ?? 'GET'} ${path.split('?')[0]} → ${String(status)} (${String(Date.now() - started)} ms)`,
+        );
       }
     })();
   };

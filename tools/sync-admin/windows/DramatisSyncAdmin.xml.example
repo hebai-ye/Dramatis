@@ -1,0 +1,15 @@
+<service>
+  <id>DramatisSyncAdmin</id>
+  <name>Dramatis 只读管理台</name>
+  <description>仅监听回环地址的账户与同步空间元数据管理台。</description>
+  <!-- 将 node.exe 放在服务目录，或改成已核验的绝对路径。秘密配置只放在 secrets。 -->
+  <executable>%BASE%\node.exe</executable>
+  <arguments>--env-file="%BASE%\secrets\admin.env" "%BASE%\start.mjs"</arguments>
+  <workingdirectory>%BASE%</workingdirectory>
+  <serviceaccount>
+    <username>__SERVICE_USER__</username>
+  </serviceaccount>
+  <logpath>%BASE%\logs</logpath>
+  <log mode="roll-by-size"><sizeThreshold>10240</sizeThreshold><keepFiles>5</keepFiles></log>
+  <onfailure action="restart" delay="10 sec" />
+</service>

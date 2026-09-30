@@ -1512,6 +1512,29 @@ TASKS 第〇节顺序 68。用户裁定「A+B 推进」；原方案里的 `limit
 
 本批**未 push、未部署**；五项门禁数字与「真模型没验」的边界见 EVAL 第八十七节。
 
+## 顺序 99、2026-09-30：账户关联与只读服务器管理台
+
+用户批准 A（SSH＋本机网页）与账户 ID／显示名＋关联空间。主仓 96／97 已完成、98 已登记给其它工作，首批最终编号 **99**；工作位于隔离分支 `codex/sync-admin-readonly`，一批一个提交，未 push／部署。
+
+| 文件 | 动作 | 内容 |
+| --- | --- | --- |
+| `tools/sync-server/src/accounts.ts` | 新增 | 账户资料最小表、现有凭证／恢复凭证证明、显式同意、句柄核对、4 KB／限流、世代绑定与事务幂等认领 |
+| `tools/sync-server/src/main.ts` | 改 | 用户自助 `/accounts/claim` 接线、专属体积上限、日志路径去查询参数 |
+| `apps/web/src/lib/account-profile.ts`／`.test.ts` | 新增 | 同意后才登记、响应核对、旧服务器／失败兼容；4 条测试 |
+| `apps/web/src/lib/account-auth.ts` | 改 | 注册／登录／恢复凭证认领接线、服务端显示名、失败保留本地账户 |
+| `apps/web/src/components/AccountPanel.tsx` | 改 | 最小资料告知和同意、登记失败提示、登录恢复状态清理、改变服务器重新取得同意 |
+| `tools/sync-admin/src/{store,http,audit,main,node.d}.ts` | 新增 | 显式安全元数据 DTO、只读 SQLite、GET 白名单、严格回环来源与 token、CSP／no-store、独立追加审计、备份文件信息与固定回环健康请求 |
+| `tools/sync-admin/{start.mjs,tsconfig.json,.env.example}` | 新增 | 独立管理进程与无秘密环境模板 |
+| `tools/sync-admin/web/{index.html,app.js,style.css}` | 新增 | 账户／空间总览、搜索分页、详情、备份与退出；token 仅会话内存，资料以纯文本渲染 |
+| `tools/sync-admin/{accounts.test.mjs,admin.test.mjs,smoke.mjs}` | 新增 | 11 条真实 SQLite／HTTP 专项，以及 Windows 本机浏览器的独立假库验收环境 |
+| `tools/sync-admin/README.md`／`windows/DramatisSyncAdmin.xml.example` | 新增 | 泛化 Windows WinSW／NTFS ACL／既有管理隧道说明、验收与回滚，无正式身份信息 |
+| `package.json`／`.github/workflows/ci.yml` | 改 | 管理编译／类型检查／专项测试接入根门禁；CI 步骤注释标明新覆盖 |
+| `docs/ADMIN-CONSOLE.md` | 改 | 修正真实 `heads`／`epoch`／封装 JSON schema、已选择形态、已实现／后续分界、Windows 接入与具体风险防护 |
+| `docs/superpowers/plans/2026-09-30-sync-admin-readonly.md` | 新增 | 单批实施、约束、验收与回滚计划 |
+| `docs/{STATUS,TASKS,EVAL,FILE-LOG}.md` | 改 | 顺序 99、任务 56 首批状态与后续；EVAL 第九十一节证据，任务 73 保持待办 |
+
+Windows 本机临时库／真实浏览器完成同意登记、不登记注册、登录、元数据查询、HTML 名称纯文本、token 拒绝与退出；正式主机没有连接。五门禁最终数字见 EVAL 第九十一节。配额修改、VIP／托管服务／其它服务目录与桌面壳均不在本批实现。
+
 ## 七十二、几点注意
 
 ---

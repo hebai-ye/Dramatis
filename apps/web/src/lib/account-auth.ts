@@ -25,7 +25,8 @@ import {
   openSpace,
   type RemoteSpaceMeta,
 } from '@dramatis/core';
-import { createAccount, createIndexedDbEntityStore, type LocalAccount, loadAccountRegistry } from './db';
+import { claimAccountProfile } from './account-profile';
+import { createAccount, createIndexedDbEntityStore, type LocalAccount, loadAccountRegistry, renameAccount } from './db';
 import { createBrowserKeyStore, type KeyStorageMode } from './keystore';
 import { assertPassword } from './password-policy';
 import { SYNC_CONFIG_META_KEY, type SyncConfig, syncPasswordKeyRef } from './sync';
@@ -88,12 +89,15 @@ export interface RegisterAccountInput {
   endpoint?: string;
   /** 密码存哪（与原来的「密码保存方式」同一套语义）。 */
   keyMode?: KeyStorageMode;
+  /** 用户同意将账户 ID / 显示名登记为服务器运营资料。 */
+  profileConsent?: boolean;
 }
 
 export interface AccountAuthResult {
   account: LocalAccount;
   /** 注册时才有：建空间那一刻必须抄下来的恢复码。 */
   recoveryCode: string | null;
+  profileWarning: string | null;
 }
 
 /**
@@ -129,7 +133,16 @@ export async function registerAccount(input: RegisterAccountInput): Promise<Acco
     throw new Error(`服务端上已经有一个「${accountId}」的空间了。直接「登录」它，或者换一个账户 ID。`);
   }
 
-  const account = createAccount({ accountId, name: input.name.trim() === '' ? accountId : input.name });
+  const localName = input.name.trim() === '' ? accountId : input.name.trim();
+  const claimed = await claimAccountProfile({
+    endpoint,
+    spaceHandle: credentials.spaceHandle,
+    accountId,
+    displayName: localName,
+    credential: credentials.credential,
+    consent: input.profileConsent === true,
+  });
+  const account = createAccount({ accountId, name: claimed.profile?.displayName ?? localName });
   await writeAccountSyncConfig(account.dbName, {
     endpoint,
     userId: accountId,
@@ -141,7 +154,7 @@ export async function registerAccount(input: RegisterAccountInput): Promise<Acco
   });
   await createBrowserKeyStore(keyMode).set(syncPasswordKeyRef(account.id), input.password);
 
-  return { account, recoveryCode: credentials.recoveryCode };
+  return { account, recoveryCode: credentials.recoveryCode, profileWarning: claimed.warning };
 }
 
 export interface LoginAccountInput {
@@ -153,6 +166,7 @@ export interface LoginAccountInput {
   keyMode?: KeyStorageMode;
   /** 本机还没有这个账户时，给它起个显示名；缺省用账户 ID。 */
   name?: string;
+  profileConsent?: boolean;
 }
 
 /**
@@ -177,11 +191,26 @@ export async function loginAccount(input: LoginAccountInput): Promise<AccountAut
   }
 
   // 密码错时在这里就会失败（GCM 认证过不去），不会留下「登录成功但数据解不开」的状态
-  await openWithSecret(meta, input.password);
+  const opened = await openWithSecret(meta, input.password);
 
   const registry = await loadAccountRegistry();
   const existing = registry.accounts.find((account) => account.accountId === accountId);
-  const account = existing ?? createAccount({ accountId, name: (input.name ?? '').trim() || accountId });
+  const localName = existing?.name ?? ((input.name ?? '').trim() || accountId);
+  const claimed = await claimAccountProfile({
+    endpoint,
+    spaceHandle,
+    accountId,
+    displayName: localName,
+    credential: opened.credential,
+    consent: input.profileConsent === true,
+  });
+  const name = claimed.profile?.displayName ?? localName;
+  const account =
+    existing === undefined
+      ? createAccount({ accountId, name })
+      : existing.name === name
+        ? existing
+        : renameAccount(existing.id, name);
 
   await writeAccountSyncConfig(account.dbName, {
     endpoint,
@@ -194,24 +223,30 @@ export async function loginAccount(input: LoginAccountInput): Promise<AccountAut
   });
   await createBrowserKeyStore(keyMode).set(syncPasswordKeyRef(account.id), input.password);
 
-  return { account, recoveryCode: null };
+  return { account, recoveryCode: null, profileWarning: claimed.warning };
 }
 
 /** 先用密码试、不行再按恢复码试（与 `sync.ts` 里那条路同一套语义）。 */
-async function openWithSecret(meta: RemoteSpaceMeta, secret: string): Promise<void> {
+async function openWithSecret(meta: RemoteSpaceMeta, secret: string): Promise<{ credential: string }> {
   const byPassword = meta.keyWraps.password;
   if (byPassword !== undefined) {
     try {
-      await openSpace({ spaceHandle: meta.spaceHandle, secret, purpose: 'password', wrapped: byPassword as never });
-      return;
+      const opened = await openSpace({
+        spaceHandle: meta.spaceHandle,
+        secret,
+        purpose: 'password',
+        wrapped: byPassword as never,
+      });
+      return { credential: opened.credential };
     } catch {
       // 落到恢复码那条路
     }
   }
-  await openSpace({
+  const opened = await openSpace({
     spaceHandle: meta.spaceHandle,
     secret: normalizeRecoveryCode(secret),
     purpose: 'recovery',
     wrapped: meta.keyWraps.recovery as never,
   });
+  return { credential: opened.credential };
 }

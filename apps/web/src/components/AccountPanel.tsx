@@ -56,6 +56,7 @@ export function AccountPanel({ disabled }: { disabled: boolean }) {
   const [loginPassword, setLoginPassword] = useState('');
 
   const [endpoint, setEndpoint] = useState('');
+  const [profileConsent, setProfileConsent] = useState(false);
 
   const [recoveryCode, setRecoveryCode] = useState<string | null>(null);
   /** 刚注册好、还没进去的那个账户（恢复码下面那个「进入」按钮用它）。 */
@@ -110,6 +111,8 @@ export function AccountPanel({ disabled }: { disabled: boolean }) {
   };
 
   const runRegister = async (): Promise<void> => {
+    setPendingAccount(null);
+    setRecoveryCode(null);
     setBusy(true);
     setError(null);
     setNotice(null);
@@ -121,12 +124,13 @@ export function AccountPanel({ disabled }: { disabled: boolean }) {
         name: registerName,
         accountId: registerId,
         password: registerPassword,
+        profileConsent,
         ...(endpoint.trim() === '' ? {} : { endpoint }),
       });
       setRecoveryCode(created.recoveryCode);
       setPendingAccount(created.account);
       setRegistry(createRegistryPreview(created.account, accounts));
-      setNotice(`账户「${created.account.name}」建好了，恢复码只显示这一次，请抄下来。`);
+      setNotice(`账户「${created.account.name}」建好了，恢复码只显示这一次，请抄下来。${created.profileWarning ?? ''}`);
       setBusy(false);
       await refreshBadges([...accounts.filter((item) => item.id !== created.account.id), created.account]);
     } catch (reason) {
@@ -136,6 +140,8 @@ export function AccountPanel({ disabled }: { disabled: boolean }) {
   };
 
   const runLogin = async (): Promise<void> => {
+    setPendingAccount(null);
+    setRecoveryCode(null);
     setBusy(true);
     setError(null);
     setNotice(null);
@@ -143,8 +149,16 @@ export function AccountPanel({ disabled }: { disabled: boolean }) {
       const logged = await loginAccount({
         accountId: loginId,
         password: loginPassword,
+        profileConsent,
         ...(endpoint.trim() === '' ? {} : { endpoint }),
       });
+      if (logged.profileWarning !== null) {
+        setPendingAccount(logged.account);
+        setRecoveryCode(null);
+        setNotice(`已登录「${logged.account.name}」。${logged.profileWarning}`);
+        setBusy(false);
+        return;
+      }
       // 登录成功：直接进这个账户（它的数据会在启动后的自动同步里拉下来）
       setNotice(
         logged.recoveryCode === null
@@ -230,6 +244,8 @@ export function AccountPanel({ disabled }: { disabled: boolean }) {
     setError(null);
     setNotice(null);
     setRecoveryCode(null);
+    setPendingAccount(null);
+    setProfileConsent(false);
     if (next === 'login' && loginId === '') setLoginId(active.accountId);
   };
 
@@ -503,6 +519,17 @@ export function AccountPanel({ disabled }: { disabled: boolean }) {
                 </div>
               )}
 
+              <label className="hint">
+                <input
+                  type="checkbox"
+                  checked={profileConsent}
+                  disabled={disabled || busy}
+                  onChange={(event) => setProfileConsent(event.target.checked)}
+                />
+                同意向此服务器登记账户 ID 和显示名，用于账户识别与后续服务权益。管理员可查看这两项资料。
+                登记不包含密码、恢复码或对话内容；已登记的显示名以服务器为准。
+              </label>
+
               <details className="account-advanced">
                 <summary>高级：连别的服务器</summary>
                 <label>
@@ -515,7 +542,12 @@ export function AccountPanel({ disabled }: { disabled: boolean }) {
                     autoCorrect="off"
                     spellCheck={false}
                     placeholder={selfEndpoint()}
-                    onChange={(event) => setEndpoint(event.target.value)}
+                    onChange={(event) => {
+                      setEndpoint(event.target.value);
+                      setProfileConsent(false);
+                      setPendingAccount(null);
+                      setRecoveryCode(null);
+                    }}
                   />
                 </label>
                 <p className="hint">留空就用本站自带的同步服务端（{selfEndpoint()}）。</p>
@@ -540,8 +572,7 @@ export function AccountPanel({ disabled }: { disabled: boolean }) {
                   className="ghost"
                   disabled={disabled || busy}
                   onClick={() => {
-                    setMode('idle');
-                    setRecoveryCode(null);
+                    openAdd('idle');
                   }}
                 >
                   取消
@@ -551,6 +582,12 @@ export function AccountPanel({ disabled }: { disabled: boolean }) {
           )}
         </li>
       </ul>
+
+      {pendingAccount !== null && recoveryCode === null ? (
+        <button type="button" disabled={disabled || busy} onClick={() => void activateAccount(pendingAccount, false)}>
+          进入已登录账户「{pendingAccount.name}」（{pendingAccount.accountId}）
+        </button>
+      ) : null}
 
       {recoveryCode === null ? null : (
         <div className="notice warn">

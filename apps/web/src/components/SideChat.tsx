@@ -1,7 +1,7 @@
 import type { AdminArtifact, Conversation, Message, MessageId } from '@dramatis/core';
 import { memo, useEffect, useRef, useState } from 'react';
 import { countRender } from '../lib/render-count';
-import { useStreamState } from '../lib/stream-store';
+import { acknowledgeStreamHandoff, resetStreamState, useStreamState } from '../lib/stream-store';
 import { useCoarsePointer } from '../lib/viewport';
 import { Composer } from './Composer';
 import { WebBridgePanel } from './WebBridgePanel';
@@ -180,12 +180,34 @@ function SideChatImpl({
   /**
    * 流式正文自己订阅（顺序 59）：管理员每条分块只重画这一块，
    * 主对话那几百条消息、左栏与面板一条都不动。
+   *
+   * 顺序 104：这里多了两件事——`progress`（管理员刚才调了哪件工具）与 `handoffId`
+   * （这一轮已经落盘、交给消息列表了）。交接的理由与主对话一致（顺序 91）：
+   * 落盘那一刻同步清空会让文字先消失、等 IndexedDB 提交完再整条出现。
    */
-  const streamText = useStreamState('admin').text;
+  const stream = useStreamState('admin');
+  const streamText = stream.text;
+  const streamProgress = stream.progress;
   const [input, setInput] = useState('');
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
-  const contentLength = messages.reduce((total, message) => total + message.content.length, 0) + streamText.length;
+  const contentLength =
+    messages.reduce((total, message) => total + message.content.length, 0) + streamText.length + streamProgress.length;
+  const lastMessageId = messages.at(-1)?.id ?? null;
+  const handedOver = stream.handoffId !== null && stream.handoffId === lastMessageId;
+
+  useEffect(() => {
+    // 看见这条消息落进列表了才算交接完成；上一位的迟到 effect 不能收掉下一位已开始的流
+    if (handedOver && stream.handoffId !== null) acknowledgeStreamHandoff('admin', stream.handoffId);
+  }, [handedOver, stream.handoffId]);
+
+  useEffect(
+    () => () => {
+      // 换对话 / 离开这一屏时把副通道收干净：不能把半截文字或没收走的交接带回来
+      resetStreamState('admin');
+    },
+    [],
+  );
 
   useEffect(() => {
     if (contentLength === 0) return;
@@ -224,7 +246,7 @@ function SideChatImpl({
           </div>
         )}
 
-        {messages.length === 0 && streamText === '' ? (
+        {messages.length === 0 && streamText === '' && streamProgress === '' ? (
           <p className="hint">例如：「按这个世界的风格，起草一个酒馆老板，再补一段旧城的设定。」</p>
         ) : null}
 
@@ -255,12 +277,20 @@ function SideChatImpl({
           </article>
         ))}
 
-        {streamText !== '' ? (
+        {/*
+          顺序 104：副对话原来要等整轮收完才显示整段文字，中途什么都看不见。
+          现在逐字流；管理员点名工具时（这个事件是「已经执行完」之后才来的）显示
+          「工具调用：新建角色卡「秦娘」」这样一行，让用户看清它动了哪件素材。
+          交接完成（handedOver）之后这一帧起不再画：正文已经在列表里了。
+        */}
+        {handedOver || (streamText === '' && streamProgress === '' && !busy) ? null : (
           <article className="admin-row admin">
             <span className="admin-role">管理员</span>
-            <div className="admin-text streaming">{streamText}</div>
+            {streamProgress === '' ? null : <p className="hint">工具调用：{streamProgress}</p>}
+            {streamText === '' ? null : <div className="admin-text streaming">{streamText}</div>}
+            {streamText === '' && streamProgress === '' ? <p className="hint">正在准备…</p> : null}
           </article>
-        ) : null}
+        )}
 
         <div ref={bottomRef} />
       </div>

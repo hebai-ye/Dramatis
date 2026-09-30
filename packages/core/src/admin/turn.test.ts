@@ -7,8 +7,8 @@ import type { Room } from '../model/room.js';
 import type { ChatMessage } from '../prompt/types.js';
 import type { ModelProvider as Provider, ChatStreamEvent as ProviderEvent } from '../provider/openai-compatible.js';
 import { buildAdminMessages } from './prompt.js';
-import type { AdminDraft } from './tools.js';
-import { type AdminTurnEvent, runAdminTurn } from './turn.js';
+import { type AdminDraft, parseAdminToolCall } from './tools.js';
+import { type AdminTurnEvent, describeToolExecution, runAdminTurn } from './turn.js';
 
 function makeCard(name: string): Card {
   return {
@@ -384,5 +384,81 @@ describe('runAdminTurn', () => {
     expect(final.calls).toBe(2);
     // 100+200 提示、10+20 输出——只记最后一轮的话会得到 200 / 20
     expect(final.usage).toEqual({ promptTokens: 300, completionTokens: 30 });
+  });
+});
+
+describe('顺序 104：副对话的逐字流与工具调用可见', () => {
+  it('onDelta 按顺序收到每一块正文，事件流本身不变', async () => {
+    const { room, card, alice, conversation } = fixture();
+    const { provider } = scriptedAdmin();
+    const deltas: string[] = [];
+
+    const events: AdminTurnEvent[] = [];
+    for await (const event of runAdminTurn(
+      provider,
+      buildAdminMessages({
+        room,
+        conversation,
+        scene: null,
+        instances: [alice],
+        cards: [card],
+        worldBooks: [],
+        personas: [],
+        history: [],
+        userInput: '帮我建一个酒馆老板',
+      }),
+      {
+        execute: async () => '已把草稿放到用户面前，等待采纳',
+        onDelta: (delta) => deltas.push(delta),
+      },
+    )) {
+      events.push(event);
+    }
+
+    // 脚本化 provider 两轮各给一块正文；不传 onDelta 时这里会是空数组（原行为）
+    expect(deltas).toEqual(['我来起草一个酒馆老板。', '草稿已经放在上面，采纳后就能用。']);
+    // 增量拼起来必须与 done 的全文一致，否则界面上的字会和落库的字对不上
+    const texts = events.filter((event) => event.type === 'text').map((event) => event.text);
+    expect(deltas).toEqual(texts);
+    const final = events.at(-1);
+    if (final?.type !== 'done') throw new Error('没有 done 事件');
+    expect(deltas.join('')).toBe(final.text);
+  });
+
+  it('工具调用在界面上显示哪一句话：优先用草稿自己的 summary', () => {
+    const { card } = fixture();
+    const parsed = parseAdminToolCall(
+      {
+        id: 'call-1',
+        type: 'function',
+        function: {
+          name: 'upsert_character_card',
+          arguments: JSON.stringify({ name: '秦娘', description: '货栈掌柜。' }),
+        },
+      },
+      { knownCardIds: [], cards: [card], worldBooks: [], knownPersonas: [] },
+    );
+    if (!parsed.ok) throw new Error('草稿没被接受');
+
+    expect(
+      describeToolExecution({
+        callId: 'call-1',
+        toolName: 'upsert_character_card',
+        result: '已把草稿放到用户面前，等待采纳',
+        draft: parsed.draft,
+        ok: true,
+      }),
+    ).toBe('新建角色卡「秦娘」');
+
+    // 解析或执行失败时没有草稿，只能退回工具名——不能让界面显示空白
+    expect(
+      describeToolExecution({
+        callId: 'call-2',
+        toolName: 'set_scene',
+        result: '调用失败：castPolicy 不是允许的值',
+        draft: null,
+        ok: false,
+      }),
+    ).toBe('调用失败：set_scene');
   });
 });

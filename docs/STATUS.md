@@ -21,6 +21,16 @@
 
 ## 新会话从这里接（2026-09-23）
 
+### 2026-09-30：顺序 104 副对话的逐字流 ＋ 工具调用可见（未 push、未部署）
+
+用户要求：「将流式输出也加载到副对话中，并且可以看清他的当前工具调用」。只读勘查先在链路上找到两处缺口，**机制本身早就有**——流式状态是主／副双通道（`apps/web/src/lib/stream-store.ts` 的 `StreamScope = 'main' | 'admin'`，`StreamingBubble` 的交接范式也在），缺的是增量与接线：`packages/core/src/admin/turn.ts` 每轮要等 `collectCompletionWithTools` **整轮收完**才 `yield { type: 'text', text }`（界面只能「等一大段 → 整段出现」），而 `apps/web/src/lib/admin.ts` 的事件 `switch` 把 `tool` 事件丢进了 `default`（工具调用完全不可见）。
+
+改法两处：①逐字流用**回调**加增量——`packages/core/src/provider/collect.ts` 的 `collectCompletionWithTools` 加可选第 5 参 `onDelta?: (delta: string) => void`（给增量、累计交调用方，不传就是原行为），`AdminTurnOptions` 加 `onDelta` 透传；`admin.ts` 在 `onDelta` 里 `answer += delta` 并 `setStreamState('admin', { text: answer, phase: 'writing', progress: '' })`，同时把 `case 'text'` 改成 `break`（否则同一段会被计两遍）。用回调而不是新事件类型，是为了不破 `packages/core/src/admin/turn.test.ts` 里四条按事件数组断言的既有用例。②工具可见——新增导出 `describeToolExecution(execution)`（有草稿就用草稿自己的中文 `summary`，如「新建角色卡「秦娘」」；没有就退 `调用失败：${toolName}`，**不自造词表**），`case 'tool'` 把它写进既有的 `StreamState.progress`，`apps/web/src/components/SideChat.tsx` 在流式行上方多画一行「工具调用：…」。措辞按事实：这个事件是**模型已经决定要调、本地也已经执行完**之后才来的，不是「正在想」。
+
+落盘不再闪一下：照抄主对话的交接范式——`handoffStreamState('admin', message.id)`（`handedOff` 标志声明在 `try` 之前，否则 `finally` 读不到），`finally` 只在没有待交接时 `resetStreamState('admin')`，`SideChat` 用 `messages.at(-1)?.id` 判 `handedOver`、effect 里 acknowledge、卸载时 reset；`busy` 且既无正文也无进度时画一行「正在准备…」。网页桥接那条路（没有 API Key、没有 provider 流）只补了进度：`commitBridge` 循环里 `setStreamState('admin', { progress: result.draft.summary })`，其 `finally` 补 reset。
+
+测试：Core 新增 2 条（`onDelta` 按顺序收到每一块正文且拼起来等于 `done.text`；`describeToolExecution` 优先草稿 summary、无草稿退工具名），Web 新增 `apps/web/src/components/SideChat.test.tsx` 5 条（正文画在管理员行、工具调用显示草稿摘要、`busy` 且无内容画「正在准备…」、不忙无流式不画这行、交接后不画流式副本）。五项门禁（2026-09-30 本机）：typecheck 0、lint `Checked 297 files` 0 error / 0 warning、test Core **74 文件 / 852 条** + Web **20 文件 / 92 条**全过、build 0（`assets/index-CNPwSDj1.js` 684.68 kB / gzip 219.86 kB）、build:sync-server 0。**本机假模型不发 `tool_calls`**（`docs/TASKS.md` 在该项里写着），所以逐字流的「观感」与「工具调用可见」只有真机真模型能验，**归 Codex**；本批**未 push、未部署**，细节与遗留见 [EVAL.md](./EVAL.md) 第一百零四节。
+
 ### 2026-09-30：顺序 103 世界管理员起草角色卡的长度口径（未 push、未部署）
 
 用户实测反馈：请世界管理员建角色时，**人设（description）压到 5 句以内、性格（personality）2～3 句，主对话效果明显更好**，要求对管理员做专项升级。只读勘查先确认了机制：管理员原有系统提示词一共 6 行、**一条长度要求都没有**；而 `buildPersonaBlock` 会把 `card.description` 与 `性格：…` **全文**塞进主对话提示词（整块被压时才截 160 字），于是起草期写多长，之后每一轮就背多长。

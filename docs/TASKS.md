@@ -8,14 +8,16 @@
 > 本文是工作清单（条目可勾选、可拆、做完就删）。每条都尽量带上**来源**——
 > 是路线图里的既定任务，还是真实使用/真实模型验证里冒出来的问题。
 >
-> 最后更新：2026-09-30（顺序 103 世界管理员起草角色卡的长度口径：人设 ≤5 句、性格 2～3 句，
-> 系统提示词、网页桥接渲染、工具字段说明三处同一口径；**只提醒不截断**。同一天还上了顺序 79
-> 跨角色串线检测（判据换成「他这句话里有别人角色卡里才写过的说法」，只在消息下提示、不改数据；
-> 只做长片段那半，道具词那半登记为顺序 98），并按用户要求把总表逐行与代码现状对齐——
-> 69/70/72/73/74/75/76/78/80/87/68b 的描述都改过。顺序 77/96/97/79 见 `docs/EVAL.md`
-> 第八十七–九十节；真模型效果与误报率仍归 Codex；处理顺序仍是第〇节「2026-09-23 总排期」，
-> 下面各个带日期的小节是历史排期，只作上下文）
-> 顺序号跳过 99／100：那两个号属于分支 `codex/sync-admin-readonly` 的「账户关联与只读服务器管理台」（顺序 99）与「管理台显示名／存储配额与正式接入」（顺序 100），`docs/EVAL.md` 第九十一、九十二节也是它们的；本批因此取顺序 103（EVAL 第一百零三节）。
+> 最后更新：2026-09-30（顺序 104 副对话逐字流 ＋ 工具调用可见：`collectCompletionWithTools` 新增
+> 可选 `onDelta` 回调（不传就是原行为），`runAdminTurn` 透传，web 侧累加进流式状态；`tool` 事件
+> 以前被丢进 `default`、现在把草稿自己的中文 `summary` 显示成「工具调用：…」；落盘后按主对话的
+> 交接范式 `handoffStreamState('admin', …)` 收掉流式副本。同一天还上了顺序 103 世界管理员起草角色卡的
+> 长度口径（人设 ≤5 句、性格 2～3 句，**只提醒不截断**）与顺序 79 跨角色串线检测（判据是「他这句话里
+> 有别人角色卡里才写过的说法」，只在消息下提示、不改数据；道具词那半登记为顺序 98），并按用户要求把
+> 总表逐行与代码现状对齐——69/70/72/73/74/75/76/78/80/87/68b 的描述都改过。顺序 77/96/97/79/103 见
+> `docs/EVAL.md` 第八十七–九十节、第一百零三节；真模型效果、误报率与「逐字流观感」仍归 Codex；处理顺序仍是第〇节
+> 「2026-09-23 总排期」，下面各个带日期的小节是历史排期，只作上下文）
+> 顺序号跳过 99／100：那两个号属于分支 `codex/sync-admin-readonly` 的「账户关联与只读服务器管理台」（顺序 99）与「管理台显示名／存储配额与正式接入」（顺序 100），`docs/EVAL.md` 第九十一、九十二节也是它们的；本批两节因此取顺序 103／104（EVAL 第一百零三、一百零四节）。
 
 ## 图例
 
@@ -119,8 +121,9 @@
 
 | 98 | **道具词级串线检测（把「抹布／账本／柜台」这类独有物件也管起来）** `[用][测]` | **P3** | 顺序 79 只做了「整段身世／独有说法」（判据是「他句子里包含了我写过的整句」）。道具是 2 字名词，判据会降级成「出现了一个词」，阈值只能靠真实语料调——T18 第一版正是栽在这里（21 条警告大多误报，用户学会无视警告比漏报更糟）；178 轮里「46/178 条非掌柜角色用了掌柜道具」首先是风格漂移的度量（布景词人人都在用） | ⬜ |
 | 103 | **世界管理员起草角色卡的长度口径（人设 ≤5 句、性格 2～3 句）** `[用][质]` | **P1** | 用户 2026-09-30 实测：请世界管理员建角色时把人设缩到 5 句以内、性格 2～3 句，主对话效果明显更好，要求对管理员做专项升级。机制也查清了：`buildPersonaBlock` 把 `card.description` 与 `性格：…` **全文**塞进主对话提示词（只有整块被压时才截 160 字），起草期写多长，之后每一轮就背多长；而管理员原有系统提示词里**一条长度要求都没有** | ✅ 2026-09-30（新增 `CARD_LENGTH_GUIDE` 同时进管理员系统提示词与网页桥接渲染，工具字段说明写明句数，草稿 `summary` 超标时附一句提醒——**只提醒不截断**，见 EVAL 第一百零三节）／真模型复跑归 Codex |
+| 104 | **副对话的逐字流式与工具调用可见（用户 2026-09-30 要求）** `[体][质]` | **P2** | 用户原话：「将流式输出也加载到副对话中，并且可以看清他的当前工具调用」。查下来两处缺口都在链路上：`packages/core/src/admin/turn.ts` 每轮要等 `collectCompletionWithTools` **整轮收完**才 yield 一个 text（所以界面只能「等一大段 → 整段出现」），`apps/web/src/lib/admin.ts` 的 switch 又把 `tool` 事件丢进 `default`（工具调用完全不可见）——而流式状态本身早就是主／副双通道（`StreamScope = 'main' \| 'admin'`），不用新建机制 | ✅ 2026-09-30（`collectCompletionWithTools` 新增可选 `onDelta` 回调、`runAdminTurn` 透传；`tool` 事件改成显示草稿自己的中文 `summary`；落盘后走主对话同一套 `handoffStreamState('admin')` 交接，取消与卸载都 reset。见 EVAL 第一百零四节）／真机真模型的逐字观感与工具调用可见归 Codex（本机假模型不发 `tool_calls`） |
 
-依赖关系：58 复用 57 的「按关键词取回」；66 在 59 之后；65 可以插在任何两批之间；80 依赖 68 已经落下的 `updatedAt` 不变量与迁移 11；**97 独立**（只动重抽与一轮内的落盘顺序，不依赖 96）；**77 已收口**（它给 `EntityStore` 加的可选 `transaction` 之后可被别的多步写入复用）；**103 独立**（只动「起草期怎么写」，与 96/79 都不互相依赖）；**98 与 79 同源**（只是把 79 的判据降到词级，等真实语料能标误报率再上）。
+依赖关系：58 复用 57 的「按关键词取回」；66 在 59 之后；65 可以插在任何两批之间；80 依赖 68 已经落下的 `updatedAt` 不变量与迁移 11；**97 独立**（只动重抽与一轮内的落盘顺序，不依赖 96）；**77 已收口**（它给 `EntityStore` 加的可选 `transaction` 之后可被别的多步写入复用）；**103 独立**（只动「起草期怎么写」，与 96/79 都不互相依赖）；**104 独立**（只动副对话的流式通道与管理员回合的增量回调，不碰主对话）；**98 与 79 同源**（只是把 79 的判据降到词级，等真实语料能标误报率再上）。
 
 #### 审计遗留（2026-09-26 深度审计的 58 条，现在在哪）
 
@@ -470,6 +473,26 @@ A4 的 core 侧（`packages/core/src/sync/loop.ts:153-162` 的 `serverHead < pul
 - **草稿界面不显示性格**：`SideChat.tsx` 的 `ArtifactCard` 只显示 description（截 56 字，标签「设定：」），性格在采纳前看不到，也就看不到「性格几行」这件事；要不要在草稿卡上加一行句数提示，等用户看过真实效果再定。
 - **只改管理员这一条链路**：用户手动建卡、导入 SillyTavern 卡、已有旧卡都不经过这里，旧卡的长人设照旧每轮全文进提示词——要收得另开一条（现有提示词压缩只在整块被压时才截 160 字）。
 - **口径数值写在两处名字里**：`CARD_DESCRIPTION_MAX_SENTENCES`／`CARD_PERSONALITY_MAX_SENTENCES` 是唯一来源，但「2～3 句」里的下界 2 目前是写死在文案里的字面量；要调下界得同时改文案与注释，测试钉的是「2～3 句话以内」这串字。
+
+**顺序 104（副对话的逐字流式与工具调用可见）怎么处理的**：
+
+用户 2026-09-30 的原话是「将流式输出也加载到副对话中，并且可以看清他的当前工具调用」。只读勘查先在链路上定位了两处缺口，而不是去新建机制。
+
+| 用户要的 | 查到的事实 | 处理 | 落点 |
+| --- | --- | --- | --- |
+| 副对话要逐字流 | 流式状态**早就是主／副双通道**（`apps/web/src/lib/stream-store.ts` 的 `type StreamScope = 'main' \| 'admin'`、`useStreamState('admin')`），缺的不是通道而是**增量**：`packages/core/src/admin/turn.ts:74-96` 每轮先 `await collectCompletionWithTools(...)`，**整轮收完之后**才 `if (text !== '') { yield { type: 'text', text } }`——web 侧每轮只会被调一次、内容是整段 | `collectCompletionWithTools` 加可选第 5 参 `onDelta?: (delta: string) => void`（给增量、累计交调用方；**不传就是原行为**），`AdminTurnOptions` 加 `onDelta` 并透传——用**回调**而不是新事件类型，这样 `turn.test.ts` 四条按事件数组断言的既有用例一条都不用改 | `packages/core/src/provider/collect.ts`、`packages/core/src/admin/turn.ts`、`apps/web/src/lib/admin.ts`（`onDelta` 里 `answer += delta` 并 `setStreamState('admin', { text: answer, phase: 'writing', progress: '' })`；`case 'text'` 改成 `break`，不再叠加一遍） |
+| 要能看清当前工具调用 | 工具事件本来就有（`yield { type: 'tool', execution }`），是 web 侧的 `switch` 把它丢进了 `default`；草稿本身带一句中文 `summary`（如「新建角色卡「秦娘」」），界面本来就在显示它 | 新增导出 `describeToolExecution(execution)`：有草稿就用 `draft.summary`，没有就退 `调用失败：${toolName}`（**不自造词表**）；`case 'tool'` 把它塞进既有的 `StreamState.progress`，副对话在流式行上方多画一行「工具调用：…」。措辞按事实：这个事件是**模型已经决定要调、本地也已经执行完**之后才来的，不是「正在想」 | `packages/core/src/admin/turn.ts`（`describeToolExecution`）、`apps/web/src/lib/admin.ts`、`apps/web/src/components/SideChat.tsx` |
+| 落盘时不要闪一下（整段文字出现又被消息列表重画一遍） | 主对话早有这套交接范式（`StreamingBubble` 的 `handoffId` + `lastMessageId` + `acknowledgeStreamHandoff`） | 副对话照抄：落盘后 `handoffStreamState('admin', message.id)`（`handedOff` 标志声明在 `try` **之前**，否则 `finally` 里读不到）；`finally` 只在没有待交接时 `resetStreamState('admin')`；`SideChat` 用 `messages.at(-1)?.id` 判 `handedOver`、effect 里 acknowledge、卸载时 reset；`busy` 且既无正文也无进度时画一行「正在准备…」 | `apps/web/src/lib/admin.ts`、`apps/web/src/components/SideChat.tsx` |
+| 网页桥接那条路（没有 API Key）也一样 | 桥接不流式（没有 provider 流），`commitBridge` 是一个个 `parseAdminToolCall` + `executeDraft` 的循环，**循环里没有进度回调** | 循环里补 `setStreamState('admin', { progress: result.draft.summary })`，其 `finally` 补 reset——桥接至少能看到「正在处理哪一张草稿」 | `apps/web/src/lib/admin.ts` |
+| 测试 | 新增行为要有断言钉住，且既有断言不能破 | core 2 条（`onDelta` 按顺序收到每一块正文、拼起来等于 `done.text`；`describeToolExecution` 优先草稿 summary、无草稿退工具名）；web 5 条（正文画在管理员行、工具调用显示草稿摘要、`busy` 且无内容画「正在准备…」、不忙无流式不画这一行、交接后不重复画流式副本）；既有 `turn.test.ts` 四条事件数组断言**未改** | `packages/core/src/admin/turn.test.ts`（9 条）、`apps/web/src/components/SideChat.test.tsx`（新增） |
+
+**顺序 104 自己带出来的遗留（别当成已解决）**：
+
+- **真机真模型才能验「观感」与「工具调用可见」**（归 Codex）：本机假模型**不发 `tool_calls`**（`docs/TASKS.md` 里 78 那条就写着这一点），所以「工具调用：…」这行在本机测试里只能靠桩事件断言，真实网关下是否真的长出这行、逐字流是否真的是一个字一个字而不是一大块一大块，必须真机跑。归 Codex。
+- **工具事件不是「正在想」**：它是模型已经决定调、本地已经执行完之后才 yield 的，所以这行显示的是**已经做完的动作**；要做成「正在调用…」得在 provider 层加增量 `onToolCall`（`packages/core/src/provider/openai-compatible.ts` 现在只在 `done` 里一次性给 `toolCalls`），本批没做。
+- **桥接只有进度、没有逐字**：桥接路径（没有 API Key 时）走的是「把提示词交给网页版助手、再把回复贴回来」的流程，没有 provider 流可接，所以只补了「正在处理哪张草稿」。
+- **`apps/web/src/lib/admin.ts` 这一层没有测试**（`admin.test.ts` 不存在）：本批把断言放在 core 的回合层与 `SideChat` 组件层，hook 里的交接时序（handoff／reset 的先后）只有人读代码保证。
+- **多轮拼接靠跨轮累加**：`answer` 是整回合累加，`onDelta` 持续往同一个串上加；`case 'text'` 已经改成不叠加，下一个人若把那里改回 `answer += event.text` 就会重复计一遍。
 
 #### 每一项怎么做（改哪里 / 怎么改 / 怎么验）
 

@@ -1575,6 +1575,22 @@ TASKS 第〇节顺序 68。用户裁定「A+B 推进」；原方案里的 `limit
 
 本批**未 push、未部署**；五项门禁数字、真模型待验与四条遗留见 EVAL 第一百零三节。
 
+## 顺序 104、2026-09-30：副对话的逐字流式与工具调用可见
+
+用户 2026-09-30 的要求：「将流式输出也加载到副对话中，并且可以看清他的当前工具调用」。只读勘查先定位缺口：主／副双通道（`StreamScope = 'main' | 'admin'`）与交接范式都是现成的，缺的是**增量**与**接线**——`packages/core/src/admin/turn.ts` 每轮要等 `collectCompletionWithTools` **整轮收完**才 yield 一个 text，`apps/web/src/lib/admin.ts` 的 `switch` 又把 `tool` 事件丢进 `default`。逐字流用**回调**加增量（不新增事件类型，免得重写 `turn.test.ts` 四条按事件数组断言的既有用例），工具可见则复用草稿自己的中文 `summary` 与既有的 `StreamState.progress`。
+
+| 文件 | 动作 | 本批内容 |
+| --- | --- | --- |
+| `packages/core/src/provider/collect.ts` | 改 | `collectCompletionWithTools(provider, messages, params = {}, signal?, onDelta?)` 加**可选**第 5 参 `onDelta?: (delta: string) => void`（给增量、累计交调用方；不传就是原行为，既有调用与测试零改动） |
+| `packages/core/src/admin/turn.ts` | 改 | `AdminTurnOptions` 加可选 `onDelta` 并透传给 `collectCompletionWithTools`；新增导出 `describeToolExecution(execution): string`（有草稿用 `execution.draft.summary`，否则 `调用失败：${execution.toolName}`） |
+| `apps/web/src/lib/admin.ts` | 改 | `onDelta` 里 `answer += delta` 并 `setStreamState('admin', { text: answer, phase: 'writing', progress: '' })`；`case 'text'` 改成 `break`（不再叠加，否则同一段计两遍）；`case 'tool'` 把 `describeToolExecution` 的结果写进 `progress`；落库后 `handoffStreamState('admin', message.id)`（`handedOff` 声明在 `try` 之前），`finally` 只在未交接时 reset；`commitBridge` 循环补 `progress` 并在其 `finally` reset |
+| `apps/web/src/components/SideChat.tsx` | 改 | 改取 `useStreamState('admin')` 的 `text` 与 `progress`；画「工具调用：{progress}」与「正在准备…」占位；`messages.at(-1)?.id` 判 `handedOver` + effect 里 `acknowledgeStreamHandoff('admin', …)`；卸载时 `resetStreamState('admin')` |
+| `apps/web/src/components/SideChat.test.tsx` | 新 | 5 条：正文画在管理员行、工具调用显示草稿摘要、`busy` 且无内容画「正在准备…」、不忙无流式不画这行、交接后不画流式副本 |
+| `packages/core/src/admin/turn.test.ts` | 改 | 新增 `describe('顺序 104：副对话的逐字流与工具调用可见')` 2 条：`onDelta` 按顺序收到每一块正文且拼起来等于 `done.text`；`describeToolExecution` 优先草稿 summary、无草稿退工具名 |
+| `docs/{TASKS,STATUS,EVAL,FILE-LOG}.md` | 改 | 顺序 104 计划行（✅）与「顺序 104 怎么处理的」整节 + 遗留、STATUS 接续点、EVAL 第一百零四节、本节 |
+
+本批**未 push、未部署**；五项门禁数字（与顺序 103 共用同一工作区状态）与五条遗留见 EVAL 第一百零四节——其中「逐字流观感」与「工具调用可见」本机假模型验不了，**归 Codex 真机真模型**。
+
 ## 七十二、几点注意
 
 ---

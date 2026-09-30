@@ -4411,7 +4411,7 @@ v12 的三个判断都是有意的：
 
 **测试与门禁（2026-09-30，本机）**：`packages/core/src/prompt/assemble.test.ts` 新增「顺序 96：人设表达收敛在这一块里，指令块还有一句不可丢弃的兜底」（断言三条收敛规矩在 `reply-style` 块里、兜底句在指令块里且 `droppable === false`）；`packages/core/src/model/card.test.ts` 新增「顺序 96：结尾反问降级」（含 `not.toContain('尽最大努力')`）。改动后这两份测试先单跑：`card.test.ts` 5 条、`assemble.test.ts` 48 条全过。五项门禁（2026-09-30，本机工作区）：`pnpm typecheck` ✓；`pnpm lint` ✓（**290 文件，0 error / 0 warning**）；`pnpm test` ✓（Core **72 文件 / 826 条**、Web **17 文件 / 68 条**；顺序 78 那批是 Core 72/824，多出来的 **2 条**正是本批新增）；`pnpm build` ✓（`apps/web/dist/assets/index-DdLNbZV9.js` **676918 B** / gzip 217.28 kB、`index-BDv279kC.css` 42459 B 未动；比顺序 78 线上那版 `index-aDLBA72A.js` 676240 B 多 **678 B**，就是这几句提示词常量）；`pnpm build:sync-server` ✓。主 JS 超过 500 kB 的既有构建提示仍在。
 
-**未验证（归 Codex）**：本批只改了提示词文字，所有「效果」类结论都必须拿**同一套台词**在真实模型上复跑才作数——`docs/EVAL.md` 第六十八节末尾那句「这一节的数字是『改之前』的基线，改完必须重跑同一套台词才能宣告有效」正是这个意思，本轮没有跑。另外没有留下量化口径：现在没有自动化指标能测「人设提及频率」，只有那份一次性离线脚本。真机与真实模型的一切归 Codex，仓库里一律写「待验证」。本批**未 push、未部署**。
+**未验证（归 Codex）**：本批只改了提示词文字，所有「效果」类结论都必须拿**同一套台词**在真实模型上复跑才作数——`docs/EVAL.md` 第六十八节末尾那句「这一节的数字是『改之前』的基线，改完必须重跑同一套台词才能宣告有效」正是这个意思，本轮没有跑。另外没有留下量化口径：现在没有自动化指标能测「人设提及频率」，只有那份一次性离线脚本。真机与真实模型的一切归 Codex，仓库里一律写「待验证」。**本批已随 2026-09-30 整批 push、网页已换版**（STATUS 顶部「整批上线」一节）。
 
 ## 八十八、2026-09-30：顺序 97 重抽只重生成被点的那一位
 
@@ -4428,7 +4428,7 @@ v12 的三个判断都是有意的：
 
 **测试与门禁（2026-09-30，本机）**：`apps/web/src/hooks/useTurnRunner.test.tsx:480` 新增三条——① 一轮两人的第二条被重抽：`updates` 只命中被点那条、`deletes` 为空（第一条一个字没动）、`updates[0].patch.speakerInstanceId` 为 `undefined`（没换人）、生成历史是 `['旅人', '秦娘']`（看得到先开口的人）、`revertTurn` 与重新排分析都按该 `turnId` 发生；② 第一位被重抽时生成历史为空（与发送当时一致，看不到同轮后面的人）；③ `revertTurn` 抛错时报警告 `regenerate.rollback` 且最后一次 `setError` 为 `null`。测试夹具（`harness`）补了 `session.updateMessage` / `deleteMessage` / `revertTurn` 与 `db.queue.clearTurn` 的桩。改动后先单跑：`useTurnRunner.test.tsx` **13 条**全过（原 10 条 + 新增 3 条）。五项门禁（2026-09-30，本机工作区）：`pnpm typecheck` ✓；`pnpm lint` ✓（**290 文件，0 error / 0 warning**）；`pnpm test` ✓（Core **72 文件 / 826 条**、Web **17 文件 / 71 条**；顺序 96 那批是 Core 72/826、Web 17/68，多出来的 **3 条**正是本批新增，Core 未动）；`pnpm build` ✓（`apps/web/dist/assets/index-CeSZMKjE.js` **677.64 kB** / gzip 217.55 kB、`index-BDv279kC.css` 42.45 kB 未动；顺序 96 那版主包是 676918 B，多出来的约 0.7 kB 就是这段重抽逻辑与注释）；`pnpm build:sync-server` ✓。主 JS 超过 500 kB 的既有构建提示仍在。
 
-**未验证（归 Codex）**：本批只有单测，**真机与真实模型没跑**。两件事要真机才作数：① 重抽出来的观感与「同轮其他人保留」读起来是否连贯（后面那位是照着旧版本接的话，两者拼在一起会不会自相矛盾）；② 顺带修的那条警告路径（回滚失败）只在单测里模拟过，没在真实 IndexedDB / 同步环境下触发过。顺序 96 的真模型效果同样待用户告知。本批**未 push、未部署**。
+**未验证（归 Codex）**：本批只有单测，**真机与真实模型没跑**。两件事要真机才作数：① 重抽出来的观感与「同轮其他人保留」读起来是否连贯（后面那位是照着旧版本接的话，两者拼在一起会不会自相矛盾）；② 顺带修的那条警告路径（回滚失败）只在单测里模拟过，没在真实 IndexedDB / 同步环境下触发过。顺序 96 的真模型效果同样待用户告知。**本批已随 2026-09-30 整批 push、网页已换版**（STATUS 顶部「整批上线」一节）。
 
 ## 八十九、2026-09-30：顺序 77 重抽／改归属的一批写入事务化
 
@@ -4447,7 +4447,7 @@ v12 的三个判断都是有意的：
 
 **测试与门禁（2026-09-30，本机）**：新增 `apps/web/src/lib/turn-write.test.ts` 6 条（全跑内存后端）：成功路径；中途失败**整批回滚**（把事务作用域的 `list` 换成抛错，消息仍是旧台词、任务还在、记忆没被软删）；没有 `transaction` 的后端退化成顺序执行（保证变弱、已写的那条留在库里）；消息不存在时任务与记忆都不动；`revertTurnWrites` 单跑一轮也走事务；`withStoreTransaction` 抛错时整批不落。`packages/core/src/platform/memory-store.test.ts`（新增，7 条）覆盖内存后端 `update` / `transaction` 与回滚。`apps/web/src/hooks/useTurnRunner.test.tsx` 夹具补 `session.rewriteTurn` 桩与 `analysisFails` / `rewriteReturnsNull` 两个开关，原来那条「后台回滚失败」拆成「事务失败按整次失败报」与「只有重排分析失败时发警告」两条。先单跑 `pnpm --filter @dramatis/web test turn-write useTurnRunner` = **2 文件 / 24 条**全过。五项门禁（2026-09-30，本机工作区）：`pnpm typecheck` ✓；`pnpm lint` ✓（**Checked 293 files**，0 error / 0 warning；顺序 97 那批是 290 个文件，多出来的三个正是新增的 `turn-write.ts` / `turn-write.test.ts` / `memory-store.test.ts`）；`pnpm test` ✓（Core **73 文件 / 833 条**、Web **18 文件 / 82 条**；顺序 97 是 Core 72/826、Web 17/71——Core 多出的 1 文件 7 条是 `memory-store.test.ts`，Web 多出的 1 文件 11 条是 `turn-write.test.ts` 与 `useTurnRunner` 的新增用例）；`pnpm build` ✓（`apps/web/dist/assets/index-CuPsB7O6.js` **680.10 kB** / gzip 218.26 kB、`index-BDv279kC.css` 42.45 kB 未动；顺序 97 的主包是 677.64 kB，多出来的约 2.5 kB 就是事务原语与 `turn-write.ts`）；`pnpm build:sync-server` ✓。主 JS 超过 500 kB 的既有构建提示仍在。lint 过程中出过 3 error + 1 warning（`apps/web/src/lib/turn-write.test.ts:152` 的 `noNonNullAssertion`、`turn-write.ts` 的 `organizeImports`、`turn-write.ts` 与 `entity-store.ts` 的 format），已用「先取出 `transact` 再判空」与 `biome check --write` 修掉。
 
-**未验证（归 Codex）**：① **IndexedDB 真事务路径没有任何自动化测试**——Node 里没有 `indexedDB`，仓库也没装 `fake-indexeddb`，上面 6 条全跑在内存后端，`db.transaction` 那段只有类型检查与代码审读；浏览器里 `tx.abort()` / `tx.done` 的真实行为只能真机验。② 内存后端**不隔离并发事务**，真机上的并发（worker drain 与用户操作同时进行）没压过。③ 真机的极端存储故障（配额耗尽、事务被浏览器中止）没触发过。④ 事务提交与同步推送之间的顺序（同一毫秒一组要一起越过水位线）没有专门测试。本批**未 push、未部署**。
+**未验证（归 Codex）**：① **IndexedDB 真事务路径没有任何自动化测试**——Node 里没有 `indexedDB`，仓库也没装 `fake-indexeddb`，上面 6 条全跑在内存后端，`db.transaction` 那段只有类型检查与代码审读；浏览器里 `tx.abort()` / `tx.done` 的真实行为只能真机验。② 内存后端**不隔离并发事务**，真机上的并发（worker drain 与用户操作同时进行）没压过。③ 真机的极端存储故障（配额耗尽、事务被浏览器中止）没触发过。④ 事务提交与同步推送之间的顺序（同一毫秒一组要一起越过水位线）没有专门测试。**本批已随 2026-09-30 整批 push、网页已换版**（STATUS 顶部「整批上线」一节）。
 
 ## 九十、2026-09-30：顺序 79 跨角色串线检测（只提示不改数据；只做长片段那半）
 
@@ -4468,7 +4468,7 @@ v12 的三个判断都是有意的：
 
 **测试与门禁（2026-09-30，本机工作区）**：新增 `packages/core/src/render/bleed.test.ts` **11 条**（片段抽取两个粒度与 4 字下限、纯数字片段丢掉、只留自己卡里的片段、含任何人的名字不算独有、两人共有与世界书布景不算独有、秦娘复述陈九身世命中并给出原话片段、自己说不算、多命中上限 3、空输入安静返回）；新增 `apps/web/src/components/MessageItem.test.tsx` **5 条**（`renderToString` + 只 mock `../lib/render-count`：命中画警告与原话证据、非最后一条不给「重抽这条」、自己说不画警告、玩家消息不评估、空签名安静；断言避开 `renderToString` 插在插值之间的 `<!-- -->`）。先单跑 `pnpm --filter @dramatis/core test bleed` = 1 文件 / 11 条、`pnpm --filter @dramatis/web test MessageItem` = 1 文件 / 5 条，全过。五项门禁：`pnpm typecheck` ✓；`pnpm lint` ✓（**Checked 296 files**，0 error / 0 warning——顺序 77 是 293，多出来的三个正是 `bleed.ts`／`bleed.test.ts`／`MessageItem.test.tsx`；本轮第一次跑出过 5 个 error：`bleed.ts` 的 `noUselessEscapeInRegex`、import 组织与三处格式，已用 `biome check --write` 修掉）；`pnpm test` ✓（Core **74 文件 / 844 条**、Web **19 文件 / 87 条**；顺序 77 是 Core 73/833、Web 18/82）；`pnpm build` ✓（`apps/web/dist/assets/index-WhTmvgwW.js` **683.26 kB** / gzip 219.21 kB、`index-BDv279kC.css` 42.45 kB；顺序 77 的主包是 680.10 kB，多出来的约 3.2 kB 就是 `bleed.ts` 与界面接线）；`pnpm build:sync-server` ✓。主 JS 超过 500 kB 的既有构建提示仍在。
 
-**未验证（归 Codex）**：① **误报率与漏报率没有任何真实语料标定**——本批精度只有人工构造的用例；真人写的卡 + 真模型长跑下「该报的报不报、不该报的报不报」，必须真机跑一轮才作数。若误报偏高，按模块头注释写的纪律先收掉提示（用户学会无视警告比漏报更糟）。② 道具词那半没做（顺序 98）。③ 模型**换个说法**抄走同一段身世（同义改写）认不出来——要认得更宽就得引入相似度阈值，那又会回到误报问题。④ 用户若把某角色的身世也写进世界书，它就变成「全场共有」，串线不再报。⑤ `signatureKey` 靠内容拼接：卡上将来加字段要记得同步补进 key，否则改那个字段不会让签名重算。本批**未 push、未部署**。
+**未验证（归 Codex）**：① **误报率与漏报率没有任何真实语料标定**——本批精度只有人工构造的用例；真人写的卡 + 真模型长跑下「该报的报不报、不该报的报不报」，必须真机跑一轮才作数。若误报偏高，按模块头注释写的纪律先收掉提示（用户学会无视警告比漏报更糟）。② 道具词那半没做（顺序 98）。③ 模型**换个说法**抄走同一段身世（同义改写）认不出来——要认得更宽就得引入相似度阈值，那又会回到误报问题。④ 用户若把某角色的身世也写进世界书，它就变成「全场共有」，串线不再报。⑤ `signatureKey` 靠内容拼接：卡上将来加字段要记得同步补进 key，否则改那个字段不会让签名重算。**本批已随 2026-09-30 整批 push、网页已换版**（STATUS 顶部「整批上线」一节）。
 
 ## 一百零三、2026-09-30：顺序 103 世界管理员起草角色卡的长度口径（人设 ≤5 句、性格 2～3 句）
 
@@ -4484,7 +4484,7 @@ v12 的三个判断都是有意的：
 
 **测试与门禁（2026-09-30，本机工作区）**：针对性跑 `pnpm --filter @dramatis/core test tools turn` = 6 文件 / 66 条全过（其中 `src/admin/tools.test.ts` 29 条、`src/admin/turn.test.ts` 先 7 条后 9 条）。五项门禁：`pnpm typecheck` ✓；`pnpm lint` ✓（**Checked 297 files**，0 error / 0 warning；本轮第一次跑出 1 个 error——新增 `apps/web/src/components/SideChat.test.tsx` 的 import 折行格式，`biome check --write` 后归零）；`pnpm test` ✓（Core **74 文件 / 852 条**、Web **20 文件 / 92 条**）；`pnpm build` ✓（`apps/web/dist/assets/index-CNPwSDj1.js` **684.68 kB** / gzip 219.86 kB、`index-BDv279kC.css` 42.45 kB；主 JS 超过 500 kB 的既有构建提示仍在）；`pnpm build:sync-server` ✓。注：顺序 103 与顺序 104 是同一天同一轮写完的，门禁在这**同一个工作区状态**上跑，两节共用这组数字。
 
-**未验证（归 Codex）**：① 真模型上人设是否真的落到 5 句以内、主对话是否真的更好——本机假模型只证明提示词与提醒到位，效果必须真机真模型复跑。② 只提醒不截断是有意的（见上），所以旧卡、手写卡、导入卡的长人设照旧每轮全文进提示词，这条链路本批没收。③ 草稿卡界面（`apps/web/src/components/SideChat.tsx` 的 `ArtifactCard`）只显示 description（截 56 字），性格在采纳前看不见，也就看不见「性格几行」；要不要在草稿卡上加句数提示等用户看过真实效果再定。④ 口径里「2～3 句」的下界 2 目前是文案里的字面量，要调得同时改文案与注释（测试钉的是那串字）。本批**未 push、未部署**。
+**未验证（归 Codex）**：① 真模型上人设是否真的落到 5 句以内、主对话是否真的更好——本机假模型只证明提示词与提醒到位，效果必须真机真模型复跑。② 只提醒不截断是有意的（见上），所以旧卡、手写卡、导入卡的长人设照旧每轮全文进提示词，这条链路本批没收。③ 草稿卡界面（`apps/web/src/components/SideChat.tsx` 的 `ArtifactCard`）只显示 description（截 56 字），性格在采纳前看不见，也就看不见「性格几行」；要不要在草稿卡上加句数提示等用户看过真实效果再定。④ 口径里「2～3 句」的下界 2 目前是文案里的字面量，要调得同时改文案与注释（测试钉的是那串字）。**本批已随合并提交 `9d5e5fd` push、并只重新部署前端**（2026-09-30，见下一节的「上线记录」）。
 
 ## 一百零四、2026-09-30：顺序 104 副对话的逐字流 ＋ 工具调用可见
 
@@ -4500,11 +4500,13 @@ v12 的三个判断都是有意的：
 
 **测试与门禁（2026-09-30，本机工作区）**：Core 新增 2 条（`onDelta` 按顺序收到每一块正文且拼起来等于 `done.text`；`describeToolExecution` 优先草稿 summary、无草稿退工具名），Web 新增 `apps/web/src/components/SideChat.test.tsx` **5 条**（正文画在管理员行、工具调用显示草稿摘要、`busy` 且无内容画「正在准备…」、不忙无流式不画这一行、交接后不画流式副本）；既有 `turn.test.ts` 四条事件数组断言**未改**（`src/admin/turn.test.ts` 共 9 条）。五项门禁与顺序 103 共用同一组数字（同一天同一工作区状态）：`pnpm typecheck` ✓；`pnpm lint` ✓（**Checked 297 files**，0 error / 0 warning）；`pnpm test` ✓（Core **74 文件 / 852 条**、Web **20 文件 / 92 条**，Web 多出的 1 文件 5 条就是 `SideChat.test.tsx`）；`pnpm build` ✓（`apps/web/dist/assets/index-CNPwSDj1.js` **684.68 kB** / gzip 219.86 kB）；`pnpm build:sync-server` ✓。
 
-**未验证（归 Codex）**：① **「逐字流的观感」与「工具调用可见」只有真机真模型能验**——本机假模型**不发 `tool_calls`**（`docs/TASKS.md` 里 78 那条已写明），所以「工具调用：…」这一行在本机只能靠桩事件断言，真实网关下是否真的长出这行、逐字流是不是真的按字增量，必须真机跑一遍。② 工具事件语义是「已决定并已执行完」（见上），要做成「正在调用…」需要在 provider 层加增量 `onToolCall`，本批没做。③ 桥接路径只有进度、没有逐字（那条路没有 provider 流）。④ `apps/web/src/lib/admin.ts` 这一层**没有测试文件**（`admin.test.ts` 不存在）：断言落在 core 的回合层与 `SideChat` 组件层，hook 里的交接时序（handoff 与 reset 的先后）只有代码审读保证。⑤ `answer` 跨轮累加是这套做法的前提，`case 'text'` 不能改回叠加，否则正文会重复。本批**未 push、未部署**。
+**未验证（归 Codex）**：① **「逐字流的观感」与「工具调用可见」只有真机真模型能验**——本机假模型**不发 `tool_calls`**（`docs/TASKS.md` 里 78 那条已写明），所以「工具调用：…」这一行在本机只能靠桩事件断言，真实网关下是否真的长出这行、逐字流是不是真的按字增量，必须真机跑一遍。② 工具事件语义是「已决定并已执行完」（见上），要做成「正在调用…」需要在 provider 层加增量 `onToolCall`，本批没做。③ 桥接路径只有进度、没有逐字（那条路没有 provider 流）。④ `apps/web/src/lib/admin.ts` 这一层**没有测试文件**（`admin.test.ts` 不存在）：断言落在 core 的回合层与 `SideChat` 组件层，hook 里的交接时序（handoff 与 reset 的先后）只有代码审读保证。⑤ `answer` 跨轮累加是这套做法的前提，`case 'text'` 不能改回叠加，否则正文会重复。**本批已 push、已只重新部署前端**（2026-09-30）。
+
+**上线记录（2026-09-30）**：顺序 103／104 完成后用户要求「请 push 以及部署」；线上网页里当时已经带着 `codex/sync-admin-readonly` 那批的账户补丁（引用 `assets/index-x6nLkgDY.js`），于是先按用户选定方案把那条隔离分支（顺序 99／100）**合入本分支**再推，免得线上回退账户关联功能。`git merge --no-ff codex/sync-admin-readonly` 在四份文档（EVAL／FILE-LOG／STATUS／TASKS）上冲突，按「两边内容都留」解掉后合并提交为 **`9d5e5fd`**（38 文件 +3072/−74；第一父 `7750848` 即顺序 104，第二父 `e6d9fda` 即顺序 100）。合并后门禁：typecheck 0、lint **318 文件** 0 error／0 warning、test Core 74 文件 / 852 条 ＋ Web 21 文件 / 96 条 ＋ 管理专项 18 条 = **966**、build 0（`assets/index-Cuf6mb55.js` 686.91 kB / gzip 220.55 kB）、build:sync-server 0。随后 `git -c http.proxy= -c https.proxy= push origin HEAD:refs/heads/main` 以 `5575105..9d5e5fd` 快进推上 `origin/main`。部署只换网页：正式机 `D:\Dramatis\sync\source-revision.txt` 已经是 `e6d9fdae…`、`accounts.js`／`storage-policy.js` 都在，同步服务与数据没动；`apps/web/dist` 传到 `D:\Dramatis\web\dist.new-20260930-234203` 核过 SHA-256 后「旧目录改名 → 暂存改名成 dist」，旧目录留成 `dist.bak-20260930-234203`。线上自查：公网首页 200 / 1160 B 且只引用 `assets/index-Cuf6mb55.js`，该 JS 200 / 686910 B、SHA-256 `F44A088DEAFE21BA395C507AFB100F2963C8B8BA42E35C68916C26C55409771C` 与本地构建逐字节相同，`index-BDv279kC.css` 200、`sw.js` 200、`/sync/health` 200 `{"ok":true}`；目标机本机（`127.0.0.1:18080`）同样全绿。回滚＝把 `dist` 改名 `dist.bad-<时间戳>`、把 `dist.bak-20260930-234203` 改回 `dist`。**教训**：换版脚本里用了 `$home` 当变量，PowerShell 的 `$HOME` 只读，脚本在目录已换完之后才抛 `VariableNotWritable`，自检与回滚都没跑——远程脚本要避开内置变量并在开头做变量预检。
 
 ## 九十一、2026-09-30：顺序 99 账户关联与只读服务器管理台
 
-**范围与编号**：读过草案、同步真实实现及旧部署说明后，用户批准 A（SSH＋本机网页）、账户 ID／显示名＋关联空间首批。首次核对主仓已有 96、97；实施期间其它工作又登记了 98，提交前复核后本批最终用 **99**。本节编号跳到九十一，八十八至九十已由主仓其它批次使用。在基线 `49a9be2` 的隔离分支 `codex/sync-admin-readonly` 工作，尚未合并主仓后续改动。单批一个提交，未 push、未部署、未连接生产。存储配额写、VIP／托管 API／服务目录与桌面壳仅规划，无实现。
+**范围与编号**：读过草案、同步真实实现及旧部署说明后，用户批准 A（SSH＋本机网页）、账户 ID／显示名＋关联空间首批。首次核对主仓已有 96、97；实施期间其它工作又登记了 98，提交前复核后本批最终用 **99**。本节编号跳到九十一，八十八至九十已由主仓其它批次使用。在基线 `49a9be2` 的隔离分支 `codex/sync-admin-readonly` 工作，尚未合并主仓后续改动。单批一个提交；**2026-09-30 已并入主线并随顺序 103／104 一起 push、一起换前端**（合并提交 `9d5e5fd`，见第一百零四节的「上线记录」）。存储配额写、VIP／托管 API／服务目录与桌面壳仅规划，无实现。
 
 **真实 schema 与只读边界**：实际表是 `spaces`、`records`、`heads`，封装在 `spaces.key_wraps` JSON，随机世代在 `spaces.epoch`；`heads.head/record_count/byte_count` 维护同步版本与含墓碑的配额计数。管理 SQL 显式投影，密文只在 SQL 内算长度，不输出 `sealed`／实体 ID／凭证哈希／封装。集合与设备仅元数据；客户端更新时间不能冒充服务器最近写入时间；缺计数器显示未知。管理连接只读＋query_only，不执行原同步建表／迁移。新增 `account_profiles` 由同步服务维护，明示用户同意后才保存 ID／显示名／句柄／认领时间／世代。
 
@@ -4561,4 +4563,4 @@ v12 的三个判断都是有意的：
 - 正式网页以4ee7edd的实际上线源码为基线，只叠顺序99的AccountPanel／account-auth／account-profile文件；暂存专用Vite别名指向该基线core。构建174模块，index-x6nLkgDY.js 678255B／gzip217.69kB，未含顺序96人设收敛文字，CSS保持原资源。正式网页及资产200、公网/sync/health为ok；公网/api/overview只返回原网页HTML，无editingEnabled管理数据。Caddy／旧入口代理未修改。
 - token在服务器生成，只放受保护环境与忽略的本地LOCAL-NOTES；浏览器登录后仅内存，URL无token，审计不记token／姓名／正文。真实连接值不写仓库。
 
-**回滚与限制**：停管理服务／关隧道、换回保留程序；新增表保留，禁止覆盖在线WAL库。旧同步程序忽略单空间配额，回退时必须明确这一影响。尚未验Node22.5最低小版本、生产并发负载和大库扫描／快照耗时、生产库恢复；LocalService仍为共享身份，应用追加日志非系统不可改写存储；默认额度展示需与同步配置同步更新。VIP／其它服务／桌面壳及任务73部署文档漂移仍留后续。本批单次带顺序号提交，未push。
+**回滚与限制**：停管理服务／关隧道、换回保留程序；新增表保留，禁止覆盖在线WAL库。旧同步程序忽略单空间配额，回退时必须明确这一影响。尚未验Node22.5最低小版本、生产并发负载和大库扫描／快照耗时、生产库恢复；LocalService仍为共享身份，应用追加日志非系统不可改写存储；默认额度展示需与同步配置同步更新。VIP／其它服务／桌面壳及任务73部署文档漂移仍留后续。本批单次带顺序号提交；**2026-09-30 已并入主线并随顺序 103／104 一起 push、一起换前端**（合并提交 `9d5e5fd`；正式机 `source-revision.txt` 当时已是本批的 `e6d9fdae…`，所以只换网页、没动同步服务，见第一百零四节的「上线记录」）。

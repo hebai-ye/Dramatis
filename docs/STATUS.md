@@ -21,7 +21,22 @@
 
 ## 新会话从这里接（2026-09-23）
 
-### 2026-09-30：顺序 104 副对话的逐字流 ＋ 工具调用可见（未 push、未部署）
+### 2026-09-30：整批上线（顺序 103／104 ＋ 并入的顺序 99／100：已 push、已只重新部署前端）
+
+顺序 103／104 做完后用户要求「请 push 以及部署」。先查证线上：提供的网页里**已经带着** `codex/sync-admin-readonly` 那批的账户补丁（线上引用 `assets/index-x6nLkgDY.js`，即 `4ee7edd` ＋ `fce1e2f`），所以按用户选定的方案**先把那条隔离分支（顺序 99／100，提交 `fce1e2f`／`e6d9fda`，worktree `C:/Users/35350/.codex/worktrees/f0ed/another life`）合入本分支**再 push，否则线上会回退掉账户关联功能。
+
+- 合并：`git merge --no-ff codex/sync-admin-readonly` → 四份文档冲突（EVAL／FILE-LOG／STATUS／TASKS），按「两边内容都留」解掉——他们的 99／100 节（EVAL 第九十一、九十二节）与我们的 103／104 节（第一百零三、一百零四节）并存，TASKS 总表并成 96、97、98、99、100、103、104。合并提交 `9d5e5fd`（38 文件 +3072/−74，第一父 `7750848`、第二父 `e6d9fda`）。解完复核：四份文档两边原来的每一条标题都还在、无冲突标记残留。
+- 门禁（合并后工作区）：typecheck 0；lint **Checked 318 files** 0 error／0 warning；test Core **74 文件 / 852 条** ＋ Web **21 文件 / 96 条** ＋ 管理专项 **18 条** = **966**；build 0（`assets/index-Cuf6mb55.js` **686.91 kB** / gzip 220.55 kB）；build:sync-server 0。
+- push：先探两路（`https://github.com/` 直连 200、Clash 7897 也在监听），走直连 `git -c http.proxy= -c https.proxy= push origin HEAD:refs/heads/main` ⇒ **`5575105..9d5e5fd` 快进到 `origin/main`**。
+- 部署范围：正式机 `D:\Dramatis\sync\source-revision.txt` = `e6d9fdae…`（就是顺序 100 的尖），`dist/tools/sync-server/src/accounts.js` 与 `storage-policy.js` 都在 ⇒ **同步服务本来就是合并后的代码，不动服务端与数据，本次只换网页**。
+- 换版：`apps/web/dist` 传到 `D:\Dramatis\web\dist.new-20260930-234203` 并核对 SHA-256，再「旧目录改名 → 暂存改名成 dist」；旧目录留成 `D:\Dramatis\web\dist.bak-20260930-234203`（更早那版仍在 `dist.bak-20260930-005711`）。
+- 线上自查：公网首页 200 / 1160 B 且只引用 `assets/index-Cuf6mb55.js`；该 JS 200 / **686910 B**、SHA-256 `F44A088DEAFE21BA395C507AFB100F2963C8B8BA42E35C68916C26C55409771C` 与本地构建逐字节相同；`index-BDv279kC.css` 200；`sw.js` 200；`/sync/health` 200 `{"ok":true}`。目标机本机自查（`http://127.0.0.1:18080/`）同样全绿（160 个文件）。
+- 回滚：把 `D:\Dramatis\web\dist` 改名 `dist.bad-<时间戳>`、`dist.bak-20260930-234203` 改回 `dist` 即生效（Caddy 不用重启）。
+- 教训：换版脚本里**不要用 `$home`**——PowerShell 的 `$HOME` 只读，脚本会在**目录已经换完**之后才抛 `VariableNotWritable`，自检与回滚逻辑都没跑到；这次靠事后另跑的只读脚本补验。远程脚本一律避开内置变量（改用 `$body` 之类），并在脚本里先做一次变量预检。
+- 本次 push 一并送出的还有此前只在本地的那几批：**顺序 77／79／96／97**（`49a9be2`／`c7f680c`／`7da9680`／`7485c4d`）。**本页下面各节里它们写的「未 push、未部署」以本节为准**：到 `9d5e5fd` 为止的提交都已 push，前端都已换版（网页就是同一个 `assets/index-Cuf6mb55.js`）。
+- 未验证：真机真模型下的逐字流观感、工具调用行，以及顺序 103 的卡长效果，仍归 Codex。
+
+### 2026-09-30：顺序 104 副对话的逐字流 ＋ 工具调用可见（已 push、已只重新部署前端）
 
 用户要求：「将流式输出也加载到副对话中，并且可以看清他的当前工具调用」。只读勘查先在链路上找到两处缺口，**机制本身早就有**——流式状态是主／副双通道（`apps/web/src/lib/stream-store.ts` 的 `StreamScope = 'main' | 'admin'`，`StreamingBubble` 的交接范式也在），缺的是增量与接线：`packages/core/src/admin/turn.ts` 每轮要等 `collectCompletionWithTools` **整轮收完**才 `yield { type: 'text', text }`（界面只能「等一大段 → 整段出现」），而 `apps/web/src/lib/admin.ts` 的事件 `switch` 把 `tool` 事件丢进了 `default`（工具调用完全不可见）。
 
@@ -29,15 +44,15 @@
 
 落盘不再闪一下：照抄主对话的交接范式——`handoffStreamState('admin', message.id)`（`handedOff` 标志声明在 `try` 之前，否则 `finally` 读不到），`finally` 只在没有待交接时 `resetStreamState('admin')`，`SideChat` 用 `messages.at(-1)?.id` 判 `handedOver`、effect 里 acknowledge、卸载时 reset；`busy` 且既无正文也无进度时画一行「正在准备…」。网页桥接那条路（没有 API Key、没有 provider 流）只补了进度：`commitBridge` 循环里 `setStreamState('admin', { progress: result.draft.summary })`，其 `finally` 补 reset。
 
-测试：Core 新增 2 条（`onDelta` 按顺序收到每一块正文且拼起来等于 `done.text`；`describeToolExecution` 优先草稿 summary、无草稿退工具名），Web 新增 `apps/web/src/components/SideChat.test.tsx` 5 条（正文画在管理员行、工具调用显示草稿摘要、`busy` 且无内容画「正在准备…」、不忙无流式不画这行、交接后不画流式副本）。五项门禁（2026-09-30 本机）：typecheck 0、lint `Checked 297 files` 0 error / 0 warning、test Core **74 文件 / 852 条** + Web **20 文件 / 92 条**全过、build 0（`assets/index-CNPwSDj1.js` 684.68 kB / gzip 219.86 kB）、build:sync-server 0。**本机假模型不发 `tool_calls`**（`docs/TASKS.md` 在该项里写着），所以逐字流的「观感」与「工具调用可见」只有真机真模型能验，**归 Codex**；本批**未 push、未部署**，细节与遗留见 [EVAL.md](./EVAL.md) 第一百零四节。
+测试：Core 新增 2 条（`onDelta` 按顺序收到每一块正文且拼起来等于 `done.text`；`describeToolExecution` 优先草稿 summary、无草稿退工具名），Web 新增 `apps/web/src/components/SideChat.test.tsx` 5 条（正文画在管理员行、工具调用显示草稿摘要、`busy` 且无内容画「正在准备…」、不忙无流式不画这行、交接后不画流式副本）。五项门禁（2026-09-30 本机）：typecheck 0、lint `Checked 297 files` 0 error / 0 warning、test Core **74 文件 / 852 条** + Web **20 文件 / 92 条**全过、build 0（`assets/index-CNPwSDj1.js` 684.68 kB / gzip 219.86 kB）、build:sync-server 0。**本机假模型不发 `tool_calls`**（`docs/TASKS.md` 在该项里写着），所以逐字流的「观感」与「工具调用可见」只有真机真模型能验，**归 Codex**；本批**已 push、已只重新部署前端**（2026-09-30 随合并批上线，见上两节），细节与遗留见 [EVAL.md](./EVAL.md) 第一百零四节。
 
-### 2026-09-30：顺序 103 世界管理员起草角色卡的长度口径（未 push、未部署）
+### 2026-09-30：顺序 103 世界管理员起草角色卡的长度口径（已 push、已只重新部署前端）
 
 用户实测反馈：请世界管理员建角色时，**人设（description）压到 5 句以内、性格（personality）2～3 句，主对话效果明显更好**，要求对管理员做专项升级。只读勘查先确认了机制：管理员原有系统提示词一共 6 行、**一条长度要求都没有**；而 `buildPersonaBlock` 会把 `card.description` 与 `性格：…` **全文**塞进主对话提示词（整块被压时才截 160 字），于是起草期写多长，之后每一轮就背多长。
 
 改法：口径本体放在 `packages/core/src/admin/tools.ts` 一处——`CARD_DESCRIPTION_MAX_SENTENCES = 5`、`CARD_PERSONALITY_MAX_SENTENCES = 3` 与 `CARD_LENGTH_GUIDE`（两句话）；`packages/core/src/admin/prompt.ts` 的管理员系统提示词引用它，`upsert_character_card` 的 `description`／`personality` 字段说明改写成「… 5 句话以内，越短主对话越聚焦」／「性格；2～3 句话以内」——网页版桥接（没有 API Key 时）由 `describeAdminTools` 把工具字段说明原样渲染，所以**改一处口径，两条链路同时生效**。超长只提醒不截断：新增 `countSentences`（按 `。！？!?…` 与换行断句，分号逗号不算，连续标点只算一次）与 `cardLengthNote`，超标时把「人设 X 句、性格 Y 句，建议人设 5 句以内、性格 2～3 句」拼进草稿自身的 `summary`（界面本来就显示它），**字段一个字不改**——硬拦会破「两行数组要被接受」与「真实模型录下的调用必须 parsed.ok」两条既有断言，而录下的老周那张卡（3 句人设 + 2 句性格）本来就合规。
 
-测试：`packages/core/src/admin/tools.test.ts` 新增 5 条（字段说明含句数、`countSentences` 的标点／换行／分号行为、6 句人设 + 4 句性格时 summary 附提醒且原文不变、合规卡 summary 恰为「新建角色卡「秦娘」」、改卡沿用旧长人设也会提醒），`packages/core/src/admin/turn.test.ts` 新增 1 条断言系统提示词含两句口径。真模型上人设是否真的变短、主对话是否真的更好，**归 Codex 复跑**；本批**未 push、未部署**，细节与遗留见 [EVAL.md](./EVAL.md) 第一百零三节。
+测试：`packages/core/src/admin/tools.test.ts` 新增 5 条（字段说明含句数、`countSentences` 的标点／换行／分号行为、6 句人设 + 4 句性格时 summary 附提醒且原文不变、合规卡 summary 恰为「新建角色卡「秦娘」」、改卡沿用旧长人设也会提醒），`packages/core/src/admin/turn.test.ts` 新增 1 条断言系统提示词含两句口径。真模型上人设是否真的变短、主对话是否真的更好，**归 Codex 复跑**；本批**已 push、已只重新部署前端**（2026-09-30 随合并批上线，见上三节），细节与遗留见 [EVAL.md](./EVAL.md) 第一百零三节。
 
 ### 2026-09-30：顺序 79 跨角色串线检测（未 push、未部署）
 
@@ -67,7 +82,7 @@
 
 测试加在 `apps/web/src/hooks/useTurnRunner.test.tsx:480`（三条）：第二轮被重抽时第一条一个字没动且生成历史里看得到先开口的人；第一位被重抽时看不到同轮后面的人；回滚失败报警告而 `setError` 为空。五项门禁与真模型未验的边界见 [EVAL.md](./EVAL.md) 第八十八节。本批**未 push、未部署**。
 
-### 2026-09-30：顺序 100 显示名／存储配额与正式管理台接入
+### 2026-09-30：顺序 100 显示名／存储配额与正式管理台接入（已并入主线、已 push、已只重新部署前端）
 
 用户批准正式连接及“显示名＋存储配额”。已在独立回环WinSW管理服务接入正式Windows，经既有SSH管理链路访问 http://127.0.0.1:8788/；未改公网代理。space_policies按epoch绑定，自定义0～1TiB／继承默认；配额检查在同步IMMEDIATE事务内，降低／恢复较低默认后保留数据、只拒增长。名称只改已认领的运营资料，不代填账户ID。
 
@@ -77,13 +92,13 @@
 
 生产前一致性快照15765504B，保留旧同步／网页目录；同步切换曾因子文件ACL继承错误启动失败，回滚恢复后修正再上线，健康通过。管理自动启动、LocalService、回环8787／8788及环境ACL已实测；公网仍提供网页／同步，不返回管理数据。操作备份独立于原6小时／30份备份，暂无自动清理；LocalService共享身份和未做生产恢复演练的限制见EVAL第九十二节。
 
-本批在隔离分支单次提交，未push／未合并主仓。正式网页以既有上线版本4ee7edd为基线，仅叠账户登记接线，未上线本分支的顺序96提示词改动。真实地址／token／回滚目录仅在忽略的LOCAL-NOTES。VIP、服务网关、删除／恢复和桌面壳留后续；任务73全面部署文档漂移仍开着。
+本批在隔离分支单次提交；**2026-09-30 已合并进主线、随 103／104 一起 push 并一起换前端**（见顶部「整批上线」一节）。当时正式网页以既有上线版本4ee7edd为基线，仅叠账户登记接线。真实地址／token／回滚目录仅在忽略的LOCAL-NOTES。VIP、服务网关、删除／恢复和桌面壳留后续；任务73全面部署文档漂移仍开着。
 
-### 2026-09-30：顺序 99 账户关联与只读管理台（本地完成，未 push、未部署）
+### 2026-09-30：顺序 99 账户关联与只读管理台（已并入主线、已 push、已只重新部署前端）
 
 主仓顺序 96／97 已完成，98 已登记给其它工作；本批最终用 **99**，不覆盖其它批次记录。用户已选 A（SSH 隧道＋本机网页）与账户 ID／显示名＋关联空间；“账户内存”明确为服务器存储容量。首批新增 `tools/sync-admin/`，只绑定回环、不挂 `/sync`、无管理写／下载入口；账户列表、搜索分页、空间计数、配额计量用量、密文长度／集合／设备元数据、备份文件状态与服务存活。资料由所有者显式同意并用同步凭证认领，旧空间未认领；新增 `account_profiles` 表绑定随机空间 `epoch`，重复认领不覆盖显示名，管理端不读取凭证／钥匙封装／实体内容。
 
-用户自助资料接口在同步宿主 `/accounts/claim`（客户端沿用 `/sync` 通道），与独立管理 API 区分；最多 4 KB，失败不阻断注册／登录与恢复码。客户端仅加资料同意与接线；审查修复反向代理 Host 变化导致合法认领失败、登录流程残留旧账户按钮。Windows 本机使用独立临时库和浏览器完成登记／未登记注册、登录、只读查询与退出；**未连接生产、未验证正式 WinSW／NTFS ACL／管理 SSH 隧道**。
+用户自助资料接口在同步宿主 `/accounts/claim`（客户端沿用 `/sync` 通道），与独立管理 API 区分；最多 4 KB，失败不阻断注册／登录与恢复码。客户端仅加资料同意与接线；审查修复反向代理 Host 变化导致合法认领失败、登录流程残留旧账户按钮。Windows 本机使用独立临时库和浏览器完成登记／未登记注册、登录、只读查询与退出；**未连接生产、未验证正式 WinSW／NTFS ACL／管理 SSH 隧道**（顺序 100 已补验并接入正式机，见上一节；整批上线见顶部一节）。
 
 五门禁：类型检查通过；lint **306 文件，0 错误／0 警告**；测试 Core **826**＋Web **72**＋管理专项 **11**＝**909** 条全过；网页、管理台、同步服务构建通过。详细证据、局限与回滚见 EVAL 第九十一节。[管理台说明](../tools/sync-admin/README.md) 给出泛化 Windows 服务模板和经旧机回环 22023 的 SSH 接入方式。任务 73 全面部署文档漂移仍开着。
 

@@ -1513,7 +1513,7 @@ TASKS 第〇节顺序 68。用户裁定「A+B 推进」；原方案里的 `limit
 | `apps/web/src/hooks/useTurnRunner.test.tsx` | 改 | 夹具补 `session.rewriteTurn` 桩与 `analysisFails` / `rewriteReturnsNull` 开关；原「后台回滚失败」一条拆成「事务失败按整次失败报」与「重排分析失败只发警告」两条 |
 | `docs/{TASKS,STATUS,EVAL,FILE-LOG}.md` | 改 | 顺序 77 计划行改成已完成并写清做法、状态接续点、EVAL 第八十九节与本节；顺序 96/97 相关小节里「真事务仍然没有」的说法一并改成「顺序 77 当天收口」 |
 
-五项门禁：`pnpm typecheck` 0；`pnpm lint` `Checked 293 files` 0 error / 0 warning；`pnpm test` Core 73 文件 / 833 条 + Web 18 文件 / 82 条全过；`pnpm build` 0（`dist/assets/index-CuPsB7O6.js` 680.10 kB / gzip 218.26 kB）；`pnpm build:sync-server` 0。本批**未 push、未部署**；IndexedDB 真事务在 Node 里没有测试基建（无 `indexedDB`、无 `fake-indexeddb`），浏览器里的原子性与并发归 Codex 真机验，边界见 EVAL 第八十九节。
+五项门禁：`pnpm typecheck` 0；`pnpm lint` `Checked 293 files` 0 error / 0 warning；`pnpm test` Core 73 文件 / 833 条 + Web 18 文件 / 82 条全过；`pnpm build` 0（`dist/assets/index-CuPsB7O6.js` 680.10 kB / gzip 218.26 kB）；`pnpm build:sync-server` 0。本批**已随 2026-09-30 整批 push、网页已换版**（STATUS 顶部「整批上线」一节）；IndexedDB 真事务在 Node 里没有测试基建（无 `indexedDB`、无 `fake-indexeddb`），浏览器里的原子性与并发归 Codex 真机验，边界见 EVAL 第八十九节。
 
 ## 顺序 97、2026-09-30：重抽只重生成被点的那一位（同轮其他人原样保留）
 
@@ -1526,7 +1526,7 @@ TASKS 第〇节顺序 68。用户裁定「A+B 推进」；原方案里的 `limit
 | `apps/web/src/components/MainChat.tsx` | 改 | `lastCharacterId` 上方注释（`:486-490`）改成准确理由：更早的回复换掉后后面那些是照着旧版本说的；写明顺序 97 只保证**同一轮**里其他人的回复不再被连带删掉，入口限制不变 |
 | `docs/{TASKS,STATUS,EVAL,FILE-LOG}.md` | 改 | 顺序 97 计划行改成已完成并写清做法、状态接续点、EVAL 第八十八节与本节 |
 
-测试先单跑：`useTurnRunner.test.tsx` 13 条全过（原 10 + 新增 3）。本批**未 push、未部署**；五项门禁数字与「真模型、真机都没验」的边界见 EVAL 第八十八节。（**顺序 77 同一天收口**：上面那张表里的 `session.updateMessage` 与「逐步 try/catch 收账」已经换成 `session.rewriteTurn` 的**一个事务**，见上一节。）
+测试先单跑：`useTurnRunner.test.tsx` 13 条全过（原 10 + 新增 3）。本批**已随 2026-09-30 整批 push、网页已换版**（STATUS 顶部「整批上线」一节）；五项门禁数字与「真模型、真机都没验」的边界见 EVAL 第八十八节。（**顺序 77 同一天收口**：上面那张表里的 `session.updateMessage` 与「逐步 try/catch 收账」已经换成 `session.rewriteTurn` 的**一个事务**，见上一节。）
 
 ## 顺序 96、2026-09-30：人设表达收敛与结尾反问降级（提示词层最小干预）
 
@@ -1542,7 +1542,7 @@ TASKS 第〇节顺序 68。用户裁定「A+B 推进」；原方案里的 `limit
 | `docs/{TASKS,STATUS,EVAL,FILE-LOG}.md` | 改 | 顺序 96 的计划行与处理表（另一并登记顺序 97 = 重抽只重生成被点的那一位）、状态接续点、EVAL 第八十七节与本节 |
 | `docs/ROLEPLAY-PROMPT.md` | 改 | 结尾反问那条改成「需要玩家表态时才用问句」，并写明「人设表达收敛」那几条不在卡预设里、在 `reply-style` 块里 |
 
-本批**未 push、未部署**；五项门禁数字与「真模型没验」的边界见 EVAL 第八十七节。
+本批**已随 2026-09-30 整批 push、网页已换版**（STATUS 顶部「整批上线」一节）；五项门禁数字与「真模型没验」的边界见 EVAL 第八十七节。
 
 ## 顺序 79、2026-09-30：跨角色串线检测（只提示不改数据；只做长片段那半）
 
@@ -1559,7 +1559,7 @@ TASKS 第〇节顺序 68。用户裁定「A+B 推进」；原方案里的 `limit
 | `apps/web/src/App.tsx` | 改 | 新增 `signatureKey` + `useMemo(buildSignatures)`：成员取 `cast`（`cardId` → `session.library.cards`），素材 = `description`／`personality`／`tags`，`aliases` = `displayName`／`name`／`nickname`；`shared` = 所挂世界书条目正文 + `scene.summary`。key 拼的是内容而不是对象引用（与 `avatars` 同一套路），避免后台每轮分析写入后重建数组；`<MainChat signatures={signatures}>` |
 | `docs/{TASKS,STATUS,EVAL,FILE-LOG}.md` | 改 | 顺序 79 计划行改成 ✅ 并写清判据与边界、加「顺序 79 怎么处理的」整节与遗留；总表逐行对齐 + 新增顺序 98 行（道具词级串线检测）；STATUS 接续点；EVAL 第九十节与本节 |
 
-本批**未 push、未部署**；五项门禁数字与「误报率没有真实语料标定」的边界见 EVAL 第九十节。
+本批**已随 2026-09-30 整批 push、网页已换版**（STATUS 顶部「整批上线」一节）；五项门禁数字与「误报率没有真实语料标定」的边界见 EVAL 第九十节。
 
 ## 顺序 103、2026-09-30：世界管理员起草角色卡的长度口径（人设 ≤5 句、性格 2～3 句）
 
@@ -1573,7 +1573,7 @@ TASKS 第〇节顺序 68。用户裁定「A+B 推进」；原方案里的 `limit
 | `packages/core/src/admin/turn.test.ts` | 改 | 新增 1 条：`buildAdminMessages` 的系统提示词里含「人设（description）控制在 5 句话以内」与「性格（personality）控制在 2～3 句话以内」 |
 | `docs/{TASKS,STATUS,EVAL,FILE-LOG}.md` | 改 | 顺序 103 计划行（✅）与「顺序 103 怎么处理的」整节 + 遗留、STATUS 接续点、EVAL 第一百零三节、本节 |
 
-本批**未 push、未部署**；五项门禁数字、真模型待验与四条遗留见 EVAL 第一百零三节。
+本批**已随合并提交 `9d5e5fd` push、并只重新部署前端**（2026-09-30，见顺序 104 一节同一行的说明）；五项门禁数字、真模型待验与四条遗留见 EVAL 第一百零三节。
 
 ## 顺序 104、2026-09-30：副对话的逐字流式与工具调用可见
 
@@ -1589,11 +1589,11 @@ TASKS 第〇节顺序 68。用户裁定「A+B 推进」；原方案里的 `limit
 | `packages/core/src/admin/turn.test.ts` | 改 | 新增 `describe('顺序 104：副对话的逐字流与工具调用可见')` 2 条：`onDelta` 按顺序收到每一块正文且拼起来等于 `done.text`；`describeToolExecution` 优先草稿 summary、无草稿退工具名 |
 | `docs/{TASKS,STATUS,EVAL,FILE-LOG}.md` | 改 | 顺序 104 计划行（✅）与「顺序 104 怎么处理的」整节 + 遗留、STATUS 接续点、EVAL 第一百零四节、本节 |
 
-本批**未 push、未部署**；五项门禁数字（与顺序 103 共用同一工作区状态）与五条遗留见 EVAL 第一百零四节——其中「逐字流观感」与「工具调用可见」本机假模型验不了，**归 Codex 真机真模型**。
+本批**已 push、已只重新部署前端**：顺序 103／104 做完后用户要求「请 push 以及部署」，因线上网页已带 `codex/sync-admin-readonly` 的账户补丁，先 `git merge --no-ff codex/sync-admin-readonly` 把顺序 99／100 并进主线（四份文档冲突按「两边内容都留」解掉），合并提交 `9d5e5fd`（38 文件 +3072/−74，第一父顺序 104、第二父顺序 100），合并后门禁 typecheck 0 / lint 318 文件 0 error / test Core 852＋Web 96＋管理 18＝**966** / build 0（`assets/index-Cuf6mb55.js` 686.91 kB）/ build:sync-server 0，再 `5575105..9d5e5fd` 快进 push 到 `origin/main`；部署只换网页（正式机 `source-revision.txt` 已是 `e6d9fdae…`，同步服务与数据没动），`D:\Dramatis\web\dist` 换成新构建、旧目录留成 `dist.bak-20260930-234203`，公网与目标机自查全绿（JS 686910 B、SHA-256 `F44A088…771C` 与本地逐字节相同、`/sync/health` 200）。五项门禁数字（与顺序 103 共用同一工作区状态）与五条遗留见 EVAL 第一百零四节——其中「逐字流观感」与「工具调用可见」本机假模型验不了，**归 Codex 真机真模型**。
 
 ## 顺序 99、2026-09-30：账户关联与只读服务器管理台
 
-用户批准 A（SSH＋本机网页）与账户 ID／显示名＋关联空间。主仓 96／97 已完成、98 已登记给其它工作，首批最终编号 **99**；工作位于隔离分支 `codex/sync-admin-readonly`，一批一个提交，未 push／部署。
+用户批准 A（SSH＋本机网页）与账户 ID／显示名＋关联空间。主仓 96／97 已完成、98 已登记给其它工作，首批最终编号 **99**；工作位于隔离分支 `codex/sync-admin-readonly`，一批一个提交。**2026-09-30 已并入主线并随顺序 103／104 一起 push、一起换前端**（合并提交 `9d5e5fd`，见顺序 104 一节）。
 
 | 文件 | 动作 | 内容 |
 | --- | --- | --- |
@@ -1617,7 +1617,7 @@ Windows 本机临时库／真实浏览器完成同意登记、不登记注册、
 
 ## 顺序 100、2026-09-30：管理台显示名／存储配额与正式接入
 
-用户批准正式连接和所选编辑范围，续于顺序99；未push，未合入主仓。正式生产接入和回滚事实见EVAL第九十二节，真实地址／身份／token仅存忽略的LOCAL-NOTES。
+用户批准正式连接和所选编辑范围，续于顺序99；**2026-09-30 已并入主线并随顺序 103／104 一起 push、一起换前端**（合并提交 `9d5e5fd`；正式机 `source-revision.txt` 当时已是本批的 `e6d9fdae…`，故只换网页、没动同步服务）。正式生产接入和回滚事实见EVAL第九十二节，真实地址／身份／token仅存忽略的LOCAL-NOTES。
 
 | 文件 | 动作 | 内容 |
 | --- | --- | --- |

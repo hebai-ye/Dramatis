@@ -34,6 +34,48 @@ export type AdminToolName =
   | 'delete_persona'
   | 'set_scene';
 
+/*
+ * 顺序 103：角色卡正文的长度口径。
+ *
+ * 来源是用户 2026-09-30 的实测：把角色卡的「人设」（description）压到 5 句话以内、
+ * 「性格」（personality）压到 2～3 句话时，主对话的表现明显更好。原因与 178 轮长跑
+ * 的失真一致——这两段每一轮都会被原样塞进提示词，卡上写得越长，角色越容易把注意力
+ * 花在「说清自己是谁」上（自称与名字当主语的次数随轮次膨胀，见 docs/EVAL.md 第六十八节）。
+ *
+ * 口径只写三处、且都从这里取：管理员系统提示词（prompt.ts 的 SYSTEM_PROMPT）、
+ * 工具参数说明（下面 ADMIN_TOOLS 里 description/personality 两行）、以及草稿摘要里的提醒。
+ * **只提醒、不截断**：管理员是起草者，用户仍可以自己写长卡，硬砍会丢设定。
+ */
+export const CARD_DESCRIPTION_MAX_SENTENCES = 5;
+export const CARD_PERSONALITY_MAX_SENTENCES = 3;
+
+/** 给模型看的完整口径（prompt.ts 直接用这一段，别再抄一遍数字）。 */
+export const CARD_LENGTH_GUIDE = [
+  `起草角色卡时把正文写短：**人设（description）控制在 ${String(CARD_DESCRIPTION_MAX_SENTENCES)} 句话以内**，**性格（personality）控制在 2～${String(CARD_PERSONALITY_MAX_SENTENCES)} 句话以内**。`,
+  '只留最能决定他「怎么说话、怎么做」的部分；身世细节、地方风物、历史事件放进世界书，需要时再触发。',
+].join('\n');
+
+const SENTENCE_SPLIT = /[。！？!?…\n\r]+/;
+
+/** 数一段话里有几「句」：句末标点与换行都断句，连续标点只算一次；分号、逗号不断句。 */
+export function countSentences(value: string): number {
+  return value
+    .split(SENTENCE_SPLIT)
+    .map((part) => part.trim())
+    .filter((part) => part !== '').length;
+}
+
+/** 草稿摘要里的长度提醒：返回空串表示两段都在口径内。 */
+export function cardLengthNote(description: string, personality: string): string {
+  const over: string[] = [];
+  const descriptionSentences = countSentences(description);
+  if (descriptionSentences > CARD_DESCRIPTION_MAX_SENTENCES) over.push(`人设 ${String(descriptionSentences)} 句`);
+  const personalitySentences = countSentences(personality);
+  if (personalitySentences > CARD_PERSONALITY_MAX_SENTENCES) over.push(`性格 ${String(personalitySentences)} 句`);
+  if (over.length === 0) return '';
+  return `${over.join('、')}，建议人设 ${String(CARD_DESCRIPTION_MAX_SENTENCES)} 句以内、性格 2～${String(CARD_PERSONALITY_MAX_SENTENCES)} 句`;
+}
+
 export const ADMIN_TOOLS: readonly ToolDefinition[] = [
   {
     type: 'function',
@@ -49,8 +91,14 @@ export const ADMIN_TOOLS: readonly ToolDefinition[] = [
           cardId: { type: 'string', description: '修改已有角色卡时填它的 id；新建时留空' },
           name: { type: 'string', description: '角色名' },
           nickname: { type: 'string', description: '角色对玩家的自称，可留空' },
-          description: { type: 'string', description: '外貌、身份、来头' },
-          personality: { type: 'string', description: '性格' },
+          description: {
+            type: 'string',
+            description: `外貌、身份、来头；${String(CARD_DESCRIPTION_MAX_SENTENCES)} 句话以内，越短主对话越聚焦`,
+          },
+          personality: {
+            type: 'string',
+            description: `性格；2～${String(CARD_PERSONALITY_MAX_SENTENCES)} 句话以内`,
+          },
           tags: { type: 'array', items: { type: 'string' }, description: '标签' },
         },
       },
@@ -318,6 +366,12 @@ function parseCardDraft(args: Record<string, unknown>, context: AdminToolContext
         })
       : { ...base, ...patch };
 
+  /*
+   * 顺序 103：两段正文超出长度口径时，只把事实写进草稿摘要，让用户（和下一次调用的模型）
+   * 看得见，不截断内容。改的是「管理员起草时的口径」，用户自己写长卡仍然照收。
+   */
+  const lengthNote = cardLengthNote(card.description, card.personality);
+
   return {
     ok: true,
     draft: {
@@ -325,7 +379,7 @@ function parseCardDraft(args: Record<string, unknown>, context: AdminToolContext
       cardId: rawId === '' ? null : asCardId(rawId),
       card,
       baseUpdatedAt: base?.updatedAt ?? null,
-      summary: `${rawId === '' ? '新建' : '修改'}角色卡「${name}」`,
+      summary: `${rawId === '' ? '新建' : '修改'}角色卡「${name}」${lengthNote === '' ? '' : `（${lengthNote}）`}`,
     },
   };
 }

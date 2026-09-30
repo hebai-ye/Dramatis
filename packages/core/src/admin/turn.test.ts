@@ -142,6 +142,25 @@ describe('buildAdminMessages', () => {
     expect(joined).not.toContain('你现在扮演的是');
   });
 
+  it('顺序 103：角色卡正文的长度口径（人设 5 句、性格 2～3 句）写进了系统提示词', () => {
+    const { room, card, alice, conversation } = fixture();
+    const messages = buildAdminMessages({
+      room,
+      conversation,
+      scene: null,
+      instances: [alice],
+      cards: [card],
+      worldBooks: [],
+      personas: [],
+      history: [],
+      userInput: '帮我建一个酒馆老板',
+    });
+
+    const joined = messages.map((message) => message.content).join('\n');
+    expect(joined).toContain('人设（description）控制在 5 句话以内');
+    expect(joined).toContain('性格（personality）控制在 2～3 句话以内');
+  });
+
   it('已起草的草稿会写进上下文，避免重复起草', () => {
     const { room, card, alice, conversation } = fixture();
     const messages = buildAdminMessages({

@@ -1561,6 +1561,20 @@ TASKS 第〇节顺序 68。用户裁定「A+B 推进」；原方案里的 `limit
 
 本批**未 push、未部署**；五项门禁数字与「误报率没有真实语料标定」的边界见 EVAL 第九十节。
 
+## 顺序 103、2026-09-30：世界管理员起草角色卡的长度口径（人设 ≤5 句、性格 2～3 句）
+
+用户 2026-09-30 的实测反馈：请世界管理员建角色时，**人设（description）压到 5 句以内、性格（personality）2～3 句，主对话效果明显更好**，要求对管理员这条链路做专项升级。只读勘查先把机制查清：管理员原有的私有系统提示词一共 6 行、**一条长度要求都没有**；而 `packages/core/src/prompt/assemble.ts` 的 `buildPersonaBlock` 会把 `card.description` 与 `性格：${card.personality}` **全文**塞进主对话提示词（只有整块被压时才截 160 字）——起草期写多长，之后**每一轮**就背多长。口径本体只写一处，系统提示词、工具字段说明（网页版桥接会原样渲染它）、草稿提醒三处共用；超长**只提醒不截断**（硬拦会破「两行数组要被接受」与「真实模型录下的调用必须 parsed.ok」两条既有断言）。
+
+| 文件 | 动作 | 本批内容 |
+| --- | --- | --- |
+| `packages/core/src/admin/tools.ts` | 改 | 新增 `CARD_DESCRIPTION_MAX_SENTENCES = 5`、`CARD_PERSONALITY_MAX_SENTENCES = 3`、`CARD_LENGTH_GUIDE`（两句：人设 5 句以内／性格 2～3 句以内 + 「身世细节、地方风物、历史事件放进世界书」）、`SENTENCE_SPLIT = /[。！？!?…\n\r]+/`、`countSentences`（分号逗号不断句、连续标点只算一次）、`cardLengthNote`（都在口径内返回空串，否则拼「人设 X 句、性格 Y 句，建议人设 5 句以内、性格 2～3 句」）；`upsert_character_card` 的 `description`／`personality` 字段说明改写成带句数的版本；`parseCardDraft` 把 `cardLengthNote` 拼进草稿自身的 `summary`（**字段一个字不改**） |
+| `packages/core/src/admin/prompt.ts` | 改 | 私有 `SYSTEM_PROMPT` 引用 `CARD_LENGTH_GUIDE`（import 改为 `import { ADMIN_TOOLS, CARD_LENGTH_GUIDE } from './tools.js';`），并附注释说明为什么放在「一次把内容写完整」之后、以及为什么只提醒不截断 |
+| `packages/core/src/admin/tools.test.ts` | 改 | 新增 5 条：工具声明字段说明含「5 句话以内」／「2～3 句话以内」、`countSentences` 的标点／换行／分号行为、6 句人设 + 4 句性格时 summary 附提醒且原文一字不改、合规卡 summary 恰为「新建角色卡「秦娘」」、改卡沿用旧长人设也会提醒 |
+| `packages/core/src/admin/turn.test.ts` | 改 | 新增 1 条：`buildAdminMessages` 的系统提示词里含「人设（description）控制在 5 句话以内」与「性格（personality）控制在 2～3 句话以内」 |
+| `docs/{TASKS,STATUS,EVAL,FILE-LOG}.md` | 改 | 顺序 103 计划行（✅）与「顺序 103 怎么处理的」整节 + 遗留、STATUS 接续点、EVAL 第一百零三节、本节 |
+
+本批**未 push、未部署**；五项门禁数字、真模型待验与四条遗留见 EVAL 第一百零三节。
+
 ## 七十二、几点注意
 
 ---

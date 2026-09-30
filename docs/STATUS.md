@@ -21,6 +21,14 @@
 
 ## 新会话从这里接（2026-09-23）
 
+### 2026-09-30：顺序 103 世界管理员起草角色卡的长度口径（未 push、未部署）
+
+用户实测反馈：请世界管理员建角色时，**人设（description）压到 5 句以内、性格（personality）2～3 句，主对话效果明显更好**，要求对管理员做专项升级。只读勘查先确认了机制：管理员原有系统提示词一共 6 行、**一条长度要求都没有**；而 `buildPersonaBlock` 会把 `card.description` 与 `性格：…` **全文**塞进主对话提示词（整块被压时才截 160 字），于是起草期写多长，之后每一轮就背多长。
+
+改法：口径本体放在 `packages/core/src/admin/tools.ts` 一处——`CARD_DESCRIPTION_MAX_SENTENCES = 5`、`CARD_PERSONALITY_MAX_SENTENCES = 3` 与 `CARD_LENGTH_GUIDE`（两句话）；`packages/core/src/admin/prompt.ts` 的管理员系统提示词引用它，`upsert_character_card` 的 `description`／`personality` 字段说明改写成「… 5 句话以内，越短主对话越聚焦」／「性格；2～3 句话以内」——网页版桥接（没有 API Key 时）由 `describeAdminTools` 把工具字段说明原样渲染，所以**改一处口径，两条链路同时生效**。超长只提醒不截断：新增 `countSentences`（按 `。！？!?…` 与换行断句，分号逗号不算，连续标点只算一次）与 `cardLengthNote`，超标时把「人设 X 句、性格 Y 句，建议人设 5 句以内、性格 2～3 句」拼进草稿自身的 `summary`（界面本来就显示它），**字段一个字不改**——硬拦会破「两行数组要被接受」与「真实模型录下的调用必须 parsed.ok」两条既有断言，而录下的老周那张卡（3 句人设 + 2 句性格）本来就合规。
+
+测试：`packages/core/src/admin/tools.test.ts` 新增 5 条（字段说明含句数、`countSentences` 的标点／换行／分号行为、6 句人设 + 4 句性格时 summary 附提醒且原文不变、合规卡 summary 恰为「新建角色卡「秦娘」」、改卡沿用旧长人设也会提醒），`packages/core/src/admin/turn.test.ts` 新增 1 条断言系统提示词含两句口径。真模型上人设是否真的变短、主对话是否真的更好，**归 Codex 复跑**；本批**未 push、未部署**，细节与遗留见 [EVAL.md](./EVAL.md) 第一百零三节。
+
 ### 2026-09-30：顺序 79 跨角色串线检测（未 push、未部署）
 
 用户在 2026-09-25 先把这条暂缓（当时的理由是「靠道具词判断不可靠」），2026-09-30 要求「所有任务清单确定、之前误解的任务都确认掉，再推进顺序 79」，于是重新评估并换口径：**不猜道具词表，改成「谁的东西以他自己的角色卡为准」**。

@@ -9,7 +9,7 @@ import {
 import { newId } from '../model/ids.js';
 import { createPersona } from '../model/persona.js';
 import type { ChatToolCall } from '../prompt/types.js';
-import { ADMIN_TOOLS, parseAdminToolCall } from './tools.js';
+import { ADMIN_TOOLS, cardLengthNote, countSentences, parseAdminToolCall } from './tools.js';
 
 function call(name: string, args: unknown): ChatToolCall {
   return {
@@ -351,6 +351,73 @@ describe('upsert_character_card · 审计 B6（改卡以现有卡为底）', () 
     expect(legacy.ok).toBe(true);
     if (!legacy.ok) return;
     expect(legacy.unknownArgs).toEqual(['scenario']);
+  });
+});
+
+describe('顺序 103：角色卡正文的长度口径（人设 5 句以内、性格 2～3 句）', () => {
+  it('工具声明把口径写在字段说明里，模型看得到', () => {
+    const tool = ADMIN_TOOLS.find((item) => item.function.name === 'upsert_character_card');
+    const parameters = tool?.function.parameters as
+      | { properties?: Record<string, { description?: string }> }
+      | undefined;
+    const description = parameters?.properties?.description?.description ?? '';
+    const personality = parameters?.properties?.personality?.description ?? '';
+
+    expect(description).toContain('5 句话以内');
+    expect(personality).toContain('2～3 句话以内');
+  });
+
+  it('数句子：句末标点与换行都断句，连续标点只算一次，分号不算', () => {
+    expect(countSentences('甲。乙！丙？')).toBe(3);
+    expect(countSentences('甲……乙')).toBe(2);
+    expect(countSentences('甲；乙，丙')).toBe(1);
+    expect(countSentences('甲。\n乙。')).toBe(2);
+    expect(countSentences('   ')).toBe(0);
+  });
+
+  it('超长的两段在草稿摘要里点名，但一个字都不砍', () => {
+    const description = '他是摆渡人。五十多岁。白天撑船。天黑后停在东岸。手上有旧疤。很少进城。';
+    const personality = '话少。认人。不爱解释。认死理。';
+
+    const result = parseAdminToolCall(call('upsert_character_card', { name: '老周', description, personality }));
+    if (!result.ok) throw new Error(result.error);
+    if (result.draft.kind !== 'character-card') throw new Error('类型不对');
+
+    expect(result.draft.summary).toContain('人设 6 句');
+    expect(result.draft.summary).toContain('性格 4 句');
+    expect(result.draft.summary).toContain('建议人设 5 句以内');
+    // 只提醒不截断：原文一字不动
+    expect(result.draft.card.description).toBe(description);
+    expect(result.draft.card.personality).toBe(personality);
+  });
+
+  it('口径之内的卡不加任何提醒', () => {
+    const result = parseAdminToolCall(
+      call('upsert_character_card', {
+        name: '秦娘',
+        description: '货栈掌柜。三十上下。手上常年有账本的墨迹。说话慢。',
+        personality: '认死理。心软。',
+      }),
+    );
+    if (!result.ok) throw new Error(result.error);
+    if (result.draft.kind !== 'character-card') throw new Error('类型不对');
+
+    expect(result.draft.summary).toBe('新建角色卡「秦娘」');
+    expect(cardLengthNote(result.draft.card.description, result.draft.card.personality)).toBe('');
+  });
+
+  it('改卡沿用旧的长人设时也会提醒（口径只看合并后的结果）', () => {
+    const long = '第一句。第二句。第三句。第四句。第五句。第六句。';
+    const card = createBlankCard({ name: '老周', description: long, personality: '话少。' });
+
+    const edited = parseAdminToolCall(call('upsert_character_card', { cardId: card.id, personality: '沉默。' }), {
+      cards: [card],
+    });
+    if (!edited.ok) throw new Error(edited.error);
+    if (edited.draft.kind !== 'character-card') throw new Error('类型不对');
+
+    expect(edited.draft.summary).toContain('人设 6 句');
+    expect(edited.draft.card.description).toBe(long);
   });
 });
 

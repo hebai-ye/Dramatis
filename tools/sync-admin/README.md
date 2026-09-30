@@ -1,4 +1,4 @@
-# 服务器管理台（顺序 101）
+# 服务器管理台（顺序 105）
 
 Node ≥22.5，使用内置 node:sqlite。A 形态已接入正式 Windows：独立 WinSW 服务 DramatisSyncAdmin，仅监听127.0.0.1:8788，经既有管理SSH隧道访问；不挂 /sync，不配置公网反代。真实地址、身份和token只在 gitignore 的 deploy/LOCAL-NOTES.md。
 
@@ -35,7 +35,7 @@ Node ≥22.5，使用内置 node:sqlite。A 形态已接入正式 Windows：独�
 
 ## 配置与Windows服务
 
-DRAMATIS_ADMIN_DATA／_TOKEN／_AUDIT必填；_HOST只允许127.0.0.1；_PORT默认8788，_SYNC_PORT默认8787；_WRITE默认0只读，1编辑且必须有_BACKUPS。_DEFAULT_MAX_MB默认256，**必须与同步服务 DRAMATIS_SYNC_MAX_MB 或其默认值一致**；更改同步全局额度时更新此值并重启管理服务。
+DRAMATIS_ADMIN_DATA／_TOKEN／_AUDIT必填；_HOST只允许127.0.0.1；_PORT默认8788，_SYNC_PORT默认8787；_WRITE默认0只读，1编辑且必须有_BACKUPS。_DEFAULT_MAX_MB默认96（MiB，100663296字节），**必须与同步服务 DRAMATIS_SYNC_MAX_MB 或其默认值一致**；更改同步全局额度时更新此值并重启管理服务。未设置自定义配额的账户／空间继承默认值，已有自定义值保留；全局降额保留原数据，超额空间只允许不增长的写入。
 
 独立目录放dist/、web/、start.mjs及包含 type=module 的package.json。参考 windows/DramatisSyncAdmin.xml.example 替换绝对路径，WinSW可放统一服务目录；Node用 --env-file 读取受保护环境文件。使用已核验来源的Node／WinSW。
 

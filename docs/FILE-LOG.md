@@ -1569,6 +1569,20 @@ Windows 本机临时库／真实浏览器完成同意登记、不登记注册、
 
 无schema迁移或同步／客户端代码修改。真实ID、地址、token与运维细节只在忽略的LOCAL-NOTES；此批未push。
 
+## 顺序105、2026-10-01：每账户默认服务器存储96MiB
+
+| 文件 | 动作 | 内容 |
+| --- | --- | --- |
+| packages/core/src/sync/server.ts | 改 | 通用同步默认100663296字节，配置覆盖优先级保持 |
+| tools/sync-admin/src/main.ts／store.ts | 改 | 管理启动／只读查询默认96MiB，与实际同步执行一致 |
+| tools/sync-server/src/storage-policy.ts | 改 | 无自定义策略的超额旧空间也可等长／缩减，事务内拒增长 |
+| tools/sync-admin/default-quota.test.mjs | 新增 | 真实子进程HTTP边界、双记录批次原子拒绝、启动前自定义保留与运行时覆盖；只用临时假库 |
+| tools/sync-admin/admin.test.mjs／policy.test.mjs | 改 | 管理默认／显式覆盖、全局降额无行分支缩减与不增长测试 |
+| tools/sync-{admin,server}/.env.example／README.md、docs/SYNC.md／ADMIN-CONSOLE.md | 改 | 当前默认96MiB、单位与继承／覆盖规则及程序回滚；历史256MB记录保留 |
+| docs/{STATUS,TASKS,EVAL,FILE-LOG}.md | 改 | 顺序105范围、五门禁922条、正式Node22隔离24条及正式切换证据 |
+
+无schema迁移或真实账户资料／单空间策略批量修改；正式同步与管理服务更新前备份20066304B，原程序及环境保留。真浏览器4行容量均96.00MB；任务73部署文档漂移仍开着。此批单个顺序105提交，未push。
+
 ## 七十二、几点注意
 
 ---

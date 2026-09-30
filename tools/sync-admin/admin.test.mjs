@@ -77,6 +77,8 @@ test('管理查询关联账户，包含墓碑，字节数沿用heads口径且不
     assert.equal(list.total, 1);
     assert.equal(list.spaces[0].records, 1);
     assert.equal(list.spaces[0].quotaBytes, 1234);
+    assert.equal(list.spaces[0].quotaLimitBytes, 96 * 1024 ** 2);
+    assert.equal(list.spaces[0].customQuota, false);
     const detail = f.store.detail('fixture-handle');
     assert.deepEqual(detail.collections, [{ collection: 'messages', records: 1, tombstones: 1 }]);
     assert.equal(detail.devices.length, 1);
@@ -210,6 +212,8 @@ test('启动配置拒绝公网监听、短token和将审计写入生产库', () 
     DRAMATIS_ADMIN_AUDIT: '/fixture/audit.jsonl',
     DRAMATIS_ADMIN_TOKEN: token,
   };
+  assert.equal(readAdminConfig(env).defaultMaxBytes, 96 * 1024 ** 2);
+  assert.equal(readAdminConfig({ ...env, DRAMATIS_ADMIN_DEFAULT_MAX_MB: '128' }).defaultMaxBytes, 128 * 1024 ** 2);
   assert.throws(() => readAdminConfig({ ...env, DRAMATIS_ADMIN_HOST: '0.0.0.0' }));
   assert.throws(() => readAdminConfig({ ...env, DRAMATIS_ADMIN_TOKEN: 'short' }));
   assert.throws(() => readAdminConfig({ ...env, DRAMATIS_ADMIN_AUDIT: env.DRAMATIS_ADMIN_DATA }));

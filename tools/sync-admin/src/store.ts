@@ -35,7 +35,7 @@ function present(row: SpaceRow, defaultMaxBytes: number) {
 }
 
 /** 与同步存储分开：不建表、不迁移、不取实体、凭证或钥匙封装。 */
-export function createAdminStore(path: string, defaultMaxBytes = 256 * 1024 ** 2) {
+export function createAdminStore(path: string, defaultMaxBytes = 96 * 1024 ** 2) {
   if (!existsSync(path)) throw new Error('同步数据库不存在，管理台拒绝新建空库。');
   const db = new DatabaseSync(path, { readOnly: true });
   try {

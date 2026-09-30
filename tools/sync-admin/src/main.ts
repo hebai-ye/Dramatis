@@ -24,7 +24,7 @@ export function readAdminConfig(env: Record<string, string | undefined>) {
   if (env.DRAMATIS_ADMIN_WRITE !== undefined && !['0', '1'].includes(env.DRAMATIS_ADMIN_WRITE))
     throw new Error('写开关无效。');
   const writeEnabled = env.DRAMATIS_ADMIN_WRITE === '1';
-  const defaultMaxBytes = Number(env.DRAMATIS_ADMIN_DEFAULT_MAX_MB ?? '256') * 1024 ** 2;
+  const defaultMaxBytes = Number(env.DRAMATIS_ADMIN_DEFAULT_MAX_MB ?? '96') * 1024 ** 2;
   if (!Number.isSafeInteger(defaultMaxBytes) || defaultMaxBytes <= 0 || defaultMaxBytes > 1024 ** 4)
     throw new Error('默认配额无效。');
   if (writeEnabled && !env.DRAMATIS_ADMIN_BACKUPS) throw new Error('可编辑管理台必须配置备份目录。');

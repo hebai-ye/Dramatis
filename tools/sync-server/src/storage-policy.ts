@@ -12,8 +12,7 @@ export function createSpaceQuotaResolver(db: SqliteDatabase) {
   // 调用点位于 core 的 IMMEDIATE 写事务，策略修改不能从判定与写入之间插队。
   return (handle: string, base: SyncAppendQuota, usage: { records: number; bytes: number }): SyncAppendQuota => {
     const row = select.get(handle) as { max_bytes: number | null } | undefined;
-    if (!row) return base;
-    const cap = row.max_bytes ?? base.maxBytes;
+    const cap = row?.max_bytes ?? base.maxBytes;
     if (!Number.isSafeInteger(cap) || cap < 0 || cap > 1024 ** 4) throw new Error('空间配额策略无效。');
     // 已超过新配额时允许不增长的替换／缩减；不删除现有记录。
     return { ...base, maxBytes: Math.max(cap, usage.bytes) };

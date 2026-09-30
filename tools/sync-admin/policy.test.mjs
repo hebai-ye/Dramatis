@@ -76,3 +76,37 @@ test('空间配额允许高于默认值，并在降低后仅拒绝增长，重�
     db.close();
   }
 });
+
+test('全局降额后，无自定义策略的旧空间仍可缩减，但不能增长', async () => {
+  const db = new DatabaseSync(':memory:');
+  const store = createSqliteSyncStore(db, { resolveQuota: (h, q, u) => resolver(h, q, u) });
+  const resolver = createSpaceQuotaResolver(db);
+  try {
+    await store.createSpace({
+      spaceHandle: 'fixture-inherited',
+      credentialHash: 'fixture',
+      recoveryCredentialHash: 'fixture',
+      keyWraps: {},
+      createdAt: '2026-01-01',
+      epoch: 'fixture-epoch',
+    });
+    const wire = (text) => [
+      { collection: 'settings', id: 'fixture', updatedAt: '2026-01-01', deletedAt: null, sealed: { ciphertext: text } },
+    ];
+    await store.appendWithinQuota('fixture-inherited', wire('x'.repeat(200)), { maxRecords: 10, maxBytes: 1000 });
+    await store.appendWithinQuota('fixture-inherited', wire('x'.repeat(150)), { maxRecords: 10, maxBytes: 100 });
+    const before = await store.spaceUsage('fixture-inherited');
+    const head = await store.head('fixture-inherited');
+    assert.ok(before.bytes > 100);
+    await assert.rejects(
+      store.appendWithinQuota('fixture-inherited', wire('x'.repeat(151)), { maxRecords: 10, maxBytes: 100 }),
+      (e) => e.kind === 'bytes',
+    );
+    assert.deepEqual(await store.spaceUsage('fixture-inherited'), before);
+    assert.equal(await store.head('fixture-inherited'), head);
+    await store.appendWithinQuota('fixture-inherited', wire('x'.repeat(150)), { maxRecords: 10, maxBytes: 100 });
+    assert.deepEqual(await store.spaceUsage('fixture-inherited'), before);
+  } finally {
+    db.close();
+  }
+});

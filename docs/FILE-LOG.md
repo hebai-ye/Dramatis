@@ -1496,6 +1496,22 @@ TASKS 第〇节顺序 68。用户裁定「A+B 推进」；原方案里的 `limit
 
 合并后主干工作区跑完五项门禁（数字见 EVAL 第八十六节）。随后 `4ee7edd` 推到 `origin/main`（`637672f..4ee7edd`），因同步服务端源码没变（`git log 637672f..4ee7edd -- tools/ packages/core/src/sync/` 为空）只换网页：Windows 正式机的 `D:\Dramatis\web\dist` 换成 `assets/index-aDLBA72A.js`（676240 B，与本地构建逐字节相同），旧目录留成 `dist.bak-20260930-005711`；线上首页 200 且引用新资源，`/sync/health` 200。
 
+## 顺序 96、2026-09-30：人设表达收敛与结尾反问降级（提示词层最小干预）
+
+用户 2026-09-30 的体验反馈（角色执着于人设、每轮都彰显自己；越聊越执着）先当假设查清再动手：只读审查 `packages/core/src/prompt/` 与 `packages/core/src/memory/`，加一份对 178 轮实录的离线复算（纯文本分析、零模型调用，脚本在 `%TEMP%` 下、**不入仓库**）。结论是「人设确实每轮在场、且是唯一没有长度上限的块，但缺的是『什么时候不该提人设』这一维约束」与「记忆里存人设这条链路不成立、但记忆回路自激」。改动只碰提示词文字三处，人设本身的长度与优先级一律没动。
+
+| 文件 | 动作 | 本批内容 |
+| --- | --- | --- |
+| `packages/core/src/prompt/reply-style.ts` | 改 | 新增导出常量 `PERSONA_RESTRAINT_RULE`（人设要挑场合／同一个设定点不要连着几轮反复说／不要为了表现人设把话头从眼前的事上拽回自己），带完整来历注释（用户反馈 + 取证 + 「缺的是这一维约束、不是字数」） |
+| `packages/core/src/prompt/assemble.ts` | 改 | `:27` 引入新常量；`reply-style` 块内容变成 `[NO_REPEAT_RULE, PERSONA_RESTRAINT_RULE, REPLY_LENGTH_RULES[...]]`，label 改「回答长度、反重复与人设收敛」；**不可丢弃**的指令块紧跟「保持角色不跳出。」加一句同向兜底（`droppable: false`，预算榨干时仍有一句约束在场） |
+| `packages/core/src/prompt/assemble.test.ts` | 改 | 新增「顺序 96：人设表达收敛在这一块里，指令块还有一句不可丢弃的兜底」 |
+| `packages/core/src/model/card.ts` | 改 | `DEFAULT_CARD_SYSTEM_PROMPT` 交互逻辑段那句「尽最大努力让回应结束在向玩家征求意见的疑问句上」降级成「需要玩家表态或做决定时……没什么可问的就自然收住」（178 轮里逼问口吻 53/178 条的出处）；卡常量注释补一段顺序 96 |
+| `packages/core/src/model/card.test.ts` | 改 | 新增「顺序 96：结尾反问降级」（含 `not.toContain('尽最大努力')`，保留顺序 89 的 `toContain('疑问句')` 不动） |
+| `docs/{TASKS,STATUS,EVAL,FILE-LOG}.md` | 改 | 顺序 96 的计划行与处理表（另一并登记顺序 97 = 重抽只重生成被点的那一位）、状态接续点、EVAL 第八十七节与本节 |
+| `docs/ROLEPLAY-PROMPT.md` | 改 | 结尾反问那条改成「需要玩家表态时才用问句」，并写明「人设表达收敛」那几条不在卡预设里、在 `reply-style` 块里 |
+
+本批**未 push、未部署**；五项门禁数字与「真模型没验」的边界见 EVAL 第八十七节。
+
 ## 七十二、几点注意
 
 ---

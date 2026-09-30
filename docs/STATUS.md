@@ -21,6 +21,16 @@
 
 ## 新会话从这里接（2026-09-23）
 
+### 2026-09-30：顺序 96 人设表达收敛（提示词层最小干预；未 push、未部署）
+
+用户 2026-09-30 的反馈是两条**观察**（角色执着于人设、每轮都彰显；轮数越多越执着），所以先当假设查清再动手：只读分包审查 `packages/core/src/prompt/` 与 `packages/core/src/memory/`，加一份对 178 轮实录（上一次真实模型长跑的 transcript）的离线复算——纯文本分析、零模型调用，脚本在 `%TEMP%` 下、**不在仓库**。结论：① 人设确实每轮在场，而且是**唯一没有长度上限**的块（`description`/`personality` 全文进提示词）、`priority: 700` 只让位于规则层、预算榨干时才被压成 160 字——但缺口不是字数，而是**没有任何一条约束管「什么时候不该提人设」**（现有反重复只管动作／道具／同义句，跟人设有关的指令全是「加大力度」）；② 「记忆里不断强调人设」这一步不成立（抽取提示词的字段里没有性格／人设／态度／喜好／身份），但记忆回路确实自激（检索词含自己最近 6 条回复、视角条目逐轮回灌、`recallCount` 正反馈、`importance > 0.5` 永不参与合并）。
+
+改动只碰提示词文字、三处：`packages/core/src/prompt/reply-style.ts` 新增 `PERSONA_RESTRAINT_RULE`（人设要挑场合／同一个设定点不要连着几轮反复说／不要为表现人设把话头从眼前的事上拽回自己）；`packages/core/src/prompt/assemble.ts` 把它并进 `reply-style` 块（label 改成「回答长度、反重复与人设收敛」），并在**不可丢弃**的指令块里紧跟「保持角色不跳出。」加一句同向的兜底；`packages/core/src/model/card.ts` 把卡预设那句「尽最大努力……疑问句上」降级成「需要玩家表态或做决定时才用问句，没什么可问的就自然收住」（保留「疑问句」「征求意见」两个词，顺序 89 的断言照旧）。测试加在 `packages/core/src/prompt/assemble.test.ts`（收敛规矩在块里 + 兜底句不可丢弃）与 `packages/core/src/model/card.test.ts`（含 `not.toContain('尽最大努力')`）。
+
+顺带登记**顺序 97**：用户拍板重抽语义 = **只重生成被点的那一位、保留同轮其他人的回复**（现状会把同轮其他角色的回复删掉，`apps/web/src/hooks/useTurnRunner.ts:964`/`:988`/`:1066-1068`，且重抽按钮只挂在最后一条角色消息上）。
+
+本批**未 push、未部署**（用户没要求）。五项门禁数字与「真模型、真机都没验」的边界见 [EVAL.md](./EVAL.md) 第八十七节。
+
 ### 2026-09-30：顺序 78 一轮内多名角色作答（已合入主线、已 push、已只重新部署前端）
 
 顺序 78 的实现在分支 `codex/task-78-multi-speaker`（6 个提交 `f47a8fc` → `28282f4`，设计基线见 [TASK-78-MULTI-SPEAKER-DESIGN.md](./TASK-78-MULTI-SPEAKER-DESIGN.md)）上完成，2026-09-30 以 `--ff-only` 快进合入本分支（`637672f..28282f4`，27 文件 2396+/159-）。要点：合格名单仍由场景 `cast` + `presence: 'onstage'` + 角色卡决定（muted 不生成）；对话级「本轮最多回应人数」三档 1／2（默认）／3（`DEFAULT_MAX_SPEAKERS` / `HARD_MAX_SPEAKERS` / `speakerLimitOf`，老记录与脏值都退回 2，无需迁移）；句首称呼或 `@显示名` 的直接称呼必须参与，超过上限在玩家消息落盘**之前**明确拒绝（不截断、不静默漏人）；导演（`buildIntentPlanMessages` + `pickPlannedSpeakers`）一轮只调用一次并给有序名单，导演关闭／熔断／超时／空名单一律由 `selectTurnSpeakers` 退回规则保底，**任何路径都至少一位**；每人生成一次、各自记账、同 `turnId` 顺序落盘；顺序 91 的流式交接升级为按 messageId 的屏障（`waitForStreamHandoff` / `acknowledgeStreamHandoff`），多人连续流不会互相清掉；网页版桥接改成逐人贴回（首份有效回贴前不落半轮）；用量面板新增「最近一轮」。**本批已 push、已只重新部署前端**：`4ee7edd` 推到 `origin/main`（`637672f..4ee7edd`）；`git log 637672f..4ee7edd -- tools/ packages/core/src/sync/` 为空 ⇒ 同步服务端源码没变，只换网页。网页由那台 Windows 正式机的 Caddy 从 `D:\Dramatis\web\dist` 提供（腾讯云旧机只做 HTTPS 入口与隧道），换版后线上首页 200 / 1366 B 且引用 `assets/index-aDLBA72A.js`（200 / 676240 B，SHA-256 与本地构建逐字节相同）、`index-BDv279kC.css` 42459 B、`sw.js` 9071 B、`/sync/health` 200 `{"ok":true}`（同步服务未重启）；旧网页目录留成 `D:\Dramatis\web\dist.bak-20260930-005711`。真机与真实模型下的观感、成本与串线归 Codex，见 EVAL 第八十六节。

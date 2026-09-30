@@ -24,7 +24,7 @@ import { ACTION_FORMAT_EXAMPLES, ACTION_FORMAT_RULE } from '../render/segments.j
 import { heuristicTokenCounter, type TokenCounter } from '../token/estimate.js';
 import { applyBudget, MESSAGE_OVERHEAD_TOKENS, structuralOverhead } from './budget.js';
 import { expandHistoryOnMention, partitionHistory, selectHistoryFor } from './history.js';
-import { NO_REPEAT_RULE, REPLY_LENGTH_RULES } from './reply-style.js';
+import { NO_REPEAT_RULE, PERSONA_RESTRAINT_RULE, REPLY_LENGTH_RULES } from './reply-style.js';
 import type { BudgetReport, ChatMessage, PromptBlock, PromptPlacement } from './types.js';
 import { unlimitedPromptOf } from './unlimited.js';
 
@@ -924,6 +924,10 @@ export function assemblePrompt(input: AssembleInput): AssembledPrompt {
     label: '本轮指令',
     content:
       `现在轮到你发言。请以「${input.instance.displayName}」的身份回应，保持角色不跳出。` +
+      // 顺序 96：紧跟「保持角色不跳出」放一句收敛，正对着它——用户反馈角色每轮都在
+      // 彰显人设。完整规矩在可丢弃的 `reply-style` 块里，这一句在**不可丢弃**的指令块里，
+      // 保证预算再紧也有一句在场。
+      '人设是你的底子，不是这一轮非说不可的台词：只在当前这件事真的用得上、或者玩家问起时才提。' +
       (playerDescription === '' ? '' : `玩家「${playerName}」的身份设定：${playerDescription}\n`) +
       othersClause +
       '不要代替玩家行动，也不要描写玩家的内心想法。' +
@@ -956,11 +960,15 @@ export function assemblePrompt(input: AssembleInput): AssembledPrompt {
   // 示范单独成块并且**可丢弃**：它是提升格式遵守率的优化项，不是必需品。
   // 预算紧张时应当先让位给记忆与关系，而不是把整条 prompt 顶出预算。
   /*
-   * 顺序 67e：回答长度与反重复。
+   * 顺序 67e：回答长度与反重复；顺序 96：人设表达收敛。
    *
    * 178 轮真实模型长跑里，回复从 171 字涨到 325 字、自称名字从 0.9 次涨到 5.6 次，
    * 于是「她把杯子放下」写成了「（角色名）把杯子放下」。用户裁定：动作可以连着做
    * 几个不同的，但不许同一个动作重复；长度要收紧，同时给用户三档自己选。
+   *
+   * 顺序 96 把「人设表达要挑场合」并进同一块（用户 2026-09-30：角色执着于人设、
+   * 每轮都彰显自己）。它是同一类质量规矩，就跟着这块走，不另外占一档优先级；
+   * 指令块里那同样的一句是它在预算被榨干时的兜底。
    *
    * 它**可丢弃**：这是质量规矩，不是正确性必需——预算被榨干时先让位给记忆与人设。
    * 但优先级只比「本轮指令」低一点，正常预算下一定在，历史被丢光之前轮不到它。
@@ -968,8 +976,8 @@ export function assemblePrompt(input: AssembleInput): AssembledPrompt {
   blocks.push({
     id: 'reply-style',
     kind: 'format',
-    label: '回答长度与反重复',
-    content: [NO_REPEAT_RULE, REPLY_LENGTH_RULES[replyLengthOf(input.modes)]].join('\n'),
+    label: '回答长度、反重复与人设收敛',
+    content: [NO_REPEAT_RULE, PERSONA_RESTRAINT_RULE, REPLY_LENGTH_RULES[replyLengthOf(input.modes)]].join('\n'),
     priority: PRIORITY.instruction - 50,
     droppable: true,
     compressed: REPLY_LENGTH_RULES[replyLengthOf(input.modes)],

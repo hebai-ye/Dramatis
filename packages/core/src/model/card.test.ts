@@ -51,3 +51,18 @@ describe('顺序 90：卡上已删掉的四类字段', () => {
     }
   });
 });
+
+/**
+ * 顺序 96（用户 2026-09-30）：结尾不再强制每轮都是反问。
+ *
+ * 178 轮真实模型长跑里「每条都以一个反问收尾」（逼问口吻 53/178 条），追到的出处就是
+ * 这句「尽最大努力……疑问句上」。保留「疑问句」「征求意见」两个词是为了不破坏顺序 89
+ * 那条 `toContain('疑问句')`，改的只是力度：从「每轮尽量反问」到「该问才问」。
+ */
+describe('顺序 96：结尾反问降级', () => {
+  it('需要玩家表态才用问句，其余自然收住', () => {
+    expect(DEFAULT_CARD_SYSTEM_PROMPT).toContain('需要玩家表态或做决定时');
+    expect(DEFAULT_CARD_SYSTEM_PROMPT).toContain('自然收住');
+    expect(DEFAULT_CARD_SYSTEM_PROMPT).not.toContain('尽最大努力');
+  });
+});

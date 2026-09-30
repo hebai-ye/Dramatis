@@ -1079,6 +1079,35 @@ describe('回答长度与反重复（顺序 67e）', () => {
     expect(system).toContain('可以连着做几个不同的动作');
     expect(system).toContain('回答长度（标准）');
   });
+
+  /**
+   * 顺序 96（用户 2026-09-30 体验反馈）：角色执着于人设、每轮都在彰显自己。
+   *
+   * 取证结论是「缺的是这一维约束本身，不是人设字数」，所以这里钉住两件东西：
+   * 收敛规矩在 `reply-style` 块里，且**指令块里那句兜底不可丢弃**——否则预算一紧，
+   * 就只剩同一条指令块里的「保持角色不跳出」还在给模型加大力度。
+   */
+  it('顺序 96：人设表达收敛在这一块里，指令块还有一句不可丢弃的兜底', () => {
+    const { card, instance, room, scene } = fixtures();
+    const prompt = assemblePrompt({
+      card,
+      instance,
+      room,
+      scene,
+      history: [],
+      playerInput: '继续',
+      budget: baseBudget,
+    });
+
+    const style = prompt.blocks.find((block) => block.id === 'reply-style')?.content ?? '';
+    expect(style).toContain('人设要挑场合');
+    expect(style).toContain('不要连着几轮反复说');
+    expect(style).toContain('把话头从眼前正在发生的事上拽回自己身上');
+
+    const instruction = prompt.blocks.find((block) => block.id === 'instruction');
+    expect(instruction?.content).toContain('人设是你的底子，不是这一轮非说不可的台词');
+    expect(instruction?.droppable).toBe(false);
+  });
 });
 
 /**

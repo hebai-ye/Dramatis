@@ -1496,6 +1496,19 @@ TASKS 第〇节顺序 68。用户裁定「A+B 推进」；原方案里的 `limit
 
 合并后主干工作区跑完五项门禁（数字见 EVAL 第八十六节）。随后 `4ee7edd` 推到 `origin/main`（`637672f..4ee7edd`），因同步服务端源码没变（`git log 637672f..4ee7edd -- tools/ packages/core/src/sync/` 为空）只换网页：Windows 正式机的 `D:\Dramatis\web\dist` 换成 `assets/index-aDLBA72A.js`（676240 B，与本地构建逐字节相同），旧目录留成 `dist.bak-20260930-005711`；线上首页 200 且引用新资源，`/sync/health` 200。
 
+## 顺序 97、2026-09-30：重抽只重生成被点的那一位（同轮其他人原样保留）
+
+用户 2026-09-30 拍板的语义。改之前重抽是「删掉这一轮**全部**角色回复、再另起一条新消息，然后整轮重排」——顺序 78 之后一轮可以有两三条角色回复，点最后一条会把前面那位刚说的话一起抹掉；新回复还会换 id、换位置，而且那五步写入零事务，任何一步失败都报成「重抽失败」（其实前三步之后回复已经换新）。本批把落盘改成**原地改写**，并把后台回滚的失败与回复本身的失败分开报。
+
+| 文件 | 动作 | 本批内容 |
+| --- | --- | --- |
+| `apps/web/src/hooks/useTurnRunner.ts` | 改 | `handleRegenerate`（`:977`）：① 落盘改成 `session.updateMessage(target.id, { content, usage, intent, intentSource })`（`:1095`）——id／位置／`createdAt` 不变、只推 `updatedAt` 供同步，同轮其他人的回复不再被删；② 历史与发送路径对齐：`historyForTurn` = 这一轮之前的历史 + 同轮排在他前面的消息（`:1014-1019`），同轮已有人说过话时 `playerInput: ''`、`mentionText` 仍是玩家那句（`:1050`）；③ `clearTurn` → `revertTurn` → 重新 `enqueueTurnAnalysis` 逐步 try/catch 收账，失败只报警告 `regenerate.rollback`（`:1142`，「新回复已经换好了，但这一轮的后台记录没收拾干净…再点一次重抽」），`setError` 保持为空；④ intent 按新内容重算（旧的清掉）；⑤ 新增模块级小助手 `errorText` |
+| `apps/web/src/hooks/useTurnRunner.test.tsx` | 改 | 新增 `describe('重抽只重生成被点的那一位（顺序 97）')`（`:480`，3 条）＋ `line()` / `twoSpeakerTurn()` 夹具；`harness` 补 `session.updateMessage` / `deleteMessage` / `revertTurn` 与 `db.queue.clearTurn` 的桩，并记录 `updates` / `deletes` / `reverted` / `analyses` |
+| `apps/web/src/components/MainChat.tsx` | 改 | `lastCharacterId` 上方注释（`:486-490`）改成准确理由：更早的回复换掉后后面那些是照着旧版本说的；写明顺序 97 只保证**同一轮**里其他人的回复不再被连带删掉，入口限制不变 |
+| `docs/{TASKS,STATUS,EVAL,FILE-LOG}.md` | 改 | 顺序 97 计划行改成已完成并写清做法、状态接续点、EVAL 第八十八节与本节 |
+
+测试先单跑：`useTurnRunner.test.tsx` 13 条全过（原 10 + 新增 3）。本批**未 push、未部署**；五项门禁数字与「真模型、真机都没验」的边界见 EVAL 第八十八节。
+
 ## 顺序 96、2026-09-30：人设表达收敛与结尾反问降级（提示词层最小干预）
 
 用户 2026-09-30 的体验反馈（角色执着于人设、每轮都彰显自己；越聊越执着）先当假设查清再动手：只读审查 `packages/core/src/prompt/` 与 `packages/core/src/memory/`，加一份对 178 轮实录的离线复算（纯文本分析、零模型调用，脚本在 `%TEMP%` 下、**不入仓库**）。结论是「人设确实每轮在场、且是唯一没有长度上限的块，但缺的是『什么时候不该提人设』这一维约束」与「记忆里存人设这条链路不成立、但记忆回路自激」。改动只碰提示词文字三处，人设本身的长度与优先级一律没动。

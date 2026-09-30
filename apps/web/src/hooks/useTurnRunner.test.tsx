@@ -1,5 +1,5 @@
-import type { CharacterInstance, Message } from '@dramatis/core';
-import { cardId, instanceId, newId, nowIso, roomId, sceneId } from '@dramatis/core';
+import type { CharacterInstance, Message, MessageId } from '@dramatis/core';
+import { cardId, instanceId, messageId, newId, nowIso, roomId, sceneId } from '@dramatis/core';
 import { createElement } from 'react';
 import { renderToString } from 'react-dom/server';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -20,6 +20,12 @@ const runtime = vi.hoisted(() => ({
   observerIds: [] as string[],
   records: [] as Array<{ category: string; speaker?: { name: string } }>,
   handoffs: [] as string[],
+  /** 重抽（顺序 97）：改写了哪些消息、删了哪些、撤销了哪些回合、重排了哪些分析。 */
+  updates: [] as Array<{ id: string; patch: Record<string, unknown> }>,
+  deletes: [] as string[],
+  reverted: [] as string[],
+  analyses: [] as string[],
+  revertFails: false,
 }));
 
 vi.mock('@dramatis/core', async (importOriginal) => {
@@ -74,7 +80,9 @@ vi.mock('../lib/turn-bookkeeping', () => ({
   },
   enqueueSceneSummary: async () => {},
   enqueueMemoryConsolidation: async () => {},
-  enqueueTurnAnalysis: async () => {},
+  enqueueTurnAnalysis: async (_db: unknown, _worker: unknown, input: { turnId: string }) => {
+    runtime.analyses.push(input.turnId);
+  },
 }));
 
 vi.mock('../lib/stream-store', async (importOriginal) => {
@@ -106,10 +114,14 @@ function actor(name: string, room: ReturnType<typeof roomId>): CharacterInstance
   };
 }
 
-function harness(withBackground = false) {
+function harness(
+  withBackground = false,
+  seed: (actors: { a: CharacterInstance; b: CharacterInstance }) => Message[] = () => [],
+) {
   const room = roomId(newId());
   const a = actor('秦娘', room);
   const b = actor('陈九', room);
+  const seeded = seed({ a, b });
   const saved: Message[] = [];
   const errors: Array<string | null> = [];
   const warnings: unknown[] = [];
@@ -124,7 +136,12 @@ function harness(withBackground = false) {
     worldTime: '',
   };
   const options = {
-    db: {},
+    db: {
+      queue: {
+        clearTurn: async () => {},
+        cancelByTurn: async () => {},
+      },
+    },
     session: {
       cards: [{ id: a.cardId }, { id: b.cardId }],
       memories: [],
@@ -134,6 +151,17 @@ function harness(withBackground = false) {
       scenes: [scene],
       appendMessages: async (batch: Message[]) => {
         saved.push(...batch);
+      },
+      updateMessage: async (id: string, patch: Record<string, unknown>) => {
+        runtime.updates.push({ id, patch });
+        return { ...(seeded.find((message) => message.id === id) ?? {}), ...patch, id } as Message;
+      },
+      deleteMessage: async (id: string) => {
+        runtime.deletes.push(id);
+      },
+      revertTurn: async (turnId: string) => {
+        runtime.reverted.push(turnId);
+        if (runtime.revertFails) throw new Error('模拟回滚失败');
       },
       markRecalled: async () => {},
       reloadWorld: async () => {
@@ -170,7 +198,7 @@ function harness(withBackground = false) {
       modes: { playerFirst: false, silent: false, intentFirst: true, maxSpeakers: 2 },
     },
     scene,
-    messages: [],
+    messages: seeded,
     instances: [a, b],
     burned: false,
     budgetReason: null,
@@ -197,7 +225,23 @@ function harness(withBackground = false) {
   }
   renderToString(createElement(Capture));
   if (api === null) throw new Error('未取得回合控制器');
-  return { api: api as TurnRunnerApi, saved, errors, warnings, busy, bridges, a, b, scene, options };
+  return {
+    api: api as TurnRunnerApi,
+    saved,
+    errors,
+    warnings,
+    busy,
+    bridges,
+    a,
+    b,
+    scene,
+    options,
+    seeded,
+    updates: runtime.updates,
+    deletes: runtime.deletes,
+    reverted: runtime.reverted,
+    analyses: runtime.analyses,
+  };
 }
 
 beforeEach(() => {
@@ -216,6 +260,11 @@ beforeEach(() => {
   runtime.observerIds = [];
   runtime.records = [];
   runtime.handoffs = [];
+  runtime.updates = [];
+  runtime.deletes = [];
+  runtime.reverted = [];
+  runtime.analyses = [];
+  runtime.revertFails = false;
 });
 
 describe('一轮多人自动生成', () => {
@@ -360,5 +409,111 @@ describe('一轮多人自动生成', () => {
     (options.conversation as { modes: { silent: boolean } }).modes.silent = true;
     await api.handleSend('你们怎么看？');
     expect(runtime.intentModes).toEqual(['hold_back']);
+  });
+});
+
+/** 造一条历史消息：重抽的测试要自己定 turnId、说话人与先后顺序（顺序 97）。 */
+function line(input: {
+  id: MessageId;
+  role: 'player' | 'character';
+  turnId: string;
+  speakerName: string;
+  speakerInstanceId?: string;
+  content: string;
+  createdAt: string;
+}): Message {
+  return {
+    id: input.id,
+    roomId: roomId(newId()),
+    conversationId: 'conversation-1',
+    sceneId: null,
+    turnId: input.turnId,
+    localSeq: 0,
+    deviceId: 'device-1',
+    role: input.role,
+    speakerInstanceId: input.speakerInstanceId ?? null,
+    speakerName: input.speakerName,
+    audience: [],
+    content: input.content,
+    createdAt: input.createdAt,
+    updatedAt: input.createdAt,
+    deletedAt: null,
+  } as unknown as Message;
+}
+
+/** 一轮两人的现成对话：玩家 → 秦娘 → 陈九。 */
+const PLAYER_LINE_ID = messageId(newId());
+const QIN_LINE_ID = messageId(newId());
+const CHEN_LINE_ID = messageId(newId());
+
+function twoSpeakerTurn(actors: { a: CharacterInstance; b: CharacterInstance }): Message[] {
+  return [
+    line({
+      id: PLAYER_LINE_ID,
+      role: 'player',
+      turnId: 'T1',
+      speakerName: '旅人',
+      content: '你们觉得呢？',
+      createdAt: '2026-09-30T10:00:00.000Z',
+    }),
+    line({
+      id: QIN_LINE_ID,
+      role: 'character',
+      turnId: 'T1',
+      speakerName: '秦娘',
+      speakerInstanceId: actors.a.id,
+      content: '「先听我说。」',
+      createdAt: '2026-09-30T10:00:01.000Z',
+    }),
+    line({
+      id: CHEN_LINE_ID,
+      role: 'character',
+      turnId: 'T1',
+      speakerName: '陈九',
+      speakerInstanceId: actors.b.id,
+      content: '「我也说一句。」',
+      createdAt: '2026-09-30T10:00:02.000Z',
+    }),
+  ];
+}
+
+describe('重抽只重生成被点的那一位（顺序 97）', () => {
+  it('一轮两人的第二条被重抽：第一条原样留着，这位仍看得见先开口的人', async () => {
+    const { api, updates, deletes, reverted, analyses, errors } = harness(false, twoSpeakerTurn);
+
+    await api.handleRegenerate(CHEN_LINE_ID);
+
+    // 只改被点的那一条：不删、不补，同轮秦娘那条一个字没动
+    expect(updates.map((item) => item.id)).toEqual([CHEN_LINE_ID]);
+    expect(deletes).toEqual([]);
+    expect(updates[0]?.patch.content).toContain('陈九回应');
+    expect(updates[0]?.patch.speakerInstanceId).toBeUndefined();
+    // 生成时看得到同轮先开口的秦娘与玩家那句（与发送路径同一份历史）
+    expect(runtime.generationSpeakers).toEqual(['陈九']);
+    expect(runtime.generationHistories.at(-1)).toEqual(['旅人', '秦娘']);
+    // 这一轮的后台写入照旧全部重算
+    expect(reverted).toEqual(['T1']);
+    expect(analyses).toEqual(['T1']);
+    expect(errors.at(-1)).toBeNull();
+  });
+
+  it('第一位被重抽时看不到同轮后面的人（发送当时他还没开口）', async () => {
+    const { api } = harness(false, twoSpeakerTurn);
+    await api.handleRegenerate(QIN_LINE_ID);
+    expect(runtime.generationSpeakers).toEqual(['秦娘']);
+    expect(runtime.generationHistories.at(-1)).toEqual([]);
+  });
+
+  it('后台回滚失败时报「回复已换新、后台没收拾干净」，不说整次重抽失败', async () => {
+    runtime.revertFails = true;
+    const { api, updates, warnings, errors } = harness(false, twoSpeakerTurn);
+
+    await api.handleRegenerate(CHEN_LINE_ID);
+
+    expect(updates.map((item) => item.id)).toEqual([CHEN_LINE_ID]);
+    expect(errors.at(-1)).toBeNull();
+    const notices = warnings.flat() as Array<{ code?: string; message?: string }>;
+    expect(notices.some((notice) => notice.code === 'regenerate.rollback')).toBe(true);
+    expect(notices.at(-1)?.message).toContain('再点一次重抽');
   });
 });

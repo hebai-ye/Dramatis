@@ -483,7 +483,11 @@ function MainChatImpl({
     return () => window.clearTimeout(timer);
   }, [focus]);
 
-  // 只有最后一条角色回复可以重抽：重抽更早的消息会让后面的对话失去前提
+  /*
+   * 只有最后一条角色回复可以重抽：更早的回复换掉之后，后面那些回复是照着旧版本说的，
+   * 整条线就自相矛盾了。顺序 97 只保证同一轮里其他人的回复**不再被连带删掉**，
+   * 不改变这条入口限制。
+   */
   const lastCharacterId = useMemo(() => {
     for (let index = messages.length - 1; index >= 0; index -= 1) {
       const message = messages[index];

@@ -4412,3 +4412,20 @@ v12 的三个判断都是有意的：
 **测试与门禁（2026-09-30，本机）**：`packages/core/src/prompt/assemble.test.ts` 新增「顺序 96：人设表达收敛在这一块里，指令块还有一句不可丢弃的兜底」（断言三条收敛规矩在 `reply-style` 块里、兜底句在指令块里且 `droppable === false`）；`packages/core/src/model/card.test.ts` 新增「顺序 96：结尾反问降级」（含 `not.toContain('尽最大努力')`）。改动后这两份测试先单跑：`card.test.ts` 5 条、`assemble.test.ts` 48 条全过。五项门禁（2026-09-30，本机工作区）：`pnpm typecheck` ✓；`pnpm lint` ✓（**290 文件，0 error / 0 warning**）；`pnpm test` ✓（Core **72 文件 / 826 条**、Web **17 文件 / 68 条**；顺序 78 那批是 Core 72/824，多出来的 **2 条**正是本批新增）；`pnpm build` ✓（`apps/web/dist/assets/index-DdLNbZV9.js` **676918 B** / gzip 217.28 kB、`index-BDv279kC.css` 42459 B 未动；比顺序 78 线上那版 `index-aDLBA72A.js` 676240 B 多 **678 B**，就是这几句提示词常量）；`pnpm build:sync-server` ✓。主 JS 超过 500 kB 的既有构建提示仍在。
 
 **未验证（归 Codex）**：本批只改了提示词文字，所有「效果」类结论都必须拿**同一套台词**在真实模型上复跑才作数——`docs/EVAL.md` 第六十八节末尾那句「这一节的数字是『改之前』的基线，改完必须重跑同一套台词才能宣告有效」正是这个意思，本轮没有跑。另外没有留下量化口径：现在没有自动化指标能测「人设提及频率」，只有那份一次性离线脚本。真机与真实模型的一切归 Codex，仓库里一律写「待验证」。本批**未 push、未部署**。
+
+## 八十八、2026-09-30：顺序 97 重抽只重生成被点的那一位
+
+**来源**：用户 2026-09-30 拍板的语义（TASKS 顺序 97）——重抽**只换被点的那一位**，同一轮里其他角色的回复原样保留。触发背景是顺序 78 上线「一轮内多名角色作答」：一轮可以有两三条角色回复，而重抽的实现在那之后就不对了。
+
+**改之前的现状与根因**：`apps/web/src/hooks/useTurnRunner.ts` 的 `handleRegenerate` 是「把这一轮的角色回复**全部**删掉，再另起一条新消息」——它先 `session.appendMessages([replacement])`，然后 `db.queue.clearTurn(turnId)`、`session.revertTurn(turnId)`，再 `for (const message of turnMessages) { if (message.role === 'character') await session.deleteMessage(message.id); }`。所以点最后一条（顺序 78 之后这很常见）会把前面那位刚说的话一起抹掉；同一段还有两个毛病：新回复是**另起一条**（换 id、`createdAt` 变成当下、排在末尾），以及那五步写入零事务、且**任何一步失败都报成「重抽失败」**——可是前三步之后回复其实已经换新了，用户看到「失败」会以为回复没变（原顺序 77 要修的正是这种自相矛盾）。另外 `history: earlierHistory`（把整轮排除在外、`playerInput` 恒为玩家那一句）与发送路径不一致：发送时同轮第二个开口的人看得到先开口那位。
+
+**改法（`apps/web/src/hooks/useTurnRunner.ts`）**：
+
+1. **原地改写**（`:1095`）：`session.updateMessage(target.id, { content, usage, intent, intentSource })`——消息 id、位置、`createdAt` 不变，`repository.updateMessage` 只把 `updatedAt` 推一下（同步据此推这条改动），所以既没有「先删后写」的空窗（审计 C18），也不会让顺序错位；同轮其他人的回复一个字不碰，旧实现那段 `deleteMessage` 循环整段删掉。顺带修好了 intent：导演没给计划、新内容也没声明意图时，把旧的清掉（`undefined` 就是界面上的「没有盘算」），否则界面上会挂着上一版回复的计划。
+2. **历史与发送路径对齐**（`:1014-1019`、`:1050`）：`historyForTurn` = 这一轮之前的历史 + 同轮排在他前面的消息（玩家那句 + 先开口的别人）；同轮已经有人说过话时 `playerInput: ''`（玩家那句已经在历史里，再当一次「本轮输入」会在提示词里出现两遍），`mentionText` 仍是玩家那一句——这三条与 `handleSend` 里 `continuedHistory` / 第二名角色的口径逐字一致。召回口径不变（查询仍是玩家这一句 + 这一轮之前的历史）。
+3. **后台回滚分开报**（`:1142`，警告码 `regenerate.rollback`）：顺序仍是「先落地新回复 → `clearTurn` → `revertTurn` → 重新 `enqueueTurnAnalysis`」（`clearTurn` 必须在前面，它移除已完成任务的幂等键，否则新排的分析会被当成跑过而跳掉），但后三步各自 try/catch 收账；失败时只报「新回复已经换好了，但这一轮的后台记录没收拾干净：…（再点一次重抽会把这一轮重新算一遍）」，`setError` 保持为空——**不再把整次重抽说成失败**。只有 `updateMessage` 返回 `null`（消息已被删或被同步覆盖）才算真正的失败并抛出。**跨集合的真事务仍然没有**（顺序 77 继续挂着），本批做到的是「哪一步失败如实分开报」。
+4. 入口限制不变：重抽按钮仍只挂在最后一条角色回复上（`apps/web/src/components/MainChat.tsx:486-490` 的 `lastCharacterId`），只把那句注释从「重抽更早的消息会让后面的对话失去前提」改成准确理由——更早的回复换掉后，后面那些是照着旧版本说的。
+
+**测试与门禁（2026-09-30，本机）**：`apps/web/src/hooks/useTurnRunner.test.tsx:480` 新增三条——① 一轮两人的第二条被重抽：`updates` 只命中被点那条、`deletes` 为空（第一条一个字没动）、`updates[0].patch.speakerInstanceId` 为 `undefined`（没换人）、生成历史是 `['旅人', '秦娘']`（看得到先开口的人）、`revertTurn` 与重新排分析都按该 `turnId` 发生；② 第一位被重抽时生成历史为空（与发送当时一致，看不到同轮后面的人）；③ `revertTurn` 抛错时报警告 `regenerate.rollback` 且最后一次 `setError` 为 `null`。测试夹具（`harness`）补了 `session.updateMessage` / `deleteMessage` / `revertTurn` 与 `db.queue.clearTurn` 的桩。改动后先单跑：`useTurnRunner.test.tsx` **13 条**全过（原 10 条 + 新增 3 条）。五项门禁（2026-09-30，本机工作区）：`pnpm typecheck` ✓；`pnpm lint` ✓（**290 文件，0 error / 0 warning**）；`pnpm test` ✓（Core **72 文件 / 826 条**、Web **17 文件 / 71 条**；顺序 96 那批是 Core 72/826、Web 17/68，多出来的 **3 条**正是本批新增，Core 未动）；`pnpm build` ✓（`apps/web/dist/assets/index-CeSZMKjE.js` **677.64 kB** / gzip 217.55 kB、`index-BDv279kC.css` 42.45 kB 未动；顺序 96 那版主包是 676918 B，多出来的约 0.7 kB 就是这段重抽逻辑与注释）；`pnpm build:sync-server` ✓。主 JS 超过 500 kB 的既有构建提示仍在。
+
+**未验证（归 Codex）**：本批只有单测，**真机与真实模型没跑**。两件事要真机才作数：① 重抽出来的观感与「同轮其他人保留」读起来是否连贯（后面那位是照着旧版本接的话，两者拼在一起会不会自相矛盾）；② 顺带修的那条警告路径（回滚失败）只在单测里模拟过，没在真实 IndexedDB / 同步环境下触发过。顺序 96 的真模型效果同样待用户告知。本批**未 push、未部署**。

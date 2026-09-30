@@ -1,4 +1,12 @@
-import { assessAttribution, type CastName, type InstanceId, type Message, type MessageId } from '@dramatis/core';
+import {
+  assessAttribution,
+  assessBleed,
+  type CastName,
+  type InstanceId,
+  type Message,
+  type MessageId,
+  type SignatureOwner,
+} from '@dramatis/core';
 import { type MouseEvent, memo, type ReactNode, type TouchEvent, useMemo, useState } from 'react';
 import { useBusy } from '../lib/busy-context';
 import { countRender } from '../lib/render-count';
@@ -37,6 +45,12 @@ interface ItemProps {
   avatars: Readonly<Record<string, string | null>>;
   /** 只有最后一条角色回复可以重抽：重抽更早的消息会让后面的对话失去前提。 */
   isLastCharacter: boolean;
+  /**
+   * 每个角色「只有他写过」的说法（顺序 79）。
+   *
+   * 引用必须稳定（App 里 `useMemo` 造好），否则几百条 `MessageItem` 的 `memo` 会全部失效。
+   */
+  signatures: readonly SignatureOwner[];
   editing: boolean;
   highlighted: boolean;
   menuOpen: boolean;
@@ -171,6 +185,7 @@ export const MessageItem = memo(function MessageItem({
   showIntent,
   archived,
   manualMode,
+  signatures,
   handlers,
 }: ItemProps) {
   countRender('MessageItem');
@@ -190,6 +205,22 @@ export const MessageItem = memo(function MessageItem({
           })
         : null,
     [message, cast, displayName],
+  );
+
+  /**
+   * 跨角色串线评估（顺序 79）：判据是「他这句话里有别人角色卡里才写过的说法」。
+   * 与上面一样纯规则、不调模型，只提示不自动改——硬改归属比错位更糟。
+   */
+  const bleed = useMemo(
+    () =>
+      message.role === 'character' && message.speakerInstanceId !== null && signatures.length > 0
+        ? assessBleed({
+            content: message.content,
+            speakerInstanceId: message.speakerInstanceId,
+            signatures,
+          })
+        : null,
+    [message, signatures],
   );
 
   return (
@@ -259,6 +290,45 @@ export const MessageItem = memo(function MessageItem({
           </div>
         ) : null}
 
+        {/*
+          跨角色串线提示（顺序 79）：他这句里有别人角色卡才写过的说法（身世、独有往事）。
+          素材来自用户自己写的卡，所以证据摆得出来：命中片段就是原话。点按钮才动数据。
+        */}
+        {bleed?.bleeding ? (
+          <div className="attr-warn">
+            <span>
+              ⚠ 这条可能不是「{displayName}」说的：{bleed.reason}。
+            </span>
+            {bleed.hits
+              .filter(
+                (hit, index) => bleed.hits.findIndex((item) => item.ownerInstanceId === hit.ownerInstanceId) === index,
+              )
+              .map((hit) => (
+                <BusyButton
+                  key={hit.ownerInstanceId}
+                  disabled={archived}
+                  title={`「${hit.span}」写在他的角色卡里`}
+                  onClick={() => handlers.onReassign(message.id, hit.ownerInstanceId)}
+                >
+                  改成「{hit.ownerName}」说的
+                </BusyButton>
+              ))}
+            {isLastCharacter ? (
+              <BusyButton
+                disabled={archived || manualMode}
+                title={
+                  manualMode
+                    ? '网页版模式下不重抽：删掉这条回复，再发一遍那句话，就会重新给你一段提示词'
+                    : '撤销这条回复，让角色重新说一次'
+                }
+                onClick={() => handlers.onRegenerate(message.id)}
+              >
+                重抽这条
+              </BusyButton>
+            ) : null}
+          </div>
+        ) : null}
+
         {editing ? (
           <EditBox
             message={message}
@@ -292,6 +362,7 @@ interface ListProps {
   showIntent: boolean;
   archived: boolean;
   manualMode: boolean;
+  signatures: readonly SignatureOwner[];
   handlers: MessageHandlers;
 }
 
@@ -316,6 +387,7 @@ export const MessageList = memo(function MessageList(props: ListProps) {
           showIntent={props.showIntent}
           archived={props.archived}
           manualMode={props.manualMode}
+          signatures={props.signatures}
           handlers={props.handlers}
         />
       ))}

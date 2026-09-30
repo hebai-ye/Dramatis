@@ -11,6 +11,7 @@ import {
   type ReplyLength,
   replyLengthOf,
   type Scene,
+  type SignatureOwner,
   speakerLimitOf,
   unlimitedModeOf,
 } from '@dramatis/core';
@@ -35,6 +36,14 @@ import { IconPlus, IconScene } from './Icons';
 import { type MessageHandlers, MessageList } from './MessageItem';
 import { StreamingBubble } from './StreamingBubble';
 import { WebBridgePanel, type WebBridgeState } from './WebBridgePanel';
+
+/**
+ * 没有角色卡素材时的空签名（顺序 79）。
+ *
+ * 做成模块级常量而不是 `[]`：`MessageList` 是按引用比较的 `memo`，每次渲染造新数组
+ * 会让几百条消息全部重画。
+ */
+const EMPTY_SIGNATURES: readonly SignatureOwner[] = [];
 
 interface Props {
   conversation: Conversation;
@@ -91,6 +100,11 @@ interface Props {
   onDropInstance: (id: InstanceId) => void;
   /** 改归属：这条其实是别人说的（T18）。 */
   onReassign: (id: MessageId, instanceId: InstanceId) => void;
+  /**
+   * 每个角色「只有他写过」的说法（顺序 79）。App 里 `useMemo` 造好，
+   * 用来提示「这条回复里有别人的东西」，只透传给消息列表。
+   */
+  signatures?: readonly SignatureOwner[];
 }
 
 /** 「跳到原句」的一次请求：`seq` 让重复点击同一条也能再闪一次。 */
@@ -250,6 +264,7 @@ function MainChatImpl({
   onOpenScene,
   onDropInstance,
   onReassign,
+  signatures,
 }: Props) {
   countRender('MainChat');
   const coarsePointer = useCoarsePointer();
@@ -641,6 +656,7 @@ function MainChatImpl({
             showIntent={showIntent}
             archived={archived}
             manualMode={manualMode}
+            signatures={signatures ?? EMPTY_SIGNATURES}
             handlers={handlers}
           />
         </BusyContext.Provider>

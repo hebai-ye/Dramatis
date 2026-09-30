@@ -21,6 +21,18 @@
 
 ## 新会话从这里接（2026-09-23）
 
+### 2026-09-30：顺序 79 跨角色串线检测（未 push、未部署）
+
+用户在 2026-09-25 先把这条暂缓（当时的理由是「靠道具词判断不可靠」），2026-09-30 要求「所有任务清单确定、之前误解的任务都确认掉，再推进顺序 79」，于是重新评估并换口径：**不猜道具词表，改成「谁的东西以他自己的角色卡为准」**。
+
+新模块 `packages/core/src/render/bleed.ts`（已在 `packages/core/src/index.ts:39` 导出）：判据只有一条——他这句话里有「**另一个角色卡里写过、他自己卡里没写过、场上别人卡里也没有**」的片段，且片段 ≥4 字、片段里不含任何人的名字。`extractSignatureSpans` 取整句与分句两个粒度并剥掉行首 `#` 标记；`buildSignatures` 先排掉含任何人名字的片段、别人也有的片段、世界书与场景设定里出现过的片段（布景词不冤人）；`assessBleed` 只报别人、每人取最长命中片段、上限 3 条。**这一版故意只做「同一段身世／独有说法」，道具词那半登记为顺序 98**——道具是 2 字名词，只能靠真实语料调阈值，而 T18 第一版 21 条误报的教训是「用户学会无视警告比漏报更糟」。
+
+界面接线：`apps/web/src/components/MessageItem.tsx` 在 T18 归属提示下方用同一套 `.attr-warn` ＋ `BusyButton` 画「⚠ 这条可能不是「X」说的：出现了「Y」独有的说法「原话片段」（他的角色卡里写着）」＋「改成「Y」说的」（复用 `onReassign`），最后一条时多一个「重抽这条」（复用 `onRegenerate`）；`MainChat.tsx` 加可选 `signatures` 透传（缺省模块级 `EMPTY_SIGNATURES`，别每次渲染造新数组拆掉 `memo`）；`App.tsx` 用 `useMemo(buildSignatures)` 从 `cast` → `session.library.cards` 取素材（`description`／`personality`／`tags`，`aliases` 含显示名与卡上的名字／昵称），`shared` = 所挂世界书条目正文 + `scene.summary`，依赖用内容拼成的 `signatureKey`（与 `avatars` 同一套路，后台每轮分析写入不重建数组）。**只提示、不改数据**——硬改归属比错位更糟。
+
+同一批还按用户要求做了**任务清单审计**：五个只读分包复核把 `docs/TASKS.md` 总表逐行与代码现状对齐（67e／68b／69／70／72／73／74／75／76／78／80／87 十二行改过，并新登记顺序 98）。**顺序 78 的结论：八项功能点全部落地、无未接线分支**，遗留只有两处死代码（`HARD_MAX_SPEAKERS` 零引用、旧 `pickPlannedSpeaker` 仅测试引用）与计划文档复选框未勾，不影响运行；顺序 70 的 SW 版本化其实已被顺序 84 做掉（降为 🟡），顺序 68b 的前提已作废（顺序 92 之后正文在仓库里固定一份，换设备不用重粘）。
+
+测试：Core 新增 `packages/core/src/render/bleed.test.ts` 11 条、Web 新增 `apps/web/src/components/MessageItem.test.tsx` 5 条。五项门禁（2026-09-30 本机）：typecheck 0、lint `Checked 296 files` 0 error / 0 warning、test Core **74 文件 / 844 条** + Web **19 文件 / 87 条**全过、build 0（`assets/index-WhTmvgwW.js` 683.26 kB）、build:sync-server 0。本批**未 push、未部署**；误报率与漏报率没有真实语料标定（归 Codex），细节与遗留见 [EVAL.md](./EVAL.md) 第九十节。
+
 ### 2026-09-30：顺序 77 重抽/改归属的一批写入事务化（未 push、未部署）
 
 来源是 2026-09-26 深度审计的存储原子性条目，2026-09-30 在顺序 97 之后同一天做掉。动手前先只读勘查：全库只有一张 object store（`apps/web/src/lib/db.ts:543`，`keyPath: ['collection','id']`），逻辑集合靠 `collection` 字段区分（清单 `packages/core/src/storage/repository.ts:48-64`）；重抽与「改归属」各碰 4 个集合（messages / backgroundTasks / memories / instances），`EntityStore` 却只有单条 CAS、没有任何跨记录原语；同步没有 outbox，靠 `updatedAt > 水位线` 推，所以事务必须覆盖 `updatedAt` 盖章，否则改写会静默丢同步——**同步侧不用一起改**。

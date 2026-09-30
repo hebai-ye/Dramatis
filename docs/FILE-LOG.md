@@ -1544,6 +1544,23 @@ TASKS 第〇节顺序 68。用户裁定「A+B 推进」；原方案里的 `limit
 
 本批**未 push、未部署**；五项门禁数字与「真模型没验」的边界见 EVAL 第八十七节。
 
+## 顺序 79、2026-09-30：跨角色串线检测（只提示不改数据；只做长片段那半）
+
+178 轮真实长跑里，46/178 条非掌柜角色用起了掌柜的道具，秦娘还整段复用了陈九的专属身世（「我八岁那年雷砸了船，船板掀起来，攥缆绳攥出来的」）。用户 2026-09-25 先决定暂缓——当时的理由是「靠道具词判断不可靠」（T18 第一版 21 条警告大多误报）。2026-09-30 用户要求「所有任务清单确定、之前误解的任务都确认掉，再推进顺序 79」，于是换一个**不猜**的口径重新评估：**谁的东西，以他自己的角色卡为准**。同一批还按用户要求把 `docs/TASKS.md` 总表逐行与代码现状对齐（改了 67e／68b／69／70／72／73／74／75／76／78／80／87 十二行的描述，并新登记顺序 98）。
+
+| 文件 | 动作 | 本批内容 |
+| --- | --- | --- |
+| `packages/core/src/render/bleed.ts` | 新增 | 纯规则模块（198 行）。判据只有一条：他这句话里有「**另一个角色卡里写过、他自己卡里没写过、场上别人卡里也没有**」的片段（≥4 字，且片段里不含任何人的名字）。导出 `MIN_SIGNATURE_LENGTH = 4`、`extractSignatureSpans`（强标点整句 + 逗号分句两个粒度，剥行首 `#` 等标记，只有数字符号的片段丢掉）、`buildSignatures`（丢弃含任何在场者名字的片段、别人也有的片段、世界书／场景里出现过的片段）、`assessBleed`（只报别人、每人取最长命中片段、上限 3 条、给出 `reason` 一句话）。**头注释写明这一版只做「同一段身世／独有说法」，道具词那半留给顺序 98**，并写下理由（2 字名词只能靠真实语料调阈值；T18 第一版的教训是「用户学会无视警告比漏报更糟」） |
+| `packages/core/src/render/bleed.test.ts` | 新增 | 11 条：整句／分句两个粒度与剥标记、4 字下限与纯数字片段、只留自己卡里的片段、含任何人的名字不算独有、两人共有与世界书布景不算独有、秦娘复述陈九身世命中（带原话片段）、自己说不算、多命中上限 3、空输入安静返回 |
+| `packages/core/src/index.ts` | 改 | `:39` 加 `export * from './render/bleed.js';`（插在 attribution 与 intent 之间） |
+| `apps/web/src/components/MessageItem.tsx` | 改 | `ItemProps` / `ListProps` 加 `signatures`（注明引用必须稳定，否则几百条消息的 `memo` 全失效）；`assessBleed` 走 `useMemo`（依赖 `[message, signatures]`）；在归属提示（T18）下方用同一套 `.attr-warn` + `BusyButton` 画串线警告：「⚠ 这条可能不是「X」说的：出现了「Y」独有的说法「原话片段」（他的角色卡里写着）」＋「改成「Y」说的」（复用 `onReassign`），最后一条时再加「重抽这条」（复用 `onRegenerate`） |
+| `apps/web/src/components/MessageItem.test.tsx` | 新增 | 5 条（`renderToString`，只 mock `../lib/render-count`）：命中画警告与原话证据、非最后一条不给「重抽这条」、自己说不画警告、玩家消息不评估、空签名安静。断言避开 `renderToString` 插在插值之间的 `<!-- -->` |
+| `apps/web/src/components/MainChat.tsx` | 改 | `Props` 加可选 `signatures`，透传给 `MessageList`；缺省用模块级常量 `EMPTY_SIGNATURES`（每次渲染造新数组会让整表重画） |
+| `apps/web/src/App.tsx` | 改 | 新增 `signatureKey` + `useMemo(buildSignatures)`：成员取 `cast`（`cardId` → `session.library.cards`），素材 = `description`／`personality`／`tags`，`aliases` = `displayName`／`name`／`nickname`；`shared` = 所挂世界书条目正文 + `scene.summary`。key 拼的是内容而不是对象引用（与 `avatars` 同一套路），避免后台每轮分析写入后重建数组；`<MainChat signatures={signatures}>` |
+| `docs/{TASKS,STATUS,EVAL,FILE-LOG}.md` | 改 | 顺序 79 计划行改成 ✅ 并写清判据与边界、加「顺序 79 怎么处理的」整节与遗留；总表逐行对齐 + 新增顺序 98 行（道具词级串线检测）；STATUS 接续点；EVAL 第九十节与本节 |
+
+本批**未 push、未部署**；五项门禁数字与「误报率没有真实语料标定」的边界见 EVAL 第九十节。
+
 ## 七十二、几点注意
 
 ---

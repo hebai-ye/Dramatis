@@ -35,7 +35,8 @@ jobs:
       - name: 类型检查
         run: pnpm typecheck
 
-      - name: 单元测试
+      # 根 test 也构建并运行 tools/sync-admin 的真实 SQLite / HTTP 边界测试。
+      - name: 单元测试（含服务器管理台）
         run: pnpm test
 
       - name: 构建

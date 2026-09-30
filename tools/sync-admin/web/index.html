@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Dramatis 服务器管理台</title>
+    <link rel="stylesheet" href="/style.css" />
+    <script type="module" src="/app.js"></script>
+  </head>
+  <body>
+    <header><div><span class="eyebrow">DRAMATIS · 管理台</span><h1>账户与同步空间</h1></div><span id="mode" class="badge">只读</span></header>
+    <main>
+      <p id="notice" role="status" aria-live="polite"></p>
+      <section id="login" class="panel login">
+        <h2>连接管理服务</h2>
+        <p>先建立 SSH 隧道，再输入管理 token。token 仅用于本次页面会话。</p>
+        <form id="login-form"><label for="token">管理 token</label><input id="token" type="password" autocomplete="off" spellcheck="false" required minlength="43" maxlength="128" /><button type="submit">连接</button></form>
+      </section>
+      <div id="dashboard" hidden>
+        <div class="toolbar"><p>查看账户资料与存储元数据</p><div><button id="refresh" type="button">刷新</button><button id="logout" type="button" class="secondary">退出</button></div></div>
+        <section id="summary" class="summary" aria-label="服务概况"></section>
+        <section class="panel">
+          <div class="section-heading"><h2>账户与空间列表</h2><form id="search-form"><label class="sr-only" for="search">搜索账户 ID、显示名或句柄</label><input id="search" type="search" placeholder="账户 ID、显示名或句柄" maxlength="128" /><button type="submit">搜索</button></form></div>
+          <div class="table-wrap"><table><thead><tr><th>账户</th><th>空间句柄</th><th>记录数</th><th>配额计量用量</th><th>空间创建时间</th><th>详情</th></tr></thead><tbody id="spaces"></tbody></table></div>
+          <div class="pagination"><span id="count"></span><div><button id="previous" type="button" class="secondary">上一页</button><button id="next" type="button" class="secondary">下一页</button></div></div>
+          <p class="hint">记录数包含墓碑。配额计量用量包含记录元数据与密文 JSON，不等于数据库文件大小。创建时间可能由客户端提供。</p>
+        </section>
+        <section id="details" class="panel" hidden><h2 tabindex="-1">空间详情</h2><div id="detail-content"></div></section>
+        <section class="panel"><h2>备份状态</h2><p class="hint">仅显示文件元数据。文件存在不代表恢复已验证；本批未提供恢复或下载入口。</p><div id="backups"></div></section>
+        <p class="hint">未认领的空间需由所有者登录并同意登记账户资料。编辑仅限运营显示名与服务器存储容量；每次保存都需完整句柄确认和前置备份。VIP 与托管服务尚未接入。</p>
+      </div>
+    </main>
+  </body>
+</html>

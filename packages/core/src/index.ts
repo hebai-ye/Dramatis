@@ -36,6 +36,7 @@ export * from './provider/collect.js';
 export * from './provider/manual.js';
 export * from './provider/openai-compatible.js';
 export * from './render/attribution.js';
+export * from './render/bleed.js';
 export * from './render/intent.js';
 export * from './render/narration.js';
 export * from './render/segments.js';

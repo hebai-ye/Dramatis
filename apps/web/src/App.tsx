@@ -3,6 +3,7 @@ import {
   type AssembledPrompt,
   applyTurnAnalysis,
   buildSceneTransitionNarration,
+  buildSignatures,
   buildTurnAnalysisMessages,
   type Card,
   type CastName,
@@ -18,6 +19,7 @@ import {
   needsWebBridge,
   type RoomId,
   renderPromptForWeb,
+  type SignatureOwner,
   selectSceneMembers,
 } from '@dramatis/core';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -220,6 +222,56 @@ export function App() {
   const castNames = useMemo<CastName[]>(
     () => cast.map((instance) => ({ id: instance.id, displayName: instance.displayName })),
     [cast],
+  );
+
+  /**
+   * 每个角色「只有他写过」的说法（顺序 79），串线提示的素材。
+   *
+   * 口径写在 `packages/core/src/render/bleed.ts`：只用**用户自己写的角色卡**
+   * （描述、性格、标签），不猜道具词表；世界书与场景设定里写过的说法算全场共有，
+   * 被排除在外——否则「客栈」「柜台」这类布景词会把每个人都判成串线。
+   *
+   * 与 `avatars` 同一套路：内容拼成 `signatureKey`，只有它变了才重建数组。
+   * `MessageList`/`MessageItem` 是按引用比较的 `memo`，每轮分析写入后无条件换新数组
+   * 会让几百条消息全部重画。
+   */
+  const signatureKey = [
+    ...cast.map((instance) => {
+      const card = session.library.cards.find((item) => item.id === instance.cardId);
+      return [
+        instance.id,
+        instance.displayName,
+        card?.name ?? '',
+        card?.nickname ?? '',
+        card?.description ?? '',
+        card?.personality ?? '',
+        (card?.tags ?? []).join('、'),
+      ].join(':');
+    }),
+    ...session.worldBooks.flatMap((book) => book.entries.map((entry) => entry.content)),
+    scene?.summary ?? '',
+  ].join('|');
+  // biome-ignore lint/correctness/useExhaustiveDependencies: 内容已汇总进 signatureKey，避免后台每轮写入触发重建
+  const signatures = useMemo<SignatureOwner[]>(
+    () =>
+      buildSignatures(
+        cast.map((instance) => {
+          const card = session.library.cards.find((item) => item.id === instance.cardId);
+          return {
+            instanceId: instance.id,
+            displayName: instance.displayName,
+            material: [card?.description ?? '', card?.personality ?? '', (card?.tags ?? []).join('、')],
+            aliases: [instance.displayName, card?.name ?? '', card?.nickname ?? ''],
+          };
+        }),
+        {
+          shared: [
+            ...session.worldBooks.flatMap((book) => book.entries.map((entry) => entry.content)),
+            scene?.summary ?? '',
+          ],
+        },
+      ),
+    [signatureKey],
   );
   /** 包含离场角色：旧消息仍应显示原说话人的头像。状态数值变化不重建这份映射。 */
   const avatarKey = instances
@@ -1134,6 +1186,7 @@ export function App() {
                   onOpenScene={handleOpenScene}
                   onDropInstance={handleDropInstance}
                   onReassign={handleReassignId}
+                  signatures={signatures}
                 />
               )}
 

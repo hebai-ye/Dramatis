@@ -78,6 +78,11 @@ function firstSentence(text: string): string {
   return sentence.length <= 60 ? sentence : `${sentence.slice(0, 60)}…`;
 }
 
+/** 把任意抛出物收成一句能给用户看的话（重抽的分布回滚要用，顺序 97）。 */
+function errorText(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
 export interface TurnRunnerOptions {
   db: DramatisDb | null;
   session: SessionApi;
@@ -949,16 +954,32 @@ export function useTurnRunner({
   );
 
   /**
-   * 重抽。
+   * 重抽（顺序 97：只重生成被点的那一位）。
    *
-   * 关键是**把这一轮的后台写入一起撤销**：取消排队中的任务，删掉旧回复，
-   * 再把已经落盘的情绪变化反向还原。只删消息不撤状态，关系会越抽越高。
+   * 三条口径：
+   *
+   * 1. **只换被点的那一条**：同一轮里其他角色的回复原样留着。顺序 78 上线「一轮内多名
+   *    角色作答」之后一轮里可以有两三条角色回复，而这里以前是「把这一轮的角色回复全部
+   *    删掉再重排」——点最后一条会把前面那位刚说的话一起抹掉（用户 2026-09-30 拍板改成
+   *    现在这样）。现在是**原地改写**那条消息（`session.updateMessage`）：id、位置、
+   *    时间戳都不变，既没有「先删后写」的空窗（审计 C18），也不会让消息顺序错位。
+   * 2. **这一位看到的东西和发送时一样**：同轮里排在他前面的消息（玩家那句 + 先开口的
+   *    别人）仍然作为历史交给他，并且和发送路径同一条规矩——前面已经有人说过话时
+   *    `playerInput` 留空（玩家那句已经在历史里，不能再当一次「本轮输入」塞一遍）。
+   * 3. **这一轮的后台写入照样全部重算**：清任务幂等键、撤销该轮已落盘的记忆与情绪变化、
+   *    再重新排一次分析。保留别人的回复 ≠ 保留照着旧内容抽出来的记忆。
+   *
+   * 写入顺序（顺序 77 留下的原子性）：**先把新回复落地**（一条记录、单次 put），再做
+   * 后台回滚与重排。后三步失败时新回复已经生效，所以不能当成「整次重抽失败」——那会让
+   * 用户以为回复没变（顺序 77 要修的正是这种自相矛盾）。这时逐条收账、统一改成明确的
+   * 警告：回复已换新，这一轮的记忆/关系没收拾干净，再点一次重抽会把这一轮重新算一遍。
    */
   const handleRegenerate = useCallback(
     async (id: MessageId) => {
       if (!db || !world || !scene || !conversation || busy) return;
 
-      const target = messages.find((message) => message.id === id);
+      const targetIndex = messages.findIndex((message) => message.id === id);
+      const target = targetIndex === -1 ? undefined : messages[targetIndex];
       if (!target) return;
 
       const turnMessages = messages.filter((message) => message.turnId === target.turnId);
@@ -985,7 +1006,17 @@ export function useTurnRunner({
         handoffId: null,
       });
 
+      /*
+       * 顺序 97：这一轮里排在被点那条**之前**的消息（玩家那句 + 先开口的别人），
+       * 就是发送当时给他的那份历史。老实现把整轮排除在历史之外，于是第二个说话的人
+       * 重抽时会「忘了」第一位刚说过什么。
+       */
+      const earlierInTurn = messages.filter(
+        (message, index) => index < targetIndex && message.turnId === target.turnId,
+      );
+      const spokeEarlier = earlierInTurn.some((message) => message.role === 'character');
       const earlierHistory = messages.filter((message) => message.turnId !== target.turnId);
+      const historyForTurn = spokeEarlier ? [...earlierHistory, ...earlierInTurn] : earlierHistory;
       const controller = new AbortController();
       abortRef.current = controller;
 
@@ -1010,8 +1041,13 @@ export function useTurnRunner({
         const generation = await runGeneration({
           speaker,
           card: speakerCard,
-          history: earlierHistory,
-          playerInput: playerMessage.content,
+          history: historyForTurn,
+          /*
+           * 同轮已经有人说过话时 `playerInput` 留空（顺序 97）：玩家那句已经在
+           * `historyForTurn` 里，再当一次「本轮输入」会在提示词里出现两遍。
+           * 判「提到了什么」仍用 `mentionText`，与发送路径完全一致。
+           */
+          playerInput: spokeEarlier ? '' : playerMessage.content,
           mentionText: playerMessage.content,
           memories: recalled.map(toPromptMemory),
           showStream: true,
@@ -1047,36 +1083,57 @@ export function useTurnRunner({
         }
 
         /*
-         * 先确认完整的新回复，再撤销旧回复与后台状态。服务商过滤、截断或断流时，
-         * 不触碰旧消息、记忆和队列；它们仍是这一轮最后一次成功的结果。
+         * 原地改写那一条（顺序 97）。**不删不补**：删掉再追加会换 id、换位置，也让
+         * 「顺手把同轮其他回复一起删掉」有了可乘之机——老实现就是在这里连带删的。
          *
-         * 写入顺序（审计 C18）：**先落新回复，再删旧的**。中途任何一步失败，最坏是
-         * 新旧两条同时在（用户删掉一条即可），而不是这一轮一条回复都不剩。
-         * clearTurn 会移除已完成任务的幂等键，以便新的分析重新入队。
+         * 服务商过滤、截断或断流时，上面已经拦下并抛错，这里不会执行；旧回复、记忆
+         * 与队列仍是这一轮最后一次成功的结果。
+         *
+         * `intent` 一并按新内容重算：导演没给计划、这一位这次也没声明意图时，把旧的
+         * 清掉（`undefined` 就是界面上的「没有盘算」），否则界面上会挂着上一版回复的计划。
          */
-        await session.appendMessages([
-          {
-            ...replacement,
+        const patched = await session.rewriteTurn({
+          messageId: target.id,
+          turnId: target.turnId,
+          patch: {
+            content: replacement.content,
             ...(generation.usage === null ? {} : { usage: generation.usage }),
-            ...(originalIntent === null ? {} : { intent: originalIntent.intent, intentSource: 'planned' as const }),
+            ...(originalIntent === null
+              ? { intent: replacement.intent, intentSource: replacement.intentSource }
+              : { intent: originalIntent.intent, intentSource: 'planned' as const }),
           },
-        ]);
-        await db.queue.clearTurn(target.turnId);
-        await session.revertTurn(target.turnId);
-        for (const message of turnMessages) {
-          if (message.role === 'character') await session.deleteMessage(message.id);
+        });
+        if (patched === null) {
+          throw new Error('原回复已经不在库里（可能已被删掉或被同步覆盖），这次重抽没有落盘。');
         }
 
-        // 重抽撤销了这一轮的后台任务，必须重新排一次队。
-        // 不补这一步的话，被重抽的那一轮会永远不再抽取记忆——角色的记忆里
-        // 就永久缺了一段（真实模型端到端测试里就是这样发现的：重抽两次之后
-        // 记忆条数少了一条，再也没有回来）。
-        await enqueueTurnAnalysis(db, worker, {
-          roomId: world.id,
-          conversationId: conversation.id,
-          sceneId: scene.id,
-          turnId: target.turnId,
-        });
+        /*
+         * 新回复与这一轮的后台记录已经**在同一个事务里**落地（顺序 77）：清任务幂等键、
+         * 撤记忆与情绪都在 `session.rewriteTurn` 里面，要么都成、要么一条都不落。以前
+         * 这三步分开写，「回复换了、上一轮的情绪还在」这种半截状态是可能的。
+         *
+         * 只剩这一步在事务外：重排一次这一轮的分析。它失败不代表回复有问题，所以只报
+         * 警告，不说成「重抽失败」。
+         */
+        try {
+          // 重抽撤销了这一轮的后台任务，必须重新排一次队。
+          // 不补这一步的话，被重抽的那一轮会永远不再抽取记忆——角色的记忆里
+          // 就永久缺了一段（真实模型端到端测试里就是这样发现的：重抽两次之后
+          // 记忆条数少了一条，再也没有回来）。
+          await enqueueTurnAnalysis(db, worker, {
+            roomId: world.id,
+            conversationId: conversation.id,
+            sceneId: scene.id,
+            turnId: target.turnId,
+          });
+        } catch (enqueueError) {
+          setWarnings([
+            {
+              code: 'regenerate.rollback',
+              message: `新回复已经换好了，但这一轮的分析没能重新排队（${errorText(enqueueError)}）。再点一次重抽会把这一轮重新算一遍。`,
+            },
+          ]);
+        }
       } catch (regenerateError) {
         const message = regenerateError instanceof Error ? regenerateError.message : String(regenerateError);
         setError(controller.signal.aborted ? `已停止生成（${message}）` : message);
@@ -1103,6 +1160,7 @@ export function useTurnRunner({
       world,
       setBusy,
       setError,
+      setWarnings,
     ],
   );
 
@@ -1121,10 +1179,27 @@ export function useTurnRunner({
       if (!target || !speaker || target.speakerInstanceId === instanceId) return;
 
       setError(null);
-      await session.updateMessage(id, { speakerInstanceId: speaker.id, speakerName: speaker.displayName });
 
-      await db.queue.clearTurn(target.turnId);
-      await session.revertTurn(target.turnId);
+      /*
+       * 顺序 77：改归属 + 清任务键 + 撤记忆与情绪走一个事务（`session.rewriteTurn`）。
+       * 老实现这三步各写各的、还没有 try/catch——一步失败就抛出，库里留下半截状态，
+       * 用户那边连一句可读的提示都没有。
+       */
+      let patched: Message | null;
+      try {
+        patched = await session.rewriteTurn({
+          messageId: id,
+          turnId: target.turnId,
+          patch: { speakerInstanceId: speaker.id, speakerName: speaker.displayName },
+        });
+      } catch (reassignError) {
+        setError(`改归属没有落盘：${errorText(reassignError)}。这条回复与这一轮的后台记录都保持原样。`);
+        return;
+      }
+      if (patched === null) {
+        setError('这条回复已经不在库里（可能已被删掉或被同步覆盖），改归属没有落盘。');
+        return;
+      }
 
       /*
        * 网页版模式：没有模型可调，所以「重算这一轮」改成再贴一次第二步。
@@ -1160,14 +1235,25 @@ export function useTurnRunner({
         return;
       }
 
-      // distinct：clearTurn 已经清掉旧记录，带上时间戳保证一定起一条新任务
-      await enqueueTurnAnalysis(db, worker, {
-        roomId: world.id,
-        conversationId: conversation.id,
-        sceneId: target.sceneId,
-        turnId: target.turnId,
-        distinct: true,
-      });
+      /*
+       * distinct：clearTurn 已经清掉旧记录，带上时间戳保证一定起一条新任务。
+       *
+       * 这一步在事务外（顺序 77）：归属已经改好、旧后台写入已经撤掉，只剩「重算这一轮」
+       * 没排上队，所以只报错误提示，不回滚。
+       */
+      try {
+        await enqueueTurnAnalysis(db, worker, {
+          roomId: world.id,
+          conversationId: conversation.id,
+          sceneId: target.sceneId,
+          turnId: target.turnId,
+          distinct: true,
+        });
+      } catch (enqueueError) {
+        setError(
+          `说话的人换了，但这一轮的分析没能重新排队（${errorText(enqueueError)}）。再改一次归属会把这一轮重新算一遍。`,
+        );
+      }
     },
     [conversation, db, messages, providers.apiKey, session, worker, world, setWarnings, setError, setBridge],
   );

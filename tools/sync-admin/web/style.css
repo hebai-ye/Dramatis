@@ -62,7 +62,8 @@ label {
   display: block;
   margin-bottom: 8px;
 }
-input {
+input,
+select {
   padding: 10px 12px;
   border: 1px solid #adbdb4;
   border-radius: 6px;
@@ -91,7 +92,8 @@ button:disabled {
   cursor: default;
 }
 button:focus-visible,
-input:focus-visible {
+input:focus-visible,
+select:focus-visible {
   outline: 3px solid #dea447;
   outline-offset: 3px;
 }
@@ -156,7 +158,8 @@ table {
   margin-top: 24px;
   padding-top: 16px;
 }
-.editor input:not([type="checkbox"]) {
+.editor input:not([type="checkbox"]),
+.editor select {
   width: 100%;
   max-width: 640px;
   display: block;
@@ -187,6 +190,12 @@ td {
   display: block;
   color: #63716b;
   margin-top: 5px;
+}
+.membership-status {
+  display: block;
+  color: #245640;
+  margin-top: 6px;
+  font-size: 13px;
 }
 .pagination {
   margin-top: 16px;

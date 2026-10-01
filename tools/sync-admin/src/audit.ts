@@ -8,6 +8,8 @@ export interface AuditEvent {
   spaceHandle?: string;
   backupFile?: string;
   maxBytes?: number | null;
+  startedAt?: string;
+  expiresAt?: string;
 }
 
 /** 明确选字段；请求、凭证、URL 和运营资料均不进入审计日志。 */
@@ -25,6 +27,8 @@ export function appendAudit(path: string, event: AuditEvent): void {
         ...(event.spaceHandle === undefined ? {} : { spaceHandle: event.spaceHandle }),
         ...(event.backupFile === undefined ? {} : { backupFile: event.backupFile }),
         ...(event.maxBytes === undefined ? {} : { maxBytes: event.maxBytes }),
+        ...(event.startedAt === undefined ? {} : { startedAt: event.startedAt }),
+        ...(event.expiresAt === undefined ? {} : { expiresAt: event.expiresAt }),
       })}\n`,
       { encoding: 'utf8' },
     );

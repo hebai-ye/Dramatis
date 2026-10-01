@@ -1,8 +1,15 @@
 import { existsSync } from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
 import { accountSpaceHandle, normalizeAccountId } from './identity.js';
+import {
+  effectiveQuota,
+  MEMBERSHIP_FIELDS,
+  type MembershipRow,
+  membershipProjection,
+  readMembership,
+} from './membership.js';
 
-interface SpaceRow {
+interface SpaceRow extends MembershipRow {
   space_handle: string;
   created_at: string;
   head: number | null;
@@ -14,14 +21,15 @@ interface SpaceRow {
   policy_max_bytes: number | null;
 }
 
-function present(row: SpaceRow, defaultMaxBytes: number) {
+function present(row: SpaceRow, defaultMaxBytes: number, now: number, membershipsAvailable: boolean) {
   return {
     spaceHandle: row.space_handle,
     createdAt: row.created_at,
     head: row.head,
     records: row.record_count,
     quotaBytes: row.byte_count,
-    quotaLimitBytes: row.policy_max_bytes ?? defaultMaxBytes,
+    ...effectiveQuota(row.policy_max_bytes, readMembership(row), defaultMaxBytes, now),
+    membershipsAvailable,
     customQuota: row.policy_max_bytes !== null,
     profile:
       row.account_id === null
@@ -35,7 +43,7 @@ function present(row: SpaceRow, defaultMaxBytes: number) {
 }
 
 /** 与同步存储分开：不建表、不迁移、不取实体、凭证或钥匙封装。 */
-export function createAdminStore(path: string, defaultMaxBytes = 96 * 1024 ** 2) {
+export function createAdminStore(path: string, defaultMaxBytes = 96 * 1024 ** 2, now = Date.now) {
   if (!existsSync(path)) throw new Error('同步数据库不存在，管理台拒绝新建空库。');
   const db = new DatabaseSync(path, { readOnly: true });
   try {
@@ -53,13 +61,27 @@ export function createAdminStore(path: string, defaultMaxBytes = 96 * 1024 ** 2)
     const policies =
       spacesColumns.includes('epoch') &&
       ['space_epoch', 'max_bytes', 'revision'].every((name) => columns('space_policies').includes(name));
+    const memberships =
+      spacesColumns.includes('epoch') &&
+      ['space_epoch', ...MEMBERSHIP_FIELDS].every((name) => columns('space_memberships').includes(name));
+    const history = [
+      'operation_id',
+      'space_handle',
+      'space_epoch',
+      'action',
+      'event_at',
+      'started_at',
+      'expires_at',
+      'max_bytes',
+    ].every((name) => columns('membership_events').includes(name));
     const join = `FROM spaces s LEFT JOIN heads h ON h.space_handle = s.space_handle
       ${profiles ? 'LEFT JOIN account_profiles p ON p.space_handle = s.space_handle AND p.space_epoch = s.epoch' : ''}
-      ${policies ? 'LEFT JOIN space_policies q ON q.space_handle=s.space_handle AND q.space_epoch=s.epoch' : ''}`;
+      ${policies ? 'LEFT JOIN space_policies q ON q.space_handle=s.space_handle AND q.space_epoch=s.epoch' : ''}
+      ${memberships ? 'LEFT JOIN space_memberships m ON m.space_handle=s.space_handle AND m.space_epoch=s.epoch' : ''}`;
     const projection = `s.space_handle, s.created_at, h.head,
       ${counters ? 'h.record_count, h.byte_count' : 'NULL AS record_count, NULL AS byte_count'},
       ${profiles ? 'p.account_id, p.display_name, p.claimed_at' : 'NULL AS account_id, NULL AS display_name, NULL AS claimed_at'},
-      ${policies ? 'q.max_bytes AS policy_max_bytes' : 'NULL AS policy_max_bytes'}`;
+      ${policies ? 'q.max_bytes AS policy_max_bytes' : 'NULL AS policy_max_bytes'},${membershipProjection(memberships)}`;
 
     const snapshot = <T>(read: () => T): T => {
       db.exec('BEGIN');
@@ -83,6 +105,19 @@ export function createAdminStore(path: string, defaultMaxBytes = 96 * 1024 ** 2)
             ${join}`)
             .get() as { spaces: number; accounts: number; quota_bytes: number | null };
           const records = (db.prepare('SELECT COUNT(*) AS n FROM records').get() as { n: number }).n;
+          const counts = { vipActive: 0, vipExpired: 0, vipRevoked: 0 };
+          if (memberships) {
+            const instant = now();
+            const rows = db
+              .prepare(`SELECT ${membershipProjection(true)} ${join} WHERE m.space_handle IS NOT NULL`)
+              .all() as MembershipRow[];
+            for (const row of rows) {
+              const member = effectiveQuota(null, readMembership(row), defaultMaxBytes, instant).membership;
+              if (member?.status === 'active') counts.vipActive++;
+              else if (member?.status === 'expired') counts.vipExpired++;
+              else if (member?.status === 'revoked') counts.vipRevoked++;
+            }
+          }
           return {
             spaces: totals.spaces,
             accounts: totals.accounts,
@@ -90,6 +125,8 @@ export function createAdminStore(path: string, defaultMaxBytes = 96 * 1024 ** 2)
             records,
             quotaBytes: totals.quota_bytes,
             profilesAvailable: profiles,
+            membershipsAvailable: memberships && history,
+            ...counts,
           };
         });
       },
@@ -107,7 +144,7 @@ export function createAdminStore(path: string, defaultMaxBytes = 96 * 1024 ** 2)
             ORDER BY s.created_at DESC, s.space_handle ASC LIMIT ? OFFSET ?`)
             .all(...params, options.limit, options.offset) as SpaceRow[];
           return {
-            spaces: rows.map((row) => present(row, defaultMaxBytes)),
+            spaces: rows.map((row) => present(row, defaultMaxBytes, now(), memberships && history)),
             total,
             offset: options.offset,
             limit: options.limit,
@@ -136,7 +173,15 @@ export function createAdminStore(path: string, defaultMaxBytes = 96 * 1024 ** 2)
             GROUP BY device_id ORDER BY MAX(server_rev) DESC LIMIT 100`)
             .all(handle) as { deviceId: string; records: number; clientUpdatedAt: string }[];
           return {
-            space: present(row, defaultMaxBytes),
+            space: present(row, defaultMaxBytes, now(), memberships && history),
+            membershipHistory: history
+              ? db
+                  .prepare(`SELECT e.action,e.event_at AS eventAt,e.started_at AS startedAt,
+              e.expires_at AS expiresAt,e.max_bytes AS maxBytes FROM membership_events e
+              JOIN spaces s ON s.space_handle=e.space_handle AND s.epoch=e.space_epoch
+              WHERE e.space_handle=? ORDER BY e.rowid DESC LIMIT 20`)
+                  .all(handle)
+              : [],
             collections: collections.map((item) => ({
               collection: item.collection,
               records: item.records,

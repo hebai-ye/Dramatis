@@ -1496,6 +1496,38 @@ TASKS 第〇节顺序 68。用户裁定「A+B 推进」；原方案里的 `limit
 
 合并后主干工作区跑完五项门禁（数字见 EVAL 第八十六节）。随后 `4ee7edd` 推到 `origin/main`（`637672f..4ee7edd`），因同步服务端源码没变（`git log 637672f..4ee7edd -- tools/ packages/core/src/sync/` 为空）只换网页：Windows 正式机的 `D:\Dramatis\web\dist` 换成 `assets/index-aDLBA72A.js`（676240 B，与本地构建逐字节相同），旧目录留成 `dist.bak-20260930-005711`；线上首页 200 且引用新资源，`/sync/health` 200。
 
+## 顺序 77、2026-09-30：重抽与改归属的一批写入事务化（IndexedDB 真事务、内存后端快照回滚）
+
+来源是 2026-09-26 深度审计的存储原子性条目，2026-09-30 在顺序 97 之后同一天做掉。动手前先只读勘查：全库只有一张 object store（`keyPath: ['collection','id']`），逻辑集合靠 `collection` 字段区分；重抽与「改归属」各碰 4 个集合，而 `EntityStore` 只有单条 CAS、没有任何跨记录原语，且同步没有 outbox（靠 `updatedAt > 水位线` 推）⇒ 事务必须覆盖 `updatedAt` 盖章，同步侧不用一起改。改法是把 `EntityStore` 的事务扩成**可选**原语，IndexedDB 侧接上真 `readwrite` 事务、内存后端用快照回滚，再把重抽／改归属那批写入收进一个事务。
+
+| 文件 | 动作 | 本批内容 |
+| --- | --- | --- |
+| `packages/core/src/platform/entity-store.ts` | 改 | `EntityStore` 新增可选 `transaction?<T>(run: (scope: EntityStore) => Promise<T>)`；新导出 `withStoreTransaction(store, run)`（没实现就 `return run(store)`） |
+| `apps/web/src/lib/db.ts` | 改 | `createIndexedDbEntityStore` 拆成「库连接来源」+ `createStoreFromSource(source, runTransaction?)`；事务版 `db.transaction(STORE,'readwrite')`、作用域内读写走 `tx.store`、成功 `await tx.done`、出错 `tx.abort()`；`DramatisDb` 暴露 `store` |
+| `packages/core/src/platform/memory-store.ts` | 改 | `transaction` = 快照所有集合 Map → run → 出错清空后按快照恢复再重抛（注释：不隔离并发事务） |
+| `apps/web/src/lib/turn-write.ts` | **新增** | `rewriteTurnWrites`（一个事务里「改写消息 → 清任务键 → 软删该轮记忆 + `undoConsolidation` → 逐条还原情绪」，消息不在库里就什么都不撤）与 `revertTurnWrites` |
+| `apps/web/src/lib/session.ts` | 改 | 新增 `rewriteTurn`（返回 `Message \| null`）；`revertTurn` 改走 `revertTurnWrites`；两者成功后 `setSnapshot` 对齐 messages / memories / instances |
+| `apps/web/src/hooks/useTurnRunner.ts` | 改 | `handleRegenerate` 落盘换成 `session.rewriteTurn`、删掉三步 try/catch 汇总；`handleReassignMessage` 原先**无 catch** 的三步写入换成同一个调用；只有「重新排这一轮的分析」留在事务外并单独报 |
+| `packages/core/src/platform/memory-store.test.ts` | **新增** | 内存后端 `update` / `transaction` 与回滚（7 条） |
+| `apps/web/src/lib/turn-write.test.ts` | **新增** | 6 条：成功路径、中途失败整批回滚（含 `remove` 被撤销）、无 `transaction` 的后端退化成顺序执行、消息不存在时不动任何东西、`revertTurnWrites` 单跑、`withStoreTransaction` 抛错整批不落 |
+| `apps/web/src/hooks/useTurnRunner.test.tsx` | 改 | 夹具补 `session.rewriteTurn` 桩与 `analysisFails` / `rewriteReturnsNull` 开关；原「后台回滚失败」一条拆成「事务失败按整次失败报」与「重排分析失败只发警告」两条 |
+| `docs/{TASKS,STATUS,EVAL,FILE-LOG}.md` | 改 | 顺序 77 计划行改成已完成并写清做法、状态接续点、EVAL 第八十九节与本节；顺序 96/97 相关小节里「真事务仍然没有」的说法一并改成「顺序 77 当天收口」 |
+
+五项门禁：`pnpm typecheck` 0；`pnpm lint` `Checked 293 files` 0 error / 0 warning；`pnpm test` Core 73 文件 / 833 条 + Web 18 文件 / 82 条全过；`pnpm build` 0（`dist/assets/index-CuPsB7O6.js` 680.10 kB / gzip 218.26 kB）；`pnpm build:sync-server` 0。本批**已随 2026-09-30 整批 push、网页已换版**（STATUS 顶部「整批上线」一节）；IndexedDB 真事务在 Node 里没有测试基建（无 `indexedDB`、无 `fake-indexeddb`），浏览器里的原子性与并发归 Codex 真机验，边界见 EVAL 第八十九节。
+
+## 顺序 97、2026-09-30：重抽只重生成被点的那一位（同轮其他人原样保留）
+
+用户 2026-09-30 拍板的语义。改之前重抽是「删掉这一轮**全部**角色回复、再另起一条新消息，然后整轮重排」——顺序 78 之后一轮可以有两三条角色回复，点最后一条会把前面那位刚说的话一起抹掉；新回复还会换 id、换位置，而且那五步写入零事务，任何一步失败都报成「重抽失败」（其实前三步之后回复已经换新）。本批把落盘改成**原地改写**，并把后台回滚的失败与回复本身的失败分开报。
+
+| 文件 | 动作 | 本批内容 |
+| --- | --- | --- |
+| `apps/web/src/hooks/useTurnRunner.ts` | 改 | `handleRegenerate`（`:977`）：① 落盘改成 `session.updateMessage(target.id, { content, usage, intent, intentSource })`（`:1095`）——id／位置／`createdAt` 不变、只推 `updatedAt` 供同步，同轮其他人的回复不再被删；② 历史与发送路径对齐：`historyForTurn` = 这一轮之前的历史 + 同轮排在他前面的消息（`:1014-1019`），同轮已有人说过话时 `playerInput: ''`、`mentionText` 仍是玩家那句（`:1050`）；③ `clearTurn` → `revertTurn` → 重新 `enqueueTurnAnalysis` 逐步 try/catch 收账，失败只报警告 `regenerate.rollback`（`:1142`，「新回复已经换好了，但这一轮的后台记录没收拾干净…再点一次重抽」），`setError` 保持为空；④ intent 按新内容重算（旧的清掉）；⑤ 新增模块级小助手 `errorText` |
+| `apps/web/src/hooks/useTurnRunner.test.tsx` | 改 | 新增 `describe('重抽只重生成被点的那一位（顺序 97）')`（`:480`，3 条）＋ `line()` / `twoSpeakerTurn()` 夹具；`harness` 补 `session.updateMessage` / `deleteMessage` / `revertTurn` 与 `db.queue.clearTurn` 的桩，并记录 `updates` / `deletes` / `reverted` / `analyses` |
+| `apps/web/src/components/MainChat.tsx` | 改 | `lastCharacterId` 上方注释（`:486-490`）改成准确理由：更早的回复换掉后后面那些是照着旧版本说的；写明顺序 97 只保证**同一轮**里其他人的回复不再被连带删掉，入口限制不变 |
+| `docs/{TASKS,STATUS,EVAL,FILE-LOG}.md` | 改 | 顺序 97 计划行改成已完成并写清做法、状态接续点、EVAL 第八十八节与本节 |
+
+测试先单跑：`useTurnRunner.test.tsx` 13 条全过（原 10 + 新增 3）。本批**已随 2026-09-30 整批 push、网页已换版**（STATUS 顶部「整批上线」一节）；五项门禁数字与「真模型、真机都没验」的边界见 EVAL 第八十八节。（**顺序 77 同一天收口**：上面那张表里的 `session.updateMessage` 与「逐步 try/catch 收账」已经换成 `session.rewriteTurn` 的**一个事务**，见上一节。）
+
 ## 顺序 96、2026-09-30：人设表达收敛与结尾反问降级（提示词层最小干预）
 
 用户 2026-09-30 的体验反馈（角色执着于人设、每轮都彰显自己；越聊越执着）先当假设查清再动手：只读审查 `packages/core/src/prompt/` 与 `packages/core/src/memory/`，加一份对 178 轮实录的离线复算（纯文本分析、零模型调用，脚本在 `%TEMP%` 下、**不入仓库**）。结论是「人设确实每轮在场、且是唯一没有长度上限的块，但缺的是『什么时候不该提人设』这一维约束」与「记忆里存人设这条链路不成立、但记忆回路自激」。改动只碰提示词文字三处，人设本身的长度与优先级一律没动。
@@ -1510,11 +1542,58 @@ TASKS 第〇节顺序 68。用户裁定「A+B 推进」；原方案里的 `limit
 | `docs/{TASKS,STATUS,EVAL,FILE-LOG}.md` | 改 | 顺序 96 的计划行与处理表（另一并登记顺序 97 = 重抽只重生成被点的那一位）、状态接续点、EVAL 第八十七节与本节 |
 | `docs/ROLEPLAY-PROMPT.md` | 改 | 结尾反问那条改成「需要玩家表态时才用问句」，并写明「人设表达收敛」那几条不在卡预设里、在 `reply-style` 块里 |
 
-本批**未 push、未部署**；五项门禁数字与「真模型没验」的边界见 EVAL 第八十七节。
+本批**已随 2026-09-30 整批 push、网页已换版**（STATUS 顶部「整批上线」一节）；五项门禁数字与「真模型没验」的边界见 EVAL 第八十七节。
+
+## 顺序 79、2026-09-30：跨角色串线检测（只提示不改数据；只做长片段那半）
+
+178 轮真实长跑里，46/178 条非掌柜角色用起了掌柜的道具，秦娘还整段复用了陈九的专属身世（「我八岁那年雷砸了船，船板掀起来，攥缆绳攥出来的」）。用户 2026-09-25 先决定暂缓——当时的理由是「靠道具词判断不可靠」（T18 第一版 21 条警告大多误报）。2026-09-30 用户要求「所有任务清单确定、之前误解的任务都确认掉，再推进顺序 79」，于是换一个**不猜**的口径重新评估：**谁的东西，以他自己的角色卡为准**。同一批还按用户要求把 `docs/TASKS.md` 总表逐行与代码现状对齐（改了 67e／68b／69／70／72／73／74／75／76／78／80／87 十二行的描述，并新登记顺序 98）。
+
+| 文件 | 动作 | 本批内容 |
+| --- | --- | --- |
+| `packages/core/src/render/bleed.ts` | 新增 | 纯规则模块（198 行）。判据只有一条：他这句话里有「**另一个角色卡里写过、他自己卡里没写过、场上别人卡里也没有**」的片段（≥4 字，且片段里不含任何人的名字）。导出 `MIN_SIGNATURE_LENGTH = 4`、`extractSignatureSpans`（强标点整句 + 逗号分句两个粒度，剥行首 `#` 等标记，只有数字符号的片段丢掉）、`buildSignatures`（丢弃含任何在场者名字的片段、别人也有的片段、世界书／场景里出现过的片段）、`assessBleed`（只报别人、每人取最长命中片段、上限 3 条、给出 `reason` 一句话）。**头注释写明这一版只做「同一段身世／独有说法」，道具词那半留给顺序 98**，并写下理由（2 字名词只能靠真实语料调阈值；T18 第一版的教训是「用户学会无视警告比漏报更糟」） |
+| `packages/core/src/render/bleed.test.ts` | 新增 | 11 条：整句／分句两个粒度与剥标记、4 字下限与纯数字片段、只留自己卡里的片段、含任何人的名字不算独有、两人共有与世界书布景不算独有、秦娘复述陈九身世命中（带原话片段）、自己说不算、多命中上限 3、空输入安静返回 |
+| `packages/core/src/index.ts` | 改 | `:39` 加 `export * from './render/bleed.js';`（插在 attribution 与 intent 之间） |
+| `apps/web/src/components/MessageItem.tsx` | 改 | `ItemProps` / `ListProps` 加 `signatures`（注明引用必须稳定，否则几百条消息的 `memo` 全失效）；`assessBleed` 走 `useMemo`（依赖 `[message, signatures]`）；在归属提示（T18）下方用同一套 `.attr-warn` + `BusyButton` 画串线警告：「⚠ 这条可能不是「X」说的：出现了「Y」独有的说法「原话片段」（他的角色卡里写着）」＋「改成「Y」说的」（复用 `onReassign`），最后一条时再加「重抽这条」（复用 `onRegenerate`） |
+| `apps/web/src/components/MessageItem.test.tsx` | 新增 | 5 条（`renderToString`，只 mock `../lib/render-count`）：命中画警告与原话证据、非最后一条不给「重抽这条」、自己说不画警告、玩家消息不评估、空签名安静。断言避开 `renderToString` 插在插值之间的 `<!-- -->` |
+| `apps/web/src/components/MainChat.tsx` | 改 | `Props` 加可选 `signatures`，透传给 `MessageList`；缺省用模块级常量 `EMPTY_SIGNATURES`（每次渲染造新数组会让整表重画） |
+| `apps/web/src/App.tsx` | 改 | 新增 `signatureKey` + `useMemo(buildSignatures)`：成员取 `cast`（`cardId` → `session.library.cards`），素材 = `description`／`personality`／`tags`，`aliases` = `displayName`／`name`／`nickname`；`shared` = 所挂世界书条目正文 + `scene.summary`。key 拼的是内容而不是对象引用（与 `avatars` 同一套路），避免后台每轮分析写入后重建数组；`<MainChat signatures={signatures}>` |
+| `docs/{TASKS,STATUS,EVAL,FILE-LOG}.md` | 改 | 顺序 79 计划行改成 ✅ 并写清判据与边界、加「顺序 79 怎么处理的」整节与遗留；总表逐行对齐 + 新增顺序 98 行（道具词级串线检测）；STATUS 接续点；EVAL 第九十节与本节 |
+
+本批**已随 2026-09-30 整批 push、网页已换版**（STATUS 顶部「整批上线」一节）；五项门禁数字与「误报率没有真实语料标定」的边界见 EVAL 第九十节。
+
+## 顺序 103、2026-09-30：世界管理员起草角色卡的长度口径（人设 ≤5 句、性格 2～3 句）
+
+用户 2026-09-30 的实测反馈：请世界管理员建角色时，**人设（description）压到 5 句以内、性格（personality）2～3 句，主对话效果明显更好**，要求对管理员这条链路做专项升级。只读勘查先把机制查清：管理员原有的私有系统提示词一共 6 行、**一条长度要求都没有**；而 `packages/core/src/prompt/assemble.ts` 的 `buildPersonaBlock` 会把 `card.description` 与 `性格：${card.personality}` **全文**塞进主对话提示词（只有整块被压时才截 160 字）——起草期写多长，之后**每一轮**就背多长。口径本体只写一处，系统提示词、工具字段说明（网页版桥接会原样渲染它）、草稿提醒三处共用；超长**只提醒不截断**（硬拦会破「两行数组要被接受」与「真实模型录下的调用必须 parsed.ok」两条既有断言）。
+
+| 文件 | 动作 | 本批内容 |
+| --- | --- | --- |
+| `packages/core/src/admin/tools.ts` | 改 | 新增 `CARD_DESCRIPTION_MAX_SENTENCES = 5`、`CARD_PERSONALITY_MAX_SENTENCES = 3`、`CARD_LENGTH_GUIDE`（两句：人设 5 句以内／性格 2～3 句以内 + 「身世细节、地方风物、历史事件放进世界书」）、`SENTENCE_SPLIT = /[。！？!?…\n\r]+/`、`countSentences`（分号逗号不断句、连续标点只算一次）、`cardLengthNote`（都在口径内返回空串，否则拼「人设 X 句、性格 Y 句，建议人设 5 句以内、性格 2～3 句」）；`upsert_character_card` 的 `description`／`personality` 字段说明改写成带句数的版本；`parseCardDraft` 把 `cardLengthNote` 拼进草稿自身的 `summary`（**字段一个字不改**） |
+| `packages/core/src/admin/prompt.ts` | 改 | 私有 `SYSTEM_PROMPT` 引用 `CARD_LENGTH_GUIDE`（import 改为 `import { ADMIN_TOOLS, CARD_LENGTH_GUIDE } from './tools.js';`），并附注释说明为什么放在「一次把内容写完整」之后、以及为什么只提醒不截断 |
+| `packages/core/src/admin/tools.test.ts` | 改 | 新增 5 条：工具声明字段说明含「5 句话以内」／「2～3 句话以内」、`countSentences` 的标点／换行／分号行为、6 句人设 + 4 句性格时 summary 附提醒且原文一字不改、合规卡 summary 恰为「新建角色卡「秦娘」」、改卡沿用旧长人设也会提醒 |
+| `packages/core/src/admin/turn.test.ts` | 改 | 新增 1 条：`buildAdminMessages` 的系统提示词里含「人设（description）控制在 5 句话以内」与「性格（personality）控制在 2～3 句话以内」 |
+| `docs/{TASKS,STATUS,EVAL,FILE-LOG}.md` | 改 | 顺序 103 计划行（✅）与「顺序 103 怎么处理的」整节 + 遗留、STATUS 接续点、EVAL 第一百零三节、本节 |
+
+本批**已随合并提交 `9d5e5fd` push、并只重新部署前端**（2026-09-30，见顺序 104 一节同一行的说明）；五项门禁数字、真模型待验与四条遗留见 EVAL 第一百零三节。
+
+## 顺序 104、2026-09-30：副对话的逐字流式与工具调用可见
+
+用户 2026-09-30 的要求：「将流式输出也加载到副对话中，并且可以看清他的当前工具调用」。只读勘查先定位缺口：主／副双通道（`StreamScope = 'main' | 'admin'`）与交接范式都是现成的，缺的是**增量**与**接线**——`packages/core/src/admin/turn.ts` 每轮要等 `collectCompletionWithTools` **整轮收完**才 yield 一个 text，`apps/web/src/lib/admin.ts` 的 `switch` 又把 `tool` 事件丢进 `default`。逐字流用**回调**加增量（不新增事件类型，免得重写 `turn.test.ts` 四条按事件数组断言的既有用例），工具可见则复用草稿自己的中文 `summary` 与既有的 `StreamState.progress`。
+
+| 文件 | 动作 | 本批内容 |
+| --- | --- | --- |
+| `packages/core/src/provider/collect.ts` | 改 | `collectCompletionWithTools(provider, messages, params = {}, signal?, onDelta?)` 加**可选**第 5 参 `onDelta?: (delta: string) => void`（给增量、累计交调用方；不传就是原行为，既有调用与测试零改动） |
+| `packages/core/src/admin/turn.ts` | 改 | `AdminTurnOptions` 加可选 `onDelta` 并透传给 `collectCompletionWithTools`；新增导出 `describeToolExecution(execution): string`（有草稿用 `execution.draft.summary`，否则 `调用失败：${execution.toolName}`） |
+| `apps/web/src/lib/admin.ts` | 改 | `onDelta` 里 `answer += delta` 并 `setStreamState('admin', { text: answer, phase: 'writing', progress: '' })`；`case 'text'` 改成 `break`（不再叠加，否则同一段计两遍）；`case 'tool'` 把 `describeToolExecution` 的结果写进 `progress`；落库后 `handoffStreamState('admin', message.id)`（`handedOff` 声明在 `try` 之前），`finally` 只在未交接时 reset；`commitBridge` 循环补 `progress` 并在其 `finally` reset |
+| `apps/web/src/components/SideChat.tsx` | 改 | 改取 `useStreamState('admin')` 的 `text` 与 `progress`；画「工具调用：{progress}」与「正在准备…」占位；`messages.at(-1)?.id` 判 `handedOver` + effect 里 `acknowledgeStreamHandoff('admin', …)`；卸载时 `resetStreamState('admin')` |
+| `apps/web/src/components/SideChat.test.tsx` | 新 | 5 条：正文画在管理员行、工具调用显示草稿摘要、`busy` 且无内容画「正在准备…」、不忙无流式不画这行、交接后不画流式副本 |
+| `packages/core/src/admin/turn.test.ts` | 改 | 新增 `describe('顺序 104：副对话的逐字流与工具调用可见')` 2 条：`onDelta` 按顺序收到每一块正文且拼起来等于 `done.text`；`describeToolExecution` 优先草稿 summary、无草稿退工具名 |
+| `docs/{TASKS,STATUS,EVAL,FILE-LOG}.md` | 改 | 顺序 104 计划行（✅）与「顺序 104 怎么处理的」整节 + 遗留、STATUS 接续点、EVAL 第一百零四节、本节 |
+
+本批**已 push、已只重新部署前端**：顺序 103／104 做完后用户要求「请 push 以及部署」，因线上网页已带 `codex/sync-admin-readonly` 的账户补丁，先 `git merge --no-ff codex/sync-admin-readonly` 把顺序 99／100 并进主线（四份文档冲突按「两边内容都留」解掉），合并提交 `9d5e5fd`（38 文件 +3072/−74，第一父顺序 104、第二父顺序 100），合并后门禁 typecheck 0 / lint 318 文件 0 error / test Core 852＋Web 96＋管理 18＝**966** / build 0（`assets/index-Cuf6mb55.js` 686.91 kB）/ build:sync-server 0，再 `5575105..9d5e5fd` 快进 push 到 `origin/main`；部署只换网页（正式机 `source-revision.txt` 已是 `e6d9fdae…`，同步服务与数据没动），`D:\Dramatis\web\dist` 换成新构建、旧目录留成 `dist.bak-20260930-234203`，公网与目标机自查全绿（JS 686910 B、SHA-256 `F44A088…771C` 与本地逐字节相同、`/sync/health` 200）。五项门禁数字（与顺序 103 共用同一工作区状态）与五条遗留见 EVAL 第一百零四节——其中「逐字流观感」与「工具调用可见」本机假模型验不了，**归 Codex 真机真模型**。
 
 ## 顺序 99、2026-09-30：账户关联与只读服务器管理台
 
-用户批准 A（SSH＋本机网页）与账户 ID／显示名＋关联空间。主仓 96／97 已完成、98 已登记给其它工作，首批最终编号 **99**；工作位于隔离分支 `codex/sync-admin-readonly`，一批一个提交，未 push／部署。
+用户批准 A（SSH＋本机网页）与账户 ID／显示名＋关联空间。主仓 96／97 已完成、98 已登记给其它工作，首批最终编号 **99**；工作位于隔离分支 `codex/sync-admin-readonly`，一批一个提交。**2026-09-30 已并入主线并随顺序 103／104 一起 push、一起换前端**（合并提交 `9d5e5fd`，见顺序 104 一节）。
 
 | 文件 | 动作 | 内容 |
 | --- | --- | --- |
@@ -1538,7 +1617,7 @@ Windows 本机临时库／真实浏览器完成同意登记、不登记注册、
 
 ## 顺序 100、2026-09-30：管理台显示名／存储配额与正式接入
 
-用户批准正式连接和所选编辑范围，续于顺序99；未push，未合入主仓。正式生产接入和回滚事实见EVAL第九十二节，真实地址／身份／token仅存忽略的LOCAL-NOTES。
+用户批准正式连接和所选编辑范围，续于顺序99；**2026-09-30 已并入主线并随顺序 103／104 一起 push、一起换前端**（合并提交 `9d5e5fd`；正式机 `source-revision.txt` 当时已是本批的 `e6d9fdae…`，故只换网页、没动同步服务）。正式生产接入和回滚事实见EVAL第九十二节，真实地址／身份／token仅存忽略的LOCAL-NOTES。
 
 | 文件 | 动作 | 内容 |
 | --- | --- | --- |
@@ -1582,6 +1661,20 @@ Windows 本机临时库／真实浏览器完成同意登记、不登记注册、
 | docs/{STATUS,TASKS,EVAL,FILE-LOG}.md | 改 | 顺序105范围、五门禁922条、正式Node22隔离24条及正式切换证据 |
 
 无schema迁移或真实账户资料／单空间策略批量修改；正式同步与管理服务更新前备份20066304B，原程序及环境保留。真浏览器4行容量均96.00MB；任务73部署文档漂移仍开着。此批单个顺序105提交，未push。
+
+## 顺序106、2026-10-01：管理台VIP会员首版与汇合发布
+
+| 文件 | 动作 | 内容 |
+| --- | --- | --- |
+| tools/sync-server/src/storage-policy.ts | 改 | 创建世代绑定会员／权益表，事务内固定配额含0优先、有效VIP额度及到期／撤销即时失效 |
+| tools/sync-admin/src/membership.ts | 新增 | 最小会员字段投影、状态与有效配额来源 |
+| tools/sync-admin/src/store.ts／operations.ts／audit.ts | 改 | 只读会员计数与最近20条权益；独立开通／续期／撤销、备份确认审计、并发与期限校验 |
+| tools/sync-admin/web/{app.js,index.html,style.css} | 改 | 会员状态／额度来源／历史、预览完整句柄确认、备份保存与已保存警告 |
+| tools/sync-admin/membership.test.mjs／policy.test.mjs | 新增／改 | 5条管理全流程及6条同步规则；覆盖固定0、到期边界、备份审计失败、票据并发、世代及凭证密文不变 |
+| tools/sync-{admin,server}/README.md、docs/ADMIN-CONSOLE.md | 改 | 当前会员范围、固定优先规则、服务器时钟、回退105忽略VIP影响；托管API未接通 |
+| docs/{STATUS,TASKS,EVAL,FILE-LOG}.md | 改 | 两边历史章节保留；顺序106范围、983项门禁、隔离浏览器与正式部署证据 |
+
+汇合origin/main已有97／77／79／103／104等代码，未重做这些功能；101／105随本批普通快进推送。正式仅更新同步／管理程序，前置快照20135936B，旧目录及配置保留；源库不覆盖，真实账户未开通VIP。运维脚本、地址、身份与截图均在忽略的本地路径；任务73仍待办。
 
 ## 七十二、几点注意
 

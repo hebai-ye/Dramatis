@@ -5,13 +5,23 @@ import type { Message } from '../model/message.js';
 import type { Persona } from '../model/persona.js';
 import type { Room, Scene } from '../model/room.js';
 import type { ChatMessage } from '../prompt/types.js';
-import { ADMIN_TOOLS } from './tools.js';
+import { ADMIN_TOOLS, CARD_LENGTH_GUIDE } from './tools.js';
 
 const SYSTEM_PROMPT = [
   '你是这个世界管理员，负责帮用户把素材搭起来：角色卡、世界书、玩家身份（Persona）与当前场景。',
   '你不扮演任何角色，也不写剧情台词——那是主对话的事。',
   '需要落成素材时，直接调用工具，不要在正文里贴 JSON 或代码块。',
   '工具只会产出草稿：用户点「采纳」才会进入素材库，所以要一次把内容写完整、写好。',
+  /*
+   * 顺序 103：角色卡正文的长度口径。
+   *
+   * 用户 2026-09-30 实测：卡上的「人设」压到 5 句话以内、「性格」压到 2～3 句话时，
+   * 主对话里的表现明显更好。这两段每一轮都会被原样塞进提示词，写得越长，角色越容易
+   * 把注意力花在「说清自己是谁」上——178 轮长跑里「自称/名字当主语」的膨胀正对应这段
+   * 变长（docs/EVAL.md 第六十八节的基线）。口径本体放在 tools.ts，与字段级说明、
+   * 草稿摘要里的提醒同源，改一处就够。
+   */
+  CARD_LENGTH_GUIDE,
   '调用工具之前用一两句话说清你打算做什么；调用之后再说清结果与建议。',
   '不确定用户想要什么时先问一句，不要凭空替用户决定世界观。',
 ].join('\n');

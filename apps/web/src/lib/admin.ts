@@ -6,6 +6,7 @@ import {
   createOpenAICompatibleProvider,
   createPlayerMessage,
   createTurnId,
+  describeToolExecution,
   type Message,
   type MessageUsage,
   messageId,
@@ -22,7 +23,7 @@ import { loadBridge, saveBridge } from './bridge-store';
 import type { DramatisDb } from './db';
 import type { ProvidersApi } from './providers';
 import type { SessionApi } from './session';
-import { resetStreamState, setStreamState } from './stream-store';
+import { handoffStreamState, resetStreamState, setStreamState } from './stream-store';
 
 export interface AdminChatApi {
   busy: boolean;
@@ -226,9 +227,13 @@ export function useAdminChat(options: {
 
       const controller = new AbortController();
       abortRef.current = controller;
+      // 上一轮的交接如果没被收走（例如界面切走了），先清掉，别把残留带进这一轮
+      resetStreamState('admin');
       const artifacts: AdminArtifact[] = [];
       /** 这一轮的管理员消息是否已经落库（审计 C13：失败时要补记，但不能记两遍）。 */
       let persisted = false;
+      /** 落盘后是否把流式副本交给了消息列表（顺序 104）：没交接时 finally 才清残留。 */
+      let handedOff = false;
       const buildMessage = (content: string, usage: MessageUsage | null): Message => ({
         id: messageId(newId()),
         roomId: world.id,
@@ -279,12 +284,32 @@ export function useAdminChat(options: {
               knownPersonas: session.personas,
             },
             execute: (draft) => executeDraft(draft, artifacts),
+            /*
+             * 顺序 104：正文逐块交给副对话，不再等整轮收完（用户原话：副对话看不到它在写）。
+             * 累计放在这里：core 给的是增量，`answer` 要跨轮拼起来才是这一回合的全文。
+             * 顺带把工具那行清掉——模型重新开口说话，就不该再显示上一件工具。
+             */
+            onDelta: (delta) => {
+              answer += delta;
+              setStreamState('admin', { text: answer, phase: 'writing', progress: '' });
+            },
           },
         )) {
           switch (event.type) {
+            /*
+             * 顺序 104：正文已经由上面的 onDelta 逐块累加，这里不能再叠加一遍
+             * （原来的 `answer += event.text` 会把这整轮文字重复计一次）。
+             */
             case 'text':
-              answer += event.text;
-              setStreamState('admin', { text: answer, phase: 'writing' });
+              break;
+            case 'tool':
+              /*
+               * 顺序 104：让用户看清管理员刚才动了哪件素材。
+               *
+               * 要注意这个事件是「模型已经点名、本地已经执行完」之后才来的，不是「正在想」——
+               * 所以界面上的措辞是「工具调用：…」而不是「正在调用…」。
+               */
+              setStreamState('admin', { progress: describeToolExecution(event.execution) });
               break;
             case 'done':
               answer = event.text === '' ? answer : event.text;
@@ -305,8 +330,13 @@ export function useAdminChat(options: {
         const message = buildMessage(content, usage);
         await session.appendMessages([message]);
         persisted = true;
-        // 落盘后立刻收掉流式副本：与主对话同一条规则，避免同一条回复显示两遍
-        resetStreamState('admin');
+        /*
+         * 顺序 104：与主对话同一条规则（顺序 91）——落盘这一刻只记下消息 id，不清正文。
+         * 清空是同步的，而消息要等 IndexedDB 写完再提交一次才出现，中间那几帧就是
+         * 「文字先消失、过一会儿整条出现」；交接给 SideChat，等它看见这条消息再收。
+         */
+        handoffStreamState('admin', message.id);
+        handedOff = true;
 
         // 记账。世界管理员不属于任何角色，所以不填 speaker（T7）
         await db.ledger.record({
@@ -336,7 +366,9 @@ export function useAdminChat(options: {
           onChanged();
         }
       } finally {
-        resetStreamState('admin');
+        // 已经交接给 SideChat 的流式副本由它收（它看见消息落进列表后会 acknowledge）；
+        // 没交接的（出错、被停止）必须在这里清掉，不能留半截文字在界面上。
+        if (!handedOff) resetStreamState('admin');
         setBusy(false);
         abortRef.current = null;
       }
@@ -378,6 +410,8 @@ export function useAdminChat(options: {
             continue;
           }
           if (result.unknownArgs !== undefined) unknown.push(...result.unknownArgs);
+          // 顺序 104：网页版这条路上没有流式，但「刚才执行了哪件素材」同样要看得见
+          setStreamState('admin', { progress: result.draft.summary });
           await executeDraft(result.draft, artifacts);
         }
 
@@ -426,6 +460,8 @@ export function useAdminChat(options: {
       } catch (commitError) {
         setError(commitError instanceof Error ? commitError.message : String(commitError));
       } finally {
+        // 网页版这一轮落库之后，流式/工具那两行都该收掉（它本来也不是真的流式）
+        resetStreamState('admin');
         setBusy(false);
       }
     },

@@ -13,6 +13,17 @@ export interface AdminToolExecution {
   ok: boolean;
 }
 
+/**
+ * 顺序 104：一次工具调用在副对话里显示的那一句话。
+ *
+ * 草稿自带的 summary 已经是中文人话（「新建角色卡「秦娘」」），优先用它；解析或执行失败
+ * 的调用没有草稿，退回工具名——界面上不自造词表，免得工具改名之后两边对不上。
+ */
+export function describeToolExecution(execution: AdminToolExecution): string {
+  if (execution.draft !== null) return execution.draft.summary;
+  return `调用失败：${execution.toolName}`;
+}
+
 export type AdminTurnEvent =
   | { type: 'text'; text: string }
   | { type: 'tool'; execution: AdminToolExecution }
@@ -40,6 +51,13 @@ export interface AdminTurnOptions {
   context?: AdminToolContext;
   /** 模型点名的工具由调用方真正执行（落库 / 应用场景设置），返回给模型的文本。 */
   execute: (draft: AdminDraft) => Promise<string>;
+  /**
+   * 顺序 104：正文的增量回调，用来让副对话逐字显示。
+   *
+   * 用回调而不是新增一种事件类型：既有四条 `runAdminTurn` 用例都是按「事件数组」断言的，
+   * 新增事件类型会让它们全要改；回调不传就完全回到原来的行为。
+   */
+  onDelta?: (delta: string) => void;
 }
 
 const DEFAULT_MAX_ROUNDS = 3;
@@ -81,6 +99,7 @@ export async function* runAdminTurn(
         toolChoice: isLastRound ? 'none' : 'auto',
       },
       options.signal,
+      options.onDelta,
     );
     const { text, toolCalls } = completion;
     calls += 1;

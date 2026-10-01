@@ -29,6 +29,22 @@ function date(value) {
   return Number.isNaN(time.getTime()) ? '未知' : time.toLocaleString('zh-CN');
 }
 
+function quotaSourceText(source) {
+  return { manual: '管理员固定配额', vip: 'VIP 权益', default: '普通默认' }[source] ?? '服务器有效配置';
+}
+
+function quotaDescription(value) {
+  return `${bytes(value.quotaLimitBytes)}（${quotaSourceText(value.quotaSource)}）`;
+}
+
+function membershipText(membership) {
+  return { active: 'VIP 有效', expired: 'VIP 已到期', revoked: 'VIP 已撤销' }[membership?.status] ?? '普通账户';
+}
+
+function membershipActionText(action) {
+  return { grant: '开通', renew: '续期', revoke: '撤销' }[action] ?? '会员变更';
+}
+
 function logout() {
   sessionVersion++;
   listVersion++;
@@ -89,10 +105,13 @@ async function showDetail(handle) {
   content.append(
     node(
       'p',
-      `有效容量上限：${bytes(detail.space.quotaLimitBytes)}（${detail.space.customQuota ? '单空间配置' : '全局默认'}）${detail.space.quotaBytes > detail.space.quotaLimitBytes ? ' · 已超额，仅允许不增加总用量的写入' : ''}`,
+      `有效容量上限：${quotaDescription(detail.space)}${detail.space.quotaBytes > detail.space.quotaLimitBytes ? ' · 已超额，仅允许不增加总用量的写入' : ''}`,
     ),
   );
+  addMembershipDetail(content, detail.space, detail.membershipHistory ?? []);
   if (editingEnabled) addEditor(content, detail.space, version);
+  if (editingEnabled && detail.space.profile && detail.space.membershipsAvailable)
+    addMembershipEditor(content, detail.space, version);
   content.append(node('h3', '集合统计'));
   const collections = node('ul');
   for (const item of detail.collections)
@@ -121,6 +140,7 @@ async function loadList() {
     const profile = node('td');
     profile.append(node('strong', space.profile?.displayName ?? '未认领'));
     if (space.profile) profile.append(node('span', space.profile.accountId, 'account-id'));
+    if (space.membershipsAvailable) profile.append(node('span', membershipText(space.membership), 'membership-status'));
     row.append(
       profile,
       node('td', space.spaceHandle, 'handle'),
@@ -161,6 +181,9 @@ async function refresh() {
   const entries = [
     ['已关联账户', overview.profilesAvailable ? overview.accounts : '登记未启用'],
     ['未认领空间', overview.unclaimed],
+    ['有效 VIP', overview.membershipsAvailable ? overview.vipActive : '会员未启用'],
+    ['已到期 VIP', overview.membershipsAvailable ? overview.vipExpired : '会员未启用'],
+    ['已撤销 VIP', overview.membershipsAvailable ? overview.vipRevoked : '会员未启用'],
     ['记录（含墓碑）', overview.records],
     ['配额计量总用量', bytes(overview.quotaBytes)],
     ['同步服务存活', overview.syncHealth.ok ? '正常' : '不可达'],
@@ -212,7 +235,7 @@ function addEditor(content, space, version) {
   const inherit = node('input');
   inherit.type = 'checkbox';
   inherit.checked = !space.customQuota;
-  defaultLabel.append(inherit, document.createTextNode(' 使用全局默认容量'));
+  defaultLabel.append(inherit, document.createTextNode(' 不设固定配额（有效 VIP 容量优先，否则全局默认）'));
   const quotaLabel = node('label', '自定义存储容量（GB，按 1024³ 字节）');
   quotaLabel.htmlFor = 'edit-quota';
   const quota = node('input');
@@ -280,7 +303,7 @@ function addEditor(content, space, version) {
         if (version !== detailVersion || requestVersion !== editVersion) return;
         confirmation.append(
           node('h3', '二次确认'),
-          node('p', `容量：${bytes(preview.before.quotaLimitBytes)} → ${bytes(preview.after.quotaLimitBytes)}`),
+          node('p', `有效容量：${quotaDescription(preview.before)} → ${quotaDescription(preview.after)}`),
         );
         if (preview.before.accountId !== preview.after.accountId)
           confirmation.append(
@@ -323,13 +346,219 @@ function addEditor(content, space, version) {
                 if (version !== detailVersion) return;
                 await refresh();
                 await showDetail(space.spaceHandle);
-                byId('notice').textContent = result.auditWarning ?? `修改已保存；前置备份：${result.backupFile}`;
+                byId('notice').textContent =
+                  `修改已保存；前置备份：${result.backupFile}${result.auditWarning ? ` · ${result.auditWarning}` : ''}`;
               } finally {
                 clear();
               }
             }),
         );
         confirmation.append(label, handle, confirm, cancel);
+      } finally {
+        save.disabled = false;
+      }
+    });
+  });
+  content.append(form);
+}
+
+function addMembershipDetail(content, space, history) {
+  content.append(node('h3', 'VIP 权益'));
+  if (!space.membershipsAvailable) {
+    content.append(node('p', '服务器会员管理尚未启用。', 'hint'));
+    return;
+  }
+  const membership = space.membership;
+  content.append(node('p', `会员状态：${membershipText(membership)}（状态以刷新时服务器时间为准）`));
+  if (membership) {
+    content.append(
+      node('p', `开通时间：${date(membership.startedAt)} · 到期时间：${date(membership.expiresAt)}`),
+      node('p', `VIP 存储权益：${bytes(membership.maxBytes)} · 当前有效容量：${quotaDescription(space)}`),
+    );
+    if (membership.revokedAt) content.append(node('p', `撤销时间：${date(membership.revokedAt)}`));
+  }
+  content.append(
+    node(
+      'p',
+      '管理员固定配额始终优先，包括 0。未设固定配额时，VIP 到期或撤销后恢复普通默认容量；已有数据保留，超额时仅允许不增加总用量的写入。',
+      'hint',
+    ),
+    node('p', '当前 VIP 权益仅包含会员期限和服务器存储额度；运营方托管 API 服务尚未接通。', 'hint'),
+  );
+  if (!space.profile) content.append(node('p', '请先关联账户 ID，再管理会员。', 'hint'));
+  content.append(node('h3', '权益变更记录'));
+  const list = node('ul');
+  for (const item of history)
+    list.append(
+      node(
+        'li',
+        `${date(item.eventAt)} · ${membershipActionText(item.action)} · 到期 ${date(item.expiresAt)} · VIP 容量 ${bytes(item.maxBytes)}`,
+      ),
+    );
+  if (!history.length) list.append(node('li', '暂无会员变更记录'));
+  content.append(list, node('p', '显示当前空间最近 20 条会员变更。', 'hint'));
+}
+
+function addMembershipEditor(content, space, version) {
+  const form = node('form', undefined, 'editor');
+  form.append(node('h3', '管理 VIP 会员'));
+  const actionLabel = node('label', '会员操作');
+  actionLabel.htmlFor = 'membership-action';
+  const action = node('select');
+  action.id = 'membership-action';
+  const status = space.membership?.status;
+  const actions =
+    status === 'active' ? ['renew', 'revoke'] : status === 'expired' ? ['renew', 'grant', 'revoke'] : ['grant'];
+  for (const item of actions) {
+    const option = node('option', membershipActionText(item));
+    option.value = item;
+    action.append(option);
+  }
+  const daysLabel = node('label', '有效期（天，1 至 3650）');
+  daysLabel.htmlFor = 'membership-days';
+  const days = node('input');
+  days.id = 'membership-days';
+  days.type = 'number';
+  days.min = '1';
+  days.max = '3650';
+  days.step = '1';
+  days.value = '30';
+  const quotaLabel = node('label', 'VIP 存储容量（MB，按 1024² 字节）');
+  quotaLabel.htmlFor = 'membership-quota';
+  const quota = node('input');
+  quota.id = 'membership-quota';
+  quota.type = 'number';
+  quota.min = String(1 / 1024 ** 2);
+  quota.max = String(1024 ** 2);
+  quota.step = 'any';
+  quota.value = String(space.membership?.maxBytes ? space.membership.maxBytes / 1024 ** 2 : 1024);
+  const fields = node('div');
+  fields.append(daysLabel, days, quotaLabel, quota);
+  const save = node('button', '预览会员变更');
+  save.type = 'submit';
+  const confirmation = node('div', undefined, 'confirmation');
+  let editVersion = 0;
+  let expiryTimer;
+  const clear = () => {
+    editVersion++;
+    clearTimeout(expiryTimer);
+    confirmation.replaceChildren();
+  };
+  const updateAction = () => {
+    const revoke = action.value === 'revoke';
+    fields.hidden = revoke;
+    days.disabled = revoke;
+    quota.disabled = revoke;
+    clear();
+  };
+  action.addEventListener('change', updateAction);
+  days.addEventListener('input', clear);
+  quota.addEventListener('input', clear);
+  form.append(
+    actionLabel,
+    action,
+    fields,
+    node('p', '有效会员续期从原到期时间延长；已到期会员从服务器当前时间重新开始。预览会列出实际到期时间。', 'hint'),
+    node('p', '每次变更都需完整空间句柄二次确认，并先自动备份。固定配额优先，开通 VIP 不会自动取消固定配额。', 'hint'),
+    save,
+    confirmation,
+  );
+  updateAction();
+  form.addEventListener('submit', (event) => {
+    event.preventDefault();
+    void perform(async () => {
+      clear();
+      const requestVersion = editVersion;
+      save.disabled = true;
+      try {
+        const membership = { action: action.value };
+        if (action.value !== 'revoke') {
+          const durationDays = Number(days.value);
+          const maxBytes = Math.round(Number(quota.value) * 1024 ** 2);
+          if (days.value.trim() === '' || !Number.isInteger(durationDays) || durationDays < 1 || durationDays > 3650)
+            throw new Error('有效期须为 1 至 3650 的整数天。');
+          if (quota.value.trim() === '' || !Number.isSafeInteger(maxBytes) || maxBytes <= 0 || maxBytes > 1024 ** 4)
+            throw new Error('VIP 容量须大于 0，且不超过 1 TB。');
+          membership.durationDays = durationDays;
+          membership.maxBytes = maxBytes;
+        }
+        const preview = await api('/api/changes/prepare', { spaceHandle: space.spaceHandle, membership });
+        if (version !== detailVersion || requestVersion !== editVersion) return;
+        confirmation.append(
+          node('h3', '二次确认会员变更'),
+          node('p', `操作：${membershipActionText(membership.action)}`),
+          node(
+            'p',
+            `会员状态：${membershipText(preview.before.membership)} → ${membershipText(preview.after.membership)}`,
+          ),
+          node(
+            'p',
+            `到期时间：${date(preview.before.membership?.expiresAt)} → ${date(preview.after.membership?.expiresAt)}`,
+          ),
+          node(
+            'p',
+            `VIP 容量：${bytes(preview.before.membership?.maxBytes)} → ${bytes(preview.after.membership?.maxBytes)}`,
+          ),
+          node('p', `有效容量：${quotaDescription(preview.before)} → ${quotaDescription(preview.after)}`),
+          node('p', `目标账户：${preview.after.accountId ?? space.profile.accountId}`),
+          node('p', `目标空间：${space.spaceHandle}`, 'handle'),
+          node('p', `确认截至 ${date(preview.expiresAt)} 有效。请输入完整空间句柄：`),
+        );
+        const handleLabel = node('label', '确认会员变更的空间句柄');
+        handleLabel.htmlFor = 'membership-confirm-handle';
+        const handle = node('input');
+        handle.id = 'membership-confirm-handle';
+        handle.autocomplete = 'off';
+        handle.spellcheck = false;
+        const confirm = node('button', '备份并保存会员变更');
+        confirm.type = 'button';
+        confirm.disabled = true;
+        const expired = () => Date.now() >= preview.expiresAt;
+        handle.addEventListener('input', () => {
+          confirm.disabled = handle.value !== space.spaceHandle || expired();
+        });
+        const cancel = node('button', '取消确认', 'secondary');
+        cancel.type = 'button';
+        cancel.addEventListener('click', clear);
+        expiryTimer = setTimeout(
+          () => {
+            if (version !== detailVersion || requestVersion !== editVersion) return;
+            clear();
+            confirmation.append(node('p', '确认已过期，请重新预览会员变更。', 'hint'));
+          },
+          Math.max(0, preview.expiresAt - Date.now()),
+        );
+        confirm.addEventListener(
+          'click',
+          () =>
+            void perform(async () => {
+              if (version !== detailVersion || requestVersion !== editVersion) return;
+              if (expired()) throw new Error('确认已过期，请重新预览会员变更。');
+              if (handle.value !== space.spaceHandle) throw new Error('请输入完整空间句柄。');
+              confirm.disabled = true;
+              cancel.disabled = true;
+              for (const control of [action, days, quota, save, handle]) control.disabled = true;
+              clearTimeout(expiryTimer);
+              try {
+                const result = await api('/api/changes/commit', {
+                  confirmationId: preview.confirmationId,
+                  confirmSpaceHandle: handle.value,
+                });
+                if (version !== detailVersion) return;
+                await refresh();
+                await showDetail(space.spaceHandle);
+                byId('notice').textContent =
+                  `会员变更已保存；前置备份：${result.backupFile}${result.auditWarning ? ` · ${result.auditWarning}` : ''}`;
+              } finally {
+                action.disabled = false;
+                days.disabled = action.value === 'revoke';
+                quota.disabled = action.value === 'revoke';
+                save.disabled = false;
+                clear();
+              }
+            }),
+        );
+        confirmation.append(handleLabel, handle, confirm, cancel);
       } finally {
         save.disabled = false;
       }

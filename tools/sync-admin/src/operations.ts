@@ -4,6 +4,15 @@ import { DatabaseSync } from 'node:sqlite';
 import type { AuditEvent } from './audit.js';
 import { backupBeforeChange } from './backup.js';
 import { accountSpaceHandle, normalizeAccountId } from './identity.js';
+import {
+  effectiveQuota,
+  MEMBERSHIP_FIELDS,
+  type MembershipRecord,
+  type MembershipRow,
+  membershipProjection,
+  presentMembership,
+  readMembership,
+} from './membership.js';
 
 export class AdminOperationError extends Error {
   constructor(
@@ -24,11 +33,14 @@ interface Snapshot {
   display_name: string | null;
   max_bytes: number | null;
   revision: number;
+  membership: MembershipRecord | null;
 }
 interface Changes {
   accountId?: string;
   displayName?: string;
   maxBytes?: number | null;
+  membership?: MembershipRecord;
+  membershipAction?: 'grant' | 'renew' | 'revoke';
 }
 interface Pending {
   handle: string;
@@ -50,15 +62,30 @@ export function createAdminOperations(options: {
   if (!existsSync(options.dataPath)) throw new Error('数据库不存在。');
   const db = new DatabaseSync(options.dataPath);
   db.exec('PRAGMA busy_timeout=5000');
+  const columns = (table: string) =>
+    (db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[]).map((c) => c.name);
+  const membershipsAvailable =
+    ['space_epoch', ...MEMBERSHIP_FIELDS].every((name) => columns('space_memberships').includes(name)) &&
+    [
+      'operation_id',
+      'space_handle',
+      'space_epoch',
+      'action',
+      'event_at',
+      'started_at',
+      'expires_at',
+      'max_bytes',
+    ].every((name) => columns('membership_events').includes(name));
   const select = db.prepare(`SELECT s.space_handle,s.epoch,p.account_id,p.display_name,q.max_bytes,
-    COALESCE(q.revision,0) AS revision FROM spaces s
+    COALESCE(q.revision,0) AS revision,${membershipProjection(membershipsAvailable)} FROM spaces s
     LEFT JOIN account_profiles p ON p.space_handle=s.space_handle AND p.space_epoch=s.epoch
     LEFT JOIN space_policies q ON q.space_handle=s.space_handle AND q.space_epoch=s.epoch
+    ${membershipsAvailable ? 'LEFT JOIN space_memberships m ON m.space_handle=s.space_handle AND m.space_epoch=s.epoch' : ''}
     WHERE s.space_handle=?`);
   const read = (handle: string): Snapshot => {
-    const row = select.get(handle) as Snapshot | undefined;
+    const row = select.get(handle) as (Omit<Snapshot, 'membership'> & MembershipRow) | undefined;
     if (!row?.epoch) return deny(404, 'space-not-found', '空间不存在或尚未升级。');
-    return row;
+    return { ...row, membership: readMembership(row) };
   };
   const now = options.now ?? Date.now;
   const pending = new Map<string, Pending>();
@@ -67,7 +94,9 @@ export function createAdminOperations(options: {
       if (
         !input ||
         typeof input !== 'object' ||
-        Object.keys(input).some((key) => !['spaceHandle', 'accountId', 'displayName', 'maxBytes'].includes(key)) ||
+        Object.keys(input).some(
+          (key) => !['spaceHandle', 'accountId', 'displayName', 'maxBytes', 'membership'].includes(key),
+        ) ||
         typeof input.spaceHandle !== 'string' ||
         !/^[A-Za-z0-9_-]{1,128}$/.test(input.spaceHandle)
       ) {
@@ -75,6 +104,65 @@ export function createAdminOperations(options: {
       }
       const snapshot = read(input.spaceHandle);
       const changes: Changes = {};
+      const instant = now();
+      if ('membership' in input) {
+        if (Object.keys(input).some((key) => !['spaceHandle', 'membership'].includes(key)))
+          return deny(400, 'mixed-membership-change', '会员操作须单独预览，不能混合账户或固定配额修改。');
+        if (!membershipsAvailable) return deny(409, 'membership-unavailable', '会员表尚未启用，请先更新同步服务。');
+        if (snapshot.account_id === null) return deny(409, 'unclaimed', '请先关联原账户 ID，再开通会员。');
+        const value = input.membership;
+        if (!value || typeof value !== 'object' || Array.isArray(value))
+          return deny(400, 'bad-membership', '会员资料无效。');
+        const memberInput = value as Record<string, unknown>;
+        const action = memberInput.action;
+        if (
+          typeof action !== 'string' ||
+          !['grant', 'renew', 'revoke'].includes(action) ||
+          Object.keys(memberInput).some(
+            (key) => !(action === 'revoke' ? ['action'] : ['action', 'durationDays', 'maxBytes']).includes(key),
+          )
+        )
+          return deny(400, 'bad-membership', '会员操作或字段无效。');
+        const previous = snapshot.membership;
+        const state = presentMembership(previous, instant);
+        if (action === 'grant' && state?.status === 'active')
+          return deny(409, 'already-vip', '会员仍有效，请使用续期。');
+        if ((action === 'renew' || action === 'revoke') && !previous)
+          return deny(409, 'membership-not-found', '此账户没有当前会员记录。');
+        if ((action === 'renew' || action === 'revoke') && previous?.revokedAt !== null)
+          return deny(409, 'membership-revoked', '会员已撤销，请重新开通。');
+        if (action === 'revoke' && previous) {
+          changes.membership = {
+            ...previous,
+            revokedAt: new Date(instant).toISOString(),
+            revision: previous.revision + 1,
+          };
+        } else {
+          const days = memberInput.durationDays;
+          const quota = memberInput.maxBytes;
+          if (
+            typeof days !== 'number' ||
+            !Number.isInteger(days) ||
+            days < 1 ||
+            days > 3650 ||
+            typeof quota !== 'number' ||
+            !Number.isSafeInteger(quota) ||
+            quota < 1 ||
+            quota > 1024 ** 4
+          )
+            return deny(400, 'bad-membership', '会员期限须为1到3650整数天，容量须为1字节到1TiB。');
+          const from = action === 'renew' && previous ? Math.max(instant, Date.parse(previous.expiresAt)) : instant;
+          if (!Number.isFinite(from)) return deny(409, 'bad-membership-state', '现有到期时间无效，不能续期。');
+          changes.membership = {
+            startedAt: action === 'renew' && previous ? previous.startedAt : new Date(instant).toISOString(),
+            expiresAt: new Date(from + days * 86400000).toISOString(),
+            revokedAt: null,
+            maxBytes: quota,
+            revision: (previous?.revision ?? 0) + 1,
+          };
+        }
+        changes.membershipAction = action as 'grant' | 'renew' | 'revoke';
+      }
       if ('accountId' in input) {
         if (snapshot.account_id !== null) return deny(409, 'already-linked', '此空间已关联账户，不能重新分配账户 ID。');
         const accountId = normalizeAccountId(input.accountId);
@@ -128,13 +216,18 @@ export function createAdminOperations(options: {
           accountId: snapshot.account_id,
           displayName: snapshot.display_name,
           maxBytes: snapshot.max_bytes,
-          quotaLimitBytes: snapshot.max_bytes ?? options.defaultMaxBytes,
+          ...effectiveQuota(snapshot.max_bytes, snapshot.membership, options.defaultMaxBytes, instant),
         },
         after: {
           accountId: changes.accountId ?? snapshot.account_id,
           displayName: changes.displayName ?? snapshot.display_name,
           maxBytes: 'maxBytes' in changes ? changes.maxBytes : snapshot.max_bytes,
-          quotaLimitBytes: ('maxBytes' in changes ? changes.maxBytes : snapshot.max_bytes) ?? options.defaultMaxBytes,
+          ...effectiveQuota(
+            ('maxBytes' in changes ? changes.maxBytes : snapshot.max_bytes) ?? null,
+            changes.membership ?? snapshot.membership,
+            options.defaultMaxBytes,
+            instant,
+          ),
         },
       };
     },
@@ -159,12 +252,23 @@ export function createAdminOperations(options: {
         return deny(503, 'backup-failed', '自动备份失败，修改未执行。');
       }
       const operationId = randomUUID();
-      const action = item.changes.accountId ? 'account-link' : 'change';
+      const action = item.changes.membershipAction
+        ? `membership-${item.changes.membershipAction}`
+        : item.changes.accountId
+          ? 'account-link'
+          : 'change';
       const event = {
         operationId,
         spaceHandle: item.handle,
         backupFile,
         ...('maxBytes' in item.changes ? { maxBytes: item.changes.maxBytes } : {}),
+        ...(item.changes.membership
+          ? {
+              maxBytes: item.changes.membership.maxBytes,
+              startedAt: item.changes.membership.startedAt,
+              expiresAt: item.changes.membership.expiresAt,
+            }
+          : {}),
         durationMs: 0,
       };
       try {
@@ -193,13 +297,39 @@ export function createAdminOperations(options: {
             item.handle,
             snapshot.epoch,
           );
-        db.prepare(`INSERT INTO space_policies(space_handle,space_epoch,max_bytes,revision) VALUES(?,?,?,?)
+        if (item.changes.membership) {
+          const member = item.changes.membership;
+          db.prepare(`INSERT INTO space_memberships(space_handle,space_epoch,started_at,expires_at,revoked_at,max_bytes,revision)
+            VALUES(?,?,?,?,?,?,?) ON CONFLICT(space_handle) DO UPDATE SET space_epoch=excluded.space_epoch,
+            started_at=excluded.started_at,expires_at=excluded.expires_at,revoked_at=excluded.revoked_at,
+            max_bytes=excluded.max_bytes,revision=excluded.revision`).run(
+            item.handle,
+            snapshot.epoch,
+            member.startedAt,
+            member.expiresAt,
+            member.revokedAt,
+            member.maxBytes,
+            member.revision,
+          );
+          db.prepare(`INSERT INTO membership_events(operation_id,space_handle,space_epoch,action,event_at,started_at,expires_at,max_bytes)
+            VALUES(?,?,?,?,?,?,?,?)`).run(
+            operationId,
+            item.handle,
+            snapshot.epoch,
+            item.changes.membershipAction,
+            new Date(now()).toISOString(),
+            member.startedAt,
+            member.expiresAt,
+            member.maxBytes,
+          );
+        } else
+          db.prepare(`INSERT INTO space_policies(space_handle,space_epoch,max_bytes,revision) VALUES(?,?,?,?)
           ON CONFLICT(space_handle) DO UPDATE SET space_epoch=excluded.space_epoch,max_bytes=excluded.max_bytes,revision=excluded.revision`).run(
-          item.handle,
-          snapshot.epoch,
-          'maxBytes' in item.changes ? item.changes.maxBytes : snapshot.max_bytes,
-          snapshot.revision + 1,
-        );
+            item.handle,
+            snapshot.epoch,
+            'maxBytes' in item.changes ? item.changes.maxBytes : snapshot.max_bytes,
+            snapshot.revision + 1,
+          );
         db.exec('COMMIT');
       } catch (error) {
         db.exec('ROLLBACK');

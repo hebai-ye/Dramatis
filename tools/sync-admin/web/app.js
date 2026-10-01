@@ -45,6 +45,129 @@ function membershipActionText(action) {
   return { grant: '开通', renew: '续期', revoke: '撤销' }[action] ?? '会员变更';
 }
 
+function capacityValue(value, unit, allowZero = true) {
+  const amount = Number(value);
+  const multiplier = { MB: 1024 ** 2, GB: 1024 ** 3 }[unit];
+  const result = Math.round(amount * multiplier);
+  if (
+    String(value).trim() === '' ||
+    !multiplier ||
+    !Number.isFinite(amount) ||
+    amount < 0 ||
+    amount * multiplier > 1024 ** 4 ||
+    !Number.isSafeInteger(result) ||
+    result < (allowZero ? 0 : 1)
+  )
+    throw new Error(`容量须${allowZero ? '为 0 或正数' : '大于 0'}，且不超过 1 TB。`);
+  return result;
+}
+
+function convertCapacity(value, from, to) {
+  const units = { MB: 1024 ** 2, GB: 1024 ** 3 };
+  if (!units[from] || !units[to] || String(value).trim() === '' || !Number.isFinite(Number(value)))
+    throw new Error('请输入有效容量。');
+  return (Number(value) * units[from]) / units[to];
+}
+
+function capacityControls(id, initialBytes, { allowZero = true, onChange, onPreset } = {}) {
+  const container = node('div', undefined, 'capacity-control');
+  const row = node('div', undefined, 'capacity-row');
+  const input = node('input');
+  input.id = id;
+  input.type = 'number';
+  input.step = 'any';
+  const unit = node('select');
+  unit.id = `${id}-unit`;
+  unit.setAttribute('aria-label', '容量单位');
+  for (const value of ['MB', 'GB']) {
+    const option = node('option', value);
+    option.value = value;
+    unit.append(option);
+  }
+  let previousUnit;
+  let enabled = true;
+  const presets = node('div', undefined, 'presets');
+  presets.setAttribute('aria-label', '常用存储容量');
+  const choices = [96, 256, 512, 1024, 5120];
+  const buttons = choices.map((mb) => {
+    const button = node('button', mb >= 1024 ? `${mb / 1024} GB` : `${mb} MB`, 'secondary');
+    button.type = 'button';
+    button.addEventListener('click', () => {
+      onPreset?.();
+      setBytes(mb * 1024 ** 2);
+      onChange?.();
+    });
+    presets.append(button);
+    return button;
+  });
+  const update = () => {
+    input.min = allowZero ? '0' : String(1 / (unit.value === 'MB' ? 1024 ** 2 : 1024 ** 3));
+    input.max = unit.value === 'MB' ? String(1024 ** 2) : '1024';
+    let selected;
+    try {
+      selected = capacityValue(input.value, unit.value, allowZero);
+    } catch {
+      selected = null;
+    }
+    buttons.forEach((button, index) => {
+      button.setAttribute('aria-pressed', String(enabled && selected === choices[index] * 1024 ** 2));
+    });
+  };
+  function setBytes(value) {
+    unit.value = value >= 1024 ** 3 ? 'GB' : 'MB';
+    previousUnit = unit.value;
+    input.value = String(value / (unit.value === 'MB' ? 1024 ** 2 : 1024 ** 3));
+    update();
+  }
+  input.addEventListener('input', () => {
+    update();
+    onChange?.();
+  });
+  unit.addEventListener('change', () => {
+    if (input.value.trim() !== '') input.value = String(convertCapacity(input.value, previousUnit, unit.value));
+    previousUnit = unit.value;
+    update();
+    onChange?.();
+  });
+  row.append(input, unit);
+  container.append(row, presets);
+  setBytes(initialBytes);
+  return {
+    container,
+    input,
+    unit,
+    value: () => capacityValue(input.value, unit.value, allowZero),
+    disable(disabled, lockPresets = false) {
+      enabled = !disabled;
+      input.disabled = disabled;
+      unit.disabled = disabled;
+      for (const button of buttons) button.disabled = lockPresets;
+      update();
+    },
+  };
+}
+
+function handleCopy(value) {
+  const row = node('div', undefined, 'handle-copy');
+  const source = node('input');
+  source.value = value;
+  source.readOnly = true;
+  source.setAttribute('aria-label', '待复制的完整空间句柄');
+  const copy = node('button', '复制完整句柄', 'secondary');
+  copy.type = 'button';
+  copy.addEventListener('click', async () => {
+    source.select();
+    try {
+      await navigator.clipboard.writeText(value);
+      copy.textContent = '已复制，请粘贴到确认框';
+    } catch {
+      copy.textContent = '已选中，请按 Ctrl+C 复制';
+    }
+  });
+  row.append(source, copy);
+  return row;
+}
+
 function logout() {
   sessionVersion++;
   listVersion++;
@@ -84,13 +207,15 @@ async function api(path, input) {
   return result;
 }
 
-async function showDetail(handle) {
+async function showDetail(handle, mode = 'details') {
   const version = ++detailVersion;
   byId('details').hidden = true;
   const detail = await api(`/api/spaces/${encodeURIComponent(handle)}`);
   if (version !== detailVersion) return;
   const content = byId('detail-content');
   content.replaceChildren();
+  byId('details').querySelector('h2').textContent =
+    mode === 'quota' ? '设置存储配额' : mode === 'vip' ? '管理 VIP 会员' : '空间详情';
   content.append(node('p', handle, 'handle'));
   content.append(
     node(
@@ -98,6 +223,24 @@ async function showDetail(handle) {
       `账户：${detail.space.profile?.displayName ?? '未认领'} · 记录数：${detail.space.records ?? '未知'} · 配额计量用量：${bytes(detail.space.quotaBytes)}`,
     ),
   );
+  if (mode !== 'details') {
+    if (detail.space.profile) content.append(node('p', `账户 ID：${detail.space.profile.accountId}`));
+    content.append(node('p', `当前有效容量：${quotaDescription(detail.space)}`));
+    if (editingEnabled) {
+      if (mode === 'quota') addEditor(content, detail.space, version, true);
+      else if (detail.space.profile && detail.space.membershipsAvailable)
+        addMembershipEditor(content, detail.space, version);
+      else content.append(node('p', '请先关联账户 ID，并确认服务器会员管理已启用。'));
+    } else content.append(node('p', '当前为只读模式。'));
+    const back = node('button', '查看完整详情', 'secondary');
+    back.type = 'button';
+    back.addEventListener('click', () => void perform(() => showDetail(handle)));
+    content.append(back);
+    byId('details').hidden = false;
+    byId('details').scrollIntoView({ block: 'start' });
+    byId('details').querySelector('h2').focus({ preventScroll: true });
+    return;
+  }
   content.append(
     node('p', `密文 JSON 字节数：${bytes(detail.ciphertextJsonBytes)} · 当前记录中的设备数：${detail.deviceCount}`),
   );
@@ -149,10 +292,23 @@ async function loadList() {
       node('td', date(space.createdAt)),
     );
     const action = node('td');
+    action.className = 'row-actions';
     const button = node('button', '查看', 'secondary');
     button.type = 'button';
     button.addEventListener('click', () => void perform(() => showDetail(space.spaceHandle)));
     action.append(button);
+    if (editingEnabled) {
+      const quota = node('button', '配额', 'secondary');
+      quota.type = 'button';
+      quota.addEventListener('click', () => void perform(() => showDetail(space.spaceHandle, 'quota')));
+      action.append(quota);
+      if (space.profile && space.membershipsAvailable) {
+        const vip = node('button', space.membership && space.membership.status !== 'revoked' ? '续期 VIP' : '开通 VIP');
+        vip.type = 'button';
+        vip.addEventListener('click', () => void perform(() => showDetail(space.spaceHandle, 'vip')));
+        action.append(vip);
+      }
+    }
     row.append(action);
     body.append(row);
   }
@@ -210,10 +366,10 @@ async function refresh() {
   byId('dashboard').hidden = false;
 }
 
-function addEditor(content, space, version) {
+function addEditor(content, space, version, quotaOnly = false) {
   const form = node('form');
   form.className = 'editor';
-  form.append(node('h3', '编辑运营资料与存储配额'));
+  form.append(node('h3', quotaOnly ? '选择存储额度' : '编辑运营资料与存储配额'));
   const accountLabel = node('label', space.profile ? '已关联账户 ID' : '关联账户 ID');
   accountLabel.htmlFor = 'edit-account';
   const account = node('input');
@@ -223,7 +379,7 @@ function addEditor(content, space, version) {
   account.readOnly = !!space.profile;
   account.autocomplete = 'off';
   account.spellcheck = false;
-  form.append(accountLabel, account);
+  if (!quotaOnly) form.append(accountLabel, account);
   const nameLabel = node('label', '服务器登记显示名');
   nameLabel.htmlFor = 'edit-name';
   const name = node('input');
@@ -236,18 +392,18 @@ function addEditor(content, space, version) {
   inherit.type = 'checkbox';
   inherit.checked = !space.customQuota;
   defaultLabel.append(inherit, document.createTextNode(' 不设固定配额（有效 VIP 容量优先，否则全局默认）'));
-  const quotaLabel = node('label', '自定义存储容量（GB，按 1024³ 字节）');
+  const quotaLabel = node('label', '固定存储容量');
   quotaLabel.htmlFor = 'edit-quota';
-  const quota = node('input');
-  quota.type = 'number';
-  quota.id = 'edit-quota';
-  quota.min = '0';
-  quota.max = '1024';
-  quota.step = 'any';
-  quota.value = String(space.quotaLimitBytes / 1024 ** 3);
-  quota.disabled = inherit.checked;
+  const capacity = capacityControls('edit-quota', space.quotaLimitBytes, {
+    onChange: () => clear(),
+    onPreset: () => {
+      inherit.checked = false;
+      capacity.disable(false);
+    },
+  });
+  capacity.disable(inherit.checked);
   inherit.addEventListener('change', () => {
-    quota.disabled = inherit.checked;
+    capacity.disable(inherit.checked);
     clear();
   });
   const save = node('button', '预览修改');
@@ -255,8 +411,10 @@ function addEditor(content, space, version) {
   const confirmation = node('div');
   confirmation.className = 'confirmation';
   let editVersion = 0;
+  let expiryTimer;
   const clear = () => {
     editVersion++;
+    clearTimeout(expiryTimer);
     confirmation.replaceChildren();
   };
   account.addEventListener('input', () => {
@@ -264,18 +422,19 @@ function addEditor(content, space, version) {
     clear();
   });
   name.addEventListener('input', clear);
-  quota.addEventListener('input', clear);
+  if (!quotaOnly) form.append(nameLabel, name);
   form.append(
-    nameLabel,
-    name,
     defaultLabel,
     quotaLabel,
-    quota,
+    capacity.container,
+    node('p', '点容量快捷项即选择固定配额，也可直接填写数值；MB／GB 均按 1024 换算。', 'hint'),
     node(
       'p',
-      space.profile
-        ? '名称仅修改服务器登记资料，设备本地名称可能在下次登记登录时更新。'
-        : '填写原账户 ID。服务器会校验它对应此空间；空显示名默认使用 ID。关联仅登记运营资料，不赋予登录或解密权限。',
+      quotaOnly
+        ? '只修改容量，不更改账户 ID、显示名或会员期限。'
+        : space.profile
+          ? '名称仅修改服务器登记资料，设备本地名称可能在下次登记登录时更新。'
+          : '填写原账户 ID。服务器会校验它对应此空间；空显示名默认使用 ID。关联仅登记运营资料，不赋予登录或解密权限。',
       'hint',
     ),
     node('p', '0 表示禁止新增用量。降低配额不会删除数据；保存前先自动创建完整一致性备份。', 'hint'),
@@ -289,14 +448,12 @@ function addEditor(content, space, version) {
       const requestVersion = editVersion;
       save.disabled = true;
       try {
-        const maxBytes = inherit.checked ? null : Math.round(Number(quota.value) * 1024 ** 3);
-        if (!inherit.checked && (quota.value.trim() === '' || !Number.isFinite(Number(quota.value))))
-          throw new Error('请输入有效容量。');
+        const maxBytes = inherit.checked ? null : capacity.value();
         const preview = await api('/api/changes/prepare', {
           spaceHandle: space.spaceHandle,
           maxBytes,
-          ...(space.profile ? { displayName: name.value } : {}),
-          ...(!space.profile && account.value.trim() !== ''
+          ...(!quotaOnly && space.profile ? { displayName: name.value } : {}),
+          ...(!quotaOnly && !space.profile && account.value.trim() !== ''
             ? { accountId: account.value, ...(name.value.trim() === '' ? {} : { displayName: name.value }) }
             : {}),
         });
@@ -316,6 +473,7 @@ function addEditor(content, space, version) {
         confirmation.append(
           node('p', `目标空间：${space.spaceHandle}`, 'handle'),
           node('p', '确认 2 分钟内有效。请输入完整空间句柄：'),
+          handleCopy(space.spaceHandle),
         );
         const label = node('label', '确认空间句柄');
         label.htmlFor = 'confirm-handle';
@@ -326,18 +484,33 @@ function addEditor(content, space, version) {
         const confirm = node('button', '备份并保存');
         confirm.type = 'button';
         confirm.disabled = true;
+        const expired = () => Date.now() >= preview.expiresAt;
         handle.addEventListener('input', () => {
-          confirm.disabled = handle.value !== space.spaceHandle;
+          confirm.disabled = handle.value !== space.spaceHandle || expired();
         });
         const cancel = node('button', '取消确认', 'secondary');
         cancel.type = 'button';
         cancel.addEventListener('click', clear);
+        expiryTimer = setTimeout(
+          () => {
+            if (version !== detailVersion || requestVersion !== editVersion) return;
+            clear();
+            confirmation.append(node('p', '确认已过期，请重新预览。', 'hint'));
+          },
+          Math.max(0, preview.expiresAt - Date.now()),
+        );
         confirm.addEventListener(
           'click',
           () =>
             void perform(async () => {
+              if (version !== detailVersion || requestVersion !== editVersion) return;
+              if (expired()) throw new Error('确认已过期，请重新预览。');
+              if (handle.value !== space.spaceHandle) throw new Error('请输入完整空间句柄。');
               confirm.disabled = true;
               cancel.disabled = true;
+              clearTimeout(expiryTimer);
+              capacity.disable(true, true);
+              for (const control of [account, name, inherit, save, handle]) control.disabled = true;
               try {
                 const result = await api('/api/changes/commit', {
                   confirmationId: preview.confirmationId,
@@ -345,10 +518,14 @@ function addEditor(content, space, version) {
                 });
                 if (version !== detailVersion) return;
                 await refresh();
-                await showDetail(space.spaceHandle);
+                await showDetail(space.spaceHandle, quotaOnly ? 'quota' : 'details');
                 byId('notice').textContent =
                   `修改已保存；前置备份：${result.backupFile}${result.auditWarning ? ` · ${result.auditWarning}` : ''}`;
               } finally {
+                capacity.disable(inherit.checked);
+                account.disabled = false;
+                name.disabled = !space.profile && account.value.trim() === '';
+                for (const control of [inherit, save, handle]) control.disabled = false;
                 clear();
               }
             }),
@@ -401,7 +578,16 @@ function addMembershipDetail(content, space, history) {
 
 function addMembershipEditor(content, space, version) {
   const form = node('form', undefined, 'editor');
-  form.append(node('h3', '管理 VIP 会员'));
+  form.append(node('h3', '会员设置'));
+  form.append(node('p', `当前状态：${membershipText(space.membership)}`));
+  if (space.customQuota)
+    form.append(
+      node(
+        'p',
+        `当前固定配额 ${bytes(space.quotaLimitBytes)} 优先；开通或续期 VIP 不会改变实际容量。需要采用 VIP 额度时，请在“配额”取消固定配额。`,
+        'quota-warning',
+      ),
+    );
   const actionLabel = node('label', '会员操作');
   actionLabel.htmlFor = 'membership-action';
   const action = node('select');
@@ -423,17 +609,33 @@ function addMembershipEditor(content, space, version) {
   days.max = '3650';
   days.step = '1';
   days.value = '30';
-  const quotaLabel = node('label', 'VIP 存储容量（MB，按 1024² 字节）');
+  const dayPresets = node('div', undefined, 'presets');
+  dayPresets.setAttribute('aria-label', '常用会员期限');
+  const dayButtons = [30, 90, 365].map((value) => {
+    const button = node('button', `${value} 天`, 'secondary');
+    button.type = 'button';
+    button.addEventListener('click', () => {
+      days.value = String(value);
+      updateDays();
+      clear();
+    });
+    dayPresets.append(button);
+    return button;
+  });
+  const updateDays = () => {
+    dayButtons.forEach((button, index) => {
+      button.setAttribute('aria-pressed', String(Number(days.value) === [30, 90, 365][index]));
+    });
+  };
+  updateDays();
+  const quotaLabel = node('label', 'VIP 存储容量');
   quotaLabel.htmlFor = 'membership-quota';
-  const quota = node('input');
-  quota.id = 'membership-quota';
-  quota.type = 'number';
-  quota.min = String(1 / 1024 ** 2);
-  quota.max = String(1024 ** 2);
-  quota.step = 'any';
-  quota.value = String(space.membership?.maxBytes ? space.membership.maxBytes / 1024 ** 2 : 1024);
+  const capacity = capacityControls('membership-quota', space.membership?.maxBytes ?? 1024 ** 3, {
+    allowZero: false,
+    onChange: () => clear(),
+  });
   const fields = node('div');
-  fields.append(daysLabel, days, quotaLabel, quota);
+  fields.append(daysLabel, days, dayPresets, quotaLabel, capacity.container);
   const save = node('button', '预览会员变更');
   save.type = 'submit';
   const confirmation = node('div', undefined, 'confirmation');
@@ -448,12 +650,15 @@ function addMembershipEditor(content, space, version) {
     const revoke = action.value === 'revoke';
     fields.hidden = revoke;
     days.disabled = revoke;
-    quota.disabled = revoke;
+    capacity.disable(revoke, revoke);
+    for (const button of dayButtons) button.disabled = revoke;
     clear();
   };
   action.addEventListener('change', updateAction);
-  days.addEventListener('input', clear);
-  quota.addEventListener('input', clear);
+  days.addEventListener('input', () => {
+    updateDays();
+    clear();
+  });
   form.append(
     actionLabel,
     action,
@@ -474,11 +679,9 @@ function addMembershipEditor(content, space, version) {
         const membership = { action: action.value };
         if (action.value !== 'revoke') {
           const durationDays = Number(days.value);
-          const maxBytes = Math.round(Number(quota.value) * 1024 ** 2);
+          const maxBytes = capacity.value();
           if (days.value.trim() === '' || !Number.isInteger(durationDays) || durationDays < 1 || durationDays > 3650)
             throw new Error('有效期须为 1 至 3650 的整数天。');
-          if (quota.value.trim() === '' || !Number.isSafeInteger(maxBytes) || maxBytes <= 0 || maxBytes > 1024 ** 4)
-            throw new Error('VIP 容量须大于 0，且不超过 1 TB。');
           membership.durationDays = durationDays;
           membership.maxBytes = maxBytes;
         }
@@ -503,6 +706,7 @@ function addMembershipEditor(content, space, version) {
           node('p', `目标账户：${preview.after.accountId ?? space.profile.accountId}`),
           node('p', `目标空间：${space.spaceHandle}`, 'handle'),
           node('p', `确认截至 ${date(preview.expiresAt)} 有效。请输入完整空间句柄：`),
+          handleCopy(space.spaceHandle),
         );
         const handleLabel = node('label', '确认会员变更的空间句柄');
         handleLabel.htmlFor = 'membership-confirm-handle';
@@ -537,7 +741,8 @@ function addMembershipEditor(content, space, version) {
               if (handle.value !== space.spaceHandle) throw new Error('请输入完整空间句柄。');
               confirm.disabled = true;
               cancel.disabled = true;
-              for (const control of [action, days, quota, save, handle]) control.disabled = true;
+              for (const control of [action, days, save, handle, ...dayButtons]) control.disabled = true;
+              capacity.disable(true, true);
               clearTimeout(expiryTimer);
               try {
                 const result = await api('/api/changes/commit', {
@@ -546,13 +751,14 @@ function addMembershipEditor(content, space, version) {
                 });
                 if (version !== detailVersion) return;
                 await refresh();
-                await showDetail(space.spaceHandle);
+                await showDetail(space.spaceHandle, 'vip');
                 byId('notice').textContent =
                   `会员变更已保存；前置备份：${result.backupFile}${result.auditWarning ? ` · ${result.auditWarning}` : ''}`;
               } finally {
                 action.disabled = false;
                 days.disabled = action.value === 'revoke';
-                quota.disabled = action.value === 'revoke';
+                capacity.disable(action.value === 'revoke', action.value === 'revoke');
+                for (const button of dayButtons) button.disabled = action.value === 'revoke';
                 save.disabled = false;
                 clear();
               }

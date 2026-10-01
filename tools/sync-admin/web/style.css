@@ -171,6 +171,55 @@ table {
 .confirmation button {
   margin-right: 12px;
 }
+.row-actions {
+  min-width: 125px;
+}
+.row-actions button {
+  padding: 6px 9px;
+  margin: 3px;
+}
+.capacity-row,
+.handle-copy,
+.presets {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.editor .capacity-row input {
+  flex: 1;
+  min-width: 0;
+  width: 140px;
+}
+.editor .capacity-row select {
+  width: 88px;
+}
+.presets {
+  margin: 0 0 18px;
+}
+.presets button {
+  padding: 7px 12px;
+}
+.presets button[aria-pressed="true"] {
+  background: #e4f2e9;
+  color: #163b36;
+  border-color: #24634e;
+}
+.handle-copy {
+  align-items: start;
+  margin-bottom: 16px;
+}
+.handle-copy input {
+  font-family: ui-monospace, monospace;
+}
+.quota-warning {
+  border-left: 3px solid #d39835;
+  padding: 10px 14px;
+  background: #fff8e8;
+  line-height: 1.7;
+}
+#details {
+  scroll-margin-top: 16px;
+}
 th {
   font-size: 13px;
   color: #52645b;

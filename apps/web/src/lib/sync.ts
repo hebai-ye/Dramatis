@@ -192,6 +192,8 @@ async function openWithSecret(
         secret,
         purpose: 'password',
         wrapped: byPassword as never,
+        // 此会话支持换密码，需要在内存里重新包装同一把主密钥。
+        extractable: true,
       });
       return { credential: opened.credential, encKey: opened.encKey };
     } catch {
@@ -204,6 +206,7 @@ async function openWithSecret(
     secret: normalizeRecoveryCode(secret),
     purpose: 'recovery',
     wrapped: meta.keyWraps.recovery as never,
+    extractable: true,
   });
   return { credential: opened.credential, encKey: opened.encKey };
 }
@@ -234,6 +237,7 @@ export function useSync(db: DramatisDb | null, options: { onChanged?: () => void
   const [spaceFull, setSpaceFull] = useState(false);
 
   const sessionRef = useRef<SyncSession | null>(null);
+  const passwordRotationRef = useRef(false);
   const configRef = useRef<SyncConfig | null>(null);
   const keyModeRef = useRef<KeyStorageMode>('session');
   const passwordRef = syncPasswordKeyRef(readActiveAccount().id);
@@ -329,13 +333,15 @@ export function useSync(db: DramatisDb | null, options: { onChanged?: () => void
    * 对不上就跳过这一轮——否则「断开」会被排在后面的那一趟悄悄复活。
    */
   const doSync = useCallback(
-    (current: SyncConfig, session: SyncSession): Promise<SyncReport> =>
+    (current: SyncConfig): Promise<SyncReport> =>
       runExclusive(async () => {
         const latest = configRef.current;
-        if (latest === null || latest.spaceHandle !== current.spaceHandle) {
+        const latestSession = sessionRef.current;
+        if (latest === null || latestSession === null || latest.spaceHandle !== current.spaceHandle) {
           throw new Error('同步已断开或换了空间，这一轮跳过。');
         }
-        return syncOnce(current, session);
+        // 换密码可能刚在前一项完成，不能沿用排队前捕获的旧凭证。
+        return syncOnce(latest, latestSession);
       }),
     [runExclusive, syncOnce],
   );
@@ -384,7 +390,7 @@ export function useSync(db: DramatisDb | null, options: { onChanged?: () => void
 
         sessionRef.current = session;
         setStatus('ready');
-        await doSync(stored, session);
+        await doSync(stored);
       } catch (syncError) {
         if (cancelled) return;
         setStatus('error');
@@ -469,7 +475,7 @@ export function useSync(db: DramatisDb | null, options: { onChanged?: () => void
         sessionRef.current = session;
         setRecoveryCode(createdCode);
         setStatus('ready');
-        await doSync(next, session);
+        await doSync(next);
       } catch (connectError) {
         setStatus('error');
         reportError(connectError);
@@ -491,7 +497,7 @@ export function useSync(db: DramatisDb | null, options: { onChanged?: () => void
         setStatus('needs-secret');
         throw new Error('需要先填同步密码（或恢复码）再同步一次。');
       }
-      await doSync(current, session);
+      await doSync(current);
       setStatus('ready');
     } catch (syncError) {
       setStatus('error');
@@ -593,34 +599,48 @@ export function useSync(db: DramatisDb | null, options: { onChanged?: () => void
    */
   const rotatePassword = useCallback(
     async (newPassword: string): Promise<void> => {
-      const current = configRef.current;
-      const session = sessionRef.current;
-      if (db === null || current === null || session === null) throw new Error('先连上同步，才能换密码。');
       // 与新建空间、注册共用同一条下限（审计 A9）——判据只在 password-policy 里
       assertPassword(newPassword);
+      if (passwordRotationRef.current) throw new Error('正在换密码，请等待完成。');
+      passwordRotationRef.current = true;
+      setBusy(true);
+      reportError(null);
+      try {
+        await runExclusive(async () => {
+          // 进入队列后重新读取，避免等待同步时断开或换空间仍沿用旧凭证。
+          const current = configRef.current;
+          const session = sessionRef.current;
+          if (db === null || current === null || session === null) throw new Error('先连上同步，才能换密码。');
+          setBusy(true);
+          const rotated = await rotateSpacePassword({
+            spaceHandle: current.spaceHandle,
+            encKey: session.encKey,
+            newPassword,
+          });
 
-      const rotated = await rotateSpacePassword({
-        spaceHandle: current.spaceHandle,
-        encKey: session.encKey,
-        newPassword,
-      });
+          const transport = createHttpSyncTransport({ endpoint: current.endpoint });
+          if (transport.rotate === undefined) throw new Error('这台服务端的版本还不支持换密码，请先更新服务端。');
+          await transport.rotate({
+            spaceHandle: current.spaceHandle,
+            credential: session.credential,
+            credentialHash: rotated.credentialHash,
+            passwordWrap: rotated.passwordWrap,
+          });
 
-      const transport = createHttpSyncTransport({ endpoint: current.endpoint });
-      if (transport.rotate === undefined) throw new Error('这台服务端的版本还不支持换密码，请先更新服务端。');
-      await transport.rotate({
-        spaceHandle: current.spaceHandle,
-        credential: session.credential,
-        credentialHash: rotated.credentialHash,
-        passwordWrap: rotated.passwordWrap,
-      });
-
-      // 服务端换完了：本机的凭证与密码都要跟着换，否则下一次同步自己就 401 了
-      sessionRef.current = { credential: rotated.credential, encKey: session.encKey };
-      // `remember` 已经把新密码写进 KeyStore 了，这里不再写第二遍（顺序 61）
-      await remember({ ...current, lastReport: current.lastReport }, newPassword);
+          // 服务端换完才更新本机；只复用 remember 写一次密码。
+          sessionRef.current = { credential: rotated.credential, encKey: session.encKey };
+          await remember({ ...current, lastReport: current.lastReport }, newPassword);
+        });
+      } catch (rotationError) {
+        reportError(rotationError);
+        throw rotationError;
+      } finally {
+        passwordRotationRef.current = false;
+        setBusy(false);
+      }
     },
     // 不再直接写 KeyStore（顺序 61）：`remember` 已经写了，`passwordRef` 因此也不必是依赖
-    [db, remember],
+    [db, remember, reportError, runExclusive],
   );
 
   /**
@@ -736,7 +756,7 @@ export function useSync(db: DramatisDb | null, options: { onChanged?: () => void
     const session = sessionRef.current;
     if (db === null || current === null || session === null) return;
     try {
-      await doSync(current, session);
+      await doSync(current);
       reportError(null);
     } catch (autoError) {
       // 自动同步不把错抛给调度器，但**失败要留痕**：文案与状态码一起记（顺序 61）

@@ -14,6 +14,7 @@ import {
 } from '@dramatis/core';
 import { type DBSchema, type IDBPDatabase, openDB } from 'idb';
 import { removeBrowserKeyRefs } from './keystore';
+import { createSerialQueue, withCrossTabLock } from './sync-queue';
 import { createTaskQueueExtras, type TaskQueueExtras } from './task-queue';
 
 const DB_NAME = 'dramatis';
@@ -38,6 +39,12 @@ const DB_NAME = 'dramatis';
 const LEGACY_ACCOUNT_STORAGE_KEY = 'dramatis.localAccount.v1';
 const ACCOUNT_REGISTRY_KEY = 'dramatis.accounts.v2';
 const PENDING_ACCOUNT_DELETIONS_KEY = 'dramatis.accounts.pendingDelete.v1';
+const accountDeletionQueue = createSerialQueue();
+
+/** 删除临界段与启动清理共用一把全局锁；调用方必须先释放临界段再调用 flush。 */
+export function withAccountDeletionLock<T>(task: () => Promise<T>): Promise<T> {
+  return accountDeletionQueue.run(() => withCrossTabLock('dramatis-account-deletion', task));
+}
 
 export interface LocalAccount {
   /** 内部稳定 id：数据库名与密钥命名空间使用它。 */
@@ -105,12 +112,15 @@ function createLocalAccountRecord(input: {
   };
 }
 
-function readRegistry(): AccountRegistry | null {
+function readRegistry(strict = false): AccountRegistry | null {
   try {
     const raw = localStorage.getItem(ACCOUNT_REGISTRY_KEY);
     if (raw === null) return null;
     const parsed = JSON.parse(raw) as Partial<AccountRegistry>;
-    if (parsed.version !== 2 || typeof parsed.activeId !== 'string' || !Array.isArray(parsed.accounts)) return null;
+    if (parsed.version !== 2 || typeof parsed.activeId !== 'string' || !Array.isArray(parsed.accounts)) {
+      if (strict) throw new Error('账户注册表无法读取，未执行删除。');
+      return null;
+    }
     const accounts = parsed.accounts.filter(
       (account): account is LocalAccount =>
         typeof account === 'object' &&
@@ -120,13 +130,17 @@ function readRegistry(): AccountRegistry | null {
         typeof account.name === 'string' &&
         typeof account.dbName === 'string',
     );
-    if (accounts.length === 0) return null;
+    if (accounts.length === 0 || (strict && accounts.length !== parsed.accounts.length)) {
+      if (strict) throw new Error('账户注册表不完整，未执行删除。');
+      return null;
+    }
     return {
       version: 2,
       activeId: accounts.some((account) => account.id === parsed.activeId) ? parsed.activeId : (accounts[0]?.id ?? ''),
       accounts,
     };
-  } catch {
+  } catch (error) {
+    if (strict) throw error;
     return null;
   }
 }
@@ -139,15 +153,17 @@ function writeRegistry(registry: AccountRegistry): void {
   }
 }
 
-function readPendingAccountDeletions(): PendingAccountDeletion[] {
+function readPendingAccountDeletions(strict = false): PendingAccountDeletion[] {
   try {
     const raw = localStorage.getItem(PENDING_ACCOUNT_DELETIONS_KEY);
     if (raw === null) return [];
     const parsed = JSON.parse(raw) as unknown;
     if (typeof parsed !== 'object' || parsed === null || !Array.isArray((parsed as { items?: unknown }).items)) {
+      if (strict) throw new Error('账户待清理队列无法读取。');
       return [];
     }
-    return (parsed as { items: unknown[] }).items.filter((item): item is PendingAccountDeletion => {
+    const rawItems = (parsed as { items: unknown[] }).items;
+    const items = rawItems.filter((item): item is PendingAccountDeletion => {
       if (typeof item !== 'object' || item === null) return false;
       const record = item as Record<string, unknown>;
       return (
@@ -158,17 +174,28 @@ function readPendingAccountDeletions(): PendingAccountDeletion[] {
         typeof record.queuedAt === 'string'
       );
     });
-  } catch {
+    if (strict && items.length !== rawItems.length) throw new Error('账户待清理条目不完整，未覆盖原队列。');
+    return items;
+  } catch (error) {
+    if (strict) throw error;
     return [];
   }
 }
 
 function writePendingAccountDeletions(items: readonly PendingAccountDeletion[]): void {
-  try {
-    localStorage.setItem(PENDING_ACCOUNT_DELETIONS_KEY, JSON.stringify({ items }));
-  } catch {
-    // 删不掉注册表时也不该让账户“复活”：调用方会保留内存里的注册表更新。
-  }
+  localStorage.setItem(PENDING_ACCOUNT_DELETIONS_KEY, JSON.stringify({ items }));
+}
+
+/** 只读旧版待删除队列；不可读时抛错，让启动界面显示未知而非零待清理。 */
+export function pendingAccountDeletionCount(): number {
+  return readPendingAccountDeletions(true).length;
+}
+
+/** 删除操作不允许把读取失败当成空注册表或触发迁移。 */
+export function readAccountRegistryForDeletion(): AccountRegistry {
+  const registry = readRegistry(true);
+  if (registry === null) throw new Error('账户注册表不存在，未执行删除。');
+  return registry;
 }
 
 function migrateLegacyAccount(): AccountRegistry {
@@ -287,11 +314,11 @@ export function renameAccount(id: string, name: string): LocalAccount {
 }
 
 export function removeAccount(id: string): void {
-  const registry = readAccountRegistry();
+  const registry = readAccountRegistryForDeletion();
   const remaining = registry.accounts.filter((account) => account.id !== id);
   if (remaining.length === 0) throw new Error('至少要保留一个账户。');
   const activeId = registry.activeId === id ? (remaining[0]?.id ?? '') : registry.activeId;
-  writeAccountRegistry({ version: 2, activeId, accounts: remaining });
+  localStorage.setItem(ACCOUNT_REGISTRY_KEY, JSON.stringify({ version: 2, activeId, accounts: remaining }));
 }
 
 /**
@@ -301,25 +328,20 @@ export function removeAccount(id: string): void {
  * 的明文键空间或口令库里。数据库删掉之前先读出 keyRef，才能真正把缓存也清掉。
  */
 export async function listAccountSecretRefs(dbName: string): Promise<string[]> {
+  const opened = await createIndexedDbEntityStore(dbName);
   try {
-    const opened = await createIndexedDbEntityStore(dbName);
-    try {
-      const profiles = await opened.store.list<Record<string, unknown>>('providerProfiles');
-      const credentials = await opened.store.list<Record<string, unknown>>('providerCredentials');
-      const refs = new Set<string>();
-      for (const profile of profiles) {
-        if (typeof profile.keyRef === 'string' && profile.keyRef !== '') refs.add(profile.keyRef);
-      }
-      for (const credential of credentials) {
-        if (typeof credential.id === 'string' && credential.id !== '') refs.add(credential.id);
-      }
-      return [...refs];
-    } finally {
-      opened.db.close();
+    const profiles = await opened.store.list<Record<string, unknown>>('providerProfiles');
+    const credentials = await opened.store.list<Record<string, unknown>>('providerCredentials');
+    const refs = new Set<string>();
+    for (const profile of profiles) {
+      if (typeof profile.keyRef === 'string' && profile.keyRef !== '') refs.add(profile.keyRef);
     }
-  } catch {
-    // 库不存在、打不开或没有模型配置：没有需要额外清理的引用。
-    return [];
+    for (const credential of credentials) {
+      if (typeof credential.id === 'string' && credential.id !== '') refs.add(credential.id);
+    }
+    return [...refs];
+  } finally {
+    opened.db.close();
   }
 }
 
@@ -331,7 +353,7 @@ export async function listAccountSecretRefs(dbName: string): Promise<string[]> {
  * 再删库；如果其他标签页还占着，标记会保留并在之后每次启动重试。
  */
 export function queueAccountDeletion(account: LocalAccount, secretRefs: readonly string[]): void {
-  const current = readPendingAccountDeletions().filter((item) => item.dbName !== account.dbName);
+  const current = readPendingAccountDeletions(true).filter((item) => item.dbName !== account.dbName);
   current.push({
     dbName: account.dbName,
     label: account.name,
@@ -343,7 +365,7 @@ export function queueAccountDeletion(account: LocalAccount, secretRefs: readonly
 
 /** IndexedDB 的 deleteDatabase 是事件式 API；封装成能 await 的 Promise。 */
 export function deleteLocalDatabase(dbName: string): Promise<void> {
-  if (typeof indexedDB === 'undefined') return Promise.resolve();
+  if (typeof indexedDB === 'undefined') return Promise.reject(new Error('本机数据库不可用，账户清理未完成。'));
   return new Promise((resolve, reject) => {
     const request = indexedDB.deleteDatabase(dbName);
     request.onsuccess = () => resolve();
@@ -353,21 +375,40 @@ export function deleteLocalDatabase(dbName: string): Promise<void> {
 }
 
 /** 启动时重试所有排队的硬删除；失败的保留标记，避免账户被扫描“复活”。 */
-export async function flushPendingAccountDeletions(): Promise<{ deleted: number; remaining: number }> {
-  const items = readPendingAccountDeletions();
+export function flushPendingAccountDeletions(): Promise<{ deleted: number; remaining: number }> {
+  return withAccountDeletionLock(flushPendingAccountDeletionsLocked);
+}
+
+async function flushPendingAccountDeletionsLocked(): Promise<{ deleted: number; remaining: number }> {
+  const items = readPendingAccountDeletions(true);
   if (items.length === 0) return { deleted: 0, remaining: 0 };
 
-  const remaining: PendingAccountDeletion[] = [];
+  const completed = new Set<string>();
+  const itemVersion = (item: PendingAccountDeletion) =>
+    JSON.stringify([item.dbName, item.label, item.queuedAt, item.secretRefs]);
   let deleted = 0;
   for (const item of items) {
     try {
-      await removeBrowserKeyRefs(item.secretRefs);
+      const registry = readAccountRegistryForDeletion();
+      // 排队成功而注册表拒写时，仍注册的容器必须保留，等待用户重试删除。
+      if (registry.accounts.some((account) => account.dbName === item.dbName)) {
+        continue;
+      }
+      const retainedRefs = new Set<string>();
+      for (const account of registry.accounts) {
+        for (const ref of await listAccountSecretRefs(account.dbName)) retainedRefs.add(ref);
+      }
+      await removeBrowserKeyRefs(item.secretRefs.filter((ref) => !retainedRefs.has(ref)));
       await deleteLocalDatabase(item.dbName);
+      completed.add(itemVersion(item));
       deleted += 1;
     } catch {
-      remaining.push(item);
+      // 保留当前任务，下一轮重试。
     }
   }
+  // 无 Web Locks 的其他标签页仍可能在 await 期间排入任务。仅移除本轮完成的
+  // 同一版本；读取快照之后新增或重新排队的条目必须保留。
+  const remaining = readPendingAccountDeletions(true).filter((item) => !completed.has(itemVersion(item)));
   writePendingAccountDeletions(remaining);
   return { deleted, remaining: remaining.length };
 }
@@ -379,40 +420,50 @@ export async function flushPendingAccountDeletions(): Promise<{ deleted: number;
  * 打开账户面板时调用一次，就能把旧库原样纳入账户列表；数据库名不动。
  */
 export async function loadAccountRegistry(): Promise<AccountRegistry> {
-  const registry = readAccountRegistry();
+  const initial = readAccountRegistry();
+  const initiallyKnown = new Set(initial.accounts.map((account) => account.dbName));
+  const initiallyPending = readPendingAccountDeletions(true).map((item) => item.dbName);
   const databases = await listLocalDatabases();
-  const pendingDeletions = new Set(readPendingAccountDeletions().map((item) => item.dbName));
-  const known = new Set(registry.accounts.map((account) => account.dbName));
-  let changed = false;
-  const accounts = [...registry.accounts];
+  return withAccountDeletionLock(async () => {
+    // 扫描期间可能删除、添加或重命名账户，必须基于最新注册表追加。最初已经
+    // 注册或待删的库不会重新导入，即使扫描过程中已清理并移除了待删标记。
+    const registry = readAccountRegistry();
+    const pendingDeletions = new Set([
+      ...initiallyPending,
+      ...readPendingAccountDeletions(true).map((item) => item.dbName),
+    ]);
+    const known = new Set([...initiallyKnown, ...registry.accounts.map((account) => account.dbName)]);
+    let changed = false;
+    const accounts = [...registry.accounts];
 
-  for (const dbName of databases) {
-    if (pendingDeletions.has(dbName)) continue;
-    if (known.has(dbName)) continue;
-    const accountId = legacyAccountIdFromDbName(dbName);
-    const storageId = dbName === DB_NAME ? 'local' : `legacy-${accountId}`;
-    if (accounts.some((account) => account.id === storageId)) continue;
-    const account = createLocalAccountRecord({
-      id: storageId,
-      accountId,
-      name: accountId === 'local' ? '本机数据' : accountId,
-      dbName,
-      legacy: true,
-    });
-    accounts.push(account);
-    known.add(dbName);
-    changed = true;
-  }
+    for (const dbName of databases) {
+      if (pendingDeletions.has(dbName)) continue;
+      if (known.has(dbName)) continue;
+      const accountId = legacyAccountIdFromDbName(dbName);
+      const storageId = dbName === DB_NAME ? 'local' : `legacy-${accountId}`;
+      if (accounts.some((account) => account.id === storageId)) continue;
+      const account = createLocalAccountRecord({
+        id: storageId,
+        accountId,
+        name: accountId === 'local' ? '本机数据' : accountId,
+        dbName,
+        legacy: true,
+      });
+      accounts.push(account);
+      known.add(dbName);
+      changed = true;
+    }
 
-  const next: AccountRegistry = {
-    version: 2,
-    activeId: accounts.some((account) => account.id === registry.activeId)
-      ? registry.activeId
-      : (accounts[0]?.id ?? ''),
-    accounts,
-  };
-  if (changed) writeAccountRegistry(next);
-  return next;
+    const next: AccountRegistry = {
+      version: 2,
+      activeId: accounts.some((account) => account.id === registry.activeId)
+        ? registry.activeId
+        : (accounts[0]?.id ?? ''),
+      accounts,
+    };
+    if (changed) writeAccountRegistry(next);
+    return next;
+  });
 }
 
 /** 现在该打开哪个库。 */

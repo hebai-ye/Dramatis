@@ -140,6 +140,64 @@ describe('口令加密的密钥库（顺序 10）', () => {
     expect(await second.get('a')).toBe('1');
   });
 
+  it('共享存储的可选互斥覆盖完整读改写，另一存储实例删除不会被旧 set 复活', async () => {
+    const backing = memoryStorage();
+    let tail: Promise<unknown> = Promise.resolve();
+    const runExclusive = <T>(task: () => Promise<T>): Promise<T> => {
+      const result = tail.then(task, task);
+      tail = result.catch(() => undefined);
+      return result;
+    };
+    const firstStorage = { ...backing, runExclusive };
+    const secondStorage = { ...backing, runExclusive };
+    await createVault(firstStorage, '测试口令', FAST);
+    const first = await openVault(firstStorage, '测试口令', FAST);
+    const second = await openVault(secondStorage, '测试口令', FAST);
+    await first.set('owned', '待清理');
+    let release: () => void = () => {};
+    let entered: () => void = () => {};
+    const started = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    firstStorage.read = async () => {
+      const raw = await backing.read();
+      entered();
+      await gate;
+      return raw;
+    };
+    const writing = first.set('new-ref', '保留新密钥');
+    await started;
+    const removing = second.remove('owned');
+    await Promise.race([removing, new Promise((resolve) => setTimeout(resolve, 10))]);
+    release();
+    await Promise.all([writing, removing]);
+    expect(await second.list()).toEqual(['new-ref']);
+    expect(await second.get('new-ref')).toBe('保留新密钥');
+    expect(await second.get('owned')).toBeNull();
+  });
+
+  it('可选存储互斥拒绝时 set/remove/clear 均明确失败并保持旧数据', async () => {
+    const backing = memoryStorage();
+    await createVault(backing, '测试口令', FAST);
+    const unlocked = await openVault(backing, '测试口令', FAST);
+    await unlocked.set('owned', '保留');
+    const storage = {
+      ...backing,
+      runExclusive: async <T>(_task: () => Promise<T>): Promise<T> => {
+        throw new Error('口令库锁不可用');
+      },
+    };
+    const store = await openVault(storage, '测试口令', FAST);
+    await expect(store.set('new-ref', '新密钥')).rejects.toThrow('口令库锁不可用');
+    await expect(store.remove('owned')).rejects.toThrow('口令库锁不可用');
+    await expect(store.clear()).rejects.toThrow('口令库锁不可用');
+    expect(await unlocked.list()).toEqual(['owned']);
+    expect(await unlocked.get('owned')).toBe('保留');
+  });
+
   it('文件里的迭代数被改成离谱的值 → 拒绝解锁，而不是把页面卡死（审计 C14）', async () => {
     const storage = memoryStorage();
     await createVault(storage, '口令', FAST);

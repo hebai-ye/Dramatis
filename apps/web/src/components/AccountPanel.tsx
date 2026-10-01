@@ -1,378 +1,473 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { assertPassword, loginAccount, readAccountSyncInfo, registerAccount, selfEndpoint } from '../lib/account-auth';
+import { deleteAccountLocally } from '../lib/account-deletion';
+import {
+  type AccountSyncBadge,
+  accountLeaveGuard,
+  copyRecoveryCode,
+  createAccountOperationGate,
+  loadAccountBadges,
+} from '../lib/account-ui';
 import {
   type AccountRegistry,
-  activeDbName,
-  copyLocalDatabase,
-  deleteLocalDatabase,
-  flushPendingAccountDeletions,
   type LocalAccount,
-  listAccountSecretRefs,
   loadAccountRegistry,
-  queueAccountDeletion,
+  readAccountRegistry,
   readActiveAccount,
-  removeAccount,
   renameAccount,
   writeActiveAccount,
 } from '../lib/db';
-import { passwordStrengthHint } from '../lib/password-policy';
-import { syncPasswordKeyRef } from '../lib/sync';
-
-/** 每个账户卡片上要显示的同步状态（异步读它自己的库）。 */
-interface SyncBadge {
-  configured: boolean;
-  unlocked: boolean;
-  lastSyncAt: string | null;
-}
+import { MIN_PASSWORD_LENGTH, passwordStrengthHint } from '../lib/password-policy';
+import { protectUnsavedRecovery } from '../lib/recovery-protection';
+import type { SyncApi } from '../lib/sync';
+import { useDialogActions } from './DialogShell';
 
 type AddMode = 'idle' | 'register' | 'login';
 
-/**
- * 账户中心（用户 2026-09-24 的账户重构）。
- *
- * 用户要的三件事：
- * 1. **界面简洁**：一个账户一张卡片，卡片上只有名字、ID、状态与几个动作；
- * 2. **允许多个账户、挑一个用**：点卡片上的「使用」就切过去（数据完全隔离）；
- * 3. **同步不再单独设密码**：注册账户时设的那个密码就是账户密码，登录时也输入它
- *    （细节见 `lib/account-auth.ts`）；「添加账户」跟卡片长一样，里面分注册与登录两条路。
- */
-export function AccountPanel({ disabled }: { disabled: boolean }) {
+export function AccountPanel({ disabled, sync }: { disabled: boolean; sync?: SyncApi }) {
+  const { requestAction, setGuard } = useDialogActions();
   const [registry, setRegistry] = useState<AccountRegistry | null>(null);
   const [active, setActive] = useState<LocalAccount>(() => readActiveAccount());
-  const [badges, setBadges] = useState<Record<string, SyncBadge>>({});
+  const [badges, setBadges] = useState<Record<string, AccountSyncBadge>>({});
+  const [loading, setLoading] = useState(true);
   const [mode, setMode] = useState<AddMode>('idle');
-  const [busy, setBusy] = useState(false);
+  const [operation, setOperation] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
-
-  // 注册
   const [registerName, setRegisterName] = useState('');
   const [registerId, setRegisterId] = useState('');
   const [registerPassword, setRegisterPassword] = useState('');
   const [registerRepeat, setRegisterRepeat] = useState('');
-
-  // 登录
   const [loginId, setLoginId] = useState('');
   const [loginPassword, setLoginPassword] = useState('');
-
+  const [showPassword, setShowPassword] = useState(false);
   const [endpoint, setEndpoint] = useState('');
   const [profileConsent, setProfileConsent] = useState(false);
-
   const [recoveryCode, setRecoveryCode] = useState<string | null>(null);
-  /** 刚注册好、还没进去的那个账户（恢复码下面那个「进入」按钮用它）。 */
+  const recoveryRef = useRef<string | null>(null);
+  const [copyNotice, setCopyNotice] = useState<{ ok: boolean; message: string } | null>(null);
   const [pendingAccount, setPendingAccount] = useState<LocalAccount | null>(null);
+  const [switchTarget, setSwitchTarget] = useState<LocalAccount | null>(null);
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameDraft, setRenameDraft] = useState('');
   const [deleteArmedId, setDeleteArmedId] = useState<string | null>(null);
   const [deleteDraft, setDeleteDraft] = useState('');
-
+  const operationGate = useRef(createAccountOperationGate());
+  const badgeVersion = useRef(0);
+  const mounted = useRef(true);
+  const renameInput = useRef<HTMLInputElement>(null);
+  const deleteInput = useRef<HTMLInputElement>(null);
+  const addInput = useRef<HTMLInputElement>(null);
+  const recoveryRegion = useRef<HTMLElement>(null);
+  const switchConfirm = useRef<HTMLButtonElement>(null);
+  const errorRegion = useRef<HTMLDivElement>(null);
+  const trigger = useRef<HTMLElement | null>(null);
+  const addButton = useRef<HTMLButtonElement>(null);
+  const enterButton = useRef<HTMLButtonElement>(null);
+  const busy = operation !== null || sync?.busy === true;
+  const blocked = disabled || busy || loading;
   const accounts = registry?.accounts ?? [active];
 
+  const clearRecovery = useCallback(() => {
+    recoveryRef.current = null;
+    setRecoveryCode(null);
+    setCopyNotice(null);
+  }, []);
+
+  useEffect(() => protectUnsavedRecovery(() => recoveryRef.current, window), []);
+
+  useEffect(() => {
+    setGuard(accountLeaveGuard(operation ?? (sync?.busy ? '正在同步' : null), recoveryCode, clearRecovery));
+    return () => setGuard(null);
+  }, [operation, sync?.busy, recoveryCode, clearRecovery, setGuard]);
+
   const refreshBadges = useCallback(async (list: readonly LocalAccount[]): Promise<void> => {
-    const entries = await Promise.all(
-      list.map(async (account) => {
-        const info = await readAccountSyncInfo(account);
-        return [
-          account.id,
-          { configured: info.configured, unlocked: info.unlocked, lastSyncAt: info.lastSyncAt },
-        ] as const;
-      }),
-    );
-    setBadges(Object.fromEntries(entries));
+    const version = ++badgeVersion.current;
+    const next = await loadAccountBadges(list, readAccountSyncInfo);
+    if (mounted.current && version === badgeVersion.current) setBadges(next);
   }, []);
 
   useEffect(() => {
+    mounted.current = true;
     void loadAccountRegistry()
-      .then((next) => {
+      .then(async (next) => {
+        if (!mounted.current) return;
         setRegistry(next);
-        const current =
-          next.accounts.find((account) => account.id === next.activeId) ?? (next.accounts[0] as LocalAccount);
-        setActive(current);
-        void refreshBadges(next.accounts);
+        setActive(next.accounts.find((account) => account.id === next.activeId) ?? (next.accounts[0] as LocalAccount));
+        await refreshBadges(next.accounts);
       })
-      .catch((reason: unknown) => setError(reason instanceof Error ? reason.message : String(reason)));
+      .catch((reason: unknown) => {
+        if (mounted.current) setError(reason instanceof Error ? reason.message : String(reason));
+      })
+      .finally(() => {
+        if (mounted.current) setLoading(false);
+      });
+    return () => {
+      mounted.current = false;
+    };
   }, [refreshBadges]);
 
-  /** 切到某个账户并刷新（新账户的库还没被应用打开，必须重载）。 */
-  /** 切到某个账户并刷新（新账户的库还没被应用打开，必须重载）。名字故意不叫 use*：那不是 hook */
-  const activateAccount = async (account: LocalAccount, carry: boolean): Promise<void> => {
-    setBusy(true);
-    setError(null);
+  useEffect(() => {
+    if (renamingId !== null) renameInput.current?.focus();
+  }, [renamingId]);
+  useEffect(() => {
+    if (deleteArmedId !== null) deleteInput.current?.focus();
+  }, [deleteArmedId]);
+  useEffect(() => {
+    if (mode !== 'idle') addInput.current?.focus();
+  }, [mode]);
+  useEffect(() => {
+    if (recoveryCode !== null) recoveryRegion.current?.focus();
+  }, [recoveryCode]);
+  useEffect(() => {
+    if (switchTarget !== null) switchConfirm.current?.focus();
+  }, [switchTarget]);
+  useEffect(() => {
+    if (error !== null) errorRegion.current?.focus();
+  }, [error]);
+  useEffect(() => {
+    if (pendingAccount !== null && !blocked && recoveryCode === null) enterButton.current?.focus();
+  }, [pendingAccount, blocked, recoveryCode]);
+
+  const restoreFocus = (): void => {
+    requestAnimationFrame(() => {
+      const target = trigger.current?.isConnected ? trigger.current : addButton.current;
+      target?.focus();
+    });
+  };
+
+  const runOperation = async (label: string, action: () => Promise<void>): Promise<void> => {
+    if (disabled || sync?.busy) return;
     try {
-      if (carry && account.dbName !== activeDbName()) {
-        await copyLocalDatabase(activeDbName(), account.dbName);
-      }
-      writeActiveAccount(account);
-      window.location.reload();
+      await operationGate.current.run(
+        async () => {
+          setError(null);
+          setNotice(null);
+          await action();
+        },
+        (pending) => {
+          setOperation(pending ? label : null);
+          setGuard(accountLeaveGuard(pending ? label : null, recoveryRef.current, clearRecovery));
+        },
+      );
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason));
-      setBusy(false);
     }
   };
 
-  const runRegister = async (): Promise<void> => {
-    setPendingAccount(null);
-    setRecoveryCode(null);
-    setBusy(true);
-    setError(null);
-    setNotice(null);
-    try {
+  const activateAccount = (account: LocalAccount): Promise<void> =>
+    runOperation('正在切换账户', async () => {
+      const latest = readAccountRegistry().accounts.find(
+        (item) => item.id === account.id && item.dbName === account.dbName,
+      );
+      if (latest === undefined) throw new Error('本机账户列表已变化，未切换账户。请重新打开账户页。');
+      writeActiveAccount(latest);
+      if (readActiveAccount().id !== latest.id)
+        throw new Error('浏览器未保存活动账户，未切换账户。请检查本机存储后重试。');
+      window.location.reload();
+    });
+
+  const runRegister = (): Promise<void> =>
+    runOperation('正在注册账户', async () => {
       assertPassword(registerPassword);
       if (registerPassword !== registerRepeat) throw new Error('两次输入的密码不一样。');
-      if (registerId.trim() === '') throw new Error('账户 ID 不能为空（它是同步空间的标识）。');
       const created = await registerAccount({
         name: registerName,
         accountId: registerId,
         password: registerPassword,
         profileConsent,
+        onRecoveryCode: (code) => {
+          recoveryRef.current = code;
+          setRecoveryCode(code);
+        },
         ...(endpoint.trim() === '' ? {} : { endpoint }),
       });
+      recoveryRef.current = created.recoveryCode;
       setRecoveryCode(created.recoveryCode);
+      const latest = readAccountRegistry();
+      if (!latest.accounts.some((account) => account.id === created.account.id))
+        throw new Error('同步空间已创建，但本机账户未保存。请先保存恢复码，检查浏览器存储后登录已有账户。');
       setPendingAccount(created.account);
-      setRegistry(createRegistryPreview(created.account, accounts));
-      setNotice(`账户「${created.account.name}」建好了，恢复码只显示这一次，请抄下来。${created.profileWarning ?? ''}`);
-      setBusy(false);
-      await refreshBadges([...accounts.filter((item) => item.id !== created.account.id), created.account]);
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : String(reason));
-      setBusy(false);
-    }
-  };
+      setRegistry(latest);
+      setRegisterPassword('');
+      setRegisterRepeat('');
+      setNotice(
+        `账户「${created.account.name}」已注册。请先安全保存恢复码，再进入账户。${created.profileWarning ?? ''}`,
+      );
+      await refreshBadges(readAccountRegistry().accounts);
+    });
 
-  const runLogin = async (): Promise<void> => {
-    setPendingAccount(null);
-    setRecoveryCode(null);
-    setBusy(true);
-    setError(null);
-    setNotice(null);
-    try {
+  const runLogin = (): Promise<void> =>
+    runOperation('正在登录账户', async () => {
       const logged = await loginAccount({
         accountId: loginId,
         password: loginPassword,
         profileConsent,
         ...(endpoint.trim() === '' ? {} : { endpoint }),
       });
-      if (logged.profileWarning !== null) {
-        setPendingAccount(logged.account);
-        setRecoveryCode(null);
-        setNotice(`已登录「${logged.account.name}」。${logged.profileWarning}`);
-        setBusy(false);
-        return;
-      }
-      // 登录成功：直接进这个账户（它的数据会在启动后的自动同步里拉下来）
-      setNotice(
-        logged.recoveryCode === null
-          ? `已登录「${logged.account.name}」，正在打开……`
-          : `已登录「${logged.account.name}」。`,
-      );
-      await activateAccount(logged.account, false);
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : String(reason));
-      setBusy(false);
-    }
-  };
+      const latest = readAccountRegistry();
+      if (!latest.accounts.some((account) => account.id === logged.account.id))
+        throw new Error('已验证账户密码，但本机账户未保存。请检查浏览器存储后重试。');
+      setPendingAccount(logged.account);
+      setRegistry(latest);
+      setLoginPassword('');
+      setNotice(`已登录「${logged.account.name}」，进入时会重新加载页面。${logged.profileWarning ?? ''}`);
+      await refreshBadges(readAccountRegistry().accounts);
+    });
 
-  const commitRename = (account: LocalAccount): void => {
-    try {
+  const commitRename = (account: LocalAccount): Promise<void> =>
+    runOperation('正在保存账户名', async () => {
+      if (renameDraft.trim() === '') throw new Error('请输入本机账户名。');
       const next = renameAccount(account.id, renameDraft);
-      setRegistry((current) =>
-        current === null
-          ? current
-          : { ...current, accounts: current.accounts.map((item) => (item.id === next.id ? next : item)) },
-      );
+      const latest = readAccountRegistry();
+      if (!latest.accounts.some((item) => item.id === next.id && item.name === next.name))
+        throw new Error('浏览器未保存账户名，本机名称未保存。请检查本机存储后重试。');
+      setRegistry(latest);
       if (active.id === next.id) setActive(next);
       setRenamingId(null);
       setRenameDraft('');
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : String(reason));
-    }
-  };
+      setNotice('本机账户名已保存。已登记的服务器显示名仍以服务器资料为准。');
+      restoreFocus();
+    });
 
-  const commitDelete = async (account: LocalAccount): Promise<void> => {
-    if (accounts.length <= 1) {
-      setError('至少要保留一个账户。');
-      return;
-    }
-    if (deleteDraft.trim() !== account.accountId) {
-      setError(`请输入完整账户 ID「${account.accountId}」来确认删除。`);
-      return;
-    }
-
-    setBusy(true);
-    setError(null);
-    setNotice(null);
-    try {
-      const remaining = accounts.filter((item) => item.id !== account.id);
-      const ownRefs = await listAccountSecretRefs(account.dbName);
-      const sharedRefs = new Set(
-        (await Promise.all(remaining.map((item) => listAccountSecretRefs(item.dbName)))).flat(),
-      );
-      const refs = ownRefs.filter((ref) => !sharedRefs.has(ref));
-      if (account.id === active.id) refs.push(syncPasswordKeyRef(account.id));
-      queueAccountDeletion(account, refs);
-      removeAccount(account.id);
-
-      if (account.id === active.id) {
-        window.location.reload();
-        return;
-      }
-
-      try {
-        await deleteLocalDatabase(account.dbName);
-      } catch {
-        // 别的标签页占着库时，排队标记会在它们关闭后的下次启动继续清理。
-      }
-      await flushPendingAccountDeletions().catch(() => undefined);
-
-      setRegistry((current) =>
-        current === null
-          ? current
-          : { ...current, accounts: current.accounts.filter((item) => item.id !== account.id) },
-      );
+  const commitDelete = (account: LocalAccount): Promise<void> =>
+    runOperation('正在删除本机账户', async () => {
+      if (accounts.length <= 1) throw new Error('至少要保留一个账户。');
+      if (deleteDraft.trim() !== account.accountId) throw new Error('请输入完整账户 ID 来确认删除。');
+      const result = await deleteAccountLocally(account);
+      setRegistry(readAccountRegistry());
       setDeleteArmedId(null);
       setDeleteDraft('');
-      setNotice(`已从这台设备硬删除「${account.name}」的账户容器、模型配置与独占 Key 缓存。`);
-      setBusy(false);
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : String(reason));
-      setBusy(false);
-    }
-  };
+      setNotice(
+        result.warning ??
+          (result.pending > 0
+            ? '账户已从本机列表移除，仍有清理待完成。关闭其他标签页后重新打开应用会继续清理。'
+            : `已删除「${account.name}」的本机账户数据。服务器密文副本保留。`),
+      );
+      if (result.requiresReload) window.location.reload();
+      else restoreFocus();
+    });
 
   const openAdd = (next: AddMode): void => {
-    setMode(next);
-    setError(null);
-    setNotice(null);
-    setRecoveryCode(null);
-    setPendingAccount(null);
-    setProfileConsent(false);
-    if (next === 'login' && loginId === '') setLoginId(active.accountId);
+    requestAction(() => {
+      setMode(next);
+      setError(null);
+      setNotice(null);
+      setPendingAccount(null);
+      setProfileConsent(false);
+      setShowPassword(false);
+      if (next === 'login' && loginId === '') setLoginId(active.accountId);
+      if (next === 'idle') restoreFocus();
+    });
   };
 
-  return (
-    <section className="panel">
-      <h2>账户</h2>
-      <p className="hint">
-        每个账户是一份完全独立的数据（世界、卡片、记忆、模型配置）。注册时会设一个**账户密码**——
-        它同时也是同步用的密码，登录别的设备时输入它就行。
-      </p>
+  const requestSwitch = (account: LocalAccount): void => requestAction(() => setSwitchTarget(account));
+  const activeEndpoint = sync?.config?.endpoint ?? badges[active.id]?.endpoint ?? selfEndpoint();
+  const defaultServer = activeEndpoint.replace(/\/+$/, '') === selfEndpoint();
+  const repeatMismatch = registerRepeat !== '' && registerPassword !== registerRepeat;
 
+  return (
+    <section className="panel account-panel" aria-busy={busy || loading}>
+      <h2>账户</h2>
+      <p className="hint">每个账户独立保存世界、对话、卡片、记忆和模型配置。账户密码同时用于多设备同步。</p>
+      {loading ? (
+        <p role="status" className="hint">
+          正在读取本机账户…
+        </p>
+      ) : null}
+      {operation === null ? null : (
+        <p role="status" className="notice">
+          {operation}…
+        </p>
+      )}
       <ul className="account-cards">
         {accounts.map((account) => {
           const isActive = account.id === active.id;
           const badge = badges[account.id];
+          const liveStatus = isActive && sync !== undefined ? sync.status : null;
+          const status =
+            liveStatus !== null
+              ? liveStatus === 'off'
+                ? '仅本机保存'
+                : liveStatus === 'needs-secret'
+                  ? '需要账户密码'
+                  : liveStatus === 'error'
+                    ? '同步出错'
+                    : sync?.busy || sync?.autoSyncPending
+                      ? '正在同步'
+                      : '同步已就绪'
+              : badge === undefined
+                ? '读取中'
+                : badge.state === 'unknown'
+                  ? '同步状态未知'
+                  : badge.configured
+                    ? badge.unlocked
+                      ? '本机已保存密码'
+                      : '需要账户密码'
+                    : '仅本机保存';
+          const needsUnlock =
+            liveStatus === 'needs-secret' ||
+            liveStatus === 'error' ||
+            (badge?.state === 'known' && badge.configured && !badge.unlocked);
           return (
             <li key={account.id} className={isActive ? 'account-card active' : 'account-card'}>
               <div className="account-card-head">
                 {renamingId === account.id ? (
-                  <>
-                    <input
-                      className="account-rename-input"
-                      value={renameDraft}
-                      disabled={disabled || busy}
-                      aria-label="账户名"
-                      onChange={(event) => setRenameDraft(event.target.value)}
-                    />
+                  <form
+                    className="account-card-actions"
+                    onSubmit={(event) => {
+                      event.preventDefault();
+                      void commitRename(account);
+                    }}
+                  >
+                    <label>
+                      <span>本机账户名</span>
+                      <input
+                        ref={renameInput}
+                        className="account-rename-input"
+                        value={renameDraft}
+                        disabled={blocked}
+                        onChange={(event) => setRenameDraft(event.target.value)}
+                      />
+                    </label>
+                    <button type="submit" className="ghost" disabled={blocked || renameDraft.trim() === ''}>
+                      保存
+                    </button>
                     <button
                       type="button"
                       className="ghost"
-                      disabled={disabled || busy}
-                      onClick={() => commitRename(account)}
+                      disabled={blocked}
+                      onClick={() => {
+                        setRenamingId(null);
+                        restoreFocus();
+                      }}
                     >
-                      保存
-                    </button>
-                    <button type="button" className="ghost" onClick={() => setRenamingId(null)}>
                       取消
                     </button>
-                  </>
+                  </form>
                 ) : (
                   <>
                     <strong>{account.name}</strong>
-                    {isActive ? <span className="tag accent">当前</span> : null}
-                    {badge?.configured ? (
-                      badge.unlocked ? (
-                        <span className="tag">同步已连接</span>
-                      ) : (
-                        <span className="tag">要输密码</span>
-                      )
-                    ) : null}
+                    {isActive ? <span className="tag accent">当前账户</span> : null}
+                    <span className="tag">{status}</span>
                   </>
                 )}
               </div>
               <p className="hint account-card-id">
-                ID：{account.accountId}
+                ID：<code>{account.accountId}</code>
                 {account.legacy ? ' · 旧账户' : ''}
-                {badge?.lastSyncAt === null || badge?.lastSyncAt === undefined
-                  ? ''
-                  : ` · 上次同步 ${formatWhen(badge.lastSyncAt)}`}
+                {(isActive ? sync?.config?.lastSyncAt : badge?.lastSyncAt)
+                  ? ` · 上次同步 ${formatWhen((isActive ? sync?.config?.lastSyncAt : badge?.lastSyncAt) as string)}`
+                  : ''}
               </p>
-
+              {badge?.state === 'unknown' ? (
+                <div className="notice error" role="status">
+                  无法读取此账户的同步状态：{badge.error}
+                  <button
+                    type="button"
+                    className="ghost"
+                    disabled={blocked}
+                    onClick={() => void runOperation('正在读取同步状态', () => refreshBadges(accounts))}
+                  >
+                    重试读取
+                  </button>
+                </div>
+              ) : null}
+              {isActive && sync?.error ? (
+                <p className="notice error" role="status">
+                  {sync.error}
+                </p>
+              ) : null}
               <div className="account-card-actions">
                 {isActive ? null : (
                   <button
                     type="button"
-                    disabled={disabled || busy}
-                    onClick={() => void activateAccount(account, false)}
+                    disabled={blocked}
+                    onClick={(event) => {
+                      trigger.current = event.currentTarget;
+                      requestSwitch(account);
+                    }}
                   >
-                    使用
+                    使用此账户
                   </button>
                 )}
-                {badge?.configured && badge.unlocked === false ? (
+                {needsUnlock ? (
                   <button
                     type="button"
                     className="ghost"
-                    disabled={disabled || busy}
-                    onClick={() => {
-                      setLoginId(account.accountId);
-                      openAdd('login');
-                      setNotice('输入这个账户的密码（忘了就用恢复码）就能重新解锁同步。');
+                    disabled={blocked}
+                    onClick={(event) => {
+                      trigger.current = event.currentTarget;
+                      requestAction(() => {
+                        setMode('login');
+                        setLoginId(account.accountId);
+                        setEndpoint(badge?.endpoint ?? (isActive ? (sync?.config?.endpoint ?? '') : ''));
+                        setProfileConsent(false);
+                        setError(null);
+                        setNotice('输入此账户的密码或恢复码，登录后重新加载即可解锁同步。');
+                      });
                     }}
                   >
-                    输入密码
+                    输入账户密码
                   </button>
                 ) : null}
                 <button
                   type="button"
                   className="ghost"
-                  disabled={disabled || busy}
-                  onClick={() => {
-                    setRenamingId(account.id);
-                    setRenameDraft(account.name);
+                  disabled={blocked}
+                  onClick={(event) => {
+                    trigger.current = event.currentTarget;
+                    requestAction(() => {
+                      setRenamingId(account.id);
+                      setRenameDraft(account.name);
+                      setError(null);
+                    });
                   }}
                 >
-                  改名
+                  改本机名称
                 </button>
                 <button
                   type="button"
                   className="ghost danger"
-                  disabled={disabled || busy || accounts.length <= 1}
-                  title={accounts.length <= 1 ? '至少要保留一个账户' : '永久删除这台设备上的账户数据'}
-                  onClick={() => {
-                    setDeleteArmedId(account.id);
-                    setDeleteDraft('');
-                    setNotice(null);
-                    setError(null);
+                  disabled={blocked || accounts.length <= 1}
+                  title={accounts.length <= 1 ? '至少要保留一个账户' : '删除这台设备上的账户数据'}
+                  onClick={(event) => {
+                    trigger.current = event.currentTarget;
+                    requestAction(() => {
+                      setDeleteArmedId(account.id);
+                      setDeleteDraft('');
+                      setNotice(null);
+                      setError(null);
+                    });
                   }}
                 >
-                  删除
+                  删除本机账户
                 </button>
               </div>
-
               {deleteArmedId === account.id ? (
-                <div className="account-delete-confirm">
+                <form
+                  className="account-delete-confirm"
+                  onSubmit={(event) => {
+                    event.preventDefault();
+                    void commitDelete(account);
+                  }}
+                >
                   <p>
-                    将从这台设备硬删除：全部世界、对话、卡片、记忆、模型配置，以及只属于这个账户的 Key 缓存。
-                    <strong>不可恢复。</strong>
-                    {account.id === active.id ? ' 删除后会自动切到另一个账户并刷新。' : ''}
+                    将从这台设备删除此账户的世界、对话、卡片、记忆、模型配置和独占密钥缓存。
+                    <strong>本机删除不可撤销。</strong>
+                    {isActive ? ' 删除后会切到另一个账户并重新加载页面。' : ''}
                   </p>
-                  <p className="hint">已经建立的同步空间仍会在服务器上保留密文副本，本操作不会删除服务器数据。</p>
+                  <p className="hint">
+                    服务器上的密文副本保留。本操作不会删除服务器数据；其他标签页占用时，本机清理会排队继续。
+                  </p>
                   <label>
                     <span>
-                      输入账户 ID「<code>{account.accountId}</code>」确认
+                      输入完整账户 ID「<code>{account.accountId}</code>」确认
                     </span>
                     <input
+                      ref={deleteInput}
                       value={deleteDraft}
-                      disabled={disabled || busy}
+                      disabled={blocked}
                       autoCapitalize="none"
                       autoCorrect="off"
                       spellCheck={false}
@@ -381,269 +476,342 @@ export function AccountPanel({ disabled }: { disabled: boolean }) {
                   </label>
                   <div className="account-card-actions">
                     <button
-                      type="button"
-                      className="ghost danger"
-                      disabled={disabled || busy || deleteDraft.trim() !== account.accountId}
-                      onClick={() => void commitDelete(account)}
+                      type="submit"
+                      className="danger"
+                      disabled={blocked || deleteDraft.trim() !== account.accountId}
                     >
-                      {busy ? '删除中…' : '永久删除本机账户'}
+                      确认删除本机数据
                     </button>
                     <button
                       type="button"
                       className="ghost"
-                      disabled={disabled || busy}
+                      disabled={blocked}
                       onClick={() => {
                         setDeleteArmedId(null);
                         setDeleteDraft('');
+                        restoreFocus();
                       }}
                     >
                       取消
                     </button>
                   </div>
-                </div>
+                </form>
               ) : null}
             </li>
           );
         })}
-
-        {/*
-          「添加账户」本身也是一张卡片（用户要求：和账户卡片一样），
-          点开之后分**注册**与**登录**两条路。
-        */}
         <li className={mode === 'idle' ? 'account-card add' : 'account-card add open'}>
           {mode === 'idle' ? (
             <button
               type="button"
               className="account-add-button"
-              disabled={disabled || busy}
-              onClick={() => openAdd('register')}
+              ref={addButton}
+              disabled={blocked}
+              onClick={(event) => {
+                trigger.current = event.currentTarget;
+                openAdd('register');
+              }}
             >
               ＋ 添加账户
             </button>
           ) : (
             <>
-              <div className="account-mode-switch">
+              <nav className="account-mode-switch" aria-label="添加账户方式">
                 <button
                   type="button"
                   className={mode === 'register' ? 'tab active' : 'tab'}
+                  aria-pressed={mode === 'register'}
+                  disabled={blocked}
                   onClick={() => openAdd('register')}
                 >
-                  注册
+                  注册新账户
                 </button>
                 <button
                   type="button"
                   className={mode === 'login' ? 'tab active' : 'tab'}
+                  aria-pressed={mode === 'login'}
+                  disabled={blocked}
                   onClick={() => openAdd('login')}
                 >
-                  登录
+                  登录已有账户
                 </button>
-              </div>
-
-              {mode === 'register' ? (
-                <div className="stack">
-                  <label>
-                    账户名（可以重复、随时改）
-                    <input
-                      value={registerName}
-                      disabled={disabled || busy}
-                      placeholder="例如：小满"
-                      onChange={(event) => setRegisterName(event.target.value)}
-                    />
-                  </label>
-                  <label>
-                    账户 ID（设备内唯一、创建后不可改）
-                    <input
-                      value={registerId}
-                      disabled={disabled || busy}
-                      autoCapitalize="none"
-                      autoCorrect="off"
-                      spellCheck={false}
-                      placeholder="例如：xiaoman-01"
-                      onChange={(event) => setRegisterId(event.target.value)}
-                    />
-                  </label>
-                  <label>
-                    账户密码（至少 6 位，同步也用它）
-                    <input
-                      type="password"
-                      value={registerPassword}
-                      disabled={disabled || busy}
-                      autoCapitalize="none"
-                      autoCorrect="off"
-                      spellCheck={false}
-                      onChange={(event) => setRegisterPassword(event.target.value)}
-                    />
-                    {passwordStrengthHint(registerPassword) === null ? null : (
-                      <span className="hint">{passwordStrengthHint(registerPassword)}</span>
-                    )}
-                  </label>
-                  <label>
-                    再输一次
-                    <input
-                      type="password"
-                      value={registerRepeat}
-                      disabled={disabled || busy}
-                      autoCapitalize="none"
-                      autoCorrect="off"
-                      spellCheck={false}
-                      onChange={(event) => setRegisterRepeat(event.target.value)}
-                    />
-                  </label>
-                </div>
-              ) : (
-                <div className="stack">
-                  <label>
-                    账户 ID
-                    <input
-                      value={loginId}
-                      disabled={disabled || busy}
-                      autoCapitalize="none"
-                      autoCorrect="off"
-                      spellCheck={false}
-                      placeholder="注册时填的那个"
-                      onChange={(event) => setLoginId(event.target.value)}
-                    />
-                  </label>
-                  <label>
-                    账户密码（忘了密码就填恢复码）
-                    <input
-                      type="password"
-                      value={loginPassword}
-                      disabled={disabled || busy}
-                      autoCapitalize="none"
-                      autoCorrect="off"
-                      spellCheck={false}
-                      onChange={(event) => setLoginPassword(event.target.value)}
-                    />
-                  </label>
-                </div>
-              )}
-
-              <label className="hint">
-                <input
-                  type="checkbox"
-                  checked={profileConsent}
-                  disabled={disabled || busy}
-                  onChange={(event) => setProfileConsent(event.target.checked)}
-                />
-                同意向此服务器登记账户 ID 和显示名，用于账户识别与后续服务权益。管理员可查看这两项资料。
-                登记不包含密码、恢复码或对话内容；已登记的显示名以服务器为准。
-              </label>
-
-              <details className="account-advanced">
-                <summary>高级：连别的服务器</summary>
-                <label>
-                  服务端地址
-                  <input
-                    value={endpoint}
-                    disabled={disabled || busy}
-                    inputMode="url"
-                    autoCapitalize="none"
-                    autoCorrect="off"
-                    spellCheck={false}
-                    placeholder={selfEndpoint()}
-                    onChange={(event) => {
-                      setEndpoint(event.target.value);
-                      setProfileConsent(false);
-                      setPendingAccount(null);
-                      setRecoveryCode(null);
-                    }}
-                  />
-                </label>
-                <p className="hint">留空就用本站自带的同步服务端（{selfEndpoint()}）。</p>
-              </details>
-
-              <div className="save-bar">
-                <button
-                  type="button"
-                  disabled={
-                    disabled ||
-                    busy ||
-                    (mode === 'register'
-                      ? registerId.trim() === '' || registerPassword === ''
-                      : loginId.trim() === '' || loginPassword === '')
-                  }
-                  onClick={() => void (mode === 'register' ? runRegister() : runLogin())}
-                >
-                  {busy ? '处理中…' : mode === 'register' ? '注册并进入' : '登录并进入'}
-                </button>
+              </nav>
+              <form
+                className="stack"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  requestAction(() => {
+                    void (mode === 'register' ? runRegister() : runLogin());
+                  });
+                }}
+              >
+                {mode === 'register' ? (
+                  <>
+                    <label>
+                      本机账户名
+                      <input
+                        ref={addInput}
+                        value={registerName}
+                        disabled={blocked}
+                        autoComplete="nickname"
+                        placeholder="可重复，之后可以修改"
+                        onChange={(event) => setRegisterName(event.target.value)}
+                      />
+                    </label>
+                    <label>
+                      账户 ID（本机唯一，创建后不可改）
+                      <input
+                        value={registerId}
+                        disabled={blocked}
+                        autoComplete="username"
+                        autoCapitalize="none"
+                        autoCorrect="off"
+                        spellCheck={false}
+                        required
+                        onChange={(event) => setRegisterId(event.target.value)}
+                      />
+                    </label>
+                    <label>
+                      账户密码（至少 6 位，同步也用它）
+                      <input
+                        type={showPassword ? 'text' : 'password'}
+                        value={registerPassword}
+                        disabled={blocked}
+                        autoComplete="new-password"
+                        required
+                        onChange={(event) => setRegisterPassword(event.target.value)}
+                      />
+                      {passwordStrengthHint(registerPassword) ? (
+                        <span className="hint">{passwordStrengthHint(registerPassword)}</span>
+                      ) : null}
+                    </label>
+                    <label>
+                      再次输入密码
+                      <input
+                        type={showPassword ? 'text' : 'password'}
+                        value={registerRepeat}
+                        disabled={blocked}
+                        autoComplete="new-password"
+                        required
+                        aria-invalid={repeatMismatch}
+                        aria-describedby={repeatMismatch ? 'account-repeat-error' : undefined}
+                        onChange={(event) => setRegisterRepeat(event.target.value)}
+                      />
+                      {repeatMismatch ? (
+                        <span id="account-repeat-error" className="hint warn">
+                          两次密码不同，请检查。
+                        </span>
+                      ) : null}
+                    </label>
+                  </>
+                ) : (
+                  <>
+                    <label>
+                      账户 ID
+                      <input
+                        ref={addInput}
+                        value={loginId}
+                        disabled={blocked}
+                        autoComplete="username"
+                        autoCapitalize="none"
+                        autoCorrect="off"
+                        spellCheck={false}
+                        required
+                        onChange={(event) => setLoginId(event.target.value)}
+                      />
+                    </label>
+                    <label>
+                      账户密码或恢复码
+                      <input
+                        type={showPassword ? 'text' : 'password'}
+                        value={loginPassword}
+                        disabled={blocked}
+                        autoComplete="current-password"
+                        required
+                        onChange={(event) => setLoginPassword(event.target.value)}
+                      />
+                    </label>
+                  </>
+                )}
                 <button
                   type="button"
                   className="ghost"
-                  disabled={disabled || busy}
-                  onClick={() => {
-                    openAdd('idle');
-                  }}
+                  disabled={blocked}
+                  aria-pressed={showPassword}
+                  onClick={() => setShowPassword((current) => !current)}
                 >
-                  取消
+                  {showPassword ? '隐藏密码' : '显示密码'}
                 </button>
-              </div>
+                <label className="hint">
+                  <input
+                    type="checkbox"
+                    checked={profileConsent}
+                    disabled={blocked}
+                    onChange={(event) => setProfileConsent(event.target.checked)}
+                  />
+                  同意向此服务器登记账户 ID
+                  和显示名。管理员可查看这两项；不包含密码、恢复码或对话。已登记显示名以服务器为准。
+                </label>
+                <details className="account-advanced">
+                  <summary>高级：连接其他服务器</summary>
+                  <label>
+                    服务端地址
+                    <input
+                      value={endpoint}
+                      disabled={blocked}
+                      inputMode="url"
+                      autoCapitalize="none"
+                      autoCorrect="off"
+                      spellCheck={false}
+                      placeholder={selfEndpoint()}
+                      onChange={(event) => {
+                        const value = event.target.value;
+                        requestAction(() => {
+                          setEndpoint(value);
+                          setProfileConsent(false);
+                          setPendingAccount(null);
+                        });
+                      }}
+                    />
+                  </label>
+                  <p className="hint">留空使用本站同步服务。更换服务器后需重新确认资料登记。</p>
+                </details>
+                <div className="save-bar">
+                  <button
+                    type="submit"
+                    disabled={
+                      blocked ||
+                      (mode === 'register'
+                        ? registerId.trim() === '' ||
+                          registerPassword.trim().length < MIN_PASSWORD_LENGTH ||
+                          registerRepeat === '' ||
+                          repeatMismatch
+                        : loginId.trim() === '' || loginPassword === '')
+                    }
+                  >
+                    {operation ?? (mode === 'register' ? '注册账户' : '登录账户')}
+                  </button>
+                  <button type="button" className="ghost" disabled={blocked} onClick={() => openAdd('idle')}>
+                    取消
+                  </button>
+                </div>
+              </form>
             </>
           )}
         </li>
       </ul>
-
-      {pendingAccount !== null && recoveryCode === null ? (
-        <button type="button" disabled={disabled || busy} onClick={() => void activateAccount(pendingAccount, false)}>
-          进入已登录账户「{pendingAccount.name}」（{pendingAccount.accountId}）
-        </button>
-      ) : null}
-
       {recoveryCode === null ? null : (
-        <div className="notice warn">
-          <strong>恢复码（只显示这一次）</strong>
+        <section ref={recoveryRegion} className="notice warn" tabIndex={-1} aria-label="请安全保存恢复码">
+          <strong>恢复码只显示这一次</strong>
           <p className="hint">
-            忘了账户密码时，它就是密码：一样能登录、一样能解开数据。抄到安全的地方； 服务端与这台设备都不会再留第二份。
+            忘记账户密码时，恢复码可用于登录和解开同步数据。请存到安全的地方；此界面关闭或重新加载后不会再显示。
           </p>
           <code className="recovery-code">{recoveryCode}</code>
-          <button type="button" className="ghost" onClick={() => void navigator.clipboard?.writeText(recoveryCode)}>
-            复制
-          </button>
-          {/*
-            注册完先让用户看到恢复码，再一键进去（不自动进：自动刷新会把恢复码冲掉）。
-          */}
-          {pendingAccount === null ? null : (
+          <div className="save-bar">
             <button
               type="button"
-              disabled={disabled || busy}
-              onClick={() => void activateAccount(pendingAccount, false)}
+              className="ghost"
+              disabled={busy}
+              onClick={() => {
+                void copyRecoveryCode(recoveryCode, navigator.clipboard).then(setCopyNotice);
+              }}
             >
-              {busy ? '进入中…' : `进入「${pendingAccount.name}」`}
+              复制恢复码
             </button>
+            <button
+              type="button"
+              disabled={blocked}
+              onClick={() => {
+                clearRecovery();
+                setGuard(null);
+                setNotice('已确认安全保存恢复码。现在可以进入账户。');
+              }}
+            >
+              我已安全保存
+            </button>
+          </div>
+          {copyNotice === null ? null : (
+            <p role="status" className={copyNotice.ok ? 'hint' : 'hint warn'}>
+              {copyNotice.message}
+            </p>
           )}
+        </section>
+      )}
+      {pendingAccount === null ? null : (
+        <div className="save-bar">
           <button
+            ref={enterButton}
             type="button"
-            className="ghost"
-            onClick={() => {
-              setRecoveryCode(null);
-              setPendingAccount(null);
+            disabled={blocked}
+            onClick={(event) => {
+              trigger.current = event.currentTarget;
+              requestSwitch(pendingAccount);
             }}
           >
-            我抄好了
+            进入「{pendingAccount.name}」
           </button>
+          <span className="hint">进入会重新加载页面。</span>
         </div>
       )}
-
-      {error === null ? null : <div className="notice error">{error}</div>}
-      {notice === null ? null : <div className="notice">{notice}</div>}
-      <p className="hint">切换账户会重新加载页面；每个账户的数据互相隔离，不会自动合并。</p>
+      {switchTarget === null ? null : (
+        <fieldset className="notice warn">
+          <legend>进入「{switchTarget.name}」？</legend>
+          <p>页面将重新加载，并打开此账户独立的数据。当前账户的数据会留在本机，不会自动合并。</p>
+          <div className="save-bar">
+            <button
+              ref={switchConfirm}
+              type="button"
+              disabled={blocked}
+              onClick={() =>
+                requestAction(() => {
+                  void activateAccount(switchTarget);
+                })
+              }
+            >
+              确认进入并重新加载
+            </button>
+            <button
+              type="button"
+              className="ghost"
+              disabled={blocked}
+              onClick={() => {
+                setSwitchTarget(null);
+                restoreFocus();
+              }}
+            >
+              取消
+            </button>
+          </div>
+        </fieldset>
+      )}
+      {error === null ? null : (
+        <div ref={errorRegion} className="notice error" role="alert" tabIndex={-1}>
+          {error}
+        </div>
+      )}
+      {notice === null ? null : (
+        <div className="notice" role="status">
+          {notice}
+        </div>
+      )}
+      <section className="panel-inner">
+        <h3>会员与容量</h3>
+        <p className="hint">
+          {defaultServer
+            ? '本站同步空间的默认额度为 96 MiB。实际会员权益、当前额度和已用容量暂不可查询，不能据此判断剩余容量。'
+            : '当前账户连接自定义服务器，会员权益和存储额度由该服务器决定。当前额度和已用容量暂不可查询。'}
+        </p>
+      </section>
     </section>
   );
 }
 
-/** 注册成功后先把新账户塞进本地列表，界面上立刻能看到它（真正的注册表由 createAccount 写好了）。 */
-function createRegistryPreview(account: LocalAccount, accounts: readonly LocalAccount[]): AccountRegistry | null {
-  if (accounts.some((item) => item.id === account.id)) return null;
-  return { version: 2, activeId: readActiveAccount().id, accounts: [...accounts, account] };
-}
-
 function formatWhen(iso: string): string {
   const at = Date.parse(iso);
-  if (Number.isNaN(at)) return '刚刚';
+  if (Number.isNaN(at)) return '时间未知';
   const minutes = Math.max(0, Math.round((Date.now() - at) / 60000));
   if (minutes < 1) return '刚刚';
   if (minutes < 60) return `${String(minutes)} 分钟前`;
   const hours = Math.round(minutes / 60);
-  if (hours < 24) return `${String(hours)} 小时前`;
-  return `${String(Math.round(hours / 24))} 天前`;
+  return hours < 24 ? `${String(hours)} 小时前` : `${String(Math.round(hours / 24))} 天前`;
 }

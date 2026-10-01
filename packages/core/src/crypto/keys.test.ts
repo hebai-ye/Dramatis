@@ -212,6 +212,80 @@ describe('恢复码', () => {
 });
 
 describe('建空间 / 加入空间', () => {
+  it('默认登录主密钥与直接解包仍不可导出', async () => {
+    const created = await createSpaceCredentials({ userId: 'test-account', password: '测试密码', ...FAST });
+    const opened = await openSpace({
+      spaceHandle: created.spaceHandle,
+      secret: '测试密码',
+      purpose: 'password',
+      wrapped: created.passwordWrap,
+      keyIterations: FAST.keyIterations,
+    });
+    const unwrapped = await unwrapSpaceKey(created.passwordWrap, {
+      spaceHandle: created.spaceHandle,
+      secret: '测试密码',
+      purpose: 'password',
+      iterations: FAST.keyIterations,
+    });
+    await expect(subtle().exportKey('raw', opened.encKey)).rejects.toBeTruthy();
+    await expect(subtle().exportKey('raw', unwrapped)).rejects.toBeTruthy();
+  });
+
+  it.each(['password', 'recovery'] as const)(
+    '显式允许重新包装后，%s 登录可换密码且主密钥和恢复码不变',
+    async (purpose) => {
+      const created = await createSpaceCredentials({ userId: 'test-account', password: '测试旧密码', ...FAST });
+      const sealed = await encryptRecord(created.encKey, COORDINATES, { content: '换密码前的数据' });
+      const opened = await openSpace({
+        spaceHandle: created.spaceHandle,
+        secret: purpose === 'password' ? '测试旧密码' : created.recoveryCode,
+        purpose,
+        wrapped: purpose === 'password' ? created.passwordWrap : created.recoveryWrap,
+        keyIterations: FAST.keyIterations,
+        extractable: true,
+      });
+      const rotated = await rotatePassword({
+        spaceHandle: created.spaceHandle,
+        encKey: opened.encKey,
+        newPassword: '测试新密码',
+        keyIterations: FAST.keyIterations,
+      });
+      const byNewPassword = await openSpace({
+        spaceHandle: created.spaceHandle,
+        secret: '测试新密码',
+        purpose: 'password',
+        wrapped: rotated.passwordWrap,
+        keyIterations: FAST.keyIterations,
+      });
+      await expect(verifyCredential(created.credential, rotated.credentialHash)).resolves.toBe(false);
+      await expect(verifyCredential(byNewPassword.credential, rotated.credentialHash)).resolves.toBe(true);
+      await expect(
+        openSpace({
+          spaceHandle: created.spaceHandle,
+          secret: '测试旧密码',
+          purpose: 'password',
+          wrapped: rotated.passwordWrap,
+          keyIterations: FAST.keyIterations,
+        }),
+      ).rejects.toBeInstanceOf(CryptoError);
+      const byRecovery = await openSpace({
+        spaceHandle: created.spaceHandle,
+        secret: created.recoveryCode,
+        purpose: 'recovery',
+        wrapped: created.recoveryWrap,
+        keyIterations: FAST.keyIterations,
+      });
+      await expect(verifyCredential(byRecovery.credential, created.recoveryCredentialHash)).resolves.toBe(true);
+      await expect(decryptRecord(byNewPassword.encKey, COORDINATES, sealed)).resolves.toEqual({
+        content: '换密码前的数据',
+      });
+      await expect(decryptRecord(byRecovery.encKey, COORDINATES, sealed)).resolves.toEqual({
+        content: '换密码前的数据',
+      });
+      await expect(subtle().exportKey('raw', byNewPassword.encKey)).rejects.toBeTruthy();
+    },
+  );
+
   it('密码与恢复码解出来的是同一把主密钥（这才是「等价凭证」）', async () => {
     const created = await createSpaceCredentials({ userId: ' 旅人 ', password: '一句够长的密码', ...FAST });
     const sealed = await encryptRecord(created.encKey, COORDINATES, { content: '用密码时期写下的' });

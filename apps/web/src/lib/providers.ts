@@ -44,11 +44,44 @@ function isAutoCreatedDefault(profile: ProviderProfile): boolean {
   );
 }
 
+interface KeyReadStamp {
+  profileId: string;
+  keyRef: string;
+  mode: KeyStorageMode;
+  vault: VaultSession | null;
+  db: DramatisDb | null;
+  reload: number;
+}
+
+interface KeyRead {
+  stamp: KeyReadStamp;
+  value: string;
+  error: string | null;
+}
+
+function sameKeyStamp(left: KeyReadStamp | null | undefined, right: KeyReadStamp | null): boolean {
+  return (
+    left != null &&
+    right !== null &&
+    left.profileId === right.profileId &&
+    left.keyRef === right.keyRef &&
+    left.mode === right.mode &&
+    left.vault === right.vault &&
+    left.db === right.db &&
+    left.reload === right.reload
+  );
+}
+
 export interface ProvidersApi {
   profiles: ProviderProfile[];
   activeId: string | null;
   active: ProviderProfile | null;
   apiKey: string;
+  /** 当前配置的本机 Key 尚未读取完毕；这时 apiKey 保持为空。 */
+  keyLoading: boolean;
+  /** 读取失败不等于没有 Key；需重新读取后才能保存。 */
+  keyError: string | null;
+  reloadApiKey: () => void;
   keyMode: KeyStorageMode;
   keyKind: KeyStore['kind'];
   /** 本机已经有一个口令库（界面用它决定显示「解锁」还是「设口令」）。 */
@@ -90,7 +123,7 @@ export interface ProvidersApi {
  * 模型服务配置管理（ROADMAP P0-8）。
  *
  * 配置本身落在实体表里，密钥落在 KeyStore 里，两者通过 keyRef 关联。
- * 这样配置将来可以安全同步，密钥永远不会离开设备。
+ * 账户同步可以传输配置与密钥的密文；KeyStore 控制本机的密钥缓存方式。
  */
 export function useProviders(
   db: DramatisDb | null,
@@ -106,13 +139,102 @@ export function useProviders(
    * 「点保存就该留住」才符合直觉。想更保守的人随时可以切回「仅本次会话」。
    */
   const [keyMode, setKeyModeState] = useState<KeyStorageMode>('device');
-  const [apiKey, setApiKeyState] = useState('');
-  const [backgroundKey, setBackgroundKey] = useState('');
+  const [keyRead, setKeyRead] = useState<KeyRead | null>(null);
+  const [backgroundRead, setBackgroundRead] = useState<KeyRead | null>(null);
+  const [keyReload, setKeyReload] = useState(0);
   const [keyKind, setKeyKind] = useState<KeyStore['kind']>('memory');
   const [vault, setVault] = useState<VaultSession | null>(null);
   const [vaultExists, setVaultExists] = useState(false);
 
   const keyStoreRef = useRef<KeyStore>(createBrowserKeyStore('session'));
+  const sessionStoreRef = useRef(keyStoreRef.current);
+  const providerKeyStore = useCallback(
+    (mode: KeyStorageMode, session: VaultSession | null = null) =>
+      mode === 'session' ? sessionStoreRef.current : createBrowserKeyStore(mode, session, { strictRead: true }),
+    [],
+  );
+  const keyReadRef = useRef<KeyRead | null>(null);
+  const keyRequestRef = useRef(0);
+  const backgroundRequestRef = useRef(0);
+  const active = profiles.find((profile) => profile.id === activeId) ?? null;
+  const dedicated = profiles.find((profile) => profile.role === 'background') ?? null;
+  const activeProfileId = active?.id ?? null;
+  const activeKeyRef = active?.keyRef ?? null;
+  const backgroundProfileId = dedicated?.id ?? null;
+  const backgroundKeyRef = dedicated?.keyRef ?? null;
+  const activeStamp = useMemo<KeyReadStamp | null>(
+    () =>
+      activeProfileId === null || activeKeyRef === null
+        ? null
+        : {
+            profileId: activeProfileId,
+            keyRef: activeKeyRef,
+            mode: keyMode,
+            vault,
+            db,
+            reload: keyReload,
+          },
+    [activeProfileId, activeKeyRef, keyMode, vault, db, keyReload],
+  );
+  const backgroundStamp = useMemo<KeyReadStamp | null>(
+    () =>
+      backgroundProfileId === null || backgroundKeyRef === null
+        ? null
+        : {
+            profileId: backgroundProfileId,
+            keyRef: backgroundKeyRef,
+            mode: keyMode,
+            vault,
+            db,
+            reload: keyReload,
+          },
+    [backgroundProfileId, backgroundKeyRef, keyMode, vault, db, keyReload],
+  );
+  const activeStampRef = useRef(activeStamp);
+  activeStampRef.current = activeStamp;
+  const backgroundStampRef = useRef(backgroundStamp);
+  backgroundStampRef.current = backgroundStamp;
+  const currentRead = sameKeyStamp(keyRead?.stamp, activeStamp) ? keyRead : null;
+  const keyLoading = activeStamp !== null && currentRead === null;
+  const keyError = currentRead?.error ?? null;
+  const apiKey = currentRead?.error === null ? currentRead.value : '';
+  const backgroundKey =
+    sameKeyStamp(backgroundRead?.stamp, backgroundStamp) && backgroundRead?.error === null ? backgroundRead.value : '';
+
+  const invalidateKeyRead = useCallback(() => {
+    keyRequestRef.current += 1;
+    keyReadRef.current = null;
+    setKeyRead(null);
+  }, []);
+  const reloadApiKey = useCallback(() => {
+    invalidateKeyRead();
+    setKeyReload((value) => value + 1);
+  }, [invalidateKeyRead]);
+  const requireKeyReady = useCallback((stamp: KeyReadStamp | null) => {
+    if (stamp?.mode === 'encrypted' && stamp.vault === null)
+      throw new Error('本机口令库尚未解锁，请先解锁并读取当前配置的 API Key 后再保存。');
+    const read = keyReadRef.current;
+    if (!sameKeyStamp(read?.stamp, stamp) || !sameKeyStamp(stamp, activeStampRef.current)) {
+      throw new Error('当前配置的 API Key 尚未读取完成，请等待后再保存。');
+    }
+    if (read?.error != null) throw new Error(`当前配置的 API Key 读取失败，请重新读取后再保存：${read.error}`);
+  }, []);
+  const publishBackgroundKey = useCallback((stamp: KeyReadStamp, value: string) => {
+    if (!sameKeyStamp(stamp, backgroundStampRef.current)) return;
+    backgroundRequestRef.current += 1;
+    setBackgroundRead({ stamp, value, error: null });
+  }, []);
+  const publishActiveKey = useCallback(
+    (stamp: KeyReadStamp, value: string) => {
+      publishBackgroundKey(stamp, value);
+      if (!sameKeyStamp(stamp, activeStampRef.current)) return;
+      keyRequestRef.current += 1;
+      const read = { stamp, value, error: null };
+      keyReadRef.current = read;
+      setKeyRead(read);
+    },
+    [publishBackgroundKey],
+  );
 
   const refresh = useCallback(async () => {
     if (!db) return [];
@@ -166,7 +288,7 @@ export function useProviders(
 
   // 存储档位 / 口令库 / 当前配置变化时，重建 KeyStore 并把已有密钥读回来
   useEffect(() => {
-    const store = createBrowserKeyStore(keyMode, vault);
+    const store = providerKeyStore(keyMode, vault);
     keyStoreRef.current = store;
     setKeyKind(store.kind);
     /*
@@ -175,28 +297,48 @@ export function useProviders(
      */
     let cancelled = false;
 
-    const profile = profiles.find((item) => item.id === activeId);
-    if (!profile) {
-      setApiKeyState('');
-    } else {
-      void store.get(profile.keyRef).then((secret) => {
-        if (!cancelled) setApiKeyState(secret ?? '');
-      });
-    }
-
-    const backgroundProfile = profiles.find((item) => item.role === 'background');
-    if (!backgroundProfile) {
-      setBackgroundKey('');
-    } else {
-      void store.get(backgroundProfile.keyRef).then((secret) => {
-        if (!cancelled) setBackgroundKey(secret ?? '');
-      });
+    const request = ++keyRequestRef.current;
+    if (activeStamp !== null) {
+      const complete = (value: string, error: string | null) => {
+        if (cancelled || request !== keyRequestRef.current) return;
+        const read = { stamp: activeStamp, value, error };
+        keyReadRef.current = read;
+        setKeyRead(read);
+      };
+      void store
+        .get(activeStamp.keyRef)
+        .then((secret) => complete(secret ?? '', null))
+        .catch((error: unknown) => complete('', error instanceof Error ? error.message : String(error)));
     }
 
     return () => {
       cancelled = true;
     };
-  }, [keyMode, vault, activeId, profiles]);
+  }, [keyMode, vault, activeStamp, providerKeyStore]);
+
+  useEffect(() => {
+    if (backgroundStamp === null) return;
+    const store = providerKeyStore(backgroundStamp.mode, backgroundStamp.vault);
+    const request = ++backgroundRequestRef.current;
+    let cancelled = false;
+    void store
+      .get(backgroundStamp.keyRef)
+      .then((secret) => {
+        if (!cancelled && request === backgroundRequestRef.current)
+          setBackgroundRead({ stamp: backgroundStamp, value: secret ?? '', error: null });
+      })
+      .catch((error: unknown) => {
+        if (!cancelled && request === backgroundRequestRef.current)
+          setBackgroundRead({
+            stamp: backgroundStamp,
+            value: '',
+            error: error instanceof Error ? error.message : String(error),
+          });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [backgroundStamp, providerKeyStore]);
 
   const syncCredential = useCallback(
     async (profile: ProviderProfile, secret: string): Promise<void> => {
@@ -266,6 +408,7 @@ export function useProviders(
         setProfiles(remoteProfiles);
       }
       if (nextActiveId !== activeIdRef.current) {
+        invalidateKeyRead();
         setActiveId(nextActiveId);
         await db.repository.setMeta(META_ACTIVE_PROFILE, nextActiveId);
       }
@@ -274,7 +417,7 @@ export function useProviders(
     return () => {
       cancelled = true;
     };
-  }, [db, keysReady, lastSyncAt, profilesLoaded, sync.status]);
+  }, [db, keysReady, lastSyncAt, profilesLoaded, sync.status, invalidateKeyRead]);
 
   /**
    * 凭据对齐（审计 A10 拆分之二）：
@@ -289,13 +432,14 @@ export function useProviders(
   useEffect(() => {
     if (db === null || sync.status !== 'ready' || profiles.length === 0 || !keysReady) return;
     let cancelled = false;
+    const store = providerKeyStore(keyMode, vault);
 
     void (async () => {
       const credentials = await db.repository.listProviderCredentials();
       const byId = new Map(credentials.map((credential) => [credential.id, credential]));
       for (const profile of profiles) {
         if (cancelled) return;
-        const local = await keyStoreRef.current.get(profile.keyRef);
+        const local = await store.get(profile.keyRef);
         if (local !== null && local !== '') {
           if (!byId.has(profile.keyRef)) await syncCredential(profile, local);
           continue;
@@ -306,17 +450,44 @@ export function useProviders(
         const opened = await sync.openSecret(profile.keyRef, credential.revision, credential.encryptedSecret);
         if (cancelled) return;
         if (opened === null || opened === '') continue;
-        await keyStoreRef.current.set(profile.keyRef, opened);
+        await store.set(profile.keyRef, opened);
         if (cancelled) return;
-        if (profile.id === activeIdRef.current) setApiKeyState(opened);
-        if (profile.role === 'background') setBackgroundKey(opened);
+        if (
+          activeStamp !== null &&
+          profile.id === activeStamp.profileId &&
+          sameKeyStamp(activeStamp, activeStampRef.current)
+        ) {
+          keyRequestRef.current += 1;
+          const read = { stamp: activeStamp, value: opened, error: null };
+          keyReadRef.current = read;
+          setKeyRead(read);
+        }
+        if (backgroundStamp !== null && profile.id === backgroundStamp.profileId) {
+          publishBackgroundKey(backgroundStamp, opened);
+        }
       }
-    })();
+    })().catch(() => {
+      // 当前配置的本机读取错误由上面的 Key 加载状态显示；同步不把失败冒充空 Key。
+    });
 
     return () => {
       cancelled = true;
     };
-  }, [db, keysReady, lastSyncAt, profiles, sync.openSecret, sync.status, syncCredential]);
+  }, [
+    db,
+    keysReady,
+    keyMode,
+    vault,
+    activeStamp,
+    backgroundStamp,
+    lastSyncAt,
+    profiles,
+    sync.openSecret,
+    sync.status,
+    syncCredential,
+    providerKeyStore,
+    publishBackgroundKey,
+  ]);
 
   /**
    * 解开本机的口令库（顺序 10）。
@@ -324,14 +495,19 @@ export function useProviders(
    * 解开之后把 KeyStore 换成库里的那份，界面上的「已连接」状态跟着变——
    * 这一条与「存进去」是两件事：库在盘上，钥匙在口令里。
    */
-  const unlockVault = useCallback(async (passphrase: string) => {
-    const opened = await openBrowserVault(passphrase);
-    setVault(opened);
-    setVaultExists(true);
-  }, []);
+  const unlockVault = useCallback(
+    async (passphrase: string) => {
+      const opened = await openBrowserVault(passphrase);
+      invalidateKeyRead();
+      setVault(opened);
+      setVaultExists(true);
+    },
+    [invalidateKeyRead],
+  );
 
   const selectProfile = useCallback(
     async (id: string) => {
+      if (id !== activeId) invalidateKeyRead();
       setActiveId(id);
       await db?.repository.setMeta(META_ACTIVE_PROFILE, id);
       const next = profiles.map((profile) =>
@@ -344,7 +520,7 @@ export function useProviders(
         await db?.repository.saveProviderProfile(profile);
       }
     },
-    [db, profiles],
+    [activeId, db, profiles, invalidateKeyRead],
   );
 
   const addProfile = useCallback(
@@ -389,27 +565,31 @@ export function useProviders(
 
   const setApiKey = useCallback(
     async (value: string) => {
-      setApiKeyState(value);
+      requireKeyReady(activeStamp);
       const profile = profiles.find((item) => item.id === activeId);
       if (!profile) return;
 
       if (value === '') {
         await keyStoreRef.current.remove(profile.keyRef);
+        if (activeStamp !== null) publishActiveKey(activeStamp, '');
         await syncCredential(profile, '');
         return;
       }
       await keyStoreRef.current.set(profile.keyRef, value);
+      if (activeStamp !== null) publishActiveKey(activeStamp, value);
       await syncCredential(profile, value);
     },
-    [activeId, profiles, syncCredential],
+    [activeId, activeStamp, profiles, syncCredential, requireKeyReady, publishActiveKey],
   );
 
   const setKeyMode = useCallback(
     async (mode: KeyStorageMode) => {
+      if (mode === keyMode) return;
+      invalidateKeyRead();
       setKeyModeState(mode);
       await db?.repository.setMeta(META_KEY_MODE, mode);
     },
-    [db],
+    [db, keyMode, invalidateKeyRead],
   );
 
   const commitConfig = useCallback(
@@ -422,6 +602,7 @@ export function useProviders(
       if (!db) return;
       const profile = profiles.find((item) => item.id === activeId);
       if (!profile) return;
+      requireKeyReady(activeStamp);
 
       /*
        * 口令加密那一档（顺序 10）：先把库备好，再往里写。
@@ -431,6 +612,7 @@ export function useProviders(
        * 口令不对就抛出去——宁可让用户再打一遍，也不能把 Key 写进一个解不开的库。
        */
       let target: KeyStore | null = null;
+      let targetVault = vault;
       if (input.keyMode === 'encrypted') {
         const passphrase = input.vaultPassphrase ?? '';
         if (passphrase.trim() === '') {
@@ -441,16 +623,21 @@ export function useProviders(
           await createVault(browserVaultStorage(), passphrase);
           return openBrowserVault(passphrase);
         });
-        setVault(opened);
-        setVaultExists(true);
+        targetVault = opened;
         target = opened.store;
       }
 
       // 先按目标档位把密钥写好，再切换档位：KeyStore 的重建发生在下次渲染之后，
       // 直接调用 setApiKey 会写进旧的存储实例
-      const store = target ?? createBrowserKeyStore(input.keyMode);
+      const store = target ?? providerKeyStore(input.keyMode);
       if (input.apiKey.trim() === '') await store.remove(profile.keyRef);
       else await store.set(profile.keyRef, input.apiKey);
+
+      // A 的保存可以完成其自身写入，但不能把晚到结果发布到已选中的 B。
+      // 档位是账户级状态；切换途中也不能让旧操作改变新配置的缓存方式。
+      const stillCurrent = sameKeyStamp(activeStamp, activeStampRef.current);
+      if (!stillCurrent && input.keyMode !== keyMode)
+        throw new Error('保存期间当前模型配置已变化，缓存方式未切换。请重新打开对应配置检查后保存。');
 
       if (input.keyMode !== keyMode) {
         /*
@@ -458,17 +645,40 @@ export function useProviders(
          * 否则用户以为已经收回了（换成密文 / 只留内存），磁盘上其实还留着。
          */
         if (keyMode === 'device') await createBrowserKeyStore('device').remove(profile.keyRef);
-        setKeyModeState(input.keyMode);
+        if (!sameKeyStamp(activeStamp, activeStampRef.current))
+          throw new Error('保存期间当前模型配置已变化，缓存方式未切换。请重新打开对应配置检查后保存。');
         await db.repository.setMeta(META_KEY_MODE, input.keyMode);
+        // 档位属于整个账户，落库成功后保持状态一致；当前配置的 Key 由读取 effect 获取。
+        setKeyModeState(input.keyMode);
       }
 
-      keyStoreRef.current = store;
-      setKeyKind(store.kind);
-      setApiKeyState(input.apiKey);
+      if (sameKeyStamp(activeStamp, activeStampRef.current)) {
+        keyStoreRef.current = store;
+        setKeyKind(store.kind);
+        if (targetVault !== vault) {
+          setVault(targetVault);
+          setVaultExists(true);
+        }
+      }
+      if (activeStamp !== null && input.keyMode === keyMode && targetVault === vault)
+        publishActiveKey(activeStamp, input.apiKey);
+      // 更换档位／解锁后由身份不同的读取 effect 从同一个 store 重读。
       await updateProfile(profile.id, input.profile);
       await syncCredential(profile, input.apiKey);
     },
-    [activeId, db, keyMode, profiles, syncCredential, updateProfile],
+    [
+      activeId,
+      activeStamp,
+      db,
+      keyMode,
+      profiles,
+      syncCredential,
+      updateProfile,
+      requireKeyReady,
+      vault,
+      providerKeyStore,
+      publishActiveKey,
+    ],
   );
 
   /**
@@ -505,6 +715,9 @@ export function useProviders(
       activeId,
       active: profiles.find((item) => item.id === activeId) ?? null,
       apiKey,
+      keyLoading,
+      keyError,
+      reloadApiKey,
       keyMode,
       keyKind,
       vaultExists,
@@ -523,6 +736,9 @@ export function useProviders(
       activeId,
       addProfile,
       apiKey,
+      keyLoading,
+      keyError,
+      reloadApiKey,
       background,
       commitConfig,
       deleteProfile,

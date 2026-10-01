@@ -1,4 +1,5 @@
 import { createMemoryKeyStore, hasVault, type KeyStore, openVault, readVault, type VaultStorage } from '@dramatis/core';
+import { createSerialQueue, withCrossTabLock } from './sync-queue';
 
 /**
  * 密钥存储模式（ROADMAP P2-8）。
@@ -15,9 +16,15 @@ export type KeyStorageMode = 'session' | 'device' | 'encrypted';
 const STORAGE_KEY = 'dramatis.keys.v1';
 /** 口令库（密文）放这儿：与明文那档**不同的键**，两者不会互相覆盖。 */
 const VAULT_KEY = 'dramatis.vault.v1';
+const browserVaultQueue = createSerialQueue();
+
+function runBrowserVaultMutation<T>(task: () => Promise<T>): Promise<T> {
+  return browserVaultQueue.run(() => withCrossTabLock('dramatis-key-vault', task));
+}
 
 /** 浏览器里的口令库文件。 */
 const vaultStorage: VaultStorage = {
+  runExclusive: runBrowserVaultMutation,
   async read() {
     try {
       return localStorage.getItem(VAULT_KEY);
@@ -37,13 +44,23 @@ export function browserVaultStorage(): VaultStorage {
   return vaultStorage;
 }
 
-function readAll(): Record<string, string> {
+function readAll(strict = false): Record<string, string> {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (raw === null) return {};
     const parsed = JSON.parse(raw) as unknown;
+    if (
+      strict &&
+      (typeof parsed !== 'object' ||
+        parsed === null ||
+        Array.isArray(parsed) ||
+        Object.values(parsed).some((value) => typeof value !== 'string'))
+    ) {
+      throw new Error('本机密钥缓存格式无法识别，请检查浏览器存储后重试。');
+    }
     return typeof parsed === 'object' && parsed !== null ? (parsed as Record<string, string>) : {};
-  } catch {
+  } catch (error) {
+    if (strict) throw error;
     return {};
   }
 }
@@ -60,13 +77,58 @@ function writeAll(values: Record<string, string>): void {
  * 硬删除账户时清掉这些 ref 的本机缓存。
  *
  * 两个地方都要看：明文档在 `dramatis.keys.v1`，口令档在 `dramatis.vault.v1`。
- * 口令库不需要口令也能删条目（删除不涉及解密；库损坏时也不能阻止账户删除）。
+ * 口令库不需要口令也能删条目。删除路径必须明确确认读取、写入成功；
+ * 失败由账户待删队列保留并重试，不沿用普通保存的会话降级策略。
  */
-export async function removeBrowserKeyRefs(refs: readonly string[]): Promise<void> {
+export function removeBrowserKeyRefs(refs: readonly string[]): Promise<void> {
   const unique = [...new Set(refs)].filter((ref) => ref !== '');
-  if (unique.length === 0) return;
+  if (unique.length === 0) return Promise.resolve();
+  return runBrowserVaultMutation(() => removeBrowserKeyRefsLocked(unique));
+}
 
-  const all = readAll();
+async function removeBrowserKeyRefsLocked(unique: readonly string[]): Promise<void> {
+  let vaultSnapshot: string | null = null;
+  const strictVaultStorage: VaultStorage = {
+    async read() {
+      const value = localStorage.getItem(VAULT_KEY);
+      vaultSnapshot = value;
+      if (value !== null && value.trim() !== '') {
+        const record = JSON.parse(value) as { secrets?: unknown } | null;
+        if (
+          record === null ||
+          typeof record.secrets !== 'object' ||
+          record.secrets === null ||
+          Array.isArray(record.secrets)
+        ) {
+          throw new Error('本机口令库条目无法读取，账户清理未完成。');
+        }
+      }
+      return value;
+    },
+    write: vaultStorage.write,
+  };
+  // readVault 的接口异步、底层 localStorage 同步。等待后若文件变了就验证
+  // 最新版本，不能把验证前的快照写回覆盖其他标签页新保存的引用。
+  let file: Awaited<ReturnType<typeof readVault>> = null;
+  let stable = false;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    file = await readVault(strictVaultStorage);
+    if (localStorage.getItem(VAULT_KEY) === vaultSnapshot) {
+      stable = true;
+      break;
+    }
+  }
+  if (!stable) throw new Error('本机口令库正在被其他页面修改，账户清理未完成，请稍后重试。');
+  if (file !== null && (typeof navigator === 'undefined' || typeof navigator.locks?.request !== 'function')) {
+    throw new Error('此浏览器不支持安全清理口令库。请关闭其他标签页，换用支持清理锁的浏览器后重试。');
+  }
+  // 从这里到两个提交之间没有 await；明文缓存也必须使用所有异步读取结束后的最新值。
+  const raw = localStorage.getItem(STORAGE_KEY);
+  const parsed: unknown = raw === null ? {} : JSON.parse(raw);
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+    throw new Error('本机密钥缓存格式无法识别，账户清理未完成。');
+  }
+  const all = parsed as Record<string, string>;
   let plainChanged = false;
   for (const ref of unique) {
     if (Object.hasOwn(all, ref)) {
@@ -74,11 +136,9 @@ export async function removeBrowserKeyRefs(refs: readonly string[]): Promise<voi
       plainChanged = true;
     }
   }
-  if (plainChanged) writeAll(all);
+  if (plainChanged) localStorage.setItem(STORAGE_KEY, JSON.stringify(all));
 
-  try {
-    const file = await readVault(vaultStorage);
-    if (file === null) return;
+  if (file !== null) {
     let vaultChanged = false;
     for (const ref of unique) {
       if (Object.hasOwn(file.secrets, ref)) {
@@ -86,17 +146,20 @@ export async function removeBrowserKeyRefs(refs: readonly string[]): Promise<voi
         vaultChanged = true;
       }
     }
-    if (vaultChanged) await vaultStorage.write(JSON.stringify(file));
-  } catch {
-    // 坏掉的本地口令库不能挡住账户硬删除；数据库与明文缓存已经清理。
+    if (vaultChanged) {
+      if (localStorage.getItem(VAULT_KEY) !== vaultSnapshot) {
+        throw new Error('本机口令库已被其他页面修改，账户清理未完成，请稍后重试。');
+      }
+      localStorage.setItem(VAULT_KEY, JSON.stringify(file));
+    }
   }
 }
 
-function createDeviceKeyStore(): KeyStore {
+function createDeviceKeyStore(strictRead = false): KeyStore {
   return {
     kind: 'plain',
     async get(ref) {
-      return readAll()[ref] ?? null;
+      return readAll(strictRead)[ref] ?? null;
     },
     async set(ref, secret) {
       const all = readAll();
@@ -124,9 +187,13 @@ export interface VaultSession {
   passphrase: string;
 }
 
-export function createBrowserKeyStore(mode: KeyStorageMode, vault: VaultSession | null = null): KeyStore {
+export function createBrowserKeyStore(
+  mode: KeyStorageMode,
+  vault: VaultSession | null = null,
+  options: { strictRead?: boolean } = {},
+): KeyStore {
   if (mode === 'session') return createMemoryKeyStore();
-  if (mode === 'device') return createDeviceKeyStore();
+  if (mode === 'device') return createDeviceKeyStore(options.strictRead === true);
   if (vault !== null) return vault.store;
 
   /*
@@ -168,7 +235,7 @@ export function describeKeyStore(kind: KeyStore['kind']): string {
     case 'memory':
       return '仅本次会话，关闭页面后需要重新填写';
     case 'plain':
-      return '明文保存在本机浏览器，不参与同步，换设备需重填';
+      return '明文保存在本机浏览器，关闭页面后仍可读取；账户同步传输的是密文。';
     case 'encrypted':
       return '口令加密后保存在本机：盘上是密文，每次打开应用要用口令解锁（忘记就只能重填 Key）';
     case 'os':

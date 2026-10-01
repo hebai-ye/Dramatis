@@ -1,10 +1,13 @@
 import type { SyncDeviceSummary } from '@dramatis/core';
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { accountLeaveGuard, copyRecoveryCode, createAccountOperationGate } from '../lib/account-ui';
 import { formatTime } from '../lib/format';
 import type { KeyStorageMode } from '../lib/keystore';
 import { MIN_PASSWORD_LENGTH, passwordStrengthHint } from '../lib/password-policy';
-import { parseSnapshot, type ServerSnapshot, SNAPSHOT_REMIND_MS } from '../lib/snapshot';
+import { protectUnsavedRecovery } from '../lib/recovery-protection';
+import { parseSnapshot, SNAPSHOT_REMIND_MS } from '../lib/snapshot';
 import { describeReport, type SyncApi } from '../lib/sync';
+import { useDialogActions } from './DialogShell';
 
 interface Props {
   api: SyncApi;
@@ -26,16 +29,6 @@ function describeDevices(overridden: readonly { deviceId: string }[]): string {
     .join('、')}${ids.length > 2 ? ` 等 ${String(ids.length)} 台` : ''}）`;
 }
 
-/** 复制恢复码：非 https / 没授权时如实说，别假装成功。 */
-async function copyRecoveryCode(code: string): Promise<boolean> {
-  try {
-    await navigator.clipboard.writeText(code);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 /**
  * 同步面板（P2-6 第四步·界面）。
  *
@@ -47,6 +40,16 @@ async function copyRecoveryCode(code: string): Promise<boolean> {
  * 2. 服务端只存密文，解不开内容。
  */
 export function SyncPanel({ api, disabled }: Props) {
+  const { requestAction, setGuard } = useDialogActions();
+  const [operation, setOperation] = useState<string | null>(null);
+  const operationGate = useRef(createAccountOperationGate());
+  const latestRecovery = useRef(api.recoveryCode);
+  latestRecovery.current = api.recoveryCode;
+  useEffect(() => protectUnsavedRecovery(() => latestRecovery.current, window), []);
+  const [passwordConfirm, setPasswordConfirm] = useState(false);
+  const passwordConfirmButton = useRef<HTMLButtonElement>(null);
+  const passwordTrigger = useRef<HTMLButtonElement>(null);
+  const recoveryRegion = useRef<HTMLElement>(null);
   const [endpoint, setEndpoint] = useState(api.config?.endpoint ?? '');
   const [userId, setUserId] = useState(api.config?.userId ?? '');
   const [secret, setSecret] = useState('');
@@ -55,9 +58,27 @@ export function SyncPanel({ api, disabled }: Props) {
   const [devices, setDevices] = useState<{ devices: SyncDeviceSummary[]; localDeviceId: string } | null>(null);
   const [newPassword, setNewPassword] = useState('');
   /** 顺序 17：服务端快照的状态（文件选择走隐藏的 input，与「导入素材」同一套做法）。 */
-  const [snapshotBusy, setSnapshotBusy] = useState(false);
+  const snapshotBusy = operation === '正在导出服务端快照' || operation === '正在恢复服务端快照';
   const [snapshotNotice, setSnapshotNotice] = useState<string | null>(null);
   const snapshotInput = useRef<HTMLInputElement | null>(null);
+  const busy = api.busy || snapshotBusy || operation !== null;
+
+  useEffect(() => {
+    setGuard(
+      accountLeaveGuard(
+        operation ?? (api.busy ? '正在同步' : snapshotBusy ? '正在处理快照' : null),
+        api.recoveryCode,
+        api.dismissRecoveryCode,
+      ),
+    );
+    return () => setGuard(null);
+  }, [operation, api.busy, snapshotBusy, api.recoveryCode, api.dismissRecoveryCode, setGuard]);
+  useEffect(() => {
+    if (passwordConfirm) passwordConfirmButton.current?.focus();
+  }, [passwordConfirm]);
+  useEffect(() => {
+    if (api.recoveryCode !== null) recoveryRegion.current?.focus();
+  }, [api.recoveryCode]);
 
   /** 上次存快照过去多久了（没存过就是「还没存过」）。 */
   const snapshotAge = ((): string => {
@@ -74,15 +95,12 @@ export function SyncPanel({ api, disabled }: Props) {
     api.config?.lastSnapshotAt === undefined ||
     Date.now() - new Date(api.config.lastSnapshotAt).getTime() > SNAPSHOT_REMIND_MS;
 
-  const loadDevices = async (): Promise<void> => {
-    try {
+  const loadDevices = (): Promise<void> =>
+    run(async () => {
       setDevices(await api.listDevices());
-    } catch (error) {
-      setNotice({ ok: false, message: error instanceof Error ? error.message : String(error) });
-    }
-  };
+    }, '正在读取设备列表');
   const [notice, setNotice] = useState<{ ok: boolean; message: string } | null>(null);
-  const [recoveryCopied, setRecoveryCopied] = useState(false);
+  const [copyNotice, setCopyNotice] = useState<{ ok: boolean; message: string } | null>(null);
 
   const connected = api.config !== null;
 
@@ -96,18 +114,32 @@ export function SyncPanel({ api, disabled }: Props) {
    */
   const sameOriginEndpoint = `${window.location.origin}/sync`;
 
-  const run = async (action: () => Promise<void>): Promise<void> => {
-    setNotice(null);
+  const run = async (action: () => Promise<void>, label = '正在处理同步操作'): Promise<void> => {
+    if (disabled || api.busy) return;
     try {
-      await action();
-      setSecret('');
+      await operationGate.current.run(
+        async () => {
+          setNotice(null);
+          await action();
+          setSecret('');
+        },
+        (pending) => {
+          setOperation(pending ? label : null);
+          setGuard(accountLeaveGuard(pending ? label : null, latestRecovery.current, api.dismissRecoveryCode));
+        },
+      );
     } catch (error) {
       setNotice({ ok: false, message: error instanceof Error ? error.message : String(error) });
     }
   };
 
   return (
-    <div className="stack">
+    <div className="stack" aria-busy={busy}>
+      {operation === null ? null : (
+        <p className="notice" role="status">
+          {operation}…
+        </p>
+      )}
       {connected ? null : (
         <>
           <p className="hint">
@@ -119,7 +151,7 @@ export function SyncPanel({ api, disabled }: Props) {
             <input
               id="sync-endpoint"
               value={endpoint}
-              disabled={disabled || api.busy}
+              disabled={disabled || busy}
               /* 手机上别自动大写、别自动纠正：地址里没有大写，改错了很难看出来 */
               inputMode="url"
               autoCapitalize="none"
@@ -131,7 +163,7 @@ export function SyncPanel({ api, disabled }: Props) {
             <button
               type="button"
               className="ghost"
-              disabled={disabled || api.busy || endpoint === sameOriginEndpoint}
+              disabled={disabled || busy || endpoint === sameOriginEndpoint}
               onClick={() => setEndpoint(sameOriginEndpoint)}
             >
               用本站地址（{sameOriginEndpoint}）
@@ -143,7 +175,7 @@ export function SyncPanel({ api, disabled }: Props) {
             <input
               id="sync-user"
               value={userId}
-              disabled={disabled || api.busy || connected}
+              disabled={disabled || busy || connected}
               autoCapitalize="none"
               autoCorrect="off"
               spellCheck={false}
@@ -159,7 +191,7 @@ export function SyncPanel({ api, disabled }: Props) {
               id="sync-secret"
               type="password"
               value={secret}
-              disabled={disabled || api.busy}
+              disabled={disabled || busy}
               autoCapitalize="none"
               autoCorrect="off"
               spellCheck={false}
@@ -176,7 +208,7 @@ export function SyncPanel({ api, disabled }: Props) {
             <select
               id="sync-keymode"
               value={keyMode}
-              disabled={disabled || api.busy}
+              disabled={disabled || busy}
               onChange={(event) => setKeyMode(event.target.value as KeyStorageMode)}
             >
               <option value="session">仅本次会话（最安全，重开要重填）</option>
@@ -193,27 +225,79 @@ export function SyncPanel({ api, disabled }: Props) {
       */}
       {connected ? (
         <div className="sync-primary">
-          <button type="button" disabled={disabled || api.busy} onClick={() => void run(api.syncNow)}>
-            {api.busy ? '同步中…' : '同步'}
+          <button type="button" disabled={disabled || busy} onClick={() => void run(api.syncNow, '正在同步')}>
+            {busy ? '同步操作进行中…' : '立即同步'}
           </button>
           <p className="hint">
             {api.status === 'needs-secret'
               ? '这个账户还没解锁：到「账户」里点它卡片上的「输入密码」。'
-              : `上次同步 ${formatTime(api.config?.lastSyncAt ?? null, '还没同步过')} · ${describeReport(api.config?.lastReport ?? null)}`}
+              : api.status === 'error'
+                ? '上次同步未成功，请查看错误后重试。'
+                : `上次同步 ${formatTime(api.config?.lastSyncAt ?? null, '还没同步过')} · ${describeReport(api.config?.lastReport ?? null)}`}
           </p>
         </div>
       ) : (
         <div className="save-bar">
           <button
             type="button"
-            disabled={disabled || api.busy}
-            onClick={() => void run(() => api.connect({ endpoint, userId, secret, keyMode }))}
+            disabled={disabled || busy}
+            onClick={() => void run(() => api.connect({ endpoint, userId, secret, keyMode }), '正在连接同步空间')}
           >
             开通 / 加入并同步
           </button>
         </div>
       )}
 
+      {api.error === null ? null : (
+        <div className="notice error" role="alert">
+          {api.error}
+        </div>
+      )}
+      {api.spaceFull ? (
+        <div className="notice warn" role="status">
+          服务器空间已满，新数据暂未上传。本机数据仍保留；请先在设置中的数据页导出备份，再处理服务器容量。
+        </div>
+      ) : null}
+      {notice === null ? null : (
+        <div className={notice.ok ? 'notice' : 'notice error'} role={notice.ok ? 'status' : 'alert'}>
+          {notice.message}
+        </div>
+      )}
+      {api.recoveryCode === null ? null : (
+        <section ref={recoveryRegion} className="notice warn" tabIndex={-1} aria-label="请安全保存恢复码">
+          <strong>恢复码只显示这一次</strong>
+          <p className="hint">忘记账户密码时，可使用恢复码登录和解开数据。先安全保存，再离开此页面。</p>
+          <code className="recovery-code">{api.recoveryCode}</code>
+          <div className="save-bar">
+            <button
+              type="button"
+              className="ghost"
+              disabled={disabled || busy}
+              onClick={() => {
+                void copyRecoveryCode(api.recoveryCode ?? '', navigator.clipboard).then(setCopyNotice);
+              }}
+            >
+              复制恢复码
+            </button>
+            <button
+              type="button"
+              disabled={disabled || busy}
+              onClick={() => {
+                api.dismissRecoveryCode();
+                setGuard(null);
+                setCopyNotice(null);
+              }}
+            >
+              我已安全保存
+            </button>
+          </div>
+          {copyNotice === null ? null : (
+            <p className={copyNotice.ok ? 'hint' : 'hint warn'} role="status">
+              {copyNotice.message}
+            </p>
+          )}
+        </section>
+      )}
       {/* 下面是「高级」：日常只需要上面那颗同步按钮 */}
       <details className="sync-advanced">
         <summary>高级</summary>
@@ -223,7 +307,7 @@ export function SyncPanel({ api, disabled }: Props) {
             <select
               id="sync-keymode-advanced"
               value={keyMode}
-              disabled={disabled || api.busy}
+              disabled={disabled || busy}
               onChange={(event) => setKeyMode(event.target.value as KeyStorageMode)}
             >
               <option value="session">仅本次会话（最安全，重开要重填）</option>
@@ -232,8 +316,8 @@ export function SyncPanel({ api, disabled }: Props) {
             <button
               type="button"
               className="ghost"
-              disabled={api.busy}
-              onClick={() => void run(async () => api.setKeyMode(keyMode))}
+              disabled={disabled || busy}
+              onClick={() => void run(async () => api.setKeyMode(keyMode), '正在更新密码保存方式')}
             >
               保存方式生效
             </button>
@@ -302,42 +386,6 @@ export function SyncPanel({ api, disabled }: Props) {
           </ul>
         ) : null}
 
-        {api.recoveryCode !== null ? (
-          <div className="notice">
-            <p>
-              <strong>恢复码（只显示这一次，请抄到安全的地方）：</strong>
-            </p>
-            {/*
-            手机上「抄下来」多半是复制粘贴，所以给一键复制 + 等宽大字 + 可选中；
-            抄错一位等于丢了这条线，值得把这一步做顺。
-          */}
-            <p className="recovery-code">{api.recoveryCode}</p>
-            <button
-              type="button"
-              className="ghost"
-              onClick={() => {
-                void copyRecoveryCode(api.recoveryCode ?? '').then((ok) => {
-                  setRecoveryCopied(ok);
-                  if (!ok) {
-                    setNotice({
-                      ok: false,
-                      message: '这个浏览器不让复制（可能是非 https 或没给剪贴板权限），请手动选中上面那串。',
-                    });
-                  }
-                });
-              }}
-            >
-              {recoveryCopied ? '已复制 ✓' : '复制恢复码'}
-            </button>
-            <p className="hint">
-              忘了同步密码时，它就是你的密码（一样能解开数据、一样能登录）。丢了就只剩封存文件那条路。
-            </p>
-            <button type="button" className="ghost" onClick={api.dismissRecoveryCode}>
-              我抄好了
-            </button>
-          </div>
-        ) : null}
-
         {/*
         顺序 11：服务端上的空间没了（被清过库、或者换了服务器），客户端只会报一句
         「服务端上没有这个空间了」——用户不知道下一步该干嘛。这里把路指出来：
@@ -373,7 +421,6 @@ export function SyncPanel({ api, disabled }: Props) {
             </p>
           </div>
         ) : null}
-        {notice !== null ? <div className={notice.ok ? 'notice' : 'notice error'}>{notice.message}</div> : null}
 
         {/* ---------- 顺序 17：服务端快照（存一份 / 灌回去）---------- */}
         {connected ? (
@@ -391,23 +438,18 @@ export function SyncPanel({ api, disabled }: Props) {
             <div className="save-bar">
               <button
                 type="button"
-                disabled={api.busy || snapshotBusy}
+                disabled={disabled || busy}
                 title="从服务端把所有记录（密文）拉下来存成一个文件"
                 onClick={() => {
-                  setSnapshotNotice(null);
-                  setSnapshotBusy(true);
-                  void api
-                    .exportSnapshot()
-                    .then((result) => {
-                      if (result === null) return;
-                      setSnapshotNotice(
-                        `存好了：${String(result.records)} 条记录，${(result.bytes / 1024).toFixed(0)} KB`,
-                      );
-                    })
-                    .catch((error: unknown) =>
-                      setSnapshotNotice(error instanceof Error ? error.message : String(error)),
-                    )
-                    .finally(() => setSnapshotBusy(false));
+                  void run(async () => {
+                    setSnapshotNotice(null);
+                    const result = await api.exportSnapshot();
+                    setSnapshotNotice(
+                      result === null
+                        ? '已取消保存快照。'
+                        : `存好了：${String(result.records)} 条记录，${(result.bytes / 1024).toFixed(0)} KB`,
+                    );
+                  }, '正在导出服务端快照');
                 }}
               >
                 {snapshotBusy ? '正在拉…' : '存一份服务端快照'}
@@ -415,7 +457,7 @@ export function SyncPanel({ api, disabled }: Props) {
               <button
                 type="button"
                 className="ghost"
-                disabled={api.busy || snapshotBusy}
+                disabled={disabled || busy}
                 title="选一个快照文件，把它的记录原样推回服务端（服务端被清空后用）"
                 onClick={() => snapshotInput.current?.click()}
               >
@@ -431,18 +473,19 @@ export function SyncPanel({ api, disabled }: Props) {
                 const file = event.target.files?.[0];
                 event.target.value = '';
                 if (file === undefined) return;
-                setSnapshotNotice(null);
-                setSnapshotBusy(true);
-                void file
-                  .text()
-                  .then((text) => parseSnapshot(text))
-                  .then((snapshot: ServerSnapshot) => api.restoreSnapshot(snapshot))
-                  .then((result) => setSnapshotNotice(`灌回去了：${String(result.pushed)} 条记录`))
-                  .catch((error: unknown) => setSnapshotNotice(error instanceof Error ? error.message : String(error)))
-                  .finally(() => setSnapshotBusy(false));
+                void run(async () => {
+                  setSnapshotNotice(null);
+                  const snapshot = parseSnapshot(await file.text());
+                  const result = await api.restoreSnapshot(snapshot);
+                  setSnapshotNotice(`灌回去了：${String(result.pushed)} 条记录`);
+                }, '正在恢复服务端快照');
               }}
             />
-            {snapshotNotice === null ? null : <p className="hint">{snapshotNotice}</p>}
+            {snapshotNotice === null ? null : (
+              <p className="hint" role="status">
+                {snapshotNotice}
+              </p>
+            )}
           </div>
         ) : null}
 
@@ -451,13 +494,22 @@ export function SyncPanel({ api, disabled }: Props) {
             <button
               type="button"
               className="ghost"
-              disabled={api.busy}
+              disabled={disabled || busy}
               title="把本机的拉取游标清掉，从服务端完整拉一遍。本地数据与服务端数据都不会被删。"
-              onClick={() => void run(api.resync)}
+              onClick={() => void run(api.resync, '正在完整拉取同步数据')}
             >
               重新拉一遍
             </button>
-            <button type="button" className="ghost danger" disabled={api.busy} onClick={() => void run(api.disconnect)}>
+            <button
+              type="button"
+              className="ghost danger"
+              disabled={disabled || busy}
+              onClick={() =>
+                requestAction(() => {
+                  void run(api.disconnect, '正在断开同步');
+                })
+              }
+            >
               断开同步（不影响本机数据，也不会删除服务端的数据）
             </button>
           </div>
@@ -472,7 +524,7 @@ export function SyncPanel({ api, disabled }: Props) {
               换完之后只知道旧密码的设备再也同步不了，你手上的其它设备用新密码重连即可。 恢复码不受影响。
             </p>
             <div className="save-bar">
-              <button type="button" className="ghost" disabled={api.busy} onClick={() => void loadDevices()}>
+              <button type="button" className="ghost" disabled={disabled || busy} onClick={() => void loadDevices()}>
                 {devices === null ? '看有哪些设备' : '刷新设备列表'}
               </button>
             </div>
@@ -494,12 +546,12 @@ export function SyncPanel({ api, disabled }: Props) {
             )}
 
             <div className="field">
-              <label htmlFor="sync-new-password">换同步密码（= 让旧密码失效）</label>
+              <label htmlFor="sync-new-password">更换账户密码（同步也用它）</label>
               <input
                 id="sync-new-password"
                 type="password"
                 value={newPassword}
-                disabled={api.busy}
+                disabled={disabled || busy}
                 autoComplete="off"
                 placeholder="新密码（至少 6 位）"
                 onChange={(event) => setNewPassword(event.target.value)}
@@ -510,28 +562,51 @@ export function SyncPanel({ api, disabled }: Props) {
             </div>
             <div className="save-bar">
               <button
+                ref={passwordTrigger}
                 type="button"
-                disabled={api.busy || newPassword.trim().length < MIN_PASSWORD_LENGTH}
+                disabled={disabled || busy || newPassword.trim().length < MIN_PASSWORD_LENGTH}
                 title="换完之后只知道旧密码的设备会同步不了；恢复码仍然有效"
-                onClick={() => {
-                  if (
-                    !window.confirm(
-                      '换同步密码？换完之后，只知道旧密码的设备会同步不了（这就是「断开」）。恢复码仍然有效。',
-                    )
-                  ) {
-                    return;
-                  }
-                  void run(async () => {
-                    await api.rotatePassword(newPassword);
-                    setNewPassword('');
-                    setNotice({ ok: true, message: '换好了。其它设备请用新密码重新连接。' });
-                  });
-                }}
+                onClick={() => requestAction(() => setPasswordConfirm(true))}
               >
                 换密码
               </button>
               <span className="hint">本机不用重连（凭证已经就地换掉了）</span>
             </div>
+            {passwordConfirm ? (
+              <fieldset className="notice warn">
+                <legend>确认更换账户密码？</legend>
+                <p>只知道旧密码的其他设备将无法继续同步，需用新密码重新登录。恢复码仍有效，本机凭证会同步更新。</p>
+                <div className="save-bar">
+                  <button
+                    ref={passwordConfirmButton}
+                    type="button"
+                    disabled={disabled || busy}
+                    onClick={() => {
+                      void run(async () => {
+                        await api.rotatePassword(newPassword);
+                        setNewPassword('');
+                        setPasswordConfirm(false);
+                        setNotice({ ok: true, message: '账户密码已更换。其他设备请用新密码重新登录。' });
+                        passwordTrigger.current?.focus();
+                      }, '正在更换账户密码');
+                    }}
+                  >
+                    确认更换密码
+                  </button>
+                  <button
+                    type="button"
+                    className="ghost"
+                    disabled={disabled || busy}
+                    onClick={() => {
+                      setPasswordConfirm(false);
+                      passwordTrigger.current?.focus();
+                    }}
+                  >
+                    取消
+                  </button>
+                </div>
+              </fieldset>
+            ) : null}
           </div>
         ) : null}
       </details>

@@ -38,7 +38,8 @@ import {
   type WorldBookId,
 } from '@dramatis/core';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { type DramatisDb, openDramatisDb } from './db';
+import { type DramatisDb, openDramatisDb, pendingAccountDeletionCount } from './db';
+import { type DeletionFeedback, deleteWithFeedback } from './deletion-feedback';
 import { revertTurnWrites, rewriteTurnWrites } from './turn-write';
 import { createInstanceFor, createSceneFor } from './world';
 
@@ -54,6 +55,7 @@ export interface BootReport {
    */
   recoveredImports: number;
   migrationsApplied: number;
+  pendingAccountDeletions: number;
 }
 
 /** 一条对话的只读素材包：导出正文、抓原句都用它。 */
@@ -107,6 +109,7 @@ export function useDatabase(): {
           recoveredTasks,
           recoveredImports: interrupted.rooms.length,
           migrationsApplied: migration.applied.length,
+          pendingAccountDeletions: pendingAccountDeletionCount(),
         });
       } catch (openError) {
         if (!cancelled) {
@@ -228,6 +231,7 @@ export interface SessionApi {
   renameConversation: (id: ConversationId, title: string) => Promise<void>;
   archiveConversation: (id: ConversationId) => Promise<ArchiveReport | null>;
   deleteConversation: (id: ConversationId) => Promise<void>;
+  deleteArchivedConversation: (id: ConversationId) => Promise<DeletionFeedback>;
 
   addInstance: (card: Card) => Promise<CharacterInstance | null>;
   removeInstance: (id: InstanceId) => Promise<void>;
@@ -731,6 +735,23 @@ export function useSession(db: DramatisDb | null): SessionApi {
       const loaded = await db.repository.loadRoom(current.room.id);
       if (loaded) setSnapshot(loaded);
       await refreshWorlds();
+    },
+    [db, refreshWorlds, setSnapshot],
+  );
+
+  const deleteArchivedConversation = useCallback(
+    async (id: ConversationId): Promise<DeletionFeedback> => {
+      const current = snapshotRef.current;
+      if (!db || !current) return { ok: false, applied: false, message: '本机数据尚未就绪，请稍后再试。' };
+      return deleteWithFeedback(
+        () => db.repository.deleteConversation(id),
+        async () => {
+          const loaded = await db.repository.loadRoom(current.room.id);
+          if (loaded === null) throw new Error('当前世界无法重新读取');
+          setSnapshot(loaded);
+          await refreshWorlds();
+        },
+      );
     },
     [db, refreshWorlds, setSnapshot],
   );
@@ -1563,6 +1584,7 @@ export function useSession(db: DramatisDb | null): SessionApi {
       renameConversation,
       archiveConversation,
       deleteConversation,
+      deleteArchivedConversation,
       addInstance,
       removeInstance,
       updateInstance,
@@ -1608,6 +1630,7 @@ export function useSession(db: DramatisDb | null): SessionApi {
     createWorld,
     deleteCard,
     deleteConversation,
+    deleteArchivedConversation,
     deleteMemory,
     deleteMessage,
     deletePersona,

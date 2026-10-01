@@ -1,5 +1,6 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { type AppearanceApi, THEME_LABELS, type ThemeName } from '../lib/appearance';
+import { useDialogActions } from './DialogShell';
 
 interface Props {
   api: AppearanceApi;
@@ -15,15 +16,41 @@ interface Props {
  * 都只影响这台设备：图片与偏好存在 localStorage，不进同步、不进封存。
  */
 export function AppearancePanel({ api, disabled }: Props) {
+  const { setGuard } = useDialogActions();
   const [error, setError] = useState<string | null>(null);
+  const [backgroundBusy, setBackgroundBusy] = useState(false);
+  const busyRef = useRef(false);
   const fileRef = useRef<HTMLInputElement | null>(null);
   const { value } = api;
+  const controlsDisabled = disabled || backgroundBusy;
+
+  useEffect(() => {
+    setGuard(backgroundBusy ? { kind: 'busy', message: '背景图片正在读取，请等待完成。' } : null);
+    return () => setGuard(null);
+  }, [backgroundBusy, setGuard]);
+
+  const loadBackground = async (file: File): Promise<void> => {
+    if (disabled || busyRef.current) return;
+    busyRef.current = true;
+    setGuard({ kind: 'busy', message: '背景图片正在读取，请等待完成。' });
+    setBackgroundBusy(true);
+    setError(null);
+    try {
+      await api.setBackgroundFromFile(file);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      busyRef.current = false;
+      setBackgroundBusy(false);
+      setGuard(null);
+    }
+  };
 
   return (
     <>
       <section className="panel">
         <h2>色调</h2>
-        <p className="hint">只换颜色，不动布局。选哪套都随时能换回来。</p>
+        <p className="hint">外观修改即时生效，无需保存；只影响这台设备。选哪套都随时能换回来。</p>
         <div className="theme-grid">
           {(Object.keys(THEME_LABELS) as ThemeName[]).map((name) => {
             const meta = THEME_LABELS[name];
@@ -32,7 +59,8 @@ export function AppearancePanel({ api, disabled }: Props) {
                 key={name}
                 type="button"
                 className={value.theme === name ? 'theme-card active' : 'theme-card'}
-                disabled={disabled}
+                aria-pressed={value.theme === name}
+                disabled={controlsDisabled}
                 onClick={() => api.patch({ theme: name })}
               >
                 <span
@@ -59,25 +87,23 @@ export function AppearancePanel({ api, disabled }: Props) {
           type="file"
           accept="image/*"
           className="hidden-file"
+          disabled={controlsDisabled}
           onChange={(event) => {
             const file = event.target.files?.[0];
             event.target.value = '';
             if (!file) return;
-            setError(null);
-            void api.setBackgroundFromFile(file).catch((reason: unknown) => {
-              setError(reason instanceof Error ? reason.message : String(reason));
-            });
+            return loadBackground(file);
           }}
         />
 
         <div className="save-bar">
-          <button type="button" disabled={disabled} onClick={() => fileRef.current?.click()}>
-            选一张图
+          <button type="button" disabled={controlsDisabled} onClick={() => fileRef.current?.click()}>
+            {backgroundBusy ? '读取中…' : '选一张图'}
           </button>
           <button
             type="button"
             className="ghost"
-            disabled={disabled || value.background === ''}
+            disabled={controlsDisabled || value.background === ''}
             onClick={() => api.patch({ background: '' })}
           >
             清除背景
@@ -100,14 +126,18 @@ export function AppearancePanel({ api, disabled }: Props) {
                 max="1"
                 step="0.05"
                 value={value.backgroundOpacity}
-                disabled={disabled}
+                disabled={controlsDisabled}
                 onChange={(event) => api.patch({ backgroundOpacity: Number(event.target.value) })}
               />
             </label>
           </>
         )}
 
-        {error === null ? null : <div className="notice error">{error}</div>}
+        {error === null ? null : (
+          <div className="notice error" role="alert">
+            {error}
+          </div>
+        )}
       </section>
 
       <section className="panel">
@@ -116,7 +146,7 @@ export function AppearancePanel({ api, disabled }: Props) {
           <input
             type="checkbox"
             checked={value.showIntent}
-            disabled={disabled}
+            disabled={controlsDisabled}
             onChange={(event) => api.patch({ showIntent: event.target.checked })}
           />
           <span>

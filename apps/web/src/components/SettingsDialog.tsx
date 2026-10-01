@@ -1,407 +1,122 @@
 import type { Conversation, ConversationId } from '@dramatis/core';
-import { useEffect, useRef, useState } from 'react';
 import type { AppearanceApi } from '../lib/appearance';
-import { formatBytes, formatTime } from '../lib/format';
 import type { ProvidersApi } from '../lib/providers';
 import type { StorageApi } from '../lib/storage';
-import type { SyncApi } from '../lib/sync';
-import { AccountPanel } from './AccountPanel';
-import { AppearancePanel } from './AppearancePanel';
-import { IconArchive, IconDatabase, IconSettings, IconSliders, IconUser } from './Icons';
-import { ProviderPanel } from './ProviderPanel';
-import { SyncPanel } from './SyncPanel';
+import { useDialogActions } from './DialogShell';
+import { IconArchive, IconDatabase, IconSettings, IconSliders } from './Icons';
+import { LazyPanel } from './LazyPanel';
 
-/**
- * 设置弹窗（用户要求：点「设置」弹窗，里面分几个大类）。
- *
- * 原来是「左栏切成设置页」——那样设置与素材管理在同一根轴线上，用户得先切回来
- * 才能看世界列表；而设置本身有六个大类，挤在一列里要滚很久。现在是一层弹窗 +
- * 左侧分类：模型配置 / 个性化 / 身份 / 同步 / 数据 / 已归档。
- *
- * 弹窗不自己存任何状态：所有内容都是现成的面板（ProviderPanel / AppearancePanel /
- * SyncPanel / …），它们各自读写自己的那一份配置。
- */
-
-export type SettingsCategory = 'model' | 'appearance' | 'account' | 'data' | 'archive';
-
-const CATEGORIES: { id: SettingsCategory; label: string; hint: string }[] = [
-  { id: 'model', label: '模型配置', hint: '接口地址、模型名、Key' },
-  { id: 'appearance', label: '个性化', hint: '色调、对话区背景、显示' },
-  { id: 'account', label: '账户', hint: '数据容器与多设备同步' },
-  { id: 'data', label: '数据', hint: '封存导出 / 本机存储' },
-  { id: 'archive', label: '已归档', hint: '归档过的对话' },
-];
-
-const CATEGORY_ICONS = {
-  model: IconSettings,
-  appearance: IconSliders,
-  account: IconUser,
-  data: IconDatabase,
-  archive: IconArchive,
-} as const;
+export type SettingsCategory = 'model' | 'appearance' | 'data' | 'archive';
 
 export const SETTINGS_CATEGORY_LABELS: Record<SettingsCategory, string> = {
   model: '模型配置',
-  appearance: '个性化',
-  account: '账户',
-  data: '数据',
-  archive: '已归档',
+  appearance: '外观与显示',
+  data: '数据与备份',
+  archive: '已归档对话',
 };
+
+const CATEGORIES: { id: SettingsCategory; hint: string; icon: typeof IconSettings }[] = [
+  { id: 'model', hint: '接口地址、模型名与 Key', icon: IconSettings },
+  { id: 'appearance', hint: '色调、背景与对话显示', icon: IconSliders },
+  { id: 'data', hint: '封存导入导出与本机浏览器存储', icon: IconDatabase },
+  { id: 'archive', hint: '回顾、导出与删除归档对话', icon: IconArchive },
+];
+
+const loadProviderPanel = () => import('./ProviderPanel').then((module) => ({ default: module.ProviderPanel }));
+const loadAppearancePanel = () => import('./AppearancePanel').then((module) => ({ default: module.AppearancePanel }));
+const loadDataPanel = () => import('./DataSettingsPanel').then((module) => ({ default: module.DataSettingsPanel }));
+const loadArchivePanel = () =>
+  import('./ArchivedConversationsPanel').then((module) => ({ default: module.ArchivedConversationsPanel }));
 
 interface Props {
   category: SettingsCategory;
   onCategoryChange: (category: SettingsCategory) => void;
-  onClose: () => void;
   providers: ProvidersApi;
   appearance: AppearanceApi;
   archivedConversations: Conversation[];
   activeConversationId: ConversationId | null;
   disabled: boolean;
   onOpenArchived: (id: ConversationId) => void;
-  onDeleteArchived: (conversation: Conversation) => void;
+  onDeleteArchived: (conversation: Conversation) => Promise<{ ok: boolean; message: string }>;
   onExportArchive: () => Promise<{ ok: boolean; message: string } | null>;
   onImportArchive: () => Promise<{ ok: boolean; message: string } | null>;
   onExportTranscript: (id: ConversationId) => Promise<{ ok: boolean; message: string } | null>;
   storage: StorageApi;
   backendKind: string;
-  sync: SyncApi;
 }
 
+/** Lightweight settings content; DialogShell owns closing, focus and leaving confirmation. */
 export function SettingsDialog(props: Props) {
-  const { category, onCategoryChange, onClose } = props;
-  const closeRef = useRef<HTMLButtonElement>(null);
-  const [archiveNotice, setArchiveNotice] = useState<{ ok: boolean; message: string } | null>(null);
-  const [archiveBusy, setArchiveBusy] = useState(false);
-  const [persistNotice, setPersistNotice] = useState<string | null>(null);
-  const [storageAction, setStorageAction] = useState<'persist' | 'install' | null>(null);
-
-  useEffect(() => {
-    const previousFocus = document.activeElement;
-    closeRef.current?.focus();
-    return () => {
-      if (previousFocus instanceof HTMLElement && previousFocus.isConnected) previousFocus.focus();
-    };
-  }, []);
-
-  const handleDialogKeyDown = (event: React.KeyboardEvent<HTMLDivElement>): void => {
-    if (event.key === 'Escape') {
-      event.stopPropagation();
-      onClose();
-      return;
-    }
-    if (event.key !== 'Tab') return;
-    const focusable = Array.from(
-      event.currentTarget.querySelectorAll<HTMLElement>(
-        'button:not([disabled]), a[href], input:not([disabled]):not([type="hidden"]), select:not([disabled]), textarea:not([disabled]), summary, [tabindex]:not([tabindex="-1"])',
-      ),
-    ).filter((element) => element.getClientRects().length > 0);
-    const first = focusable[0];
-    const last = focusable[focusable.length - 1];
-    if (first === undefined || last === undefined) {
-      event.preventDefault();
-      return;
-    }
-    const active = document.activeElement;
-    if (event.shiftKey && (active === first || !focusable.includes(active as HTMLElement))) {
-      event.preventDefault();
-      last.focus();
-    } else if (!event.shiftKey && (active === last || !focusable.includes(active as HTMLElement))) {
-      event.preventDefault();
-      first.focus();
-    }
-  };
-
-  const runArchive = async (action: () => Promise<{ ok: boolean; message: string } | null>): Promise<void> => {
-    setArchiveBusy(true);
-    setArchiveNotice(null);
-    try {
-      const result = await action();
-      if (result !== null) setArchiveNotice(result);
-    } catch (error) {
-      setArchiveNotice({ ok: false, message: error instanceof Error ? error.message : String(error) });
-    } finally {
-      setArchiveBusy(false);
-    }
-  };
-
+  const { requestAction } = useDialogActions();
   return (
-    // biome-ignore lint/a11y/noStaticElementInteractions: 遮罩点击关闭是弹窗的通用约定，键盘路径是 Esc 与「关闭」
-    <div className="dialog-backdrop" onClick={onClose} onKeyDown={handleDialogKeyDown}>
-      {/* biome-ignore lint/a11y/useKeyWithClickEvents: 同上；点击在这里只用于阻止冒泡 */}
-      <section
-        className="dialog settings-dialog"
-        role="dialog"
-        aria-label="设置"
-        aria-modal="true"
-        onClick={(event) => event.stopPropagation()}
-      >
-        <header className="dialog-head">
-          <strong>设置</strong>
-          <button ref={closeRef} type="button" className="ghost" onClick={onClose}>
-            关闭
+    <div className="settings-body">
+      <nav className="settings-nav" aria-label="设置分类">
+        {CATEGORIES.map(({ id, hint, icon: CategoryIcon }) => (
+          <button
+            key={id}
+            type="button"
+            className={id === props.category ? 'ghost active' : 'ghost'}
+            aria-current={id === props.category ? 'page' : undefined}
+            onClick={() => {
+              if (id !== props.category) requestAction(() => props.onCategoryChange(id));
+            }}
+          >
+            <strong>
+              <CategoryIcon />
+              {SETTINGS_CATEGORY_LABELS[id]}
+            </strong>
+            <span className="hint">{hint}</span>
           </button>
-        </header>
-
-        <div className="settings-body">
-          <nav className="settings-nav" aria-label="设置分类">
-            {CATEGORIES.map((item) => {
-              const CategoryIcon = CATEGORY_ICONS[item.id];
-              return (
-                <button
-                  key={item.id}
-                  type="button"
-                  className={item.id === category ? 'ghost active' : 'ghost'}
-                  aria-current={item.id === category ? 'page' : undefined}
-                  onClick={() => onCategoryChange(item.id)}
-                >
-                  <strong>
-                    <CategoryIcon />
-                    {item.label}
-                  </strong>
-                  <span className="hint">{item.hint}</span>
-                </button>
-              );
-            })}
-          </nav>
-
-          <div className="settings-content">
-            {category === 'model' ? (
-              <section className="panel">
-                <h2>模型接入</h2>
-                <p className="hint">
-                  填好接口地址、模型名与 API Key 之后，角色回复、记忆抽取、情绪推演都会自动跑。
-                  <strong>不填也能用</strong>：应用会把每一轮要发的提示词交给你，你贴进 DeepSeek
-                  网页版，再把回复粘回来——只是每轮多两次复制粘贴。
-                </p>
-                <ProviderPanel api={props.providers} disabled={props.disabled} />
-              </section>
-            ) : null}
-
-            {category === 'appearance' ? <AppearancePanel api={props.appearance} disabled={props.disabled} /> : null}
-
-            {/*
-              「账户」= 数据容器 + 多设备同步。扮演身份已经移到左栏「我的身份」，
-              这里不再混入 Persona 的创建与选择。
-            */}
-            {category === 'account' ? (
-              <>
-                <AccountPanel disabled={props.disabled} />
-                <section className="panel">
-                  <h2>多设备同步</h2>
-                  <p className="hint">
-                    账户 ID 就是同步空间的名字，账户密码就是同步密码（注册时设的那个）。
-                    点下面的「同步」即可；多台设备、快照、改密码都在「高级」里。
-                  </p>
-                  <SyncPanel api={props.sync} disabled={props.disabled} />
-                </section>
-              </>
-            ) : null}
-
-            {category === 'data' ? (
-              <>
-                <section className="panel">
-                  <h2>封存（导出 / 导入）</h2>
-                  <p className="hint">
-                    导出的是一整个世界：对话、场景、角色与角色卡、消息、记忆、情绪关系、前情章节、世界书、账单——一个文件，
-                    换台设备导进来就能接着用。导入永远是<strong>新建一条世界线</strong>，不会覆盖或改动本机已有的数据。
-                  </p>
-                  <div className="save-bar" aria-busy={archiveBusy}>
-                    <button
-                      type="button"
-                      disabled={props.disabled || archiveBusy || props.activeConversationId === null}
-                      onClick={() => void runArchive(props.onExportArchive)}
-                    >
-                      {archiveBusy ? '处理中…' : '导出这个世界'}
-                    </button>
-                    <button
-                      type="button"
-                      className="ghost"
-                      disabled={props.disabled || archiveBusy}
-                      onClick={() => void runArchive(props.onImportArchive)}
-                    >
-                      导入封存
-                    </button>
-                  </div>
-                  {archiveNotice === null ? null : (
-                    <div
-                      className={archiveNotice.ok ? 'notice' : 'notice error'}
-                      role={archiveNotice.ok ? 'status' : 'alert'}
-                    >
-                      <p>{archiveNotice.message.replace(/\*\*/g, '')}</p>
-                    </div>
-                  )}
-                </section>
-
-                <section className="panel">
-                  <h2>本机存储</h2>
-                  <ul className="usage-list">
-                    <li>
-                      <span className="usage-name">存储后端</span>
-                      <span className="usage-figure">{props.backendKind || '…'}</span>
-                    </li>
-                    <li>
-                      <span className="usage-name">持久化</span>
-                      <span className="usage-figure">
-                        {props.storage.status.supported
-                          ? props.storage.status.persisted
-                            ? '已获得'
-                            : '未获得'
-                          : '这个浏览器不支持'}
-                      </span>
-                    </li>
-                    <li>
-                      <span className="usage-name">已用 / 配额</span>
-                      <span className="usage-figure">
-                        {props.storage.status.usage === null || props.storage.status.quota === null
-                          ? '未知'
-                          : `${formatBytes(props.storage.status.usage)} / ${formatBytes(props.storage.status.quota)}`}
-                      </span>
-                    </li>
-                  </ul>
-                  <div className="save-bar">
-                    <button
-                      type="button"
-                      disabled={
-                        props.disabled ||
-                        storageAction !== null ||
-                        !props.storage.status.supported ||
-                        props.storage.status.persisted === true
-                      }
-                      onClick={() => {
-                        setPersistNotice(null);
-                        setStorageAction('persist');
-                        void props.storage
-                          .requestPersist()
-                          .then((granted) => {
-                            setPersistNotice(
-                              granted
-                                ? '拿到了 ✓ 浏览器不会再因为磁盘紧张、或你很久没打开，就悄悄清掉这些数据。'
-                                : '浏览器这次没给。Chrome 不弹窗，它按「有没有把这个站点装成应用 / 来过几次」自己判断——下一步：装成应用（下面那个按钮），然后再点一次。没拿到也不影响使用，导出封存照样是最后的保险。',
-                            );
-                          })
-                          .catch((error: unknown) =>
-                            setPersistNotice(error instanceof Error ? error.message : String(error)),
-                          )
-                          .finally(() => setStorageAction(null));
-                      }}
-                    >
-                      {storageAction === 'persist' ? '申请中…' : '申请持久化存储'}
-                    </button>
-                    <button
-                      type="button"
-                      className="ghost"
-                      disabled={props.disabled || storageAction !== null}
-                      onClick={() => {
-                        setPersistNotice(null);
-                        setStorageAction('install');
-                        void props.storage
-                          .installApp()
-                          .then((outcome) => {
-                            setPersistNotice(
-                              outcome === 'accepted'
-                                ? '安装开始了。装完回到这里再点一次「申请持久化存储」，一般就能拿到。'
-                                : outcome === 'dismissed'
-                                  ? '这次取消了。想装的话，地址栏右边或浏览器菜单里也有「安装应用 / 添加到主屏幕」。'
-                                  : '这个浏览器现在没给一键安装的口子：看地址栏右边的安装图标，或者浏览器菜单里的「安装应用」「添加到主屏幕」（安卓上叫「添加到主屏幕」）。',
-                            );
-                          })
-                          .catch((error: unknown) =>
-                            setPersistNotice(error instanceof Error ? error.message : String(error)),
-                          )
-                          .finally(() => setStorageAction(null));
-                      }}
-                    >
-                      {storageAction === 'install'
-                        ? '处理中…'
-                        : props.storage.canInstall
-                          ? '装成应用（更容易拿到持久化）'
-                          : '怎么装成应用'}
-                    </button>
-                  </div>
-                  {persistNotice === null ? null : (
-                    <p className="hint" role="status">
-                      {persistNotice}
-                    </p>
-                  )}
-                  <p className="hint">
-                    {props.storage.status.persisted === true
-                      ? '已经拿到持久化：浏览器不会因为磁盘紧张或你很久没打开就清掉这些数据。'
-                      : '没拿到持久化时，浏览器随时可能回收本地数据。Chrome 上拿到它的正路是把这个站点'}
-                    {props.storage.status.persisted === true ? null : <strong>装成应用</strong>}
-                    {props.storage.status.persisted === true
-                      ? null
-                      : '（安卓上叫「添加到主屏幕」），装完再点一次申请；应用也会自动申请一次，所以常来同样会慢慢拿到。无论哪种情况，导出封存都是最稳的备份。'}
-                  </p>
-                </section>
-              </>
-            ) : null}
-
-            {category === 'archive' ? (
-              <section className="panel">
-                <h2>已归档的对话</h2>
-                <p className="hint">
-                  归档意味着这条时间线没有发生过：情绪、关系与记忆都已经回滚到它开始之前。对话本身保留在这里，
-                  只用于回顾——<strong>没有「取消归档」</strong>，要接着往下聊得开一条新对话；但你可以把正文导出带走
-                  （导出的是当时一句句说了什么，与「封存」那份可再导入的数据文件不是一回事）。
-                </p>
-                {props.archivedConversations.length === 0 ? (
-                  <p className="hint">还没有归档的对话。</p>
-                ) : (
-                  <ul className="room-list">
-                    {props.archivedConversations.map((conversation) => (
-                      <li
-                        key={conversation.id}
-                        className={conversation.id === props.activeConversationId ? 'active' : ''}
-                      >
-                        <button
-                          type="button"
-                          className="room-open"
-                          disabled={props.disabled}
-                          onClick={() => props.onOpenArchived(conversation.id)}
-                        >
-                          <span className="room-title">{conversation.title}</span>
-                          <span className="hint">
-                            归档于 {formatTime(conversation.archivedAt ?? conversation.updatedAt)}
-                          </span>
-                        </button>
-                        <button
-                          type="button"
-                          className="ghost"
-                          disabled={props.disabled || archiveBusy}
-                          title="把这条对话的正文导出成 Markdown 文件"
-                          onClick={() => void runArchive(() => props.onExportTranscript(conversation.id))}
-                        >
-                          导出正文
-                        </button>
-                        <button
-                          type="button"
-                          className="ghost danger"
-                          disabled={props.disabled}
-                          title="彻底删除，不可恢复"
-                          onClick={() => {
-                            if (window.confirm(`彻底删除已归档的「${conversation.title}」？`))
-                              props.onDeleteArchived(conversation);
-                          }}
-                        >
-                          删除
-                        </button>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-                {archiveNotice === null ? null : (
-                  <div
-                    className={archiveNotice.ok ? 'notice' : 'notice error'}
-                    role={archiveNotice.ok ? 'status' : 'alert'}
-                  >
-                    <p>{archiveNotice.message.replace(/\*\*/g, '')}</p>
-                  </div>
-                )}
-              </section>
-            ) : null}
-          </div>
-        </div>
-      </section>
+        ))}
+      </nav>
+      <div className="settings-content">
+        {props.category === 'model' ? (
+          <LazyPanel
+            key="model"
+            load={loadProviderPanel}
+            label="模型配置"
+            panelProps={{ api: props.providers, disabled: props.disabled }}
+          />
+        ) : null}
+        {props.category === 'appearance' ? (
+          <LazyPanel
+            key="appearance"
+            load={loadAppearancePanel}
+            label="外观与显示"
+            panelProps={{ api: props.appearance, disabled: props.disabled }}
+          />
+        ) : null}
+        {props.category === 'data' ? (
+          <LazyPanel
+            key="data"
+            load={loadDataPanel}
+            label="数据与备份"
+            panelProps={{
+              activeConversationId: props.activeConversationId,
+              disabled: props.disabled,
+              onExportArchive: props.onExportArchive,
+              onImportArchive: props.onImportArchive,
+              storage: props.storage,
+              backendKind: props.backendKind,
+            }}
+          />
+        ) : null}
+        {props.category === 'archive' ? (
+          <LazyPanel
+            key="archive"
+            load={loadArchivePanel}
+            label="已归档对话"
+            panelProps={{
+              archivedConversations: props.archivedConversations,
+              activeConversationId: props.activeConversationId,
+              disabled: props.disabled,
+              onOpenArchived: props.onOpenArchived,
+              onDeleteArchived: props.onDeleteArchived,
+              onExportTranscript: props.onExportTranscript,
+            }}
+          />
+        ) : null}
+      </div>
     </div>
   );
 }

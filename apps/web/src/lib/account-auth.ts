@@ -58,17 +58,13 @@ export async function readAccountSyncInfo(
   account: LocalAccount,
   keyMode: KeyStorageMode = 'session',
 ): Promise<{ configured: boolean; lastSyncAt: string | null; endpoint: string | null; unlocked: boolean }> {
-  let config: SyncConfig | null = null;
+  const opened = await createIndexedDbEntityStore(account.dbName);
+  let config: SyncConfig | null;
   try {
-    const opened = await createIndexedDbEntityStore(account.dbName);
-    try {
-      const row = await opened.store.get<{ value?: SyncConfig }>('meta', SYNC_CONFIG_META_KEY);
-      config = row?.value ?? null;
-    } finally {
-      opened.db.close();
-    }
-  } catch {
-    // 打不开（别的标签页占着、或者库还没建）就当没配置
+    const row = await opened.store.get<{ value?: SyncConfig }>('meta', SYNC_CONFIG_META_KEY);
+    config = row?.value ?? null;
+  } finally {
+    opened.db.close();
   }
 
   if (config === null) return { configured: false, lastSyncAt: null, endpoint: null, unlocked: false };
@@ -91,6 +87,8 @@ export interface RegisterAccountInput {
   keyMode?: KeyStorageMode;
   /** 用户同意将账户 ID / 显示名登记为服务器运营资料。 */
   profileConsent?: boolean;
+  /** 服务端创建成功后立即交付恢复码；调用方只在内存中显示，先于本机保存。 */
+  onRecoveryCode?: (code: string) => void;
 }
 
 export interface AccountAuthResult {
@@ -104,7 +102,8 @@ export interface AccountAuthResult {
  * 注册一个新账户：建本地容器 + 在服务端建空间（两份钥匙封装：密码一份、恢复码一份）。
  *
  * 顺序是**先建服务端空间、再建本地容器**：反过来的话，服务端失败会在本机留下一个
- * 永远同步不上去的空账户，用户还得手动删。现在失败就是什么都没发生。
+ * 永远同步不上去的空账户，用户还得手动删。远端创建成功后先交付恢复码，
+ * 本机保存失败时可用它登录已经创建的账户。
  */
 export async function registerAccount(input: RegisterAccountInput): Promise<AccountAuthResult> {
   const accountId = input.accountId.trim();
@@ -133,28 +132,34 @@ export async function registerAccount(input: RegisterAccountInput): Promise<Acco
     throw new Error(`服务端上已经有一个「${accountId}」的空间了。直接「登录」它，或者换一个账户 ID。`);
   }
 
-  const localName = input.name.trim() === '' ? accountId : input.name.trim();
-  const claimed = await claimAccountProfile({
-    endpoint,
-    spaceHandle: credentials.spaceHandle,
-    accountId,
-    displayName: localName,
-    credential: credentials.credential,
-    consent: input.profileConsent === true,
-  });
-  const account = createAccount({ accountId, name: claimed.profile?.displayName ?? localName });
-  await writeAccountSyncConfig(account.dbName, {
-    endpoint,
-    userId: accountId,
-    spaceHandle: credentials.spaceHandle,
-    keyMode,
-    createdAt: new Date().toISOString(),
-    lastSyncAt: null,
-    lastReport: null,
-  });
-  await createBrowserKeyStore(keyMode).set(syncPasswordKeyRef(account.id), input.password);
+  try {
+    input.onRecoveryCode?.(credentials.recoveryCode);
+    const localName = input.name.trim() === '' ? accountId : input.name.trim();
+    const claimed = await claimAccountProfile({
+      endpoint,
+      spaceHandle: credentials.spaceHandle,
+      accountId,
+      displayName: localName,
+      credential: credentials.credential,
+      consent: input.profileConsent === true,
+    });
+    const account = createAccount({ accountId, name: claimed.profile?.displayName ?? localName });
+    await writeAccountSyncConfig(account.dbName, {
+      endpoint,
+      userId: accountId,
+      spaceHandle: credentials.spaceHandle,
+      keyMode,
+      createdAt: new Date().toISOString(),
+      lastSyncAt: null,
+      lastReport: null,
+    });
+    await createBrowserKeyStore(keyMode).set(syncPasswordKeyRef(account.id), input.password);
 
-  return { account, recoveryCode: credentials.recoveryCode, profileWarning: claimed.warning };
+    return { account, recoveryCode: credentials.recoveryCode, profileWarning: claimed.warning };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`服务器账户已创建，请先保存恢复码并检查本机存储后登录：${message}`);
+  }
 }
 
 export interface LoginAccountInput {

@@ -1,8 +1,9 @@
 import type { KeyStore, ProviderPrice, ProviderRole } from '@dramatis/core';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { KeyStorageMode } from '../lib/keystore';
 import { describeKeyStore } from '../lib/keystore';
 import type { ProvidersApi } from '../lib/providers';
+import { useDialogActions } from './DialogShell';
 
 interface Props {
   api: ProvidersApi;
@@ -118,16 +119,27 @@ function isSameDraft(left: Draft | null, right: Draft | null): boolean {
  * 与密钥本身也会一起生效。
  */
 export function ProviderPanel({ api, disabled }: Props) {
+  const { requestAction, setGuard } = useDialogActions();
   const [showKey, setShowKey] = useState(false);
   const [clipboardBusy, setClipboardBusy] = useState(false);
   const [saveBusy, setSaveBusy] = useState(false);
-  const [draft, setDraft] = useState<Draft | null>(null);
+  const [deleteBusy, setDeleteBusy] = useState(false);
+  const [deleteArmed, setDeleteArmed] = useState(false);
+  const [draft, setDraft] = useState<Draft | null>(() => draftOf(api));
   const [savedAt, setSavedAt] = useState<string | null>(null);
   /** 口令库的报错（口令不对 / 文件坏了）：就地显示，不弹窗。 */
   const [vaultError, setVaultError] = useState<string | null>(null);
+  const [profileBusy, setProfileBusy] = useState(false);
+  const busyRef = useRef(false);
+  const baselineRef = useRef(draftOf(api));
+  const apiRef = useRef(api);
+  apiRef.current = api;
+  const draftRef = useRef(draft);
+  draftRef.current = draft;
+  const previousProfileRef = useRef(api.activeId);
   const active = api.active;
-  const { activeId, keyMode } = api;
-  const controlsDisabled = disabled || saveBusy || clipboardBusy;
+  const controlsDisabled = disabled || saveBusy || clipboardBusy || deleteBusy || profileBusy;
+  const keyBlocked = api.keyLoading || api.keyError !== null || api.vaultLocked;
 
   /**
    * 草稿的重置时机。
@@ -135,23 +147,103 @@ export function ProviderPanel({ api, disabled }: Props) {
    * 只在「换了一份配置」或「那份配置在库里变了」时重置——不能每渲染一次就重置，
    * 否则用户正在输入的内容会被冲掉。所以依赖是一串具体的值，而不是整个 api 对象。
    */
-  const signature = [activeId, keyMode, active?.name, active?.model, active?.baseUrl, active?.role].join('|');
+  const signature = JSON.stringify([api.activeId, draftOf(api)]);
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: 依赖就是上面那串值，重新取整个 api 会把草稿冲掉
   useEffect(() => {
-    setDraft(draftOf(api));
-    setSavedAt(null);
+    const switched = previousProfileRef.current !== api.activeId;
+    if (switched || isSameDraft(draft, baselineRef.current)) {
+      baselineRef.current = draftOf(api);
+      draftRef.current = baselineRef.current;
+      setDraft(baselineRef.current);
+    } else if (draft !== null && baselineRef.current !== null && draft.apiKey === baselineRef.current.apiKey) {
+      // A key can finish loading after the user has edited another field. Refresh
+      // the untouched key without discarding the rest of that user's draft.
+      baselineRef.current = { ...baselineRef.current, apiKey: api.apiKey };
+      draftRef.current = { ...draft, apiKey: api.apiKey };
+      setDraft(draftRef.current);
+    }
+    if (switched) {
+      setSavedAt(null);
+      setDeleteArmed(false);
+      setVaultError(null);
+      setShowKey(false);
+    }
+    previousProfileRef.current = api.activeId;
   }, [signature]);
 
-  const dirty = !isSameDraft(draft, draftOf(api));
+  const dirty = !isSameDraft(draft, baselineRef.current);
+  const discard = (): void => {
+    baselineRef.current = draftOf(apiRef.current);
+    draftRef.current = baselineRef.current;
+    setDraft(baselineRef.current);
+    setSavedAt(null);
+    setVaultError(null);
+    setDeleteArmed(false);
+  };
+
+  // biome-ignore lint/correctness/useExhaustiveDependencies: discard follows this render's draft and API; cleanup releases the panel guard
+  useEffect(() => {
+    setGuard(
+      saveBusy || clipboardBusy || deleteBusy || profileBusy
+        ? { kind: 'busy', message: '模型配置正在处理，请等待完成。' }
+        : dirty
+          ? { kind: 'dirty', message: '模型配置有未保存的更改。离开会放弃这些更改。', discard }
+          : null,
+    );
+    return () => setGuard(null);
+  }, [saveBusy, clipboardBusy, deleteBusy, profileBusy, dirty, draft, setGuard]);
+
+  const beginOperation = (): boolean => {
+    if (disabled || busyRef.current) return false;
+    busyRef.current = true;
+    setGuard({ kind: 'busy', message: '模型配置正在处理，请等待完成。' });
+    return true;
+  };
+  const endOperation = (): void => {
+    busyRef.current = false;
+    setGuard(
+      !isSameDraft(draftRef.current, baselineRef.current)
+        ? { kind: 'dirty', message: '模型配置有未保存的更改。离开会放弃这些更改。', discard }
+        : null,
+    );
+  };
+
+  const changeProfile = async (id: string): Promise<void> => {
+    if (!beginOperation()) return;
+    setProfileBusy(true);
+    setVaultError(null);
+    try {
+      if (id === '__new__') {
+        await api.addProfile({ name: '新配置', baseUrl: 'https://api.deepseek.com', model: 'deepseek-flash' });
+      } else await api.selectProfile(id);
+    } catch (error) {
+      setVaultError(error instanceof Error ? error.message : String(error));
+    } finally {
+      endOperation();
+      setProfileBusy(false);
+    }
+  };
 
   const patch = (values: Partial<Draft>): void => {
-    setDraft((previous) => (previous === null ? previous : { ...previous, ...values }));
+    if ('apiKey' in values && (apiRef.current.keyLoading || apiRef.current.keyError !== null)) return;
+    const previous = draftRef.current;
+    const next = previous === null ? null : { ...previous, ...values };
+    draftRef.current = next;
+    setDraft(next);
     setSavedAt(null);
   };
 
   const save = async (): Promise<void> => {
-    if (draft === null || active === null || saveBusy || clipboardBusy) return;
+    if (
+      draft === null ||
+      active === null ||
+      apiRef.current.keyLoading ||
+      apiRef.current.keyError !== null ||
+      apiRef.current.vaultLocked ||
+      !beginOperation()
+    )
+      return;
     setVaultError(null);
     setSaveBusy(true);
     try {
@@ -171,29 +263,46 @@ export function ProviderPanel({ api, disabled }: Props) {
         vaultPassphrase: draft.vaultPassphrase,
       });
       // 口令用完了就从草稿里擦掉：它只在这一刻需要，留在界面上没有好处
-      setDraft((previous) => (previous === null ? previous : { ...previous, vaultPassphrase: '' }));
+      baselineRef.current = { ...draft, vaultPassphrase: '' };
+      draftRef.current = baselineRef.current;
+      setDraft(baselineRef.current);
       setSavedAt(new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }));
     } catch (error) {
       // 口令不对 / 库坏了：**不要**当成「保存成功」，也不要清掉用户填的 Key
       setVaultError(error instanceof Error ? error.message : String(error));
     } finally {
+      endOperation();
       setSaveBusy(false);
     }
   };
 
+  const deleteProfile = async (): Promise<void> => {
+    if (active === null || controlsDisabled || !deleteArmed || !beginOperation()) return;
+    setVaultError(null);
+    setDeleteBusy(true);
+    try {
+      await api.deleteProfile(active.id);
+      setDeleteArmed(false);
+    } catch (error) {
+      setVaultError(error instanceof Error ? error.message : String(error));
+    } finally {
+      endOperation();
+      setDeleteBusy(false);
+    }
+  };
+
   return (
-    <section className="panel" aria-busy={saveBusy || clipboardBusy}>
+    <section className="panel" aria-busy={api.keyLoading || saveBusy || clipboardBusy || deleteBusy || profileBusy}>
+      <h2>模型配置</h2>
+      <p className="hint">填写接口地址、模型名与 API Key 后保存。不填 Key 时仍可通过网页版桥接使用。</p>
       <label>
         当前配置
         <select
           value={api.activeId ?? ''}
           disabled={controlsDisabled}
           onChange={(event) => {
-            if (event.target.value === '__new__') {
-              void api.addProfile({ name: '新配置', baseUrl: 'https://api.deepseek.com', model: 'deepseek-flash' });
-              return;
-            }
-            void api.selectProfile(event.target.value);
+            const id = event.target.value;
+            if (id !== api.activeId) requestAction(() => void changeProfile(id));
           }}
         >
           {api.profiles.map((profile) => (
@@ -204,6 +313,11 @@ export function ProviderPanel({ api, disabled }: Props) {
           <option value="__new__">{NEW_PROFILE_LABEL}</option>
         </select>
       </label>
+      {vaultError === null ? null : (
+        <div className="notice error" role="alert">
+          <p>{vaultError}</p>
+        </div>
+      )}
 
       {active && draft ? (
         <>
@@ -254,36 +368,19 @@ export function ProviderPanel({ api, disabled }: Props) {
           </datalist>
 
           <label>
-            用途
-            <select
-              value={draft.role}
-              disabled={controlsDisabled}
-              onChange={(event) => patch({ role: event.target.value as ProviderRole })}
-            >
-              <option value="both">对话与后台都用</option>
-              <option value="main">只用于对话</option>
-              <option value="background">只用于后台任务</option>
-            </select>
-          </label>
-          <p className="hint">
-            后台任务（记忆抽取、情绪推演）可以单独配一个更便宜的模型。标了「只用于后台任务」的配置会成为
-            这些调用专用的通道。
-          </p>
-
-          <label>
             API Key
             <span className="inline">
               <input
                 type={showKey ? 'text' : 'password'}
-                value={draft.apiKey}
-                disabled={controlsDisabled}
+                value={keyBlocked ? '' : draft.apiKey}
+                disabled={controlsDisabled || keyBlocked}
                 placeholder="sk-..."
                 onChange={(event) => patch({ apiKey: event.target.value })}
               />
               <button
                 type="button"
                 className="ghost"
-                disabled={controlsDisabled}
+                disabled={controlsDisabled || keyBlocked}
                 aria-label={showKey ? '隐藏 API Key' : '显示 API Key'}
                 aria-pressed={showKey}
                 onClick={() => setShowKey((value) => !value)}
@@ -292,6 +389,19 @@ export function ProviderPanel({ api, disabled }: Props) {
               </button>
             </span>
           </label>
+          {api.keyLoading ? (
+            <p className="hint" role="status">
+              正在读取当前配置的 API Key，请等待后再编辑或保存。
+            </p>
+          ) : null}
+          {api.keyError === null ? null : (
+            <div className="notice error" role="alert">
+              <p>当前配置的 API Key 读取失败：{api.keyError}。重新读取成功后才能编辑或保存。</p>
+              <button type="button" className="ghost" disabled={controlsDisabled} onClick={() => api.reloadApiKey()}>
+                重新读取 API Key
+              </button>
+            </div>
+          )}
 
           {/*
             顺序 7：「官方 Key 极简引导」。
@@ -301,7 +411,7 @@ export function ProviderPanel({ api, disabled }: Props) {
             所以把入口直连到 API keys 页，并给一个「粘贴 Key」入口。
             粘贴只修改草稿，仍需点「保存」才会写入密钥库。
           */}
-          {draft.apiKey.trim() === '' ? (
+          {!keyBlocked && draft.apiKey.trim() === '' ? (
             <div className="key-guide">
               <strong>还没有 Key？三步就好（大约两分钟）</strong>
               <ol>
@@ -322,6 +432,7 @@ export function ProviderPanel({ api, disabled }: Props) {
                   title="从剪贴板读取 sk- 开头的 Key，填入草稿；点保存后生效"
                   onClick={() => {
                     void (async () => {
+                      if (apiRef.current.keyLoading || apiRef.current.keyError !== null || !beginOperation()) return;
                       setVaultError(null);
                       setClipboardBusy(true);
                       try {
@@ -330,10 +441,11 @@ export function ProviderPanel({ api, disabled }: Props) {
                         if (!text.startsWith('sk-')) {
                           throw new Error('剪贴板里的东西不像 API Key（一般是 sk- 开头）。先在开放平台复制。');
                         }
-                        setDraft((previous) => (previous === null ? previous : { ...previous, apiKey: text }));
+                        patch({ apiKey: text });
                       } catch (error) {
                         setVaultError(error instanceof Error ? error.message : String(error));
                       } finally {
+                        endOperation();
                         setClipboardBusy(false);
                       }
                     })();
@@ -350,7 +462,7 @@ export function ProviderPanel({ api, disabled }: Props) {
             密钥保存方式
             <select
               value={draft.keyMode}
-              disabled={controlsDisabled}
+              disabled={controlsDisabled || keyBlocked}
               onChange={(event) => patch({ keyMode: keyModeOf(event.target.value) })}
             >
               <option value="session">仅本次会话（最安全）</option>
@@ -388,11 +500,17 @@ export function ProviderPanel({ api, disabled }: Props) {
                   disabled={controlsDisabled || draft.vaultPassphrase.trim() === ''}
                   title="用这句口令打开本机的口令库（解不开就说明口令不对）"
                   onClick={() => {
+                    if (!beginOperation()) return;
                     setVaultError(null);
+                    setProfileBusy(true);
                     void api
                       .unlockVault(draft.vaultPassphrase)
                       .then(() => patch({ vaultPassphrase: '' }))
-                      .catch((error: unknown) => setVaultError(error instanceof Error ? error.message : String(error)));
+                      .catch((error: unknown) => setVaultError(error instanceof Error ? error.message : String(error)))
+                      .finally(() => {
+                        endOperation();
+                        setProfileBusy(false);
+                      });
                   }}
                 >
                   解锁
@@ -404,15 +522,9 @@ export function ProviderPanel({ api, disabled }: Props) {
           {api.vaultLocked ? (
             <p className="hint warn">
               这台机器上的 Key 是用口令加密存的，现在还没解锁——这一轮会走网页版桥接。
-              在上面填口令点「解锁」，或者点「保存」把这次填的 Key 存进库里。
+              请先在上面填口令并点「解锁」，读取已有 Key 后才能编辑和保存。
             </p>
           ) : null}
-
-          {vaultError === null ? null : (
-            <div className="notice error" role="alert">
-              <p>{vaultError}</p>
-            </div>
-          )}
 
           {/*
             用户一定会问「我填进去的 Key 到底被谁看见」。答案要写在**填的地方**，
@@ -432,100 +544,113 @@ export function ProviderPanel({ api, disabled }: Props) {
                 请求头里——不经过本项目的任何中转。
               </li>
               <li>
-                <strong>同步服务端</strong>：不会。服务端只存密文与哈希，连「Key」这个字段都没有；模型配置也不在同步
-                白名单里，导出封存时同样不带它。
+                <strong>同步服务端</strong>：启用账户同步后，模型配置与 Key 的密文会随账户同步；服务端无法读取 Key
+                明文。
               </li>
               <li>
                 <strong>给你发这个网页的人</strong>：<strong>能</strong>。这是唯一的信任边界——能改这个网页的人
                 就能读你填进来的 Key。自己部署=自己；用别人的站点，等于把这项能力交给站主。
               </li>
             </ul>
+            <p className="hint">保存方式只控制本机缓存。可选择仅本次会话或口令加密，也可以自己部署网页。</p>
+          </details>
+
+          <details className="provider-advanced">
+            <summary>高级配置：用途、上下文与费用</summary>
+            <label>
+              用途
+              <select
+                value={draft.role}
+                disabled={controlsDisabled}
+                onChange={(event) => patch({ role: event.target.value as ProviderRole })}
+              >
+                <option value="both">对话与后台都用</option>
+                <option value="main">只用于对话</option>
+                <option value="background">只用于后台任务</option>
+              </select>
+            </label>
+            <p className="hint">后台任务可单独配置模型；标记为“只用于后台任务”的配置会供记忆抽取与情绪推演使用。</p>
+            <div className="grid-3">
+              <label>
+                温度
+                <input
+                  type="number"
+                  step="0.05"
+                  min="0"
+                  max="2"
+                  value={draft.temperature}
+                  disabled={controlsDisabled}
+                  onChange={(event) => patch({ temperature: Number(event.target.value) || 0 })}
+                />
+              </label>
+              <label>
+                上下文窗口
+                <input
+                  type="number"
+                  step="1024"
+                  min="1024"
+                  value={draft.maxTokens}
+                  disabled={controlsDisabled}
+                  onChange={(event) => patch({ maxTokens: Number(event.target.value) || 1024 })}
+                />
+              </label>
+              <label>
+                预留回复
+                <input
+                  type="number"
+                  step="256"
+                  min="0"
+                  value={draft.reserveForReply}
+                  disabled={controlsDisabled}
+                  onChange={(event) => patch({ reserveForReply: Number(event.target.value) || 0 })}
+                />
+              </label>
+            </div>
+
+            <div className="grid-3">
+              <label>
+                输入价 / 百万 token
+                <input
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  placeholder="留空＝不换算"
+                  value={draft.priceInput}
+                  disabled={controlsDisabled}
+                  onChange={(event) => patch({ priceInput: event.target.value })}
+                />
+              </label>
+              <label>
+                输出价 / 百万 token
+                <input
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  placeholder="留空＝不换算"
+                  value={draft.priceOutput}
+                  disabled={controlsDisabled}
+                  onChange={(event) => patch({ priceOutput: event.target.value })}
+                />
+              </label>
+              <label>
+                币种
+                <input
+                  type="text"
+                  maxLength={4}
+                  value={draft.priceCurrency}
+                  disabled={controlsDisabled}
+                  onChange={(event) => patch({ priceCurrency: event.target.value })}
+                />
+              </label>
+            </div>
             <p className="hint">
-              想更稳：用「仅本次会话」（默认），或者自己在服务器上跑一份这个网页。任务清单里还有一步
-              「口令加密落盘」——做完之后即使选「保存在本机浏览器」，磁盘上也是密文。
+              单价由你自己填（各家价格不同、还会变）。填了之后，运行时的「用量」页会把 token 换算成钱； 留空就只报 token
+              数，绝不会用编出来的价格糊弄你。
             </p>
           </details>
 
-          <div className="grid-3">
-            <label>
-              温度
-              <input
-                type="number"
-                step="0.05"
-                min="0"
-                max="2"
-                value={draft.temperature}
-                disabled={controlsDisabled}
-                onChange={(event) => patch({ temperature: Number(event.target.value) || 0 })}
-              />
-            </label>
-            <label>
-              上下文窗口
-              <input
-                type="number"
-                step="1024"
-                min="1024"
-                value={draft.maxTokens}
-                disabled={controlsDisabled}
-                onChange={(event) => patch({ maxTokens: Number(event.target.value) || 1024 })}
-              />
-            </label>
-            <label>
-              预留回复
-              <input
-                type="number"
-                step="256"
-                min="0"
-                value={draft.reserveForReply}
-                disabled={controlsDisabled}
-                onChange={(event) => patch({ reserveForReply: Number(event.target.value) || 0 })}
-              />
-            </label>
-          </div>
-
-          <div className="grid-3">
-            <label>
-              输入价 / 百万 token
-              <input
-                type="number"
-                step="0.01"
-                min="0"
-                placeholder="留空＝不换算"
-                value={draft.priceInput}
-                disabled={controlsDisabled}
-                onChange={(event) => patch({ priceInput: event.target.value })}
-              />
-            </label>
-            <label>
-              输出价 / 百万 token
-              <input
-                type="number"
-                step="0.01"
-                min="0"
-                placeholder="留空＝不换算"
-                value={draft.priceOutput}
-                disabled={controlsDisabled}
-                onChange={(event) => patch({ priceOutput: event.target.value })}
-              />
-            </label>
-            <label>
-              币种
-              <input
-                type="text"
-                maxLength={4}
-                value={draft.priceCurrency}
-                disabled={controlsDisabled}
-                onChange={(event) => patch({ priceCurrency: event.target.value })}
-              />
-            </label>
-          </div>
-          <p className="hint">
-            单价由你自己填（各家价格不同、还会变）。填了之后，运行时的「用量」页会把 token 换算成钱； 留空就只报 token
-            数，绝不会用编出来的价格糊弄你。
-          </p>
-
-          <div className="save-bar">
-            <button type="button" disabled={controlsDisabled || !dirty} onClick={() => void save()}>
+          <div className="save-bar provider-save-bar">
+            <button type="button" disabled={controlsDisabled || keyBlocked || !dirty} onClick={save}>
               {saveBusy ? '保存中…' : '保存'}
             </button>
             <button
@@ -533,10 +658,7 @@ export function ProviderPanel({ api, disabled }: Props) {
               className="ghost"
               disabled={controlsDisabled || !dirty}
               title="放弃这次改动，恢复成已保存的值"
-              onClick={() => {
-                setDraft(draftOf(api));
-                setSavedAt(null);
-              }}
+              onClick={discard}
             >
               撤销
             </button>
@@ -550,11 +672,30 @@ export function ProviderPanel({ api, disabled }: Props) {
             className="ghost danger"
             disabled={controlsDisabled || api.profiles.length <= 1}
             onClick={() => {
-              if (window.confirm(`删除配置「${active.name}」？`)) void api.deleteProfile(active.id);
+              setVaultError(null);
+              setDeleteArmed(true);
             }}
           >
             删除这个配置
           </button>
+          {deleteArmed ? (
+            <div className="notice warn">
+              <p>确认删除配置「{active.name}」？删除后将使用剩余配置。</p>
+              <div className="save-bar">
+                <button type="button" className="danger" disabled={controlsDisabled} onClick={deleteProfile}>
+                  {deleteBusy ? '删除中…' : '确认删除配置'}
+                </button>
+                <button
+                  type="button"
+                  className="ghost"
+                  disabled={controlsDisabled}
+                  onClick={() => setDeleteArmed(false)}
+                >
+                  取消
+                </button>
+              </div>
+            </div>
+          ) : null}
         </>
       ) : (
         <p className="hint">还没有模型配置。</p>

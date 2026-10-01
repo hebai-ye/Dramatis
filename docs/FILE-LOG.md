@@ -1688,7 +1688,27 @@ Windows 本机临时库／真实浏览器完成同意登记、不登记注册、
 
 后端接口、schema和同步程序不变，真实账户没有作为编辑测试。正式仅重启独立管理服务，切换前自动备份20156416B，保留旧管理程序／配置；空间配额前后核验一致，同步uptime持续，不覆盖生产库或WAL。正式包哈希、快照及验收见EVAL第一百零七节。
 
-## 七十二、几点注意
+## 顺序109、2026-10-01：账户与设置独立界面及体验优化
+
+| 文件 | 动作 | 内容 |
+| --- | --- | --- |
+| apps/web/src/App.tsx、components/{LeftRail,TopBar}.tsx | 改 | 两个独立打开状态与互斥入口，按需加载弹窗，窄屏关闭回到可见顶栏入口，启动显示账户待清理反馈 |
+| apps/web/src/components/{DialogShell,LazyPanel,AccountDialog}.tsx | 新增 | 共用Portal／inert／焦点外壳、离开确认和异步内容边界；账户独立两分区 |
+| apps/web/src/components/{SettingsDialog,AccountPanel,SyncPanel,ProviderPanel,AppearancePanel}.tsx | 改 | 设置去账户分类；账户状态、流程错误和忙碌态、恢复码保护；模型草稿与保存反馈、主题pressed、图片读取保护；模型删除／换密码改界面内确认 |
+| apps/web/src/components/{DataSettingsPanel,ArchivedConversationsPanel}.tsx | 新增 | 数据备份和本机存储独立面板；归档删除等待真实结果，失败保留确认与重试 |
+| apps/web/src/lib/{account-ui,account-deletion,dialog-controller,deletion-feedback,recovery-protection}.ts | 新增 | 账户状态、同步操作gate、严格本机删除结果、离开保护与浏览器恢复码提醒；归档删除区分未删除和已删除但刷新失败 |
+| apps/web/src/lib/{account-auth,db,keystore,session,sync,providers}.ts | 改 | 注册成功尽早内存交付恢复码；严格清理、队列／扫描并发、共享密钥保留、启动反馈；同步旋转串行和读取最新凭证；模型Key加载就绪保护 |
+| packages/core/src/crypto/keys.ts、platform/key-vault.ts | 改 | 默认不可导出的主密钥提供显式同步会话重新包装选项；口令库整笔读改写可共用本机串行锁，无协议或存储格式迁移 |
+| apps/web/src/styles.css | 改 | 复用既有token，390px单列、横屏短高度、安全区、可视视口、长名／ID换行、保存栏与确认布局 |
+| apps/web/tools/shell-assets.ts、vite.config.ts、public/sw.js | 新增／改 | 构建懒加载模块清单并让SW随产物更新；预缓存两弹窗及面板、保留上一代静态模块，API／同步请求仍放行 |
+| 本批相关 Core／Web 测试 | 新增／改 | 删除／注册／恢复码／并发／换密码／模型草稿与Key／归档真实反馈／离线分包行为回归；实际数字见EVAL第一百零八节 |
+| docs/superpowers/plans/2026-10-01-task-109-account-settings.md、docs/{TASKS,STATUS,EVAL,FILE-LOG}.md | 新增／改 | 用户批准方案、109范围、门禁和验收证据、回滚及未验证项；不重写107或其它会话段落 |
+
+本批单个109提交；初次本地交付未push／部署，不改同步服务端或管理端、不新增运行时依赖。五门禁全过：lint344文件，Core857＋Web209＋管理38＝1104条；首屏JS649422B为入口及所有modulepreload合计，减5.43%，后台预缓存另计。真实浏览器切换、改名、删除、恢复码登录与桌面／竖横屏／浅深色已验；物理手机与真实软键盘、实际刷新警告及PWA真断网更新待验证，69／70仅部分收口，76保持待办。实施提交前fetch主线仍f97dbad；没有带入其它会话改动。
+
+2026-10-02发布补记：用户追加明确授权push及部署，后续仅只读已批准的必要接入信息，没有复制私密笔记或编辑桌面副本。发布前五门禁再次全过，仍1104条；只换正式静态网页，172文件长度／SHA校验、13份新JS-CSS及2份旧资产保留，完整旧目录备份，公网16份关键资源200／MIME／SHA及缓存头通过，同步健康与五服务PID保持。正式浏览器刷新后的独立账户／设置及旧页面兼容已验；首次新标签仍命中旧首页，完整PWA更新仍待验证。主线交付采用单个109提交普通快进推送；四文档只更新109发布续记，脚本／清单／日志／截图留在忽略的out/task-109，未新增批次或改其它会话历史。
+
+## 七十三、几点注意
 
 ---
 

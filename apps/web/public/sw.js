@@ -16,7 +16,21 @@
 // v2（审计 A2）：v1 会把同源 GET 的同步接口（/sync/...）也缓存下来，版本号一换，
 // activate 时旧缓存整体删除，被污染的 head / pull 响应随之清掉。
 // v4：桌面图标改为近景取图，并使用新的安装图标路径。
-const CACHE = 'dramatis-shell-v4';
+// v5：预缓存懒加载模块，保留上一版模块供已经打开的页面使用。
+const CACHE = 'dramatis-shell-v5';
+const SHELL_ASSETS = '/assets/shell-assets.json';
+const PREVIOUS_ASSETS = '/assets/shell-previous.json';
+
+function isShellModule(path) {
+  return typeof path === 'string' && /^\/assets\/[a-zA-Z0-9._-]+\.(js|css)$/.test(path) && !path.includes('..');
+}
+
+async function moduleList(response) {
+  if (!response?.ok) throw new Error('离线模块清单读取失败');
+  const manifest = await response.json();
+  if (!Array.isArray(manifest.files) || !manifest.files.every(isShellModule)) throw new Error('离线模块清单无效');
+  return manifest.files;
+}
 
 /**
  * 白名单：只有这些**静态**路径允许进缓存（审计 A2）。
@@ -96,6 +110,11 @@ async function discoverShell(html) {
     }
   }
 
+  // HTML 不列出动态 import；构建清单覆盖两个弹窗和每个面板。
+  const modules = await moduleList(await fetch(SHELL_ASSETS, { cache: 'no-store' }));
+  for (const file of modules) urls.add(file);
+  urls.add(SHELL_ASSETS);
+
   // manifest 里声明的图标也一起收：装到桌面之后断网打开，图标不该是破图
   try {
     const manifest = await (await fetch('/manifest.webmanifest', { cache: 'no-store' })).json();
@@ -119,12 +138,35 @@ async function discoverShell(html) {
  */
 async function refreshShell() {
   const response = await fetch('/index.html', { cache: 'no-store' });
+  if (!response.ok) throw new Error('离线外壳读取失败');
   const urls = await discoverShell(await response.text());
   const cache = await caches.open(CACHE);
+  const currentModules = urls.filter(isShellModule).sort();
+  const priorManifest = await cache.match(SHELL_ASSETS);
+  const priorModules = priorManifest ? (await moduleList(priorManifest)).sort() : [];
+  const changed = JSON.stringify(priorModules) !== JSON.stringify(currentModules);
+  const previousManifest = await cache.match(PREVIOUS_ASSETS);
+  let previous = changed ? priorModules : previousManifest ? await moduleList(previousManifest) : [];
 
+  // 从旧缓存迁入已下载的上一版模块；失败时不先销毁旧外壳。
+  for (const key of await caches.keys()) {
+    if (key === CACHE || !key.startsWith('dramatis-shell-')) continue;
+    const old = await caches.open(key);
+    const oldModules = (await old.keys()).map((request) => new URL(request.url).pathname).filter(isShellModule);
+    if (previous.length === 0) previous = oldModules;
+    for (const file of previous) {
+      if (await cache.match(file)) continue;
+      const cached = await old.match(file);
+      if (cached) await cache.put(file, cached);
+    }
+  }
+
+  // addAll 原子成功后才清旧资源；install / activate 连跑不会丢上一代。
   await cache.addAll(urls);
+  await cache.put(PREVIOUS_ASSETS, Response.json({ files: previous }));
+  const retained = new Set([...urls, ...previous, PREVIOUS_ASSETS]);
   for (const request of await cache.keys()) {
-    if (!urls.includes(new URL(request.url).pathname)) await cache.delete(request);
+    if (!retained.has(new URL(request.url).pathname)) await cache.delete(request);
   }
   return urls;
 }
@@ -136,10 +178,12 @@ self.addEventListener('install', (event) => {
 self.addEventListener('activate', (event) => {
   event.waitUntil(
     (async () => {
-      // 别的版本留下的缓存整体删掉，只留当前这一份
-      const keys = await caches.keys();
-      await Promise.all(keys.filter((key) => key !== CACHE).map((key) => caches.delete(key)));
       await refreshShell();
+      // 新外壳准备好后再清理本应用旧缓存。
+      const keys = await caches.keys();
+      await Promise.all(
+        keys.filter((key) => key !== CACHE && key.startsWith('dramatis-shell-')).map((key) => caches.delete(key)),
+      );
       await self.clients.claim();
     })(),
   );

@@ -28,6 +28,8 @@ import { CastDetail } from './components/CastDetail';
 import { CastRail } from './components/CastRail';
 import { CastStrip } from './components/CastStrip';
 import { ChatControls } from './components/ChatControls';
+import { DialogShell } from './components/DialogShell';
+import { LazyPanel } from './components/LazyPanel';
 import { LeftRail, type RailPane } from './components/LeftRail';
 import { type FocusRequest, MainChat } from './components/MainChat';
 import { MainHeader } from './components/MainHeader';
@@ -35,7 +37,7 @@ import { NewConversationDialog } from './components/NewConversationDialog';
 import { PersonaLibrary } from './components/PersonaLibrary';
 import { RuntimePanel } from './components/RuntimePanel';
 import { SceneDialog } from './components/SceneDialog';
-import { type SettingsCategory, SettingsDialog } from './components/SettingsDialog';
+import type { SettingsCategory } from './components/SettingsDialog';
 import { SideChat } from './components/SideChat';
 import { TopBar } from './components/TopBar';
 import { WorldDesigner } from './components/WorldDesigner';
@@ -63,6 +65,11 @@ import { extraCalls, useUsage } from './lib/usage';
 import { NARROW_SCREEN_QUERY, useNarrowScreen } from './lib/viewport';
 import { useBackgroundWorker } from './lib/worker';
 import { UNLIMITED_PROMPT } from './prompt/unlimitedPreset';
+
+const loadSettingsDialog = () =>
+  import('./components/SettingsDialog').then((module) => ({ default: module.SettingsDialog }));
+const loadAccountDialog = () =>
+  import('./components/AccountDialog').then((module) => ({ default: module.AccountDialog }));
 
 /**
  * 应用外壳（LAYOUT 的骨架）。
@@ -166,11 +173,25 @@ export function App() {
   }, [narrow]);
   const [pane, setPane] = useState<RailPane>('list');
   const [panelOpen, setPanelOpen] = useState(false);
-  /**
-   * 设置改成了弹窗（用户要求）：分六个大类，从哪一类进由调用方决定
-   * （比如归档后那条提示会把「已归档」直接打开）。
-   */
+  /** 账户与设置独立打开，入口函数确保不叠窗。 */
   const [settingsCategory, setSettingsCategory] = useState<SettingsCategory | null>(null);
+  const [accountOpen, setAccountOpen] = useState(false);
+  const dialogReturnFocus = useRef<HTMLElement | null>(null);
+  const openSettings = useCallback(
+    (category: SettingsCategory = 'model') => {
+      dialogReturnFocus.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+      setAccountOpen(false);
+      setSettingsCategory(category);
+      closeRailOnNarrow();
+    },
+    [closeRailOnNarrow],
+  );
+  const openAccount = useCallback(() => {
+    dialogReturnFocus.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    setSettingsCategory(null);
+    setAccountOpen(true);
+    closeRailOnNarrow();
+  }, [closeRailOnNarrow]);
   const [newConversationMode, setNewConversationMode] = useState<
     { kind: 'new-world' } | { kind: 'in-world'; worldId: RoomId } | null
   >(null);
@@ -182,6 +203,22 @@ export function App() {
    * 解构用**原来的名字**，所以下面二十多处调用点一个字都不用改。
    */
   const { error, setError, warnings, setWarnings, installHint, dismissInstallHint } = useNotices(storage.ratio);
+  useEffect(() => {
+    if ((boot?.pendingAccountDeletions ?? 0) === 0) return;
+    setWarnings((previous) =>
+      previous.some((item) => item.code === 'account-cleanup')
+        ? previous
+        : [
+            ...previous,
+            {
+              code: 'account-cleanup',
+              message:
+                '本机账户已移出列表，但仍有清理未完成。请关闭其他 Dramatis 标签页；在账户中查看或重试清理。服务器密文副本不会因此删除。',
+              action: { label: '查看账户', run: openAccount },
+            },
+          ],
+    );
+  }, [boot?.pendingAccountDeletions, openAccount, setWarnings]);
 
   /** 「跳到原句」的最近一次请求（T11）：带序号，重复点击同一条也能再闪一次。 */
   const [focus, setFocus] = useState<FocusRequest | null>(null);
@@ -504,14 +541,14 @@ export function App() {
             // 归档后对话就从主列表消失了，给一步到位的入口（T12）
             label: '去看这条对话',
             run: () => {
-              setSettingsCategory('archive');
+              openSettings('archive');
               setWarnings([]);
             },
           },
         },
       ]);
     },
-    [session, setWarnings, setError],
+    [session, setWarnings, setError, openSettings],
   );
 
   /**
@@ -1004,8 +1041,8 @@ export function App() {
               closeRailOnNarrow();
             }}
             onImportFile={(file) => void handleImport(file)}
-            onOpenSettings={() => setSettingsCategory('model')}
-            onOpenAccount={() => setSettingsCategory('account')}
+            onOpenSettings={() => openSettings('model')}
+            onOpenAccount={openAccount}
             disabled={disabled}
             list={
               <>
@@ -1335,29 +1372,49 @@ export function App() {
         />
       )}
 
-      {/* 设置弹窗：模型、外观、账户、数据与归档；玩家身份已移到左栏。 */}
+      {accountOpen ? (
+        <DialogShell
+          label="账户"
+          className="account-dialog"
+          returnFocus={dialogReturnFocus.current}
+          onClose={() => setAccountOpen(false)}
+        >
+          <LazyPanel load={loadAccountDialog} label="账户" panelProps={{ sync, disabled }} />
+        </DialogShell>
+      ) : null}
+
       {settingsCategory === null ? null : (
-        <SettingsDialog
-          category={settingsCategory}
-          onCategoryChange={setSettingsCategory}
+        <DialogShell
+          label="设置"
+          className="settings-dialog"
+          returnFocus={dialogReturnFocus.current}
           onClose={() => setSettingsCategory(null)}
-          providers={providers}
-          appearance={appearance}
-          archivedConversations={session.archivedConversations}
-          activeConversationId={conversation?.id ?? null}
-          disabled={disabled}
-          onOpenArchived={(id) => {
-            void session.openConversation(id);
-            setSettingsCategory(null);
-          }}
-          onDeleteArchived={(target) => void session.deleteConversation(target.id)}
-          onExportArchive={() => (world === null ? Promise.resolve(null) : archive.exportWorld(world.id))}
-          onImportArchive={archive.importArchive}
-          onExportTranscript={(id) => archive.exportTranscript(session.bundleOf(id), world?.title ?? '')}
-          storage={storage}
-          backendKind={boot?.backendKind ?? ''}
-          sync={sync}
-        />
+        >
+          <LazyPanel
+            load={loadSettingsDialog}
+            label="设置"
+            panelProps={{
+              category: settingsCategory,
+              onCategoryChange: setSettingsCategory,
+              providers,
+              appearance,
+              archivedConversations: session.archivedConversations,
+              activeConversationId: conversation?.id ?? null,
+              disabled,
+              onOpenArchived: (id: ConversationId) => {
+                void session.openConversation(id);
+                setSettingsCategory(null);
+              },
+              onDeleteArchived: (target: Conversation) => session.deleteArchivedConversation(target.id),
+              onExportArchive: () => (world === null ? Promise.resolve(null) : archive.exportWorld(world.id)),
+              onImportArchive: archive.importArchive,
+              onExportTranscript: (id: ConversationId) =>
+                archive.exportTranscript(session.bundleOf(id), world?.title ?? ''),
+              storage,
+              backendKind: boot?.backendKind ?? '',
+            }}
+          />
+        </DialogShell>
       )}
     </div>
   );

@@ -192,7 +192,10 @@ export interface WrapSpaceKeyInput {
 }
 
 /** 解封装用的输入：与 `WrapSpaceKeyInput` 同一套「给 keys 或给 secret」的规则。 */
-export type UnwrapSpaceKeyInput = Omit<WrapSpaceKeyInput, 'iv'>;
+export type UnwrapSpaceKeyInput = Omit<WrapSpaceKeyInput, 'iv'> & {
+  /** 仅需换密码、重新包装主密钥的客户端会话显式开启；默认不可导出。 */
+  extractable?: boolean;
+};
 
 /**
  * 拿到这次要用的两把钥匙：优先用调用方已经派生好的那份。
@@ -238,8 +241,8 @@ export async function wrapSpaceKey(masterKey: CryptoKey, input: WrapSpaceKeyInpu
 /**
  * 解包主密钥。
  *
- * 解出来的主密钥是不可导出的——它只活在当前会话的内存里，除了加解密记录
- * 以外拿不去别处。
+ * 默认解出的主密钥不可导出。需要在会话内换密码、重新包装的客户端可以
+ * 显式开启 extractable；主密钥仍只由调用方保存在会话内存里。
  */
 export async function unwrapSpaceKey(wrapped: WrappedKey, input: UnwrapSpaceKeyInput): Promise<CryptoKey> {
   if (wrapped.algorithm !== WRAPPED_KEY_ALGORITHM) {
@@ -255,7 +258,7 @@ export async function unwrapSpaceKey(wrapped: WrappedKey, input: UnwrapSpaceKeyI
       keyEncryptionKey,
       { name: 'AES-GCM', iv, additionalData: wrapAad(input.spaceHandle, input.purpose), tagLength: 128 },
       { name: 'AES-GCM', length: KEY_BITS },
-      false,
+      input.extractable ?? false,
       ['encrypt', 'decrypt'],
     );
   } catch {
@@ -467,6 +470,8 @@ export interface OpenSpaceInput {
   purpose: SecretPurpose;
   /** 服务端存的那一份封装。 */
   wrapped: WrappedKey;
+  /** 为客户端会话的换密码能力允许重新包装；默认不可导出。 */
+  extractable?: boolean;
   /** 测试用。 */
   keyIterations?: number;
 }
@@ -498,6 +503,7 @@ export async function openSpace(input: OpenSpaceInput): Promise<OpenedSpace> {
     purpose: input.purpose,
     // 复用上面那一次派生：登录从「两次 600k 迭代」降到一次（顺序 61）
     keys,
+    extractable: input.extractable,
   });
   const credential = await deriveCredential(keys.authKey, input.spaceHandle);
   return { credential, credentialHash: await hashCredential(credential), encKey };

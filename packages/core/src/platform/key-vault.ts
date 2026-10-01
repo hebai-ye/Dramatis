@@ -68,6 +68,8 @@ export interface VaultStorage {
   read(): Promise<string | null>;
   write(value: string): Promise<void>;
   remove?(): Promise<void>;
+  /** 可选平台互斥：覆盖一次完整读改写，而非分别保护 read/write。 */
+  runExclusive?<T>(task: () => Promise<T>): Promise<T>;
 }
 
 export interface VaultOptions {
@@ -212,11 +214,14 @@ export async function openVault(
     const previous = writeQueues.get(storage) ?? Promise.resolve();
     const next = previous
       .catch(() => {})
-      .then(async () => {
-        const current = await readVault(storage);
-        if (current === null) return false;
-        if (await change(current)) await persist(current);
-        return true;
+      .then(() => {
+        const run = async () => {
+          const current = await readVault(storage);
+          if (current === null) return false;
+          if (await change(current)) await persist(current);
+          return true;
+        };
+        return storage.runExclusive === undefined ? run() : storage.runExclusive(run);
       });
     writeQueues.set(storage, next);
     return next;

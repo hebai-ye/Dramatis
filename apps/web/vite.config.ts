@@ -1,10 +1,11 @@
 import react from '@vitejs/plugin-react';
 import { defineConfig } from 'vite';
+import { shellAssets } from './tools/shell-assets.ts';
 import { syncDevBackend } from './tools/sync-dev-backend.ts';
 
 export default defineConfig({
   // 第二个插件只在开发 / 预览时提供「同步服务端」（同一份内核逻辑，存 JSON 文件）
-  plugins: [react(), syncDevBackend()],
+  plugins: [react(), syncDevBackend(), shellAssets()],
   server: {
     port: 5173,
   },

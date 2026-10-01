@@ -20,7 +20,7 @@ interface Props {
   onImportFile: (file: File) => void;
   /** 打开设置弹窗。 */
   onOpenSettings: () => void;
-  /** 打开「个人账户」（同步空间与身份）。 */
+  /** 打开独立账户弹窗（数据容器与多设备同步）。 */
   onOpenAccount: () => void;
   disabled: boolean;
   /** 世界与对话列表。 */
@@ -148,13 +148,25 @@ function LeftRailImpl({
 
       <footer className="rail-foot">
         {/*
-          底部两个按钮：左边 1/4 是「个人账户」（同步空间与身份），右边 3/4 是「设置」。
+          底部两个按钮分别打开账户与设置，布局沿用已有比例。
           账号是常看的东西（换设备、给朋友 id、抄恢复码），不该埋在设置的二级页里。
         */}
-        <button type="button" className="ghost account-button" disabled={disabled} onClick={onOpenAccount}>
+        <button
+          type="button"
+          className="ghost account-button"
+          data-dialog-trigger="account"
+          disabled={disabled}
+          onClick={onOpenAccount}
+        >
           账户
         </button>
-        <button type="button" className="ghost" disabled={disabled} onClick={onOpenSettings}>
+        <button
+          type="button"
+          className="ghost"
+          data-dialog-trigger="settings"
+          disabled={disabled}
+          onClick={onOpenSettings}
+        >
           设置
         </button>
       </footer>

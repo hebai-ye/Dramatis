@@ -46,6 +46,7 @@ export function TopBar({
       <button
         type="button"
         className="ghost rail-toggle"
+        data-dialog-return
         title={collapsed ? '展开左栏' : '折叠左栏'}
         aria-label={collapsed ? '展开左栏' : '折叠左栏'}
         aria-expanded={!collapsed}

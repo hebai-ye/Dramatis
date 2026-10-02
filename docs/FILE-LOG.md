@@ -1708,6 +1708,23 @@ Windows 本机临时库／真实浏览器完成同意登记、不登记注册、
 
 2026-10-02发布补记：用户追加明确授权push及部署，后续仅只读已批准的必要接入信息，没有复制私密笔记或编辑桌面副本。发布前五门禁再次全过，仍1104条；只换正式静态网页，172文件长度／SHA校验、13份新JS-CSS及2份旧资产保留，完整旧目录备份，公网16份关键资源200／MIME／SHA及缓存头通过，同步健康与五服务PID保持。正式浏览器刷新后的独立账户／设置及旧页面兼容已验；首次新标签仍命中旧首页，完整PWA更新仍待验证。主线交付采用单个109提交普通快进推送；四文档只更新109发布续记，脚本／清单／日志／截图留在忽略的out/task-109，未新增批次或改其它会话历史。
 
+## 顺序110、2026-10-02：VIP套餐、托管纳元账本与回环网关
+
+| 文件 | 动作 | 内容 |
+| --- | --- | --- |
+| tools/sync-admin/src/{vip-plans,api-accounting}.ts | 新增 | 四档版本化价格／50%整期额度；运营schema、追加购买／credit／charge、BigInt汇总、独立资格、预留／结算／pending与epoch幂等 |
+| tools/sync-admin/src/{operations,membership,store,http}.ts | 改 | 购买同事务、API修订预览与canonical套餐、旧会员身份兼容、仅安全账本投影与鉴权目录，沿用确认／备份／审计 |
+| tools/sync-server/src/{deepseek-billing,hosted-api,gateway-main}.ts、gateway.mjs、gateway.env.example | 新增 | 固定回环DeepSeek Flash、公开价版本／节假日／整个调用区间判断、严格usage与纳元计价、鉴权重检、UUID幂等、真实HTTP SSE／背压／停机和受保护配置模板 |
+| tools/sync-server/src/{storage-policy.ts,node.d.ts} | 改 | 宿主初始化运营表，现有固定／VIP配额规则保持；Node运行类型支持 |
+| tools/sync-admin/{accounting,billing-store,hosted-api,vip-purchases}.test.mjs | 新增 | 追加账本／购买事务／字段安全、旧库、精确金额、并发与异常、真实HTTP慢socket及供应商usage夹具回归 |
+| tools/sync-admin/{admin,policy}.test.mjs | 改 | 鉴权套餐目录；可空会员迁移兼容明确列名插入 |
+| tools/sync-admin/web/{app.js,index.html,style.css} | 改 | 购买／赠送办理方式、4档快照、独立截止、余额与待核对流水；人工句柄及旧预览清理；109账户恢复入口 |
+| tools/sync-admin/README.md、tools/sync-server/README.md、docs/ADMIN-CONSOLE.md | 改 | 本批后端范围、网关配置／资金和价格限制、回环与程序回滚，不扩任务73 |
+| docs/superpowers/{specs/2026-10-01-vip-deepseek-billing-design.md,plans/2026-10-02-vip-hosted-billing.md} | 新增 | 用户规则及顺序110真实实施边界与验收计划；不另占顺序号 |
+| docs/{STATUS,TASKS,EVAL,FILE-LOG}.md | 改 | 门禁1154/1154、正式Node22隔离88/88、IAB假库购买／续期／赠送及真实Flash两次扣费、安全发布证据与后续 |
+
+门禁与正式发布详见EVAL第一百零九节。真实运营Key、包／备份／部署脚本、隔离数据库／日志和截图留忽略路径，不提交；生产账户只读，不补历史发放。公网模型入口、客户端接线、支付和供应商对账保持后续。一个带顺序110提交，普通快进推送，不覆盖生产库或WAL。
+
 ## 七十三、几点注意
 
 ---

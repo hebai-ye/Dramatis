@@ -246,6 +246,57 @@ td {
   margin-top: 6px;
   font-size: 13px;
 }
+.membership-controls,
+.billing-detail {
+  border-top: 1px solid #d9e1dc;
+  margin-top: 24px;
+  padding-top: 16px;
+}
+.membership-controls > select {
+  width: 100%;
+  max-width: 640px;
+}
+.membership-controls .editor {
+  border-top: 0;
+  margin-top: 0;
+}
+.billing-summary {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 12px;
+}
+.billing-summary > div {
+  background: #f5f7f5;
+  border: 1px solid #d9e1dc;
+  border-radius: 8px;
+  padding: 12px;
+}
+.billing-summary span,
+.billing-summary strong {
+  display: block;
+  overflow-wrap: anywhere;
+}
+.billing-summary span {
+  font-size: 13px;
+  color: #63716b;
+}
+.billing-summary strong {
+  margin-top: 6px;
+  font-size: 20px;
+}
+.billing-history {
+  padding-left: 22px;
+}
+.billing-history p {
+  margin: 4px 0;
+}
+.plan-summary {
+  line-height: 1.7;
+  font-weight: 600;
+}
+.plan-presets button {
+  text-align: left;
+}
 .pagination {
   margin-top: 16px;
 }

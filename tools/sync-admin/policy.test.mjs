@@ -142,15 +142,9 @@ async function vipFixture() {
     createdAt: '2026-01-01',
     epoch: 'fixture-epoch',
   });
-  db.prepare('INSERT INTO space_memberships VALUES (?, ?, ?, ?, ?, ?, ?)').run(
-    'fixture-vip',
-    'fixture-epoch',
-    VIP_START,
-    VIP_END,
-    null,
-    1000,
-    1,
-  );
+  db.prepare(
+    'INSERT INTO space_memberships(space_handle,space_epoch,started_at,expires_at,revoked_at,max_bytes,revision) VALUES (?, ?, ?, ?, ?, ?, ?)',
+  ).run('fixture-vip', 'fixture-epoch', VIP_START, VIP_END, null, 1000, 1);
   return {
     db,
     store,
@@ -169,15 +163,9 @@ test('同步宿主创建会员状态和权益变动表，重启初始化保留�
   try {
     createSpaceQuotaResolver(db);
     assert.doesNotThrow(() => {
-      db.prepare('INSERT INTO space_memberships VALUES (?, ?, ?, ?, ?, ?, ?)').run(
-        'fixture-vip',
-        'fixture-epoch',
-        VIP_START,
-        VIP_END,
-        null,
-        1000,
-        1,
-      );
+      db.prepare(
+        'INSERT INTO space_memberships(space_handle,space_epoch,started_at,expires_at,revoked_at,max_bytes,revision) VALUES (?, ?, ?, ?, ?, ?, ?)',
+      ).run('fixture-vip', 'fixture-epoch', VIP_START, VIP_END, null, 1000, 1);
       db.prepare('INSERT INTO membership_events VALUES (?, ?, ?, ?, ?, ?, ?, ?)').run(
         'fixture-operation',
         'fixture-vip',

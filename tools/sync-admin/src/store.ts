@@ -1,5 +1,6 @@
 import { existsSync } from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
+import { createApiLedger } from './api-accounting.js';
 import { accountSpaceHandle, normalizeAccountId } from './identity.js';
 import {
   effectiveQuota,
@@ -11,6 +12,7 @@ import {
 
 interface SpaceRow extends MembershipRow {
   space_handle: string;
+  space_epoch: string | null;
   created_at: string;
   head: number | null;
   record_count: number | null;
@@ -19,6 +21,61 @@ interface SpaceRow extends MembershipRow {
   display_name: string | null;
   claimed_at: string | null;
   policy_max_bytes: number | null;
+}
+
+function presentBilling(summary: ReturnType<ReturnType<typeof createApiLedger>['summary']>) {
+  return {
+    available: summary.available,
+    balanceNanoyuan: summary.balanceNanoyuan,
+    reservedNanoyuan: summary.reservedNanoyuan,
+    availableNanoyuan: summary.availableNanoyuan,
+    grantedNanoyuan: summary.grantedNanoyuan,
+    spentNanoyuan: summary.spentNanoyuan,
+    paidUntil: summary.paidUntil,
+    paidActive: summary.paidActive,
+    vipActive: summary.vipActive,
+    status: summary.status,
+    revision: summary.revision,
+    serviceStatus: '托管网关尚未对最终用户开放',
+    purchases: summary.purchases.map((purchase) => ({
+      operationId: purchase.operationId,
+      planId: purchase.planId,
+      planVersion: purchase.planVersion,
+      planName: purchase.planName,
+      durationDays: purchase.durationDays,
+      maxBytes: purchase.maxBytes,
+      priceFen: purchase.priceFen,
+      creditNanoyuan: purchase.creditNanoyuan,
+      eventAt: purchase.eventAt,
+      paidUntil: purchase.paidUntil,
+      revision: purchase.revision,
+    })),
+    requests: summary.requests.map((request) => ({
+      requestId: request.requestId,
+      state: request.state,
+      reservedNanoyuan: request.reservedNanoyuan,
+      chargedNanoyuan: request.chargedNanoyuan,
+      model: request.model,
+      priceVersion: request.priceVersion,
+      pricePeriod: request.pricePeriod,
+      maxOutputTokens: request.maxOutputTokens,
+      startedAt: request.startedAt,
+      sentAt: request.sentAt,
+      completedAt: request.completedAt,
+      upstreamId: request.upstreamId,
+      usage: request.usage
+        ? {
+            promptTokens: request.usage.promptTokens,
+            cacheHitTokens: request.usage.cacheHitTokens,
+            cacheMissTokens: request.usage.cacheMissTokens,
+            completionTokens: request.usage.completionTokens,
+            totalTokens: request.usage.totalTokens,
+            ...(request.usage.reasoningTokens === undefined ? {} : { reasoningTokens: request.usage.reasoningTokens }),
+          }
+        : null,
+      pendingReason: request.pendingReason,
+    })),
+  };
 }
 
 function present(row: SpaceRow, defaultMaxBytes: number, now: number, membershipsAvailable: boolean) {
@@ -64,6 +121,8 @@ export function createAdminStore(path: string, defaultMaxBytes = 96 * 1024 ** 2,
     const memberships =
       spacesColumns.includes('epoch') &&
       ['space_epoch', ...MEMBERSHIP_FIELDS].every((name) => columns('space_memberships').includes(name));
+    const membershipPlans =
+      memberships && ['plan_id', 'plan_version'].every((name) => columns('space_memberships').includes(name));
     const history = [
       'operation_id',
       'space_handle',
@@ -78,10 +137,11 @@ export function createAdminStore(path: string, defaultMaxBytes = 96 * 1024 ** 2,
       ${profiles ? 'LEFT JOIN account_profiles p ON p.space_handle = s.space_handle AND p.space_epoch = s.epoch' : ''}
       ${policies ? 'LEFT JOIN space_policies q ON q.space_handle=s.space_handle AND q.space_epoch=s.epoch' : ''}
       ${memberships ? 'LEFT JOIN space_memberships m ON m.space_handle=s.space_handle AND m.space_epoch=s.epoch' : ''}`;
-    const projection = `s.space_handle, s.created_at, h.head,
+    const ledger = createApiLedger(db, now);
+    const projection = `s.space_handle, ${spacesColumns.includes('epoch') ? 's.epoch' : 'NULL'} AS space_epoch, s.created_at, h.head,
       ${counters ? 'h.record_count, h.byte_count' : 'NULL AS record_count, NULL AS byte_count'},
       ${profiles ? 'p.account_id, p.display_name, p.claimed_at' : 'NULL AS account_id, NULL AS display_name, NULL AS claimed_at'},
-      ${policies ? 'q.max_bytes AS policy_max_bytes' : 'NULL AS policy_max_bytes'},${membershipProjection(memberships)}`;
+      ${policies ? 'q.max_bytes AS policy_max_bytes' : 'NULL AS policy_max_bytes'},${membershipProjection(memberships, membershipPlans)}`;
 
     const snapshot = <T>(read: () => T): T => {
       db.exec('BEGIN');
@@ -174,6 +234,7 @@ export function createAdminStore(path: string, defaultMaxBytes = 96 * 1024 ** 2,
             .all(handle) as { deviceId: string; records: number; clientUpdatedAt: string }[];
           return {
             space: present(row, defaultMaxBytes, now(), memberships && history),
+            apiBilling: presentBilling(ledger.summary(handle, row.space_epoch ?? '')),
             membershipHistory: history
               ? db
                   .prepare(`SELECT e.action,e.event_at AS eventAt,e.started_at AS startedAt,

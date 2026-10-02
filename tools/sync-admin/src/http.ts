@@ -2,6 +2,7 @@ import { timingSafeEqual } from 'node:crypto';
 import type { AuditEvent } from './audit.js';
 import { AdminOperationError, type createAdminOperations } from './operations.js';
 import type { AdminStore } from './store.js';
+import { VIP_PLANS } from './vip-plans.js';
 
 export interface BackupStatus {
   available: boolean;
@@ -28,7 +29,7 @@ const SECURITY = {
   'x-frame-options': 'DENY',
 };
 
-/** 管理服务只接受固定本机来源；业务 API 全部只读，token 不接受查询参数。 */
+/** 管理服务只接受固定本机来源；受控写单独确认，token 不接受查询参数。 */
 export function createAdminHandler(options: Options) {
   if (!/^[A-Za-z0-9_-]{43,128}$/.test(options.token))
     throw new Error('管理 token 必须是至少 32 随机字节生成的 base64url 值。');
@@ -100,6 +101,10 @@ export function createAdminHandler(options: Options) {
         return action === 'change-prepare'
           ? finish(200, options.operations.prepare(input))
           : finish(200, options.operations.commit(input), 'application/json; charset=utf-8', false);
+      }
+      if (url.pathname === '/api/plans') {
+        action = 'plans-list';
+        return finish(200, { plans: VIP_PLANS });
       }
       if (url.pathname === '/api/overview') {
         action = 'overview';

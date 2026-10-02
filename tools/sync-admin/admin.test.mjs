@@ -181,6 +181,13 @@ test('管理HTTP强制token与本机来源，拒绝写接口和下载，限制�
     assert.equal((await get('/api/spaces?token=oops')).status, 400);
     assert.equal((await get('/sync/api/spaces')).status, 404);
     assert.equal((await get('/api/backup/download')).status, 404);
+    assert.equal((await get('/api/plans', { authorization: '' })).status, 401);
+    const catalog = await get('/api/plans');
+    assert.equal(catalog.status, 200);
+    assert.deepEqual(
+      (await catalog.json()).plans.map((plan) => plan.priceFen),
+      [1000, 3000, 6800, 9800],
+    );
     const response = await get('/api/overview');
     assert.equal(response.status, 200);
     assert.equal(response.headers.get('cache-control'), 'no-store');

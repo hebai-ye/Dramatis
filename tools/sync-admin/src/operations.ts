@@ -1,6 +1,7 @@
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
+import { apiAccountingAvailable, recordPurchase } from './api-accounting.js';
 import type { AuditEvent } from './audit.js';
 import { backupBeforeChange } from './backup.js';
 import { accountSpaceHandle, normalizeAccountId } from './identity.js';
@@ -13,6 +14,7 @@ import {
   presentMembership,
   readMembership,
 } from './membership.js';
+import { getVipPlan, type VipPlan } from './vip-plans.js';
 
 export class AdminOperationError extends Error {
   constructor(
@@ -34,13 +36,17 @@ interface Snapshot {
   max_bytes: number | null;
   revision: number;
   membership: MembershipRecord | null;
+  api_paid_until: string | null;
+  api_revision: number;
 }
 interface Changes {
   accountId?: string;
   displayName?: string;
   maxBytes?: number | null;
   membership?: MembershipRecord;
-  membershipAction?: 'grant' | 'renew' | 'revoke';
+  membershipAction?: 'grant' | 'renew' | 'revoke' | 'purchase';
+  purchase?: VipPlan;
+  purchaseAt?: string;
 }
 interface Pending {
   handle: string;
@@ -76,11 +82,16 @@ export function createAdminOperations(options: {
       'expires_at',
       'max_bytes',
     ].every((name) => columns('membership_events').includes(name));
+  const plansAvailable = ['plan_id', 'plan_version'].every((name) => columns('space_memberships').includes(name));
+  const billingAvailable = plansAvailable && apiAccountingAvailable(db);
   const select = db.prepare(`SELECT s.space_handle,s.epoch,p.account_id,p.display_name,q.max_bytes,
-    COALESCE(q.revision,0) AS revision,${membershipProjection(membershipsAvailable)} FROM spaces s
+    COALESCE(q.revision,0) AS revision,${membershipProjection(membershipsAvailable, plansAvailable)},
+    ${billingAvailable ? 'a.paid_until' : 'NULL'} AS api_paid_until,
+    ${billingAvailable ? 'COALESCE(a.revision,0)' : '0'} AS api_revision FROM spaces s
     LEFT JOIN account_profiles p ON p.space_handle=s.space_handle AND p.space_epoch=s.epoch
     LEFT JOIN space_policies q ON q.space_handle=s.space_handle AND q.space_epoch=s.epoch
     ${membershipsAvailable ? 'LEFT JOIN space_memberships m ON m.space_handle=s.space_handle AND m.space_epoch=s.epoch' : ''}
+    ${billingAvailable ? 'LEFT JOIN api_accounts a ON a.space_handle=s.space_handle AND a.space_epoch=s.epoch' : ''}
     WHERE s.space_handle=?`);
   const read = (handle: string): Snapshot => {
     const row = select.get(handle) as (Omit<Snapshot, 'membership'> & MembershipRow) | undefined;
@@ -117,21 +128,53 @@ export function createAdminOperations(options: {
         const action = memberInput.action;
         if (
           typeof action !== 'string' ||
-          !['grant', 'renew', 'revoke'].includes(action) ||
+          !['grant', 'renew', 'revoke', 'purchase'].includes(action) ||
           Object.keys(memberInput).some(
-            (key) => !(action === 'revoke' ? ['action'] : ['action', 'durationDays', 'maxBytes']).includes(key),
+            (key) =>
+              !(
+                action === 'purchase'
+                  ? ['action', 'planId']
+                  : action === 'revoke'
+                    ? ['action']
+                    : ['action', 'durationDays', 'maxBytes']
+              ).includes(key),
           )
         )
           return deny(400, 'bad-membership', '会员操作或字段无效。');
         const previous = snapshot.membership;
         const state = presentMembership(previous, instant);
+        if (action === 'purchase') {
+          if (!billingAvailable) return deny(409, 'billing-unavailable', '套餐账本尚未启用，请先更新同步服务。');
+          let plan: VipPlan;
+          try {
+            plan = getVipPlan(memberInput.planId);
+          } catch {
+            return deny(400, 'bad-plan', '请选择服务端目录中的套餐。');
+          }
+          if (state?.status === 'active' && (previous?.planId !== plan.id || previous?.maxBytes !== plan.maxBytes))
+            return deny(409, 'plan-switch-denied', '有效会员仅支持同档付费续期；历史自定义会员或跨档请另行处理。');
+          const from = state?.status === 'active' && previous ? Date.parse(previous.expiresAt) : instant;
+          changes.membership = {
+            startedAt: state?.status === 'active' && previous ? previous.startedAt : new Date(instant).toISOString(),
+            expiresAt: new Date(from + plan.durationDays * 86400000).toISOString(),
+            revokedAt: null,
+            maxBytes: plan.maxBytes,
+            revision: (previous?.revision ?? 0) + 1,
+            planId: plan.id,
+            planVersion: plan.version,
+          };
+          changes.purchase = plan;
+          changes.purchaseAt = new Date(instant).toISOString();
+        }
         if (action === 'grant' && state?.status === 'active')
           return deny(409, 'already-vip', '会员仍有效，请使用续期。');
         if ((action === 'renew' || action === 'revoke') && !previous)
           return deny(409, 'membership-not-found', '此账户没有当前会员记录。');
         if ((action === 'renew' || action === 'revoke') && previous?.revokedAt !== null)
           return deny(409, 'membership-revoked', '会员已撤销，请重新开通。');
-        if (action === 'revoke' && previous) {
+        if (action === 'purchase') {
+          // 套餐期限及容量已由服务端目录确定，不接受客户端报价。
+        } else if (action === 'revoke' && previous) {
           changes.membership = {
             ...previous,
             revokedAt: new Date(instant).toISOString(),
@@ -159,9 +202,11 @@ export function createAdminOperations(options: {
             revokedAt: null,
             maxBytes: quota,
             revision: (previous?.revision ?? 0) + 1,
+            planId: action === 'renew' && previous?.maxBytes === quota ? previous.planId : null,
+            planVersion: action === 'renew' && previous?.maxBytes === quota ? previous.planVersion : null,
           };
         }
-        changes.membershipAction = action as 'grant' | 'renew' | 'revoke';
+        changes.membershipAction = action as Changes['membershipAction'];
       }
       if ('accountId' in input) {
         if (snapshot.account_id !== null) return deny(409, 'already-linked', '此空间已关联账户，不能重新分配账户 ID。');
@@ -212,6 +257,23 @@ export function createAdminOperations(options: {
         confirmationId,
         expiresAt,
         spaceHandle: snapshot.space_handle,
+        ...(changes.purchase
+          ? {
+              purchase: {
+                planId: changes.purchase.id,
+                planVersion: changes.purchase.version,
+                planName: changes.purchase.name,
+                durationDays: changes.purchase.durationDays,
+                maxBytes: changes.purchase.maxBytes,
+                priceFen: changes.purchase.priceFen,
+                creditNanoyuan: changes.purchase.creditNanoyuan,
+                paidUntil: new Date(
+                  Math.max(instant, snapshot.api_paid_until === null ? instant : Date.parse(snapshot.api_paid_until)) +
+                    changes.purchase.durationDays * 86400000,
+                ).toISOString(),
+              },
+            }
+          : {}),
         before: {
           accountId: snapshot.account_id,
           displayName: snapshot.display_name,
@@ -322,6 +384,18 @@ export function createAdminOperations(options: {
             member.expiresAt,
             member.maxBytes,
           );
+          if (plansAvailable)
+            db.prepare(
+              'UPDATE space_memberships SET plan_id=?,plan_version=? WHERE space_handle=? AND space_epoch=?',
+            ).run(member.planId ?? null, member.planVersion ?? null, item.handle, snapshot.epoch);
+          if (item.changes.purchase)
+            recordPurchase(db, {
+              operationId,
+              spaceHandle: item.handle,
+              spaceEpoch: snapshot.epoch,
+              plan: item.changes.purchase,
+              eventAt: item.changes.purchaseAt ?? new Date(now()).toISOString(),
+            });
         } else
           db.prepare(`INSERT INTO space_policies(space_handle,space_epoch,max_bytes,revision) VALUES(?,?,?,?)
           ON CONFLICT(space_handle) DO UPDATE SET space_epoch=excluded.space_epoch,max_bytes=excluded.max_bytes,revision=excluded.revision`).run(

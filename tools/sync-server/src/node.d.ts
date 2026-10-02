@@ -14,16 +14,31 @@ declare module 'node:http' {
     /** 请求来自哪个 socket（顺序 61 给 `POST /spaces` 限流按来源分桶用）。 */
     socket: { remoteAddress?: string | undefined };
     [Symbol.asyncIterator](): AsyncIterator<Uint8Array>;
+    iterator(options: { destroyOnReturn: boolean }): AsyncIterable<Uint8Array>;
+    once(event: string, listener: () => void): void;
+    resume(): void;
   }
   export interface ServerResponse {
     statusCode: number;
     setHeader(name: string, value: string): void;
     end(body?: string): void;
+    write(chunk: Uint8Array): boolean;
+    readonly destroyed: boolean;
+    readonly writableEnded: boolean;
+    readonly headersSent: boolean;
+    once(event: string, listener: () => void): void;
+    off(event: string, listener: () => void): void;
   }
   export interface Server {
     listen(port: number, host: string, callback: () => void): void;
     close(callback?: () => void): void;
     on(event: string, listener: (...args: never[]) => void): void;
+    once(event: string, listener: (...args: never[]) => void): void;
+    off(event: string, listener: (...args: never[]) => void): void;
+    closeAllConnections(): void;
+    requestTimeout: number;
+    headersTimeout: number;
+    keepAliveTimeout: number;
   }
   export function createServer(handler: (request: IncomingMessage, response: ServerResponse) => void): Server;
 }

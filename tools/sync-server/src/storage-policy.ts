@@ -1,4 +1,5 @@
 import type { SqliteDatabase, SyncAppendQuota } from '../../../packages/core/src/index.js';
+import { initializeApiAccounting } from '../../sync-admin/src/api-accounting.js';
 
 interface QuotaRow {
   fixed_max_bytes: number | null;
@@ -24,6 +25,7 @@ export function createSpaceQuotaResolver(db: SqliteDatabase, now: () => number =
     action TEXT NOT NULL, event_at TEXT NOT NULL, started_at TEXT NOT NULL,
     expires_at TEXT NOT NULL, max_bytes INTEGER NOT NULL
   )`);
+  initializeApiAccounting(db);
   const select = db.prepare(`SELECT p.max_bytes AS fixed_max_bytes, m.max_bytes AS vip_max_bytes,
     m.started_at, m.expires_at, m.revoked_at FROM spaces s
     LEFT JOIN space_policies p ON p.space_handle=s.space_handle AND p.space_epoch=s.epoch

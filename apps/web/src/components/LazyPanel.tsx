@@ -23,7 +23,7 @@ class PanelBoundary extends Component<BoundaryProps, { failed: boolean }> {
   }
 }
 
-/** 外壳不参与Suspense；重试重新创建lazy边界，内容错误不会令整个应用退出。 */
+/** 外壳不参与 Suspense；重建 React 边界，模块 loader 自己负责原生缓存的重试。 */
 export function LazyPanel<P extends object>({
   load,
   panelProps,

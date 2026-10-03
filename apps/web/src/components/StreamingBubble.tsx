@@ -1,5 +1,6 @@
 import { type CastName, type MessageId, renderMessageContent } from '@dramatis/core';
 import { type RefObject, useEffect, useLayoutEffect, useRef } from 'react';
+import type { ChatScrollVisibility } from '../lib/chat-visibility';
 import { countRender } from '../lib/render-count';
 import { acknowledgeStreamHandoff, resetStreamState, useStreamState } from '../lib/stream-store';
 import { Avatar } from './MessageBody';
@@ -17,6 +18,7 @@ interface Props {
   suspendAutoScroll: boolean;
   /** 对话区底部的锚点：流式内容长出来时滚到它。 */
   bottomRef: RefObject<HTMLDivElement | null>;
+  scrollVisibility?: ChatScrollVisibility;
   cast: readonly CastName[];
   avatars: Readonly<Record<string, string | null>>;
 }
@@ -42,7 +44,16 @@ function tailOf(text: string, max = 120): string {
  * 它是**唯一**订阅流式状态的组件：每个 token 到达只重画这里，几百条已落盘的消息、
  * 左栏、面板都不动。三块内容与拆出来之前一样：推理流、阶段占位（0ms 就有话说）、流式气泡。
  */
-export function StreamingBubble({ busy, onStop, lastMessageId, suspendAutoScroll, bottomRef, cast, avatars }: Props) {
+export function StreamingBubble({
+  busy,
+  onStop,
+  lastMessageId,
+  suspendAutoScroll,
+  bottomRef,
+  scrollVisibility,
+  cast,
+  avatars,
+}: Props) {
   countRender('StreamingBubble');
   const { text, speaker, reasoning, progress, phase, handoffId } = useStreamState();
   const speakerId = cast.find((member) => member.displayName === speaker)?.id;
@@ -81,10 +92,14 @@ export function StreamingBubble({ busy, onStop, lastMessageId, suspendAutoScroll
     const before = previousHeight.current ?? height;
     previousHeight.current = height;
     if (suspendAutoScroll || (text === '' && reasoning === '' && phase === 'idle')) return;
+    if (scrollVisibility?.visibleRef.current === false) {
+      if (scrollVisibility.followHiddenRef.current === true) scroller.scrollTop = height;
+      return;
+    }
     const growth = Math.max(0, height - before);
     const previousDistance = height - growth - scroller.scrollTop - scroller.clientHeight;
     if (previousDistance <= 120) scroller.scrollTop = height;
-  }, [text, reasoning, phase, suspendAutoScroll, bottomRef]);
+  }, [text, reasoning, phase, suspendAutoScroll, bottomRef, scrollVisibility]);
 
   // 已交接：这一帧起流式副本不再画任何东西（落盘消息已经在列表里了）
   if (handedOver) return null;

@@ -28,6 +28,7 @@ import {
 } from 'react';
 import { createPortal } from 'react-dom';
 import { BusyContext } from '../lib/busy-context';
+import { useChatViewportVisibility } from '../lib/chat-visibility';
 import { countRender } from '../lib/render-count';
 import { isNearBottom } from '../lib/scroll';
 import { useCoarsePointer } from '../lib/viewport';
@@ -282,6 +283,13 @@ function MainChatImpl({
     [castKey],
   );
   const [input, setInput] = useState('');
+  const bodyRef = useRef<HTMLDivElement | null>(null);
+  const bottomRef = useRef<HTMLDivElement | null>(null);
+  const inputRef = useRef<HTMLTextAreaElement | null>(null);
+  const { visible, visibleRef, scrollVisibility } = useChatViewportVisibility(bodyRef, inputRef, conversation.id);
+  const consumedFocus = useRef<number | null>(null);
+  const consumedInsert = useRef<number | null>(null);
+  const highlightTimer = useRef<number | null>(null);
   const [editingId, setEditingId] = useState<MessageId | null>(null);
   const [modeMenuOpen, setModeMenuOpen] = useState(false);
   const modeMenuId = useId();
@@ -289,13 +297,13 @@ function MainChatImpl({
   useEffect(() => {
     if (!modeMenuOpen) return;
     const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape') return;
+      if (event.key !== 'Escape' || event.isComposing || event.defaultPrevented || !visibleRef.current) return;
       setModeMenuOpen(false);
-      modeTriggerRef.current?.focus();
+      modeTriggerRef.current?.focus({ preventScroll: true });
     };
     window.addEventListener('keydown', closeOnEscape);
     return () => window.removeEventListener('keydown', closeOnEscape);
-  }, [modeMenuOpen]);
+  }, [modeMenuOpen, visibleRef]);
   /**
    * 无限制模式的正文是**仓库里固定的一份**（顺序 92），而且用户 2026-09-26 明说了两件事：
    * 词已经设定好、**不可更改**；内容**不可阅读**。
@@ -333,10 +341,14 @@ function MainChatImpl({
    */
   const swallowNextClick = useRef(false);
 
-  const openMenu = useCallback((id: MessageId, x: number, y: number): void => {
-    setMenuFor(id);
-    setMenuAt({ x, y });
-  }, []);
+  const openMenu = useCallback(
+    (id: MessageId, x: number, y: number): void => {
+      if (!visibleRef.current) return;
+      setMenuFor(id);
+      setMenuAt({ x, y });
+    },
+    [visibleRef],
+  );
   const closeMenu = useCallback((): void => {
     setMenuFor(null);
     setMenuAt(null);
@@ -396,6 +408,7 @@ function MainChatImpl({
   useEffect(
     () => () => {
       if (pressTimer.current !== null) window.clearTimeout(pressTimer.current);
+      if (highlightTimer.current !== null) window.clearTimeout(highlightTimer.current);
     },
     [],
   );
@@ -422,8 +435,14 @@ function MainChatImpl({
       window.removeEventListener('keydown', onKey);
     };
   }, [menuFor]);
-  const bottomRef = useRef<HTMLDivElement | null>(null);
-  const inputRef = useRef<HTMLTextAreaElement | null>(null);
+  useEffect(() => {
+    if (visible) return;
+    cancelPress();
+    closeMenu();
+    setModeMenuOpen(false);
+    setDragOver(false);
+    swallowNextClick.current = false;
+  }, [visible, cancelPress, closeMenu]);
 
   /*
    * 输入框跟着字数长高（最多 200px，再多就自己滚）。
@@ -445,21 +464,22 @@ function MainChatImpl({
    * 现在只在「本来就贴着底部（80px 内）」或「是自己刚发的那句」时跟；否则只亮一个
    * 「有新消息」的小按钮，点了再下去。流式长出来的那部分由 StreamingBubble 自己按同样的规矩跟。
    */
-  const bodyRef = useRef<HTMLDivElement | null>(null);
   const nearBottomRef = useRef(true);
   const [hasNewBelow, setHasNewBelow] = useState(false);
   const onBodyScroll = useCallback(() => {
     const node = bodyRef.current;
-    if (node === null) return;
+    if (node === null || !visibleRef.current) return;
     const near = isNearBottom(node);
     nearBottomRef.current = near;
     if (near) setHasNewBelow(false);
-  }, []);
+  }, [visibleRef]);
   const jumpToBottom = useCallback(() => {
+    if (!visibleRef.current) return;
     nearBottomRef.current = true;
     setHasNewBelow(false);
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, []);
+    const node = bodyRef.current;
+    node?.scrollTo({ top: node.scrollHeight, behavior: 'smooth' });
+  }, [visibleRef]);
 
   const lastMessage = messages[messages.length - 1];
   const lastMessageKey = lastMessage === undefined ? '' : `${lastMessage.id}:${String(lastMessage.content.length)}`;
@@ -472,14 +492,21 @@ function MainChatImpl({
     // 刚切进一条对话：总是从底部开始看
     const switched = conversationKeyRef.current !== conversation.id;
     conversationKeyRef.current = conversation.id;
+    const node = bodyRef.current;
+    if (node === null) return;
+    if (!visibleRef.current) {
+      if (scrollVisibility.followHiddenRef.current === true) node.scrollTop = node.scrollHeight;
+      else setHasNewBelow(true);
+      return;
+    }
     if (switched || lastIsPlayer || nearBottomRef.current) {
       nearBottomRef.current = true;
       setHasNewBelow(false);
-      bottomRef.current?.scrollIntoView({ behavior: switched ? 'auto' : 'smooth' });
+      node.scrollTo({ top: node.scrollHeight, behavior: switched ? 'auto' : 'smooth' });
       return;
     }
     setHasNewBelow(true);
-  }, [lastMessageKey, lastIsPlayer, focus, conversation.id]);
+  }, [lastMessageKey, lastIsPlayer, focus, conversation.id, visibleRef, scrollVisibility]);
 
   /**
    * 跳到原句（T11）。
@@ -488,15 +515,20 @@ function MainChatImpl({
    * 又不会让整屏一直有人在发光。
    */
   useEffect(() => {
-    if (focus === null) return;
-    const node = document.querySelector(`[data-message-id="${focus.id}"]`);
-    if (node === null) return;
-
-    node.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    if (!visible || focus === null || consumedFocus.current === focus.seq) return;
+    const body = bodyRef.current;
+    const node = Array.from(body?.querySelectorAll<HTMLElement>('[data-message-id]') ?? []).find(
+      (message) => message.dataset.messageId === focus.id,
+    );
+    if (body === null || node === undefined) return;
+    consumedFocus.current = focus.seq;
+    const rect = node.getBoundingClientRect();
+    const top = body.scrollTop + rect.top - body.getBoundingClientRect().top - (body.clientHeight - rect.height) / 2;
+    body.scrollTo({ top: Math.max(0, top), behavior: 'smooth' });
     setHighlightId(focus.id);
-    const timer = window.setTimeout(() => setHighlightId(null), 2600);
-    return () => window.clearTimeout(timer);
-  }, [focus]);
+    if (highlightTimer.current !== null) window.clearTimeout(highlightTimer.current);
+    highlightTimer.current = window.setTimeout(() => setHighlightId(null), 2600);
+  }, [focus, visible]);
 
   /*
    * 只有最后一条角色回复可以重抽：更早的回复换掉之后，后面那些回复是照着旧版本说的，
@@ -533,8 +565,8 @@ function MainChatImpl({
     setModeMenuOpen(false);
     window.requestAnimationFrame(() => {
       const target = inputRef.current;
-      if (target === null) return;
-      target.focus();
+      if (target === null || !visibleRef.current) return;
+      target.focus({ preventScroll: true });
       target.setSelectionRange(start + caretOffset, start + caretOffset);
     });
   };
@@ -548,19 +580,20 @@ function MainChatImpl({
    */
   // biome-ignore lint/correctness/useExhaustiveDependencies: 只在请求变化时插一次；把 input 放进依赖会因为「插入本身改了 input」而自己触发自己
   useEffect(() => {
-    if (insertRequest === null) return;
+    if (!visible || insertRequest === null || consumedInsert.current === insertRequest.seq) return;
+    consumedInsert.current = insertRequest.seq;
     const node = inputRef.current;
     const start = node?.selectionStart ?? input.length;
     const end = node?.selectionEnd ?? input.length;
     setInput(`${input.slice(0, start)}${insertRequest.text}${input.slice(end)}`);
     window.requestAnimationFrame(() => {
       const target = inputRef.current;
-      if (target === null) return;
-      target.focus();
+      if (target === null || !visibleRef.current) return;
+      target.focus({ preventScroll: true });
       const caret = start + insertRequest.text.length;
       target.setSelectionRange(caret, caret);
     });
-  }, [insertRequest]);
+  }, [insertRequest, visible, visibleRef]);
 
   const startEdit = useCallback((id: MessageId): void => setEditingId(id), []);
   const cancelEdit = useCallback((): void => setEditingId(null), []);
@@ -668,6 +701,7 @@ function MainChatImpl({
           lastMessageId={messages[messages.length - 1]?.id ?? null}
           suspendAutoScroll={focus !== null}
           bottomRef={bottomRef}
+          scrollVisibility={scrollVisibility}
           cast={castNames}
           avatars={avatars}
         />
@@ -681,7 +715,7 @@ function MainChatImpl({
         <div ref={bottomRef} />
       </div>
 
-      {menuMessage !== null
+      {visible && menuMessage !== null
         ? createPortal(
             <div
               className="row-menu"
@@ -821,7 +855,7 @@ function MainChatImpl({
                   <IconPlus />
                 </span>
               </button>
-              {modeMenuOpen ? (
+              {visible && modeMenuOpen ? (
                 <div id={modeMenuId} className="mode-menu">
                   <p className="hint">对话模式（只影响这条对话）</p>
                   {MODE_OPTIONS.map((mode) => (

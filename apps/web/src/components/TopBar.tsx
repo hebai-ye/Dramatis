@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react';
+import { useLibraryView } from '../lib/library-view';
 import { IconChevron, IconMenu } from './Icons';
 
 interface Props {
@@ -41,6 +42,7 @@ export function TopBar({
   castStrip,
   chatControls,
 }: Props) {
+  const { activeView } = useLibraryView();
   return (
     <header className={narrow ? 'topbar narrow' : 'topbar'}>
       <button
@@ -69,11 +71,11 @@ export function TopBar({
         </span>
       )}
 
-      {narrow ? castStrip : null}
+      {narrow && activeView === null ? castStrip : null}
 
       <div className="topbar-spacer" />
 
-      {narrow ? chatControls : null}
+      {narrow && activeView === null ? chatControls : null}
 
       {backgroundPending > 0 ? <span className="tag">后台任务 {backgroundPending}</span> : null}
 

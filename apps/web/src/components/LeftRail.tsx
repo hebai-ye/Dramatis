@@ -1,17 +1,9 @@
 import { memo, type ReactNode, useRef } from 'react';
+import { LIBRARY_SURFACE_ID, LIBRARY_VIEWS, useLibraryView } from '../lib/library-view';
 import { countRender } from '../lib/render-count';
 
-/**
- * 左栏里的三段（列表 / 世界书 / 角色卡）。
- *
- * `settings` 不在其中：设置改成**弹窗**（用户要求），从底部那个按钮直接开，
- * 不再占用左栏的一块地方——否则「看设置」与「看世界列表」得来回切。
- */
-export type RailPane = 'list' | 'personas' | 'worldbooks' | 'cards';
-
 interface Props {
-  pane: RailPane;
-  onPaneChange: (pane: RailPane) => void;
+  counts: Record<'personas' | 'cards' | 'worldbooks', number>;
   /** 顶层入口：创建新世界，并在其中开启首条对话。 */
   onNewConversation: () => void;
   /** 「创建」走副对话，由 AI 帮忙起草，用户决定去留。 */
@@ -25,15 +17,7 @@ interface Props {
   disabled: boolean;
   /** 世界与对话列表。 */
   list: ReactNode;
-  /** 素材与设置面板，逐个切换。 */
-  panel: ReactNode;
 }
-
-const PANES: Array<{ id: RailPane; label: string; hint: string }> = [
-  { id: 'personas', label: '我的身份', hint: '创建、编辑、删除玩家在对话中扮演的身份' },
-  { id: 'worldbooks', label: '世界书', hint: '导入、删除、微调世界设定' },
-  { id: 'cards', label: '角色卡', hint: '导入、删除、微调角色模板' },
-];
 
 /**
  * 左栏（LAYOUT「左栏」）。
@@ -47,8 +31,7 @@ const PANES: Array<{ id: RailPane; label: string; hint: string }> = [
  * 这是规格里刻意分开的两件事——前者是整理已有的东西，后者是让 AI 陪你起草。
  */
 function LeftRailImpl({
-  pane,
-  onPaneChange,
+  counts,
   onNewConversation,
   onCreateWithAi,
   onImportFile,
@@ -56,10 +39,9 @@ function LeftRailImpl({
   onOpenAccount,
   disabled,
   list,
-  panel,
 }: Props) {
   countRender('LeftRail');
-  const active = PANES.find((item) => item.id === pane) ?? null;
+  const library = useLibraryView();
   const fileRef = useRef<HTMLInputElement | null>(null);
 
   return (
@@ -85,30 +67,22 @@ function LeftRailImpl({
         >
           新对话
         </button>
-        <button
-          type="button"
-          className={pane === 'personas' ? 'ghost active' : 'ghost'}
-          disabled={disabled}
-          onClick={() => onPaneChange(pane === 'personas' ? 'list' : 'personas')}
-        >
-          我的身份
-        </button>
-        <button
-          type="button"
-          className={pane === 'worldbooks' ? 'ghost active' : 'ghost'}
-          disabled={disabled}
-          onClick={() => onPaneChange(pane === 'worldbooks' ? 'list' : 'worldbooks')}
-        >
-          查看已有世界书
-        </button>
-        <button
-          type="button"
-          className={pane === 'cards' ? 'ghost active' : 'ghost'}
-          disabled={disabled}
-          onClick={() => onPaneChange(pane === 'cards' ? 'list' : 'cards')}
-        >
-          查看已有角色卡
-        </button>
+        {LIBRARY_VIEWS.map((view) => (
+          <button
+            key={view.id}
+            type="button"
+            className={library.activeView === view.id ? 'ghost active' : 'ghost'}
+            data-library-trigger={view.id}
+            aria-expanded={library.activeView === view.id}
+            aria-pressed={library.activeView === view.id}
+            aria-controls={LIBRARY_SURFACE_ID}
+            title={view.hint}
+            onClick={() => void library.toggle(view.id)}
+          >
+            {view.id === 'personas' ? view.label : `查看已有${view.label}`}
+            <span className="library-count">{counts[view.id]}</span>
+          </button>
+        ))}
         <button
           type="button"
           className="ghost"
@@ -129,22 +103,7 @@ function LeftRailImpl({
         </button>
       </div>
 
-      <div className="rail-body">
-        {pane === 'list' ? (
-          list
-        ) : (
-          <>
-            <header className="rail-panel-head">
-              <strong>{active?.label}</strong>
-              <span className="hint">{active?.hint}</span>
-              <button type="button" className="ghost" onClick={() => onPaneChange('list')}>
-                返回列表
-              </button>
-            </header>
-            {panel}
-          </>
-        )}
-      </div>
+      <div className="rail-body">{list}</div>
 
       <footer className="rail-foot">
         {/*
@@ -174,8 +133,5 @@ function LeftRailImpl({
   );
 }
 
-/**
- * memo（顺序 59）。它的 `list` / `panel` 是 App 每次渲染新造的 JSX，所以 App 重渲染时它还是会跟着；
- * 收益同 RuntimePanel：流式与打字那两条路已经不经过 App。拆 App（顺序 66）时再把两块内容做成子组件。
- */
+/** 世界与对话列表始终保留；素材开关只消费局部视图状态。 */
 export const LeftRail = memo(LeftRailImpl);

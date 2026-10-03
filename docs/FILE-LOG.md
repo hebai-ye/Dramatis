@@ -1725,7 +1725,61 @@ Windows 本机临时库／真实浏览器完成同意登记、不登记注册、
 
 门禁与正式发布详见EVAL第一百零九节。真实运营Key、包／备份／部署脚本、隔离数据库／日志和截图留忽略路径，不提交；生产账户只读，不补历史发放。公网模型入口、客户端接线、支付和供应商对账保持后续。一个带顺序110提交，普通快进推送，不覆盖生产库或WAL。
 
-## 七十三、几点注意
+## 七十三、2026-10-03：顺序112 素材库工作区、保存离开协调与浏览器回归
+
+用户批准全部推荐方案；从最新 `origin/main` 基线 `4c5169a` 创建新worktree，分支 `codex/task-112-library-surface`，避开可能被其它线使用的111。本批仅前端素材工作区及其验证；App 1385行。最终五门禁按typecheck→lint→test→build→build:sync-server串行执行，HTTP缓存503边界修复后重跑；实际退出码、文件／测试总数、构建模块与首屏／全JS／CSS／SW产物以EVAL顺序112最终记录为准，不沿用修复前数字。首屏按入口及全部静态preload合计，与实建649422B基线核对。
+
+| 文件 | 动作 | 内容 |
+| --- | --- | --- |
+| `apps/web/src/App.tsx` | 改 | 保留原主副聊天分支；素材workspace接线、手机抽屉互斥、成功导航与全局导入协调；1385行 |
+| `apps/web/src/components/LeftRail.tsx` | 改 | 世界／对话列表始终保留，三个素材开关与数量、aria-expanded／pressed／controls；纯浏览不受生成busy禁用 |
+| `apps/web/src/components/TopBar.tsx` | 改 | 素材模式隐藏手机角色条与聊天控件，顶栏左栏入口保留 |
+| `apps/web/src/components/LibraryWorkspace.tsx` | 新增 | 局部Provider、工作区覆盖region、轻量标题／关闭、inert隔离、逻辑入口回焦、Esc与crop离开确认、懒加载接线 |
+| `apps/web/src/components/LibrarySurface.tsx` | 新增 | 按访问保留三库、全库搜索／排序／挂载筛选、列表／详情、相邻选择修复、原生导入／下载与手机焦点 |
+| `apps/web/src/components/PersonaLibrary.tsx` | 改 | 复用编辑器字段，受控选择、Promise保存／删除、IME／失败重试与统一离开handle |
+| `apps/web/src/components/CardDesigner.tsx` | 改 | 受控选择、真实保存结果、字段／图片草稿、裁图pending／discard与统一离开handle |
+| `apps/web/src/components/WorldDesigner.tsx` | 改 | 条目草稿、Promise操作、无世界禁挂、明确挂载／解绑与真实当前世界删除说明 |
+| `apps/web/src/components/library-editors.test.tsx` | 新增 | 受控编辑器handler／hook回归：慢创建、删除邻项、组合输入、crop、失败重试；不是DOM验收 |
+| `apps/web/src/components/MainChat.tsx` | 改 | 素材隐藏时局部滚动／追尾、历史锚点和选区保持、瞬态菜单关闭、focus／insert seq只消费一次；不改流式生命周期 |
+| `apps/web/src/components/SideChat.tsx` | 改 | 历史阅读意图与贴底跟随、隐藏期局部追尾、消息锚点；instant避免平滑动画漂移；handoff／reset保留 |
+| `apps/web/src/components/StreamingBubble.tsx` | 改 | 接入稳定可见性ref，仅约束DOM滚动；消息落盘交接与停止清理保持 |
+| `apps/web/src/components/LazyPanel.tsx` | 改 | 保留现有加载／错误／重试边界，明确模块缓存重试由loader负责，轻量外壳在Suspense之外 |
+| `apps/web/src/hooks/useLibraryWorkspace.ts` | 新增 | 窄类型素材props、最新已提交会话ref、只读存在性检查、完整deferred navigation与导入协调；App接线瘦身 |
+| `apps/web/src/hooks/useImport.ts` | 改 | 返回真实Promise结果；素材库／原会话两模式，三类原生文件与既有角色卡／世界书解析，库内导入不建会话 |
+| `apps/web/src/hooks/useImport.test.tsx` | 新增 | 三类入库、同名副本、无世界不创建／不挂载、失败、原全局流程与ST兼容回归 |
+| `apps/web/src/lib/library-view.tsx` | 新增 | 三种纯UI视图、共享动作与leave handle、保存／pending gate、实际commit导航与确认后完整动作 |
+| `apps/web/src/lib/library-view.test.ts` | 新增 | 切库／收起／在途等待／失败／crop、目标不存在与导航后半段回归 |
+| `apps/web/src/lib/library-editor.ts` | 新增 | 串行真实保存、成功基线、在途flush、失败保草稿、IME、外部更新／删除协调及有界新建保护 |
+| `apps/web/src/lib/library-editor.test.ts` | 新增 | 保存／删除／在途／失败／组合输入／外部刷新与失效草稿回归 |
+| `apps/web/src/lib/library-query.ts` | 新增 | 三库规范化搜索、稳定名称／最近修改排序、有效挂载ID交集计数 |
+| `apps/web/src/lib/library-query.test.ts` | 新增 | 全库字段搜索、trim／大小写、排序与失效／重复挂载ID计数回归 |
+| `apps/web/src/lib/library-transfer.ts` | 新增 | 三类原生素材JSON严格解析／序列化，素材字段和来源保留、回导新实体／条目ID、旧删除字段剥除 |
+| `apps/web/src/lib/library-transfer.test.ts` | 新增 | 三类往返、扩展／图片／内嵌书、来源、新ID与非法版本／字段回归 |
+| `apps/web/src/lib/chat-visibility.tsx` | 新增 | 只控制DOM：隐藏前停平滑动画、锚点／追尾与textarea选区捕获恢复，流订阅／持久化不暂停 |
+| `apps/web/src/lib/chat-visibility.test.ts` | 新增 | 几何锚点／贴底及真实SideChat受控effect回归，包含历史漂移和动画中间事件；不是浏览器DOM |
+| `apps/web/src/lib/lazy-module.ts` | 新增 | 完整fetch预检模块与静态依赖，重试cache:reload刷新原地址HTTP失败缓存并递增目标查询，成功／并发缓存 |
+| `apps/web/src/lib/lazy-module.test.ts` | 新增 | 网络恢复、连续失败、原查询／片段、静态依赖失败、并发及成功复用回归 |
+| `apps/web/src/lazy-module-url.d.ts` | 新增 | 构建模块地址query的TypeScript声明 |
+| `apps/web/src/lib/session.ts` | 改 | 素材异步完成后按目标世界与最新snapshot窄合并身份／挂载字段；无世界可软删世界书 |
+| `apps/web/src/lib/session-library.test.ts` | 新增 | 延迟素材操作期间后台reload新增消息保留、切世界不回写与无世界删书回归 |
+| `apps/web/src/styles.css` | 改 | 主题token、覆盖层／层级、独立滚动、手机列表详情／44px点击区／安全区／抽屉位移及低高度宽屏滚动 |
+| `apps/web/tools/lazy-module-urls.ts` | 新增 | Vite发出独立hash模块及未首屏加载静态依赖地址，精确token替换兼容引用ID；不提前导入编辑器 |
+| `apps/web/tools/lazy-module-urls.test.ts` | 新增 | 实际Vite构建模块／完整依赖／排除首屏与开发非根base回归 |
+| `apps/web/vite.config.ts` | 改 | 注册素材模块地址插件，既有开发后端和shell资产插件保持 |
+| `docs/superpowers/specs/2026-10-02-task-112-library-surface.md` | 新增 | 用户全部推荐已批准的素材工作区规格、范围、行为与验收边界 |
+| `docs/superpowers/plans/2026-10-02-task-112-library-surface.md` | 新增 | 顺序112执行计划、隔离／分工、红绿回归、五门禁与浏览器验证步骤 |
+| `docs/TASKS.md` | 改 | 新112计划行、处理表与遗留；注明111可能属于其它线，其它历史任务状态保持 |
+| `docs/STATUS.md` | 改 | 本批接续状态、已验／待验及单提交与授权发布边界 |
+| `docs/EVAL.md` | 改 | 顺序112真实门禁、DOM／流式／文件／分包／产物证据与未验证项；由root登记最终数字 |
+| `docs/FILE-LOG.md` | 改 | 本节全量新增／修改文件表，几点注意七十三→七十四 |
+
+本机真实浏览器覆盖桌面1280×900、模拟手机390×844／844×390、无世界CRUD、658B原生卡下载回导同名新ID、手机自动收栏／回焦与裁图离开确认。主副聊历史／贴底A→落盘→B已有实际DOM交接证据；副历史scrollTop差0，节点／草稿／选区保持，历史2660帧和贴底2655帧空白／重复均0，stop未因素材开关增加。真实生产503／静态依赖恢复和交接耗时明细见EVAL顺序112。SSR／handler／hook与构建测试不冒充DOM；物理手机、真实IME／模型、PWA跨版本升级和离线恢复待验证。
+
+没有运行时依赖、repository／db／schema、同步协议或服务端源码修改；session只窄改前端素材异步状态发布。日志、截图、临时模型／网络夹具、下载文件与构建统计只留忽略的out或本地验收路径，不进本批提交。初次本地交付后，用户2026-10-03明确授权“推送及部署”；仅正式静态前端已上线，本批单提交普通快进推主线，保留分支和worktree。
+
+发布续记仍属本节112：发布前五门禁再次375文件lint／1264测试全过，180静态文件长度／SHA通过、公网24份关键资源标准TLS／SHA／MIME通过，保留原109的15份资产与完整旧目录。首轮发布脚本作用域故障已回退旧首页，独立复核状态后修正并用新批标成功发布，失败目录保留；现有35份哈希资产继续可用。六服务PID未变、sync健康与uptime连续，服务配置／Caddy／DB／WAL不动。正式转发浏览器核对三库与回焦、旧设置分包；新标签首次旧壳、刷新一次进入新版，缓存策略与PWA待验边界见EVAL。忽略out/task-112/release中的包／脚本／日志／截图不提交；仅本批四文档和spec／plan追加授权与发布状态，不增加文档编号。
+
+## 七十四、几点注意
 
 ---
 

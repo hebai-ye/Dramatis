@@ -1,14 +1,18 @@
 import { type Card, type CardId, createBlankCard } from '@dramatis/core';
-import { useEffect, useRef, useState } from 'react';
+import { useRef, useState } from 'react';
+import { useLibraryEditor } from '../lib/library-editor';
 import { avatarOf, PORTRAITS, portraitOf } from '../lib/portraits';
 import { AvatarCropper } from './AvatarCropper';
 import { Avatar } from './MessageBody';
 
 interface Props {
   cards: Card[];
+  selectedId?: string | null;
+  onSelectionChange?: (id: string | null) => void;
+  hideSelector?: boolean;
   disabled: boolean;
-  onSave: (card: Card) => void;
-  onDelete: (id: CardId) => void;
+  onSave: (card: Card) => void | Promise<void>;
+  onDelete: (id: CardId) => void | Promise<void>;
 }
 
 /**
@@ -17,70 +21,65 @@ interface Props {
  * 编辑的是模板层：改这里只影响卡本身，不会动已有角色实例的记忆与关系。
  * 这是 Card / Instance 分离的直接结果——卡可以迭代，世界线不受影响。
  *
- * 提交策略：字段改动先进本地草稿，失焦时才落盘。逐字写库既不必要，
+ * 提交策略：字段改动先进本地草稿，短延迟或失焦时统一落盘。逐字写库既不必要，
  * 也容易在快速输入时产生抖动。
  */
-export function CardDesigner({ cards, disabled, onSave, onDelete }: Props) {
-  const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [draft, setDraft] = useState<Card | null>(null);
+export function CardDesigner({
+  cards,
+  disabled,
+  onSave,
+  onDelete,
+  selectedId,
+  onSelectionChange,
+  hideSelector = false,
+}: Props) {
   const [showPortraits, setShowPortraits] = useState(false);
   const [cropSource, setCropSource] = useState<File | string | null>(null);
   const [imageError, setImageError] = useState<string | null>(null);
   const imageInput = useRef<HTMLInputElement | null>(null);
 
-  const selected = cards.find((card) => card.id === selectedId) ?? null;
-
-  // 换卡或外部更新时同步草稿，但不要覆盖正在编辑的内容
-  useEffect(() => {
-    if (!selected) {
-      setDraft(null);
-      return;
-    }
-    setDraft((previous) => (previous?.id === selected.id ? previous : { ...selected }));
-  }, [selected]);
-
-  // biome-ignore lint/correctness/useExhaustiveDependencies: selectedId 是触发器——换一张卡就把上一张的裁切草稿与错误清掉，代码里不需要读它的值
-  useEffect(() => {
-    setCropSource(null);
-    setImageError(null);
-  }, [selectedId]);
-
-  const patch = (changes: Partial<Card>): void => {
-    setDraft((previous) => (previous ? { ...previous, ...changes } : previous));
-  };
-
-  const commit = (): void => {
-    if (draft) onSave(draft);
-  };
-
-  const createCard = (): void => {
-    const blank = createBlankCard();
-    onSave(blank);
-    setSelectedId(blank.id);
-    setDraft(blank);
-  };
-
+  const editor = useLibraryEditor({
+    items: cards,
+    view: 'cards',
+    selectedId,
+    onSelectionChange,
+    disabled,
+    onSave,
+    pending: () => (cropSource ? '角色图裁切尚未确认，是否放弃这次裁切？' : null),
+    discard: () => setCropSource(null),
+  });
+  const draft = editor.draft;
+  const writeDisabled = editor.writeDisabled;
+  const patch = editor.patch;
+  const commit = editor.commit;
+  const createCard = () => editor.create(createBlankCard());
   return (
-    <div className="stack">
+    <div className="stack" onCompositionStart={editor.beginComposition} onCompositionEnd={editor.endComposition}>
       <div className="inline">
-        <select
-          value={selectedId ?? ''}
-          disabled={disabled}
-          onChange={(event) => setSelectedId(event.target.value === '' ? null : event.target.value)}
-        >
-          <option value="">选择一张卡…</option>
-          {cards.map((card) => (
-            <option key={card.id} value={card.id}>
-              {card.name}
-              {card.source.kind === 'manual' ? '（手写）' : ''}
-            </option>
-          ))}
-        </select>
-        <button type="button" className="ghost" disabled={disabled} onClick={createCard}>
+        {!hideSelector ? (
+          <select value={editor.selectedId ?? ''} onChange={(event) => editor.select(event.target.value || null)}>
+            <option value="">选择一张卡…</option>
+            {cards.map((card) => (
+              <option key={card.id} value={card.id}>
+                {card.name}
+                {card.source.kind === 'manual' ? '（手写）' : ''}
+              </option>
+            ))}
+          </select>
+        ) : null}
+        <button type="button" className="ghost" disabled={writeDisabled} onClick={createCard}>
           ＋ 新建
         </button>
       </div>
 
+      {editor.error ? (
+        <p role="alert" className="notice error">
+          {editor.error}
+          <button type="button" disabled={writeDisabled} onClick={commit}>
+            重试保存
+          </button>
+        </p>
+      ) : null}
       {draft === null ? (
         <p className="hint">这里写的是角色卡模板。改卡不会影响已经在跑的对话——角色实例有自己的记忆与关系。</p>
       ) : (
@@ -91,7 +90,7 @@ export function CardDesigner({ cards, disabled, onSave, onDelete }: Props) {
               <input
                 type="text"
                 value={draft.name}
-                disabled={disabled}
+                disabled={writeDisabled}
                 onChange={(event) => patch({ name: event.target.value })}
                 onBlur={commit}
               />
@@ -101,7 +100,7 @@ export function CardDesigner({ cards, disabled, onSave, onDelete }: Props) {
               <input
                 type="text"
                 value={draft.nickname}
-                disabled={disabled}
+                disabled={writeDisabled}
                 onChange={(event) => patch({ nickname: event.target.value })}
                 onBlur={commit}
               />
@@ -113,7 +112,7 @@ export function CardDesigner({ cards, disabled, onSave, onDelete }: Props) {
             <textarea
               rows={4}
               value={draft.description}
-              disabled={disabled}
+              disabled={writeDisabled}
               placeholder="外貌、身份、背景"
               onChange={(event) => patch({ description: event.target.value })}
               onBlur={commit}
@@ -140,7 +139,7 @@ export function CardDesigner({ cards, disabled, onSave, onDelete }: Props) {
                 <button
                   type="button"
                   className="ghost"
-                  disabled={disabled}
+                  disabled={writeDisabled}
                   onClick={() => {
                     const {
                       dramatisPortrait: _bundled,
@@ -149,8 +148,8 @@ export function CardDesigner({ cards, disabled, onSave, onDelete }: Props) {
                       ...extensions
                     } = draft.extensions;
                     const updated = { ...draft, extensions };
-                    setDraft(updated);
-                    onSave(updated);
+                    editor.replace(updated);
+                    void commit();
                   }}
                 >
                   移除立绘
@@ -161,11 +160,12 @@ export function CardDesigner({ cards, disabled, onSave, onDelete }: Props) {
               ref={imageInput}
               type="file"
               accept="image/png,image/jpeg,image/webp"
+              disabled={writeDisabled}
               className="hidden-file"
               onChange={(event) => {
                 const file = event.target.files?.[0];
                 event.target.value = '';
-                if (!file) return;
+                if (!file || writeDisabled) return;
                 if (!['image/png', 'image/jpeg', 'image/webp'].includes(file.type)) {
                   setImageError('请选择 PNG、JPEG 或 WebP 图片。');
                   return;
@@ -179,14 +179,19 @@ export function CardDesigner({ cards, disabled, onSave, onDelete }: Props) {
               }}
             />
             <div className="inline">
-              <button type="button" className="ghost" disabled={disabled} onClick={() => imageInput.current?.click()}>
+              <button
+                type="button"
+                className="ghost"
+                disabled={writeDisabled}
+                onClick={() => imageInput.current?.click()}
+              >
                 上传角色图
               </button>
               {typeof draft.extensions.dramatisCustomPortrait === 'string' ? (
                 <button
                   type="button"
                   className="ghost"
-                  disabled={disabled}
+                  disabled={writeDisabled}
                   onClick={() => setCropSource(draft.extensions.dramatisCustomPortrait as string)}
                 >
                   重新选取头像
@@ -197,7 +202,7 @@ export function CardDesigner({ cards, disabled, onSave, onDelete }: Props) {
             {cropSource ? (
               <AvatarCropper
                 source={cropSource}
-                disabled={disabled}
+                disabled={writeDisabled}
                 onCancel={() => setCropSource(null)}
                 onConfirm={(portrait, avatar) => {
                   const {
@@ -210,8 +215,8 @@ export function CardDesigner({ cards, disabled, onSave, onDelete }: Props) {
                     ...draft,
                     extensions: { ...extensions, dramatisCustomPortrait: portrait, dramatisCustomAvatar: avatar },
                   };
-                  setDraft(updated);
-                  onSave(updated);
+                  editor.replace(updated);
+                  void commit();
                   setCropSource(null);
                 }}
               />
@@ -223,7 +228,7 @@ export function CardDesigner({ cards, disabled, onSave, onDelete }: Props) {
                     type="button"
                     key={portrait.src}
                     className={portraitOf(draft) === portrait.src ? 'portrait-tile selected' : 'portrait-tile'}
-                    disabled={disabled}
+                    disabled={writeDisabled}
                     title={`${String(portrait.number).padStart(2, '0')} · ${portrait.name}（${portrait.namingStyle}）`}
                     onClick={() => {
                       const {
@@ -235,8 +240,8 @@ export function CardDesigner({ cards, disabled, onSave, onDelete }: Props) {
                         ...draft,
                         extensions: { ...extensions, dramatisPortrait: portrait.src },
                       };
-                      setDraft(updated);
-                      onSave(updated);
+                      editor.replace(updated);
+                      void commit();
                       setCropSource(null);
                     }}
                   >
@@ -255,7 +260,7 @@ export function CardDesigner({ cards, disabled, onSave, onDelete }: Props) {
             <textarea
               rows={3}
               value={draft.personality}
-              disabled={disabled}
+              disabled={writeDisabled}
               placeholder="说话方式、价值观、忌讳"
               onChange={(event) => patch({ personality: event.target.value })}
               onBlur={commit}
@@ -273,7 +278,7 @@ export function CardDesigner({ cards, disabled, onSave, onDelete }: Props) {
               <input
                 type="text"
                 value={draft.creator}
-                disabled={disabled}
+                disabled={writeDisabled}
                 onChange={(event) => patch({ creator: event.target.value })}
                 onBlur={commit}
               />
@@ -283,7 +288,7 @@ export function CardDesigner({ cards, disabled, onSave, onDelete }: Props) {
               <input
                 type="text"
                 value={draft.characterVersion}
-                disabled={disabled}
+                disabled={writeDisabled}
                 onChange={(event) => patch({ characterVersion: event.target.value })}
                 onBlur={commit}
               />
@@ -294,7 +299,7 @@ export function CardDesigner({ cards, disabled, onSave, onDelete }: Props) {
             <input
               type="text"
               value={draft.tags.join('、')}
-              disabled={disabled}
+              disabled={writeDisabled}
               onChange={(event) =>
                 patch({
                   tags: event.target.value
@@ -312,19 +317,17 @@ export function CardDesigner({ cards, disabled, onSave, onDelete }: Props) {
           </p>
 
           <div className="inline">
-            <button type="button" disabled={disabled} onClick={commit}>
+            <button type="button" disabled={writeDisabled} onClick={commit}>
               保存
             </button>
             <button
               type="button"
               className="ghost danger"
-              disabled={disabled}
+              disabled={writeDisabled}
               title="只从素材库移除；已经用到这张卡的角色实例不受影响"
               onClick={() => {
                 if (window.confirm(`从素材库删除「${draft.name}」？已经建立的角色实例不受影响。`)) {
-                  onDelete(draft.id);
-                  setSelectedId(null);
-                  setDraft(null);
+                  return editor.remove(() => onDelete(draft.id));
                 }
               }}
             >

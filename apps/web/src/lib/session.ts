@@ -1164,7 +1164,7 @@ export function useSession(db: DramatisDb | null): SessionApi {
 
   const savePersona = useCallback(
     async (persona: Persona) => {
-      const current = snapshotRef.current;
+      const targetWorldId = snapshotRef.current?.room.id;
       if (!db) return;
       await db.repository.savePersona(persona);
       setPersonas((previous) =>
@@ -1172,34 +1172,35 @@ export function useSession(db: DramatisDb | null): SessionApi {
           ? previous.map((item) => (item.id === persona.id ? persona : item))
           : [...previous, persona],
       );
-      if (!current) return;
-
-      const personas = current.personas.some((item) => item.id === persona.id)
-        ? current.personas.map((item) => (item.id === persona.id ? persona : item))
-        : [...current.personas, persona];
-
-      const conversations = current.conversations.map((conversation) =>
-        conversation.personaId === persona.id
-          ? {
-              ...conversation,
-              playerName: persona.name,
-              playerPersona: persona.description,
-              updatedAt: nowIso(),
-            }
-          : conversation,
-      );
-      for (const conversation of conversations) {
+      const current = snapshotRef.current;
+      if (!current || current.room.id !== targetWorldId) return;
+      for (const conversation of current.conversations) {
         if (conversation.personaId !== persona.id) continue;
-        await db.repository.saveConversation(conversation);
+        await db.repository.saveConversation({
+          ...conversation,
+          playerName: persona.name,
+          playerPersona: persona.description,
+          updatedAt: nowIso(),
+        });
       }
-
-      // 世界上的副本继续当「新对话的默认身份」，但不代表所有旧对话都被改写。
-      const room =
-        current.room.personaId === persona.id
-          ? { ...current.room, playerName: persona.name, playerPersona: persona.description }
-          : current.room;
-
-      setSnapshot({ ...current, personas, room, conversations });
+      // A background reload may finish during persistence. Publish only identity fields onto its latest snapshot.
+      const latest = snapshotRef.current;
+      if (!latest || latest.room.id !== targetWorldId) return;
+      setSnapshot({
+        ...latest,
+        personas: latest.personas.some((item) => item.id === persona.id)
+          ? latest.personas.map((item) => (item.id === persona.id ? persona : item))
+          : [...latest.personas, persona],
+        room:
+          latest.room.personaId === persona.id
+            ? { ...latest.room, playerName: persona.name, playerPersona: persona.description }
+            : latest.room,
+        conversations: latest.conversations.map((conversation) =>
+          conversation.personaId === persona.id
+            ? { ...conversation, playerName: persona.name, playerPersona: persona.description, updatedAt: nowIso() }
+            : conversation,
+        ),
+      });
     },
     [db, setSnapshot],
   );
@@ -1213,13 +1214,23 @@ export function useSession(db: DramatisDb | null): SessionApi {
 
   const deletePersona = useCallback(
     async (id: string) => {
-      const current = snapshotRef.current;
+      const targetWorldId = snapshotRef.current?.room.id;
       if (!db) return;
       await db.repository.deletePersona(id);
       setPersonas((previous) => previous.filter((persona) => persona.id !== id));
-      if (!current) return;
+      const current = snapshotRef.current;
+      if (!current || current.room.id !== targetWorldId) return;
       const loaded = await db.repository.loadRoom(current.room.id);
-      if (loaded !== null) setSnapshot(loaded);
+      const latest = snapshotRef.current;
+      if (!loaded || !latest || latest.room.id !== targetWorldId) return;
+      setSnapshot({
+        ...latest,
+        personas: latest.personas.filter((persona) => persona.id !== id),
+        room: latest.room.personaId === id ? { ...latest.room, personaId: null } : latest.room,
+        conversations: latest.conversations.map((conversation) =>
+          conversation.personaId === id ? { ...conversation, personaId: null } : conversation,
+        ),
+      });
     },
     [db, setSnapshot],
   );
@@ -1327,20 +1338,29 @@ export function useSession(db: DramatisDb | null): SessionApi {
 
   const attachWorldBook = useCallback(
     async (book: WorldBook) => {
-      const current = snapshotRef.current;
-      if (!db || !current) return;
-
+      const targetWorldId = snapshotRef.current?.room.id;
+      if (!db || !targetWorldId) return;
       await db.repository.saveWorldBook(book);
       await refreshLibrary();
-      if (current.room.worldBookIds.includes(book.id)) return;
-
+      const current = snapshotRef.current;
+      if (!current || current.room.id !== targetWorldId || current.room.worldBookIds.includes(book.id)) return;
       const room: Room = {
         ...current.room,
         worldBookIds: [...current.room.worldBookIds, book.id],
         updatedAt: nowIso(),
       };
       await db.repository.saveRoom(room);
-      setSnapshot({ ...current, room, worldBooks: [...current.worldBooks, book] });
+      const latest = snapshotRef.current;
+      if (!latest || latest.room.id !== targetWorldId) return;
+      setSnapshot({
+        ...latest,
+        room: {
+          ...latest.room,
+          worldBookIds: [...new Set([...latest.room.worldBookIds, book.id])],
+          updatedAt: room.updatedAt,
+        },
+        worldBooks: [...latest.worldBooks.filter((item) => item.id !== book.id), book],
+      });
     },
     [db, refreshLibrary, setSnapshot],
   );
@@ -1348,15 +1368,25 @@ export function useSession(db: DramatisDb | null): SessionApi {
   const detachWorldBook = useCallback(
     async (id: WorldBookId) => {
       const current = snapshotRef.current;
-      if (!db || !current) return;
-
+      if (!db || !current?.room.worldBookIds.includes(id)) return;
+      const targetWorldId = current.room.id;
       const room: Room = {
         ...current.room,
         worldBookIds: current.room.worldBookIds.filter((item) => item !== id),
         updatedAt: nowIso(),
       };
       await db.repository.saveRoom(room);
-      setSnapshot({ ...current, room, worldBooks: current.worldBooks.filter((book) => book.id !== id) });
+      const latest = snapshotRef.current;
+      if (!latest || latest.room.id !== targetWorldId) return;
+      setSnapshot({
+        ...latest,
+        room: {
+          ...latest.room,
+          worldBookIds: latest.room.worldBookIds.filter((item) => item !== id),
+          updatedAt: room.updatedAt,
+        },
+        worldBooks: latest.worldBooks.filter((book) => book.id !== id),
+      });
     },
     [db, setSnapshot],
   );
@@ -1408,23 +1438,28 @@ export function useSession(db: DramatisDb | null): SessionApi {
 
   const deleteWorldBook = useCallback(
     async (id: WorldBookId) => {
-      const current = snapshotRef.current;
-      if (!db || !current) return;
-
+      const targetWorldId = snapshotRef.current?.room.id;
+      if (!db) return;
       await db.repository.deleteWorldBook(id);
-      // 删书顺带解绑，否则世界上会留下指向不存在世界书的引用
-      if (current.room.worldBookIds.includes(id)) {
+      const current = snapshotRef.current;
+      if (current && current.room.id === targetWorldId && current.room.worldBookIds.includes(id)) {
         const room: Room = {
           ...current.room,
           worldBookIds: current.room.worldBookIds.filter((item) => item !== id),
           updatedAt: nowIso(),
         };
         await db.repository.saveRoom(room);
-        setSnapshot({
-          ...current,
-          room,
-          worldBooks: current.worldBooks.filter((book) => book.id !== id),
-        });
+        const latest = snapshotRef.current;
+        if (latest && latest.room.id === targetWorldId)
+          setSnapshot({
+            ...latest,
+            room: {
+              ...latest.room,
+              worldBookIds: latest.room.worldBookIds.filter((item) => item !== id),
+              updatedAt: room.updatedAt,
+            },
+            worldBooks: latest.worldBooks.filter((book) => book.id !== id),
+          });
       }
       await refreshLibrary();
     },

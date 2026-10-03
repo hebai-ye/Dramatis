@@ -23,26 +23,25 @@ import {
   selectSceneMembers,
 } from '@dramatis/core';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { CardDesigner } from './components/CardDesigner';
 import { CastDetail } from './components/CastDetail';
 import { CastRail } from './components/CastRail';
 import { CastStrip } from './components/CastStrip';
 import { ChatControls } from './components/ChatControls';
 import { DialogShell } from './components/DialogShell';
 import { LazyPanel } from './components/LazyPanel';
-import { LeftRail, type RailPane } from './components/LeftRail';
+import { LeftRail } from './components/LeftRail';
+import { LibraryWorkspace, LibraryWorkspaceProvider } from './components/LibraryWorkspace';
 import { type FocusRequest, MainChat } from './components/MainChat';
 import { MainHeader } from './components/MainHeader';
 import { NewConversationDialog } from './components/NewConversationDialog';
-import { PersonaLibrary } from './components/PersonaLibrary';
 import { RuntimePanel } from './components/RuntimePanel';
 import { SceneDialog } from './components/SceneDialog';
 import type { SettingsCategory } from './components/SettingsDialog';
 import { SideChat } from './components/SideChat';
 import { TopBar } from './components/TopBar';
-import { WorldDesigner } from './components/WorldDesigner';
 import { WorldTree } from './components/WorldTree';
 import { useImport } from './hooks/useImport';
+import { useLibraryNavigation, useLibrarySurface } from './hooks/useLibraryWorkspace';
 import { useNotices } from './hooks/useNotices';
 import { useTurnRunner } from './hooks/useTurnRunner';
 import { useWebBridge } from './hooks/useWebBridge';
@@ -171,8 +170,17 @@ export function App() {
   const closeRailOnNarrow = useCallback(() => {
     if (narrow) setCollapsed(true);
   }, [narrow]);
-  const [pane, setPane] = useState<RailPane>('list');
   const [panelOpen, setPanelOpen] = useState(false);
+  const {
+    libraryNavigation,
+    enterLibrary,
+    returnFromLibrary,
+    openWorld,
+    openConversation,
+    navigateCreated,
+    navigateSide,
+    navigateImported,
+  } = useLibraryNavigation(session, db, narrow, setCollapsed, setPanelOpen);
   /** 账户与设置独立打开，入口函数确保不叠窗。 */
   const [settingsCategory, setSettingsCategory] = useState<SettingsCategory | null>(null);
   const [accountOpen, setAccountOpen] = useState(false);
@@ -490,7 +498,6 @@ export function App() {
       await session.createWorld({ title: '新世界', persona: activePersona, cards: [] });
     }
     await session.openSideConversation();
-    setPane('list');
   }, [activePersona, session]);
 
   const handleToggleKind = useCallback(async () => {
@@ -513,7 +520,7 @@ export function App() {
     }
     const opening = collapsed;
     setCollapsed(!opening);
-    if (!opening) setPanelOpen(false);
+    if (opening) setPanelOpen(false);
   }, [collapsed, narrow]);
 
   const handleTogglePanel = useCallback((): void => {
@@ -901,28 +908,16 @@ export function App() {
     [handleBridgeAnalysis],
   );
   const handleAddInstance = useCallback((card: Card) => void session.addInstance(card), [session]);
-  const handleOpenWorld = useCallback(
-    (id: RoomId) => {
-      void session.openWorld(id);
-      closeRailOnNarrow();
-    },
-    [closeRailOnNarrow, session],
-  );
+  const handleOpenWorld = useCallback((id: RoomId) => void openWorld(id), [openWorld]);
   const handleNewConversationInWorld = useCallback(
-    async (id: RoomId) => {
-      if (world?.id !== id) await session.openWorld(id);
-      setNewConversationMode({ kind: 'in-world', worldId: id });
-      closeRailOnNarrow();
-    },
-    [closeRailOnNarrow, session, world?.id],
+    (id: RoomId) =>
+      openWorld(id, () => {
+        setNewConversationMode({ kind: 'in-world', worldId: id });
+        closeRailOnNarrow();
+      }),
+    [closeRailOnNarrow, openWorld],
   );
-  const handleOpenConversation = useCallback(
-    (id: ConversationId) => {
-      void session.openConversation(id);
-      closeRailOnNarrow();
-    },
-    [closeRailOnNarrow, session],
-  );
+  const handleOpenConversation = useCallback((id: ConversationId) => void openConversation(id), [openConversation]);
   const handleArchiveConversation = useCallback(
     (target: Conversation) => {
       if (
@@ -969,7 +964,8 @@ export function App() {
     [session.library.cards, session.library.worldBooks, session.personas],
   );
 
-  const disabled = busy || !session.ready;
+  const disabled = busy || admin.busy || !session.ready;
+  const { libraryCounts, librarySurface } = useLibrarySurface(session, disabled, handleImport);
   const detail = detailId === null ? null : (instances.find((instance) => instance.id === detailId) ?? null);
   const worldId = world?.id ?? null;
 
@@ -980,442 +976,410 @@ export function App() {
   }, [worldId]);
 
   return (
-    /*
-     * 对话区背景通过两个 CSS 变量下发：`.chat-surface::before` 拿它画背景。
-     * 背景挂在不滚动的那一层上，所以滑动时它固定、只有对话在动。
-     */
-    <div
-      className={[
-        'app',
-        appearance.value.background === '' ? '' : 'has-bg',
-        /*
-         * 手机上左右两侧都是「把主对话推开」的卡片（用户 2026-09-24 要求，
-         * 参考他给的 DeepSeek 截图），所以打开状态要落在根上，CSS 才能一起位移
-         * 顶栏与工作区。桌面不加这两个类，行为一个字不变。
-         */
-        narrow && !collapsed ? 'rail-open' : '',
-        narrow && panelOpen ? 'panel-open' : '',
-      ]
-        .filter((name) => name !== '')
-        .join(' ')}
-      style={
-        {
-          '--chat-bg': appearance.value.background === '' ? 'none' : `url("${appearance.value.background}")`,
-          '--chat-bg-opacity': appearance.value.background === '' ? 0 : appearance.value.backgroundOpacity,
-        } as React.CSSProperties
-      }
-    >
-      <TopBar
-        collapsed={collapsed}
-        onToggleCollapsed={handleToggleRail}
-        degraded={boot?.degraded ?? false}
-        backgroundPending={worker.pending}
-        narrow={narrow}
-        castStrip={<CastStrip cast={castNames} isSide={isSide} onAsk={handleAskCast} />}
-        chatControls={
-          <ChatControls
-            isSide={isSide}
-            disabled={disabled}
-            panelOpen={panelOpen}
-            onToggleKind={() => void handleToggleKind()}
-            onTogglePanel={handleTogglePanel}
-          />
+    // 外观变量供聊天固定背景使用；素材状态由局部 Provider 持有。
+    <LibraryWorkspaceProvider navigationRef={libraryNavigation} onEnter={enterLibrary} onReturn={returnFromLibrary}>
+      <div
+        className={[
+          'app',
+          appearance.value.background === '' ? '' : 'has-bg',
+          /*
+           * 手机上左右两侧都是「把主对话推开」的卡片（用户 2026-09-24 要求，
+           * 参考他给的 DeepSeek 截图），所以打开状态要落在根上，CSS 才能一起位移
+           * 顶栏与工作区。桌面不加这两个类，行为一个字不变。
+           */
+          narrow && !collapsed ? 'rail-open' : '',
+          narrow && panelOpen ? 'panel-open' : '',
+        ]
+          .filter((name) => name !== '')
+          .join(' ')}
+        style={
+          {
+            '--chat-bg': appearance.value.background === '' ? 'none' : `url("${appearance.value.background}")`,
+            '--chat-bg-opacity': appearance.value.background === '' ? 0 : appearance.value.backgroundOpacity,
+          } as React.CSSProperties
         }
-      />
+      >
+        <TopBar
+          collapsed={collapsed}
+          onToggleCollapsed={handleToggleRail}
+          degraded={boot?.degraded ?? false}
+          backgroundPending={worker.pending}
+          narrow={narrow}
+          castStrip={<CastStrip cast={castNames} isSide={isSide} onAsk={handleAskCast} />}
+          chatControls={
+            <ChatControls
+              isSide={isSide}
+              disabled={disabled}
+              panelOpen={panelOpen}
+              onToggleKind={() => void handleToggleKind()}
+              onTogglePanel={handleTogglePanel}
+            />
+          }
+        />
 
-      <div className={collapsed ? 'app-body collapsed' : 'app-body'}>
-        {/*
+        <div className={collapsed ? 'app-body collapsed' : 'app-body'}>
+          {/*
           手机上左栏**始终挂着**（收起时用位移推到屏幕外）：不挂就没法播「滑出来」的动效，
           而打开时主对话是靠 CSS 平移让位的。桌面保持原样——收起就是不渲染那一列。
         */}
-        {collapsed && !narrow ? null : (
-          <LeftRail
-            pane={pane}
-            onPaneChange={setPane}
-            onNewConversation={() => {
-              setNewConversationMode({ kind: 'new-world' });
-              closeRailOnNarrow();
-            }}
-            onCreateWithAi={() => {
-              void handleCreateWithAi();
-              closeRailOnNarrow();
-            }}
-            onImportFile={(file) => void handleImport(file)}
-            onOpenSettings={() => openSettings('model')}
-            onOpenAccount={openAccount}
-            disabled={disabled}
-            list={
-              <>
-                {error !== null || dbError !== null || session.error !== null ? (
-                  <div className="notice error">
-                    <strong>出错了</strong>
-                    <p>{error ?? session.error ?? dbError}</p>
-                    <button
-                      type="button"
-                      className="ghost"
-                      onClick={() => {
-                        setError(null);
-                        session.clearError();
-                      }}
-                    >
-                      知道了
-                    </button>
-                  </div>
-                ) : null}
+          {collapsed && !narrow ? null : (
+            <LeftRail
+              counts={libraryCounts}
+              onNewConversation={() => {
+                void libraryNavigation.current?.requestAction(() => {
+                  setNewConversationMode({ kind: 'new-world' });
+                  closeRailOnNarrow();
+                });
+              }}
+              onCreateWithAi={() => void navigateSide(handleCreateWithAi)}
+              onImportFile={(file) => void navigateImported(() => handleImport(file))}
+              onOpenSettings={() => openSettings('model')}
+              onOpenAccount={openAccount}
+              disabled={disabled}
+              list={
+                <>
+                  {error !== null || dbError !== null || session.error !== null ? (
+                    <div className="notice error">
+                      <strong>出错了</strong>
+                      <p>{error ?? session.error ?? dbError}</p>
+                      <button
+                        type="button"
+                        className="ghost"
+                        onClick={() => {
+                          setError(null);
+                          session.clearError();
+                        }}
+                      >
+                        知道了
+                      </button>
+                    </div>
+                  ) : null}
 
-                {warnings.length > 0 ? (
-                  <div className="notice warn">
-                    <strong>提示</strong>
-                    <ul>
-                      {warnings.map((item, index) => (
-                        <li key={`${String(index)}-${item.message.slice(0, 12)}`}>
-                          {item.message}
-                          {item.action === undefined ? null : (
-                            <button type="button" className="ghost" onClick={item.action?.run}>
-                              {item.action.label}
-                            </button>
-                          )}
-                        </li>
-                      ))}
-                    </ul>
-                    <button type="button" className="ghost" onClick={() => setWarnings([])}>
-                      知道了
-                    </button>
-                  </div>
-                ) : null}
+                  {warnings.length > 0 ? (
+                    <div className="notice warn">
+                      <strong>提示</strong>
+                      <ul>
+                        {warnings.map((item, index) => (
+                          <li key={`${String(index)}-${item.message.slice(0, 12)}`}>
+                            {item.message}
+                            {item.action === undefined ? null : (
+                              <button type="button" className="ghost" onClick={item.action?.run}>
+                                {item.action.label}
+                              </button>
+                            )}
+                          </li>
+                        ))}
+                      </ul>
+                      <button type="button" className="ghost" onClick={() => setWarnings([])}>
+                        知道了
+                      </button>
+                    </div>
+                  ) : null}
 
-                <WorldTree
-                  worlds={session.worlds}
-                  activeWorldId={world?.id ?? null}
-                  conversations={session.conversations}
-                  activeConversationId={conversation?.id ?? null}
-                  disabled={disabled}
-                  onOpenWorld={handleOpenWorld}
-                  onNewConversation={(id) => void handleNewConversationInWorld(id)}
-                  onOpenConversation={handleOpenConversation}
-                  onArchiveConversation={handleArchiveConversation}
-                  onRenameConversation={(target, title) => void session.renameConversation(target.id, title)}
-                  onDeleteConversation={handleDeleteConversation}
-                  onDeleteWorld={handleDeleteWorld}
-                />
-              </>
-            }
-            panel={
-              <>
-                {pane === 'personas' ? (
-                  <section className="panel">
-                    <PersonaLibrary
-                      personas={session.personas}
-                      disabled={disabled}
-                      onSave={(persona) => void session.savePersona(persona)}
-                      onDelete={(id) => void session.deletePersona(id)}
-                    />
-                  </section>
-                ) : null}
+                  <WorldTree
+                    worlds={session.worlds}
+                    activeWorldId={world?.id ?? null}
+                    conversations={session.conversations}
+                    activeConversationId={conversation?.id ?? null}
+                    disabled={disabled}
+                    onOpenWorld={handleOpenWorld}
+                    onNewConversation={(id) => void handleNewConversationInWorld(id)}
+                    onOpenConversation={handleOpenConversation}
+                    onArchiveConversation={handleArchiveConversation}
+                    onRenameConversation={(target, title) => void session.renameConversation(target.id, title)}
+                    onDeleteConversation={handleDeleteConversation}
+                    onDeleteWorld={handleDeleteWorld}
+                  />
+                </>
+              }
+            />
+          )}
 
-                {pane === 'cards' ? (
-                  <section className="panel">
-                    <CardDesigner
-                      cards={session.library.cards}
-                      disabled={disabled}
-                      onSave={(card) => void session.saveCard(card)}
-                      onDelete={(id) => void session.deleteCard(id)}
-                    />
-                  </section>
-                ) : null}
-
-                {pane === 'worldbooks' ? (
-                  <section className="panel">
-                    <WorldDesigner
-                      books={session.library.worldBooks}
-                      attachedIds={world?.worldBookIds ?? []}
-                      disabled={disabled}
-                      onSave={(book) => void session.saveWorldBook(book)}
-                      onDelete={(id) => void session.deleteWorldBook(id)}
-                      onAttach={(book) => void session.attachWorldBook(book)}
-                    />
-                  </section>
-                ) : null}
-              </>
-            }
-          />
-        )}
-
-        <div className="workspace">
-          {/*
+          <LibraryWorkspace surfaceProps={librarySurface} hasConversation={conversation !== null}>
+            {/*
             手机上这一行（「世界名 · 对话名」）整条不渲染（用户 2026-09-24 要求）：
             在场角色与两颗按钮已经搬到顶栏，剩下的标题在对话区上面白占一行。
             改名入口搬到左栏的对话列表里（WorldTree 的「改名」）。
           */}
-          {narrow ? null : (
-            <MainHeader
-              world={world}
-              conversation={conversation}
-              cast={cast}
-              disabled={disabled}
-              panelOpen={panelOpen}
-              narrow={narrow}
-              onToggleKind={() => void handleToggleKind()}
-              onTogglePanel={handleTogglePanel}
-              onRenameConversation={(title) => void session.updateConversation({ title })}
-            />
-          )}
+            {narrow ? null : (
+              <MainHeader
+                world={world}
+                conversation={conversation}
+                cast={cast}
+                disabled={disabled}
+                panelOpen={panelOpen}
+                narrow={narrow}
+                onToggleKind={() => void handleToggleKind()}
+                onTogglePanel={handleTogglePanel}
+                onRenameConversation={(title) => void session.updateConversation({ title })}
+              />
+            )}
 
-          {world === null || conversation === null ? (
-            <section className="chat-surface empty">
-              <p className="hint">还没有打开的对话。</p>
-              <p className="hint">
-                导入一张角色卡，或者用左栏的「新对话」开一条线；也可以点「创建」让世界管理员陪你起草。
-              </p>
-              {needsWebBridge(providers.apiKey) ? (
+            {world === null || conversation === null ? (
+              <section className="chat-surface empty">
+                <p className="hint">还没有打开的对话。</p>
                 <p className="hint">
-                  <strong>没有 API Key 也能开始</strong>
-                  ：导入一张卡之后，应用会把每一轮要发的提示词交给你，贴进 DeepSeek 网页版，再把回复粘回来。
+                  导入一张角色卡，或者用左栏的「新对话」开一条线；也可以点「创建」让世界管理员陪你起草。
                 </p>
-              ) : null}
-            </section>
-          ) : (
-            <div className="workspace-body">
-              {isSide ? (
-                <SideChat
-                  conversation={conversation}
-                  messages={messages}
-                  busy={admin.busy}
-                  ready={ready}
-                  archived={archived}
-                  bridge={admin.bridge}
-                  manualMode={needsWebBridge(providers.apiKey)}
-                  error={admin.error}
-                  onBridgeCommit={handleAdminBridgeCommit}
-                  onBridgeCancel={admin.cancelBridge}
-                  onSend={handleAdminSend}
-                  onStop={admin.stop}
-                  onAdopt={handleAdoptArtifact}
-                  onDiscard={handleDiscardArtifact}
-                  onRevoke={handleRevokeArtifact}
-                  existingIds={adminExistingIds}
-                />
-              ) : (
-                <MainChat
-                  conversation={conversation}
-                  scene={scene}
-                  messages={messages}
-                  cast={cast}
-                  avatars={avatars}
-                  busy={busy}
-                  ready={ready}
-                  archived={archived}
-                  focus={focus}
-                  showIntent={appearance.value.showIntent}
-                  bridge={bridge}
-                  manualMode={bridge !== null || needsWebBridge(providers.apiKey)}
-                  insertRequest={castAsk}
-                  onBridgeReply={handleBridgeReplyText}
-                  onBridgeAnalysis={handleBridgeAnalysisText}
-                  onBridgeSkip={handleBridgeSkip}
-                  onSend={handleSendText}
-                  onStop={handleStop}
-                  onRegenerate={handleRegenerateId}
-                  onEdit={handleEditMessage}
-                  onDelete={handleDeleteId}
-                  onChangeModes={handleChangeModes}
-                  unlimitedPrompt={unlimitedPrompt}
-                  onOpenScene={handleOpenScene}
-                  onDropInstance={handleDropInstance}
-                  onReassign={handleReassignId}
-                  signatures={signatures}
-                />
-              )}
+                {needsWebBridge(providers.apiKey) ? (
+                  <p className="hint">
+                    <strong>没有 API Key 也能开始</strong>
+                    ：导入一张卡之后，应用会把每一轮要发的提示词交给你，贴进 DeepSeek 网页版，再把回复粘回来。
+                  </p>
+                ) : null}
+              </section>
+            ) : (
+              <div className="workspace-body">
+                {isSide ? (
+                  <SideChat
+                    conversation={conversation}
+                    messages={messages}
+                    busy={admin.busy}
+                    ready={ready}
+                    archived={archived}
+                    bridge={admin.bridge}
+                    manualMode={needsWebBridge(providers.apiKey)}
+                    error={admin.error}
+                    onBridgeCommit={handleAdminBridgeCommit}
+                    onBridgeCancel={admin.cancelBridge}
+                    onSend={handleAdminSend}
+                    onStop={admin.stop}
+                    onAdopt={handleAdoptArtifact}
+                    onDiscard={handleDiscardArtifact}
+                    onRevoke={handleRevokeArtifact}
+                    existingIds={adminExistingIds}
+                  />
+                ) : (
+                  <MainChat
+                    conversation={conversation}
+                    scene={scene}
+                    messages={messages}
+                    cast={cast}
+                    avatars={avatars}
+                    busy={busy}
+                    ready={ready}
+                    archived={archived}
+                    focus={focus}
+                    showIntent={appearance.value.showIntent}
+                    bridge={bridge}
+                    manualMode={bridge !== null || needsWebBridge(providers.apiKey)}
+                    insertRequest={castAsk}
+                    onBridgeReply={handleBridgeReplyText}
+                    onBridgeAnalysis={handleBridgeAnalysisText}
+                    onBridgeSkip={handleBridgeSkip}
+                    onSend={handleSendText}
+                    onStop={handleStop}
+                    onRegenerate={handleRegenerateId}
+                    onEdit={handleEditMessage}
+                    onDelete={handleDeleteId}
+                    onChangeModes={handleChangeModes}
+                    unlimitedPrompt={unlimitedPrompt}
+                    onOpenScene={handleOpenScene}
+                    onDropInstance={handleDropInstance}
+                    onReassign={handleReassignId}
+                    signatures={signatures}
+                  />
+                )}
 
-              {/*
+                {/*
                 手机上运行时面板也是一张从右侧滑出来的卡片（CSS ≤640px）：
                 打开时主对话向左让位，不再铺一层黑遮罩盖住它。
               */}
-              <div className={panelOpen ? 'runtime-drawer open' : 'runtime-drawer'}>
-                {panelOpen || narrow ? (
-                  <RuntimePanel
-                    open={panelOpen}
-                    focusOnOpen={narrow}
-                    onClose={() => setPanelOpen(false)}
-                    scene={scene}
-                    instances={instances}
-                    memories={session.memories}
-                    conversations={session.conversations}
-                    activeConversationId={conversation?.id ?? null}
-                    personas={session.personas}
-                    personaId={conversation?.personaId ?? null}
-                    playerName={conversation?.playerName ?? world?.playerName ?? ''}
-                    chapters={session.chapters}
-                    attachedWorldBooks={session.worldBooks}
-                    libraryCards={session.library.cards}
-                    worldCards={session.cards}
-                    prompt={lastPrompt}
-                    pending={worker.pending}
-                    extraCalls={extraCalls(usage.world)}
-                    usage={{ world: usage.world, conversation: usage.conversation, latestTurn: usage.latestTurn }}
-                    budget={budget}
-                    budgetLimits={world?.budget ?? null}
-                    onSaveBudget={(limits) => void session.setBudget(limits)}
-                    conversationTitle={conversation?.title ?? ''}
-                    workerError={worker.lastError}
-                    failedTasks={worker.failed}
-                    onRetryFailed={() => void worker.retryFailed()}
-                    disabled={disabled}
-                    onSceneChange={(patch) => void session.updateScene(patch)}
-                    onStartNewScene={(title) => void handleStartNewScene({ title, location: '', worldTime: '' })}
-                    onSetPresence={(id, presence) => void session.setPresence(id, presence)}
-                    onSelectPersona={(persona) => void session.setPersona(persona)}
-                    onRenameInstance={(id, name) => void session.updateInstance(id, { displayName: name })}
-                    onRemoveInstance={(id) => void session.removeInstance(id)}
-                    onAddInstance={(card) => void session.addInstance(card)}
-                    onDetachWorldBook={(id) => void session.detachWorldBook(id)}
-                    onUpdateMemory={(id, patch) => void session.updateMemory(id, patch)}
-                    onDeleteMemory={(id) => void session.deleteMemory(id)}
-                    onLocateMemory={handleLocateMemory}
-                  />
-                ) : null}
+                <div className={panelOpen ? 'runtime-drawer open' : 'runtime-drawer'}>
+                  {panelOpen || narrow ? (
+                    <RuntimePanel
+                      open={panelOpen}
+                      focusOnOpen={narrow}
+                      onClose={() => setPanelOpen(false)}
+                      scene={scene}
+                      instances={instances}
+                      memories={session.memories}
+                      conversations={session.conversations}
+                      activeConversationId={conversation?.id ?? null}
+                      personas={session.personas}
+                      personaId={conversation?.personaId ?? null}
+                      playerName={conversation?.playerName ?? world?.playerName ?? ''}
+                      chapters={session.chapters}
+                      attachedWorldBooks={session.worldBooks}
+                      libraryCards={session.library.cards}
+                      worldCards={session.cards}
+                      prompt={lastPrompt}
+                      pending={worker.pending}
+                      extraCalls={extraCalls(usage.world)}
+                      usage={{ world: usage.world, conversation: usage.conversation, latestTurn: usage.latestTurn }}
+                      budget={budget}
+                      budgetLimits={world?.budget ?? null}
+                      onSaveBudget={(limits) => void session.setBudget(limits)}
+                      conversationTitle={conversation?.title ?? ''}
+                      workerError={worker.lastError}
+                      failedTasks={worker.failed}
+                      onRetryFailed={() => void worker.retryFailed()}
+                      disabled={disabled}
+                      onSceneChange={(patch) => void session.updateScene(patch)}
+                      onStartNewScene={(title) => void handleStartNewScene({ title, location: '', worldTime: '' })}
+                      onSetPresence={(id, presence) => void session.setPresence(id, presence)}
+                      onSelectPersona={(persona) => void session.setPersona(persona)}
+                      onRenameInstance={(id, name) => void session.updateInstance(id, { displayName: name })}
+                      onRemoveInstance={(id) => void session.removeInstance(id)}
+                      onAddInstance={(card) => void session.addInstance(card)}
+                      onDetachWorldBook={(id) => void session.detachWorldBook(id)}
+                      onUpdateMemory={(id, patch) => void session.updateMemory(id, patch)}
+                      onDeleteMemory={(id) => void session.deleteMemory(id)}
+                      onLocateMemory={handleLocateMemory}
+                    />
+                  ) : null}
+                </div>
               </div>
-            </div>
-          )}
+            )}
 
-          {!isSide && world !== null && conversation !== null ? (
-            <CastRail
-              instances={instances}
-              scene={scene}
-              cards={session.library.cards}
-              disabled={disabled}
-              onOpenDetail={setDetailId}
-              availableCards={availableCards}
-              onAddInstance={handleAddInstance}
-            />
-          ) : null}
+            {!isSide && world !== null && conversation !== null ? (
+              <CastRail
+                instances={instances}
+                scene={scene}
+                cards={session.library.cards}
+                disabled={disabled}
+                onOpenDetail={setDetailId}
+                availableCards={availableCards}
+                onAddInstance={handleAddInstance}
+              />
+            ) : null}
+          </LibraryWorkspace>
         </div>
-      </div>
 
-      {narrow && installHint ? (
-        <div className="notice warn install-hint">
-          <strong>手机上想要全屏，把它装成应用</strong>
-          <p>
-            地址栏与底部工具栏会一直占着地方。用浏览器菜单里的「安装应用」／「添加到主屏幕」 （iPhone 上是分享 →
-            添加到主屏幕）装一次，打开就是全屏，也更容易拿到持久化存储。
-          </p>
-          <button
-            type="button"
-            className="ghost"
-            onClick={() => {
-              dismissInstallHint();
-            }}
-          >
-            知道了
-          </button>
-        </div>
-      ) : null}
+        {narrow && installHint ? (
+          <div className="notice warn install-hint">
+            <strong>手机上想要全屏，把它装成应用</strong>
+            <p>
+              地址栏与底部工具栏会一直占着地方。用浏览器菜单里的「安装应用」／「添加到主屏幕」 （iPhone 上是分享 →
+              添加到主屏幕）装一次，打开就是全屏，也更容易拿到持久化存储。
+            </p>
+            <button
+              type="button"
+              className="ghost"
+              onClick={() => {
+                dismissInstallHint();
+              }}
+            >
+              知道了
+            </button>
+          </div>
+        ) : null}
 
-      {/*
+        {/*
         点「被移开的对话区」= 收起侧栏（用户 2026-09-24 第二轮要求）：
         一层透明的可点区域，盖在对话与顶栏之上、侧栏卡片之下。
         侧栏自己那些关闭按钮（左栏的 ≡、面板的「收起面板」）已经按用户要求删掉。
       */}
-      {narrow && (!collapsed || panelOpen) ? (
-        <button
-          type="button"
-          className="drawer-backdrop"
-          aria-label="收起侧栏"
-          onClick={() => {
-            setCollapsed(true);
-            setPanelOpen(false);
-          }}
-        />
-      ) : null}
-
-      {newConversationMode !== null &&
-      (newConversationMode.kind === 'new-world' || world?.id === newConversationMode.worldId) ? (
-        <NewConversationDialog
-          mode={newConversationMode.kind}
-          currentWorldTitle={world?.title}
-          cards={session.library.cards}
-          worldBooks={session.library.worldBooks}
-          defaultCardIds={newConversationMode.kind === 'new-world' ? [] : instances.map((instance) => instance.cardId)}
-          attachedBookIds={newConversationMode.kind === 'new-world' ? [] : (world?.worldBookIds ?? [])}
-          disabled={disabled}
-          onClose={() => setNewConversationMode(null)}
-          onSubmit={(input) => void handleNewConversation(input)}
-        />
-      ) : null}
-
-      {sceneOpen ? (
-        <SceneDialog
-          scene={scene}
-          instances={instances}
-          disabled={disabled}
-          onClose={() => setSceneOpen(false)}
-          onSave={(patch) => void session.updateScene(patch)}
-          onStartNewScene={(input) => void handleStartNewScene(input)}
-        />
-      ) : null}
-
-      {detail === null ? null : (
-        <CastDetail
-          instance={detail}
-          card={session.library.cards.find((card) => card.id === detail.cardId) ?? null}
-          memories={session.memories}
-          disabled={disabled}
-          onClose={() => setDetailId(null)}
-          onRename={(id, name) => void session.updateInstance(id, { displayName: name })}
-          onSetPresence={(id, presence) => void session.setPresence(id, presence)}
-          onSetRelationship={(id, field, value) => void session.setRelationship(id, field, value)}
-          onRemove={(id) => {
-            setDetailId(null);
-            void session.removeInstance(id);
-          }}
-          onRevertChange={(id, changeId) => void session.revertAffectChange(id, changeId)}
-        />
-      )}
-
-      {accountOpen ? (
-        <DialogShell
-          label="账户"
-          className="account-dialog"
-          returnFocus={dialogReturnFocus.current}
-          onClose={() => setAccountOpen(false)}
-        >
-          <LazyPanel load={loadAccountDialog} label="账户" panelProps={{ sync, disabled }} />
-        </DialogShell>
-      ) : null}
-
-      {settingsCategory === null ? null : (
-        <DialogShell
-          label="设置"
-          className="settings-dialog"
-          returnFocus={dialogReturnFocus.current}
-          onClose={() => setSettingsCategory(null)}
-        >
-          <LazyPanel
-            load={loadSettingsDialog}
-            label="设置"
-            panelProps={{
-              category: settingsCategory,
-              onCategoryChange: setSettingsCategory,
-              providers,
-              appearance,
-              archivedConversations: session.archivedConversations,
-              activeConversationId: conversation?.id ?? null,
-              disabled,
-              onOpenArchived: (id: ConversationId) => {
-                void session.openConversation(id);
-                setSettingsCategory(null);
-              },
-              onDeleteArchived: (target: Conversation) => session.deleteArchivedConversation(target.id),
-              onExportArchive: () => (world === null ? Promise.resolve(null) : archive.exportWorld(world.id)),
-              onImportArchive: archive.importArchive,
-              onExportTranscript: (id: ConversationId) =>
-                archive.exportTranscript(session.bundleOf(id), world?.title ?? ''),
-              storage,
-              backendKind: boot?.backendKind ?? '',
+        {narrow && (!collapsed || panelOpen) ? (
+          <button
+            type="button"
+            className="drawer-backdrop"
+            aria-label="收起侧栏"
+            onClick={() => {
+              setCollapsed(true);
+              setPanelOpen(false);
             }}
           />
-        </DialogShell>
-      )}
-    </div>
+        ) : null}
+
+        {newConversationMode !== null &&
+        (newConversationMode.kind === 'new-world' || world?.id === newConversationMode.worldId) ? (
+          <NewConversationDialog
+            mode={newConversationMode.kind}
+            currentWorldTitle={world?.title}
+            cards={session.library.cards}
+            worldBooks={session.library.worldBooks}
+            defaultCardIds={
+              newConversationMode.kind === 'new-world' ? [] : instances.map((instance) => instance.cardId)
+            }
+            attachedBookIds={newConversationMode.kind === 'new-world' ? [] : (world?.worldBookIds ?? [])}
+            disabled={disabled}
+            onClose={() => setNewConversationMode(null)}
+            onSubmit={(input) => void navigateCreated(() => handleNewConversation(input))}
+          />
+        ) : null}
+
+        {sceneOpen ? (
+          <SceneDialog
+            scene={scene}
+            instances={instances}
+            disabled={disabled}
+            onClose={() => setSceneOpen(false)}
+            onSave={(patch) => void session.updateScene(patch)}
+            onStartNewScene={(input) => void handleStartNewScene(input)}
+          />
+        ) : null}
+
+        {detail === null ? null : (
+          <CastDetail
+            instance={detail}
+            card={session.library.cards.find((card) => card.id === detail.cardId) ?? null}
+            memories={session.memories}
+            disabled={disabled}
+            onClose={() => setDetailId(null)}
+            onRename={(id, name) => void session.updateInstance(id, { displayName: name })}
+            onSetPresence={(id, presence) => void session.setPresence(id, presence)}
+            onSetRelationship={(id, field, value) => void session.setRelationship(id, field, value)}
+            onRemove={(id) => {
+              setDetailId(null);
+              void session.removeInstance(id);
+            }}
+            onRevertChange={(id, changeId) => void session.revertAffectChange(id, changeId)}
+          />
+        )}
+
+        {accountOpen ? (
+          <DialogShell
+            label="账户"
+            className="account-dialog"
+            returnFocus={dialogReturnFocus.current}
+            onClose={() => setAccountOpen(false)}
+          >
+            <LazyPanel load={loadAccountDialog} label="账户" panelProps={{ sync, disabled }} />
+          </DialogShell>
+        ) : null}
+
+        {settingsCategory === null ? null : (
+          <DialogShell
+            label="设置"
+            className="settings-dialog"
+            returnFocus={dialogReturnFocus.current}
+            onClose={() => setSettingsCategory(null)}
+          >
+            <LazyPanel
+              load={loadSettingsDialog}
+              label="设置"
+              panelProps={{
+                category: settingsCategory,
+                onCategoryChange: setSettingsCategory,
+                providers,
+                appearance,
+                archivedConversations: session.archivedConversations,
+                activeConversationId: conversation?.id ?? null,
+                disabled,
+                onOpenArchived: (id: ConversationId) => {
+                  // Close the settings focus trap before a possible library discard dialog.
+                  setSettingsCategory(null);
+                  requestAnimationFrame(() => {
+                    void openConversation(id);
+                  });
+                },
+                onDeleteArchived: (target: Conversation) => session.deleteArchivedConversation(target.id),
+                onExportArchive: () => (world === null ? Promise.resolve(null) : archive.exportWorld(world.id)),
+                onImportArchive: async () => {
+                  setSettingsCategory(null);
+                  await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+                  return navigateImported(archive.importArchive);
+                },
+                onExportTranscript: (id: ConversationId) =>
+                  archive.exportTranscript(session.bundleOf(id), world?.title ?? ''),
+                storage,
+                backendKind: boot?.backendKind ?? '',
+              }}
+            />
+          </DialogShell>
+        )}
+      </div>
+    </LibraryWorkspaceProvider>
   );
 }

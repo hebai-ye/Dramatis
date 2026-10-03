@@ -1,6 +1,8 @@
 import type { AdminArtifact, Conversation, Message, MessageId } from '@dramatis/core';
-import { memo, useEffect, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useRef, useState } from 'react';
+import { useChatViewportVisibility } from '../lib/chat-visibility';
 import { countRender } from '../lib/render-count';
+import { isNearBottom } from '../lib/scroll';
 import { acknowledgeStreamHandoff, resetStreamState, useStreamState } from '../lib/stream-store';
 import { useCoarsePointer } from '../lib/viewport';
 import { Composer } from './Composer';
@@ -191,9 +193,19 @@ function SideChatImpl({
   const [input, setInput] = useState('');
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
+  const bodyRef = useRef<HTMLDivElement | null>(null);
+  const { visibleRef, scrollVisibility } = useChatViewportVisibility(bodyRef, inputRef, conversation.id);
+  const nearBottomRef = useRef(true);
+  const conversationKeyRef = useRef<string | null>(null);
+  const previousMessageRef = useRef<MessageId | null>(null);
+  const onBodyScroll = useCallback(() => {
+    const node = bodyRef.current;
+    if (node !== null && visibleRef.current) nearBottomRef.current = isNearBottom(node);
+  }, [visibleRef]);
   const contentLength =
     messages.reduce((total, message) => total + message.content.length, 0) + streamText.length + streamProgress.length;
   const lastMessageId = messages.at(-1)?.id ?? null;
+  const lastIsPlayer = messages.at(-1)?.role === 'player';
   const handedOver = stream.handoffId !== null && stream.handoffId === lastMessageId;
 
   useEffect(() => {
@@ -211,8 +223,23 @@ function SideChatImpl({
 
   useEffect(() => {
     if (contentLength === 0) return;
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [contentLength]);
+    const switched = conversationKeyRef.current !== conversation.id;
+    const sentByPlayer = lastIsPlayer && previousMessageRef.current !== lastMessageId;
+    conversationKeyRef.current = conversation.id;
+    previousMessageRef.current = lastMessageId;
+    const node = bodyRef.current;
+    if (node === null) return;
+    if (!visibleRef.current) {
+      if (scrollVisibility.followHiddenRef.current === true) node.scrollTop = node.scrollHeight;
+      return;
+    }
+    // 读取增长前的贴底意图；长段落到达后再检查几何，会误以为用户已离开底部。
+    if (switched || sentByPlayer || nearBottomRef.current) {
+      nearBottomRef.current = true;
+      // 分块跟随立即完成，避免动画中间的 scroll 事件把程序滚动误记为历史阅读。
+      node.scrollTo({ top: node.scrollHeight, behavior: 'instant' });
+    }
+  }, [contentLength, conversation.id, lastMessageId, lastIsPlayer, visibleRef, scrollVisibility]);
 
   // 与主对话的输入框同一条规则：跟着字数长高，最多 200px
   // biome-ignore lint/correctness/useExhaustiveDependencies: 同上——跟着 input 重跑，但读的是 DOM 的实际高度
@@ -233,7 +260,7 @@ function SideChatImpl({
 
   return (
     <section className="chat-surface side">
-      <div className="chat-body">
+      <div className="chat-body" ref={bodyRef} onScroll={onBodyScroll}>
         <div className="admin-hint">
           <strong>世界管理员</strong>
           <span className="hint">帮你起草角色卡、世界书与场景设置。它不扮演任何角色，产出的素材由你决定去留。</span>
@@ -251,7 +278,7 @@ function SideChatImpl({
         ) : null}
 
         {messages.map((message) => (
-          <article key={message.id} className={`admin-row ${message.role}`}>
+          <article key={message.id} data-message-id={message.id} className={`admin-row ${message.role}`}>
             <span className="admin-role">
               {message.role === 'admin' ? '管理员' : message.role === 'player' ? '我' : message.role}
             </span>

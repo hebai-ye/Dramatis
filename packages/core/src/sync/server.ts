@@ -19,6 +19,7 @@ import { verifyCredential } from '../crypto/keys.js';
 import type { EncryptedRecord } from '../crypto/records.js';
 import type {
   SyncAcceptedRecord,
+  SyncConditionalPushResult,
   SyncCredentials,
   SyncDeviceSummary,
   SyncHeadInput,
@@ -115,6 +116,17 @@ export interface SyncServerStore {
     records: readonly SyncWireRecord[],
     quota: SyncAppendQuota,
   ): Promise<SyncAcceptedRecord[]>;
+  /**
+   * 可选：原子条件写（A03）。实现此方法才可声明 conditionalPush 能力。
+   * 在同一个事务内读当前版本、按请求顺序比较、计算实际写入后的配额、写记录与 head。
+   * 严格较旧拒绝；同时间墓碑优先；同类平局仍按原有后到写覆盖，不排序设备号。
+   * rejected.current 是本批结束时的胜者，配额或写入失败必须整批回滚，禁止降级为先查后写。
+   */
+  appendConditionalWithinQuota?(
+    spaceHandle: string,
+    records: readonly SyncWireRecord[],
+    quota: SyncAppendQuota,
+  ): Promise<SyncConditionalPushResult>;
   /**
    * 可选：按设备聚合（顺序 14）。没实现就返回空列表——
    * 「看得见设备」是增强，不该让旧后端连同步都做不了。
@@ -473,7 +485,13 @@ export function createSyncServer(store: SyncServerStore, options: CreateSyncServ
     async head(input: SyncHeadInput) {
       const space = await authorize(store, input);
       const head = await store.head(input.spaceHandle);
-      return space.epoch === undefined || space.epoch === '' ? { head } : { head, epoch: space.epoch };
+      return {
+        head,
+        ...(space.epoch === undefined || space.epoch === '' ? {} : { epoch: space.epoch }),
+        ...(store.appendConditionalWithinQuota === undefined
+          ? {}
+          : { capabilities: { conditionalPush: true as const } }),
+      };
     },
 
     async push(input: SyncPushInput) {
@@ -504,6 +522,9 @@ export function createSyncServer(store: SyncServerStore, options: CreateSyncServ
       const quota: SyncAppendQuota = { maxRecords: limits.maxRecordsPerSpace, maxBytes: limits.maxBytesPerSpace };
       let accepted: SyncAcceptedRecord[];
       try {
+        if (store.appendConditionalWithinQuota !== undefined) {
+          return await store.appendConditionalWithinQuota(input.spaceHandle, input.records, quota);
+        }
         if (store.appendWithinQuota !== undefined) {
           accepted = await store.appendWithinQuota(input.spaceHandle, input.records, quota);
         } else {
@@ -613,27 +634,16 @@ export function createMemorySyncStore(): MemorySyncStore {
       return heads.get(spaceHandle) ?? 0;
     },
 
+    async appendConditionalWithinQuota(spaceHandle, records, quota) {
+      return appendNow(spaceHandle, records, quota);
+    },
+
     async appendWithinQuota(spaceHandle, records, quota) {
-      const table = rows.get(spaceHandle);
-      if (table === undefined) throw new CryptoError('空间不存在。');
-      // 内存版天然原子：从这里到写完之间没有 await
-      const projected = projectUsage(
-        table.size,
-        [...table.values()].reduce((sum, row) => sum + syncRowBytes(row), 0),
-        records,
-        (key) => {
-          const row = table.get(key);
-          return row === undefined ? undefined : syncRowBytes(row);
-        },
-      );
-      assertWithinQuota(projected, quota);
-      return appendNow(spaceHandle, table, records);
+      return [...appendNow(spaceHandle, records, quota).accepted];
     },
 
     async append(spaceHandle, records) {
-      const table = rows.get(spaceHandle);
-      if (table === undefined) throw new CryptoError('空间不存在。');
-      return appendNow(spaceHandle, table, records);
+      return [...appendNow(spaceHandle, records, null).accepted];
     },
 
     async list(spaceHandle, options) {
@@ -674,26 +684,50 @@ export function createMemorySyncStore(): MemorySyncStore {
 
   function appendNow(
     spaceHandle: string,
-    table: Map<string, SyncRecordRow>,
     records: readonly SyncWireRecord[],
-  ): SyncAcceptedRecord[] {
-    const accepted: SyncAcceptedRecord[] = [];
-    let head = heads.get(spaceHandle) ?? 0;
-    for (const record of records) {
-      head += 1;
+    quota: SyncAppendQuota | null,
+  ): SyncConditionalPushResult {
+    const table = rows.get(spaceHandle);
+    if (table === undefined) throw new CryptoError('空间不存在。');
+    // 从读当前版本到提交之间没有 await，失败前只改计划，不改实际 Map。
+    const plan = planConditionalAppend(heads.get(spaceHandle) ?? 0, records, (record) => {
+      const row = table.get(rowKey(record.collection, record.id));
+      return row === undefined ? undefined : asPulled(row);
+    });
+    if (plan.writes.length === 0) return plan.result;
+    if (quota !== null) {
+      const projected = projectUsage(
+        table.size,
+        [...table.values()].reduce((sum, row) => sum + syncRowBytes(row), 0),
+        plan.writes,
+        (key) => {
+          const row = table.get(key);
+          return row === undefined ? undefined : syncRowBytes(row);
+        },
+      );
+      assertWithinQuota(projected, quota);
+    }
+    for (const record of plan.writes) {
       table.set(rowKey(record.collection, record.id), {
-        collection: record.collection,
-        id: record.id,
-        serverRev: head,
-        updatedAt: record.updatedAt,
-        deletedAt: record.deletedAt,
-        sealed: record.sealed,
+        ...record,
+        sealed: { ...record.sealed },
         deviceId: record.deviceId ?? null,
       });
-      accepted.push({ collection: record.collection, id: record.id, serverRev: head });
     }
-    heads.set(spaceHandle, head);
-    return accepted;
+    heads.set(spaceHandle, plan.result.head);
+    return plan.result;
+  }
+
+  function asPulled(row: SyncRecordRow): SyncPulledRecord {
+    return {
+      collection: row.collection as SyncPulledRecord['collection'],
+      id: row.id,
+      updatedAt: row.updatedAt,
+      deletedAt: row.deletedAt,
+      sealed: { ...row.sealed },
+      serverRev: row.serverRev,
+      ...(row.deviceId === null ? {} : { deviceId: row.deviceId }),
+    };
   }
 
   function listRows(table: Map<string, SyncRecordRow>, options: { since: number; limit: number }): SyncPulledRecord[] {
@@ -701,15 +735,7 @@ export function createMemorySyncStore(): MemorySyncStore {
       .filter((row) => row.serverRev > options.since)
       .sort((left, right) => left.serverRev - right.serverRev)
       .slice(0, options.limit)
-      .map((row) => ({
-        collection: row.collection as SyncPulledRecord['collection'],
-        id: row.id,
-        updatedAt: row.updatedAt,
-        deletedAt: row.deletedAt,
-        sealed: row.sealed,
-        serverRev: row.serverRev,
-        ...(row.deviceId === null ? {} : { deviceId: row.deviceId }),
-      }));
+      .map(asPulled);
   }
 
   function deviceRows(table: Map<string, SyncRecordRow>): SyncDeviceSummary[] {
@@ -726,6 +752,45 @@ export function createMemorySyncStore(): MemorySyncStore {
     }
     return [...byDevice.values()].sort((left, right) => right.lastWriteAt.localeCompare(left.lastWriteAt));
   }
+}
+
+/**
+ * 事务内构造条件写计划；不修改存储。内存与 SQLite 共用同一版本规则。
+ * 时间戳沿用协议的字符串比较（不解析旧记录），同类平局保持后到写覆盖。
+ * 配额仅计算 writes 的最终状态，批内重复坐标必须看到此前已接受的版本。
+ */
+export function planConditionalAppend(
+  head: number,
+  records: readonly SyncWireRecord[],
+  currentRecord: (record: SyncWireRecord) => SyncPulledRecord | undefined,
+): { writes: SyncPulledRecord[]; result: SyncConditionalPushResult } {
+  const latest = new Map<string, SyncPulledRecord>();
+  const writes: SyncPulledRecord[] = [];
+  const accepted: SyncAcceptedRecord[] = [];
+  const rejected: { index: number; current: SyncPulledRecord }[] = [];
+  for (const [index, record] of records.entries()) {
+    const key = `${record.collection}/${record.id}`;
+    const current = latest.get(key) ?? currentRecord(record);
+    if (
+      current !== undefined &&
+      (record.updatedAt < current.updatedAt ||
+        (record.updatedAt === current.updatedAt && current.deletedAt !== null && record.deletedAt === null))
+    ) {
+      rejected.push({ index, current });
+      continue;
+    }
+    head += 1;
+    const next = { ...record, sealed: { ...record.sealed }, serverRev: head };
+    latest.set(key, next);
+    writes.push(next);
+    accepted.push({ index, collection: record.collection, id: record.id, serverRev: head });
+  }
+  // 某项被拒之后，同坐标仍可能在本批稍后被更新；返回提交时的胜者，而不是中间快照。
+  for (const rejection of rejected) {
+    const current = latest.get(`${rejection.current.collection}/${rejection.current.id}`) ?? rejection.current;
+    rejection.current = { ...current, sealed: { ...current.sealed } };
+  }
+  return { writes, result: { head, accepted, rejected } };
 }
 
 /**

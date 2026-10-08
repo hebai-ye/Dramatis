@@ -26,7 +26,7 @@ import type { Affect, CharacterInstance, Relationship } from '../model/instance.
 import { type AdminArtifact, localSeqOf, type MemoryEvent, type Message } from '../model/message.js';
 import type { Persona } from '../model/persona.js';
 import type { Room, Scene } from '../model/room.js';
-import type { Repository } from './repository.js';
+import type { Repository, RoomSnapshot } from './repository.js';
 import type { UsageLedger, UsageRecord } from './usage.js';
 
 /**
@@ -242,7 +242,11 @@ const LEGACY_IMPORT_PENDING_KEY = 'archive.importPending';
  */
 export const IMPORT_PENDING_STALE_MS = 5 * 60_000;
 
+const IMPORT_PENDING_VERSION = 1;
+
 interface PendingImport {
+  /** 老版本没有此字段；只兼容这一种旧格式，不猜测未来格式。 */
+  version?: number;
   roomId: string;
   cardIds: string[];
   worldBookIds: string[];
@@ -250,8 +254,125 @@ interface PendingImport {
   startedAt: string;
 }
 
+function isId(value: unknown): value is string {
+  return typeof value === 'string' && value.trim() !== '' && value.trim() === value;
+}
+
+function isIdList(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every(isId) && new Set(value).size === value.length;
+}
+
+/** A13：必须一次检查完所有删除参数；不能删完世界才发现后半张清单不可迭代。 */
+function isPendingImport(value: unknown): value is PendingImport {
+  return (
+    isRecord(value) &&
+    (value.version === undefined || value.version === IMPORT_PENDING_VERSION) &&
+    isId(value.roomId) &&
+    isIdList(value.cardIds) &&
+    isIdList(value.worldBookIds) &&
+    (value.personaId === null || isId(value.personaId)) &&
+    typeof value.startedAt === 'string' &&
+    Number.isFinite(Date.parse(value.startedAt))
+  );
+}
+
+function sameIds(left: readonly string[], right: readonly string[]): boolean {
+  return left.length === right.length && left.every((id) => right.includes(id));
+}
+
+/** 集合本身与每条记录都要校验，不能信任调用方的 TypeScript 断言。 */
+function hasUniqueRows(value: unknown, roomId?: string): value is Array<Record<string, unknown> & { id: string }> {
+  if (!Array.isArray(value)) return false;
+  const ids = new Set<string>();
+  for (const row of value) {
+    if (!isRecord(row) || !isId(row.id) || ids.has(row.id)) return false;
+    if (roomId !== undefined && row.roomId !== roomId) return false;
+    ids.add(row.id);
+  }
+  return true;
+}
+
+/**
+ * 启动恢复处理的是磁盘上的不可信 marker，而不是本次导入在内存里分配的 id。
+ * 先完整读取快照，再核对房间、所有级联集合与素材清单；缺快照绝不猜着删孤儿。
+ * 这只是删除前置校验，不是跨集合事务：仓储的删除写失败仍可能留下部分墓碑。
+ */
+async function checkPendingImportSnapshot(repository: Repository, pending: PendingImport): Promise<string | null> {
+  const snapshot: RoomSnapshot | null = await repository.loadRoom(asRoomId(pending.roomId));
+  if (snapshot === null) return '没有可核验的世界快照，已保留数据与标记。';
+  const room = snapshot.room;
+  if (
+    !isRecord(room) ||
+    room.id !== pending.roomId ||
+    !isIdList(room.cardIds) ||
+    !isIdList(room.worldBookIds) ||
+    !isIdList(room.instanceIds) ||
+    !sameIds(room.cardIds, pending.cardIds) ||
+    !sameIds(room.worldBookIds, pending.worldBookIds) ||
+    room.personaId !== pending.personaId
+  ) {
+    return '世界与导入标记的素材归属不一致，已保留数据与标记。';
+  }
+  for (const collection of [
+    snapshot.conversations,
+    snapshot.scenes,
+    snapshot.instances,
+    snapshot.messages,
+    snapshot.memories,
+    snapshot.chapters,
+  ]) {
+    if (!hasUniqueRows(collection, pending.roomId)) return '世界快照的集合或房间归属损坏，已保留数据与标记。';
+  }
+  if (
+    !hasUniqueRows(snapshot.cards) ||
+    !hasUniqueRows(snapshot.worldBooks) ||
+    !hasUniqueRows(snapshot.personas) ||
+    !sameIds(
+      snapshot.cards.map((card) => card.id),
+      pending.cardIds,
+    ) ||
+    !sameIds(
+      snapshot.worldBooks.map((book) => book.id),
+      pending.worldBookIds,
+    ) ||
+    snapshot.instances.some((instance) => !pending.cardIds.includes(instance.cardId)) ||
+    (pending.personaId !== null && !snapshot.personas.some((persona) => persona.id === pending.personaId))
+  ) {
+    return '世界快照的素材清单不完整，已保留数据与标记。';
+  }
+
+  // 素材本来可以跨世界共享；旧标记不能撤掉后来被别的世界使用的卡、世界书或身份。
+  for (const other of await repository.listRooms()) {
+    if (other.id === pending.roomId) continue;
+    const otherRoom = await repository.getRoom(other.id);
+    if (otherRoom === null) continue;
+    const instances = await repository.listInstances(other.id);
+    const conversations = await repository.listConversations(other.id, { includeArchived: true });
+    if (
+      !isIdList(otherRoom.cardIds) ||
+      !isIdList(otherRoom.worldBookIds) ||
+      !hasUniqueRows(instances, other.id) ||
+      !hasUniqueRows(conversations, other.id)
+    ) {
+      return '无法核验其他世界的素材引用，已保留数据与标记。';
+    }
+    if (
+      otherRoom.cardIds.some((id) => pending.cardIds.includes(id)) ||
+      otherRoom.worldBookIds.some((id) => pending.worldBookIds.includes(id)) ||
+      instances.some((instance) => pending.cardIds.includes(instance.cardId)) ||
+      (pending.personaId !== null &&
+        (otherRoom.personaId === pending.personaId ||
+          conversations.some((conversation) => conversation.personaId === pending.personaId)))
+    ) {
+      return '导入素材已被其他世界使用，已保留数据与标记。';
+    }
+  }
+  return null;
+}
+
 /** 按「导入中」标记把半个世界整个撤掉（全部软删除，与手动删世界一致）。 */
 async function rollbackImport(repository: Repository, pending: PendingImport): Promise<void> {
+  if (!isPendingImport(pending)) throw new Error('导入标记损坏，未删除任何数据。');
   await repository.deleteRoom(asRoomId(pending.roomId));
   for (const id of pending.cardIds) await repository.deleteCard(asCardId(id));
   for (const id of pending.worldBookIds) await repository.deleteWorldBook(asWorldBookId(id));
@@ -266,10 +387,12 @@ export interface RecoverInterruptedImportsOptions {
 }
 
 export interface InterruptedImportRecovery {
-  /** 这次被撤掉的世界。 */
+  /** 这次完成撤回的世界；失败的不计作成功。 */
   rooms: RoomId[];
   /** 还太新、这次没动的标记数（可能另有标签页正在导入）。 */
   stillPending: number;
+  /** 损坏标记、快照核验失败或清理失败；调用方必须向用户显示，不能只记成功数。 */
+  warnings: string[];
 }
 
 /**
@@ -285,25 +408,47 @@ export async function recoverInterruptedImports(
   const staleAfterMs = options.staleAfterMs ?? IMPORT_PENDING_STALE_MS;
   const now = options.now ?? Date.now();
   const rooms: RoomId[] = [];
+  const warnings: string[] = [];
   let stillPending = 0;
-
-  for (const key of [...(await repository.listMetaKeys(IMPORT_PENDING_KEY_PREFIX)), LEGACY_IMPORT_PENDING_KEY]) {
-    const pending = await repository.getMeta<PendingImport | null>(key);
-    if (pending === null || typeof pending !== 'object' || typeof pending.roomId !== 'string') {
-      await repository.deleteMeta(key);
-      continue;
-    }
-    const startedAt = Date.parse(pending.startedAt);
-    if (Number.isFinite(startedAt) && now - startedAt < staleAfterMs) {
-      stillPending += 1;
-      continue;
-    }
-    await rollbackImport(repository, pending);
-    await repository.deleteMeta(key);
-    rooms.push(asRoomId(pending.roomId));
+  if (!Number.isFinite(now) || !Number.isFinite(staleAfterMs) || staleAfterMs < 0) {
+    return { rooms, stillPending, warnings: ['导入恢复的时间参数无效，未删除任何数据或标记。'] };
   }
 
-  return { rooms, stillPending };
+  const keys = await repository.listMetaKeys(IMPORT_PENDING_KEY_PREFIX);
+  for (const key of [...keys, LEGACY_IMPORT_PENDING_KEY]) {
+    let deleting = false;
+    try {
+      const pending = await repository.getMeta<unknown>(key);
+      if (pending === null && key === LEGACY_IMPORT_PENDING_KEY) continue;
+      if (!isPendingImport(pending)) {
+        await repository.deleteMeta(key);
+        warnings.push(`导入标记 ${key} 损坏或版本不受支持，已清除标记，未删除世界或素材。`);
+        continue;
+      }
+      if (now - Date.parse(pending.startedAt) < staleAfterMs) {
+        stillPending += 1;
+        continue;
+      }
+      const problem = await checkPendingImportSnapshot(repository, pending);
+      if (problem !== null) {
+        warnings.push(`导入标记 ${key}：${problem}`);
+        continue;
+      }
+      deleting = true;
+      await rollbackImport(repository, pending);
+      // 删除标记失败不应把已完成撤回的世界漏报成「什么也没做」。
+      rooms.push(asRoomId(pending.roomId));
+      await repository.deleteMeta(key);
+    } catch {
+      warnings.push(
+        deleting
+          ? `导入标记 ${key} 清理失败，可能已有部分删除；保留标记，请先备份并检查数据。`
+          : `导入标记 ${key} 无法读取或核验，未删除世界或素材；请备份后重试。`,
+      );
+    }
+  }
+
+  return { rooms, stillPending, warnings };
 }
 
 /** 一趟导入里所有「旧 id → 新 id」的对照表（审计 A11：所有引用都从这里改写）。 */
@@ -419,12 +564,14 @@ export async function importWorldArchive(
   const pendingKey = `${IMPORT_PENDING_KEY_PREFIX}${newId()}`;
 
   const pending: PendingImport = {
+    version: IMPORT_PENDING_VERSION,
     roomId,
     cardIds: [...maps.cards.values()],
     worldBookIds: [...maps.worldBooks.values()],
     personaId: maps.persona.to,
     startedAt: at,
   };
+  if (!isPendingImport(pending)) throw new Error('导入时间或标记无效，未写入任何数据。');
   await repository.setMeta(pendingKey, pending);
 
   try {

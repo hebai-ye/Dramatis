@@ -28,6 +28,14 @@ import { createPersona, type Persona } from '../model/persona.js';
 import type { ProviderCredential, ProviderProfile } from '../model/provider.js';
 import type { Room, Scene } from '../model/room.js';
 import { type EntityQuery, type EntityStore, updateEntity } from '../platform/entity-store.js';
+import { type AtomicMergeResult, decideMerge } from '../sync/merge.js';
+import {
+  type SyncRepairMarker,
+  type SyncRepairScope,
+  syncRepairKey,
+  syncRepairPrefix,
+  syncVersionKey,
+} from '../sync/repair.js';
 import {
   EMPTY_SYNC_STATE,
   type LocalSyncRecord,
@@ -857,7 +865,11 @@ export class Repository {
     const row = await this.store.get<Record<string, unknown> & { id: string }>(COLLECTIONS[collection], id);
     if (row === null) return null;
     const value =
-      collection === 'messages' ? reviveMessage(row as unknown as StoredMessage, await this.deviceId()) : row;
+      collection === 'messages'
+        ? reviveMessage(row as unknown as StoredMessage, await this.deviceId())
+        : collection === 'cards'
+          ? (stripRemovedCardFields(row) ?? row)
+          : row;
     return {
       collection,
       id,
@@ -875,6 +887,117 @@ export class Repository {
    * 记录必须保留原来的坐标——它表达的是**那台设备**的事实。
    */
   async putSyncRecord(record: LocalSyncRecord): Promise<void> {
+    await this.store.put(COLLECTIONS[record.collection], this.normalizeSyncRecord(record));
+  }
+
+  /** Decryption happens outside; get/decide/put is one mandatory atomic update. */
+  async mergeSyncRecord(record: LocalSyncRecord): Promise<AtomicMergeResult> {
+    this.requireAtomicSync();
+    const next = this.normalizeSyncRecord(record);
+    let result: AtomicMergeResult | undefined;
+    await this.requireAtomicSync()<Record<string, unknown> & { id: string }>(
+      COLLECTIONS[record.collection],
+      record.id,
+      (row) => {
+        const local =
+          row === null
+            ? null
+            : {
+                updatedAt:
+                  typeof row.updatedAt === 'string'
+                    ? row.updatedAt
+                    : record.collection === 'messages' && typeof row.createdAt === 'string'
+                      ? row.createdAt
+                      : '',
+                deletedAt: typeof row.deletedAt === 'string' ? row.deletedAt : null,
+              };
+        const decision = decideMerge(local, record);
+        result = { decision, local };
+        return decision === 'take-remote' ? next : undefined;
+      },
+    );
+    if (result === undefined) throw new Error('Atomic sync update did not run its callback.');
+    return result;
+  }
+
+  /** No updateEntity fallback: claiming sync atomicity without it would lose concurrent edits. */
+  requireAtomicSync(): NonNullable<EntityStore['update']> {
+    if (this.store.update === undefined) throw new Error('同步需要存储后端支持原子 update；未执行非原子降级。');
+    return this.store.update.bind(this.store);
+  }
+
+  async markSyncRepair(scope: SyncRepairScope, record: LocalSyncRecord): Promise<SyncRepairMarker> {
+    this.requireAtomicSync();
+    const marker: SyncRepairMarker = {
+      ...scope,
+      version: 1,
+      collection: record.collection,
+      id: record.id,
+      updatedAt: record.updatedAt,
+      deletedAt: record.deletedAt,
+      token: newId(),
+    };
+    const key = syncRepairKey(scope, record);
+    const saved = await this.requireAtomicSync()<MetaRecord>(COLLECTIONS.meta, key, (current) => {
+      const previous = current?.value as SyncRepairMarker | null | undefined;
+      // A delayed observation must not replace a newer pending version.
+      if (
+        previous != null &&
+        decideMerge(previous, marker) === 'keep-local' &&
+        syncVersionKey(previous) !== syncVersionKey(marker)
+      )
+        return undefined;
+      return { id: key, value: marker, updatedAt: nowIso() };
+    });
+    if (saved === null) throw new Error('补推记录未持久化；停止同步。');
+    return saved.value as SyncRepairMarker;
+  }
+
+  async listSyncRepairs(scope: SyncRepairScope): Promise<SyncRepairMarker[]> {
+    const keys = await this.listMetaKeys(syncRepairPrefix(scope));
+    const out: SyncRepairMarker[] = [];
+    for (const key of keys) {
+      const marker = await this.getMeta<SyncRepairMarker>(key);
+      if (
+        marker !== null &&
+        marker.version === 1 &&
+        marker.spaceHandle === scope.spaceHandle &&
+        marker.epoch === scope.epoch
+      )
+        out.push(marker);
+    }
+    return out;
+  }
+
+  /** Only clear the observed marker and a confirmed version; never an in-flight new observation. */
+  async acknowledgeSyncRepair(marker: SyncRepairMarker, confirmed: LocalSyncRecord): Promise<void> {
+    this.requireAtomicSync();
+    if (this.store.transaction === undefined) throw new Error('补推确认需要存储事务；未清除补推记录。');
+    await this.store.transaction(async (store) => {
+      await new Repository(store).acknowledgeSyncRepairInTransaction(marker, confirmed);
+    });
+  }
+
+  private async acknowledgeSyncRepairInTransaction(
+    marker: SyncRepairMarker,
+    confirmed: LocalSyncRecord,
+  ): Promise<void> {
+    const current = await this.getSyncRecord(marker.collection, marker.id);
+    if (current === null) return; // Hard deletion isn't proof the server accepted a tombstone.
+    if (syncVersionKey(current) !== syncVersionKey(confirmed)) {
+      await this.markSyncRepair(marker, current);
+      return;
+    }
+    const key = syncRepairKey(marker, marker);
+    await this.requireAtomicSync()<MetaRecord>(COLLECTIONS.meta, key, (row) => {
+      const pending = row?.value as SyncRepairMarker | null | undefined;
+      if (pending?.token !== marker.token || syncVersionKey(pending) !== syncVersionKey(marker)) return undefined;
+      // update has no atomic delete; keep an empty slot, never get+remove after the CAS.
+      return { id: key, value: null, updatedAt: nowIso() };
+    });
+  }
+
+  private normalizeSyncRecord(record: LocalSyncRecord): Record<string, unknown> & { id: string } {
     const value = record.value;
     if (value === null || typeof value !== 'object' || Array.isArray(value)) {
       throw new Error(`同步记录 ${record.collection}/${record.id} 的内容不是一个对象，拒绝落库。`);
@@ -886,12 +1009,12 @@ export class Repository {
      */
     const source = value as Record<string, unknown>;
     const clean = record.collection === 'cards' ? (stripRemovedCardFields(source) ?? source) : source;
-    await this.store.put(COLLECTIONS[record.collection], {
+    return {
       ...clean,
       id: record.id,
       updatedAt: record.updatedAt,
       deletedAt: record.deletedAt,
-    });
+    };
   }
 
   // ---- 软删除与默认过滤（P2-6） ----

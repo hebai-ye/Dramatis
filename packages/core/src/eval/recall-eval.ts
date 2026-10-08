@@ -57,16 +57,20 @@ export interface ProbeResult {
 export interface RecallReport {
   dataset: string;
   probes: ProbeResult[];
-  /** 期望条目出现在排序里的比例。 */
-  hitRate: number;
-  /** 期望条目通过预算裁剪、真的进了 prompt 的比例。 */
-  inBudgetRate: number;
-  /** 禁项混进 prompt 的比例（视角串味的底线）。 */
-  leakRate: number;
-  /** 每题平均带进去多少条噪音。 */
-  noisePerProbe: number;
-  /** 每题平均占多少 token。 */
-  tokensPerProbe: number;
+  /** 全部探针数；串味、噪音与 token 均按这一分母计算。 */
+  probeCount: number;
+  /** 正向探针数；命中与进预算比例仅按这一分母计算。 */
+  positiveProbeCount: number;
+  /** 期望条目出现在排序里的比例；没有正向题时为 null（未测）。 */
+  hitRate: number | null;
+  /** 期望条目通过预算裁剪、真的进了 prompt 的比例；没有正向题时为 null。 */
+  inBudgetRate: number | null;
+  /** 禁项混进 prompt 的题目比例（视角串味的底线）；零题时为 null。 */
+  leakRate: number | null;
+  /** 每题平均带进去多少条噪音；零题时为 null。 */
+  noisePerProbe: number | null;
+  /** 每题平均占多少 token；零题时为 null。 */
+  tokensPerProbe: number | null;
 }
 
 export interface EvaluateRecallOptions {
@@ -128,33 +132,45 @@ export function evaluateRecall(dataset: RecallDataset, options: EvaluateRecallOp
 
   // 负向探针（expectIds 为空）只用来测「有没有串味」，不算命中率的分母
   const positive = results.filter((result) => result.probe.expectIds.length > 0);
-  const count = positive.length === 0 ? 1 : positive.length;
+  const average = (total: number, count: number): number | null => (count === 0 ? null : total / count);
   return {
     dataset: dataset.name,
     probes: results,
-    hitRate: positive.filter((result) => result.rank !== null).length / count,
-    inBudgetRate: positive.filter((result) => result.inBudget).length / count,
-    leakRate: results.filter((result) => result.leaked.length > 0).length / count,
-    noisePerProbe: results.reduce((total, result) => total + result.noise.length, 0) / count,
-    tokensPerProbe: results.reduce((total, result) => total + result.tokens, 0) / count,
+    probeCount: results.length,
+    positiveProbeCount: positive.length,
+    hitRate: average(positive.filter((result) => result.rank !== null).length, positive.length),
+    inBudgetRate: average(positive.filter((result) => result.inBudget).length, positive.length),
+    leakRate: average(results.filter((result) => result.leaked.length > 0).length, results.length),
+    noisePerProbe: average(
+      results.reduce((total, result) => total + result.noise.length, 0),
+      results.length,
+    ),
+    tokensPerProbe: average(
+      results.reduce((total, result) => total + result.tokens, 0),
+      results.length,
+    ),
   };
 }
 
 /** 给人看的一行结论（CLI 与文档都用它，免得两边手抄数字）。 */
 export function formatRecallReport(report: RecallReport): string {
+  const percent = (value: number | null): string => (value === null ? '未测' : `${(value * 100).toFixed(0)}%`);
+  const mean = (value: number | null, digits: number): string => (value === null ? '未测' : value.toFixed(digits));
   const lines = [
     `# ${report.dataset}`,
-    `命中 ${(report.hitRate * 100).toFixed(0)}% · 进预算 ${(report.inBudgetRate * 100).toFixed(0)}% · 串味 ${(report.leakRate * 100).toFixed(0)}% · 平均噪音 ${report.noisePerProbe.toFixed(1)} 条 · 平均 ${report.tokensPerProbe.toFixed(0)} token`,
+    `探针 ${String(report.probeCount)} 题（正向 ${String(report.positiveProbeCount)} 题）`,
+    `命中 ${percent(report.hitRate)} · 进预算 ${percent(report.inBudgetRate)} · 串味 ${percent(report.leakRate)} · 平均噪音 ${mean(report.noisePerProbe, 1)} 条 · 平均 ${mean(report.tokensPerProbe, 0)} token`,
     '',
     '| 探针 | 排名 | 进预算 | 噪音 | token |',
     '| --- | --- | --- | --- | --- |',
   ];
 
   for (const result of report.probes) {
+    const positive = result.probe.expectIds.length > 0;
+    const rank = positive ? (result.rank === null ? '未命中' : `#${String(result.rank)}`) : '不适用';
+    const inBudget = positive ? (result.inBudget ? '✅' : '❌') : '不适用';
     lines.push(
-      `| ${result.probe.text.slice(0, 18)} | ${result.rank === null ? '未命中' : `#${String(result.rank)}`} | ${
-        result.inBudget ? '✅' : '❌'
-      } | ${String(result.noise.length)} | ${String(result.tokens)} |`,
+      `| ${result.probe.text.slice(0, 18)} | ${rank} | ${inBudget} | ${String(result.noise.length)} | ${String(result.tokens)} |`,
     );
   }
 

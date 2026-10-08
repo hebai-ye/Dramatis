@@ -9,6 +9,7 @@
 
 import { describe, expect, it } from 'vitest';
 import { createSpaceCredentials, openSpace, rotatePassword } from '../crypto/keys.js';
+import { encryptRecord } from '../crypto/records.js';
 import { createBlankCard } from '../model/card.js';
 import { createPersona } from '../model/persona.js';
 import { createMemoryEntityStore } from '../platform/memory-store.js';
@@ -164,7 +165,7 @@ describe('换同步密码（顺序 15）= 断开只知道旧密码的设备', ()
 });
 
 describe('覆盖可见性（顺序 19）', () => {
-  it('另一台设备推了一条更旧的 → 报告里说得出「被哪台挡回去了」', async () => {
+  it('新端拒绝较旧写入；旧端遗留覆盖仍报告来源并补推本地胜者', async () => {
     const { created, server, a, b } = await twoDevices();
     await syncOf(a, server, created.spaceHandle);
     await syncOf(b, server, created.spaceHandle);
@@ -212,8 +213,28 @@ describe('覆盖可见性（顺序 19）', () => {
     await b.repository.writeSyncState({ ...stateB, pushedAt: '1999-12-31T00:00:00.000Z' });
     await syncOf(b, server, created.spaceHandle);
 
-    const report = await syncOf(a, server, created.spaceHandle);
+    // 新服务端直接拒绝B旧写，B已收下A的胜者；不能再把拒绝当成一次服务器覆盖。
+    expect((await b.repository.getRoom(roomId))?.title).toBe('A 改的');
     const bDeviceId = await b.repository.deviceId();
+    // 注入旧服务端遗留的低版本（不改变rev），验证升级全量复核与原覆盖提示。
+    const updatedAt = '2000-01-01T00:00:00.000Z';
+    server.tamper('rooms', roomId, {
+      updatedAt,
+      deviceId: bDeviceId,
+      deletedAt: null,
+      sealed: await encryptRecord(
+        created.encKey,
+        {
+          spaceHandle: created.spaceHandle,
+          collection: 'rooms',
+          id: roomId,
+          updatedAt,
+        },
+        { ...roomB, title: 'B 改的（更旧）', deletedAt: null },
+      ),
+    });
+    await a.repository.writeSyncState({ ...(await a.repository.readSyncState()), pulledHead: 0 });
+    const report = await syncOf(a, server, created.spaceHandle);
     expect(report.overriddenCount).toBeGreaterThan(0);
     expect(report.overridden.some((item) => item.deviceId === bDeviceId)).toBe(true);
     // 本机那条留着（没被旧版本盖回去）

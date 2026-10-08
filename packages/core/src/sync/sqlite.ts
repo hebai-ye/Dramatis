@@ -15,12 +15,13 @@ import { CryptoError } from '../crypto/errors.js';
 import {
   assertWithinQuota,
   newSpaceEpoch,
+  planConditionalAppend,
   projectUsage,
   type SyncAppendQuota,
   type SyncServerStore,
   type SyncSpaceRecord,
 } from './server.js';
-import type { SyncAcceptedRecord, SyncPulledRecord, SyncWireRecord } from './types.js';
+import type { SyncConditionalPushResult, SyncPulledRecord, SyncWireRecord } from './types.js';
 
 /** 我们用到的那几个方法（`node:sqlite` 与 better-sqlite3 都是这个形状）。 */
 export interface SqliteStatement {
@@ -224,79 +225,67 @@ export function createSqliteSyncStore(
     spaceHandle: string,
     records: readonly SyncWireRecord[],
     quota: SyncAppendQuota | null,
-  ): SyncAcceptedRecord[] => {
-    if (records.length === 0) return [];
-    if (db.prepare('SELECT space_handle FROM spaces WHERE space_handle = ?1').get(spaceHandle) === undefined) {
-      throw new CryptoError('空间不存在。');
-    }
-
-    const accepted: SyncAcceptedRecord[] = [];
-    // 事务包住：号、行、用量计数要么一起落，要么都不落（中途失败不能留下跳号的空洞）。
-    // IMMEDIATE：一开始就拿写锁，配额的「读用量 → 判定 → 写」之间不会被别的写入插队。
+  ): SyncConditionalPushResult => {
+    if (records.length === 0) return { head: getHead(spaceHandle), accepted: [], rejected: [] };
+    // 比较版本、实际用量、行与 head 必须在同一个写事务中，不能先查再 await 写。
     db.exec('BEGIN IMMEDIATE');
     try {
-      let head = getHead(spaceHandle);
+      if (db.prepare('SELECT space_handle FROM spaces WHERE space_handle = ?1').get(spaceHandle) === undefined) {
+        throw new CryptoError('空间不存在。');
+      }
       const usage = readUsage(spaceHandle);
       const existing = db.prepare(
-        `SELECT ${ROW_BYTES_SQL} AS bytes FROM records WHERE space_handle = ?1 AND collection = ?2 AND id = ?3`,
+        `SELECT collection, id, server_rev, updated_at, deleted_at, sealed, device_id,
+          ${ROW_BYTES_SQL} AS bytes FROM records WHERE space_handle = ?1 AND collection = ?2 AND id = ?3`,
       );
-      // 同一批里同一坐标出现多次时，后面那次要看到前面那次写下的行：按「批内最新」算
-      const seen = new Map<string, number>();
-      const existingBytes = (key: string): number | undefined => {
-        const cached = seen.get(key);
-        if (cached !== undefined) return cached;
-        const slash = key.indexOf('/');
-        const row = existing.get(spaceHandle, key.slice(0, slash), key.slice(slash + 1)) as
-          | { bytes: number }
-          | undefined;
-        return row?.bytes;
-      };
-      for (const record of records) {
+      const before = new Map<string, (RecordRow & { bytes: number }) | undefined>();
+      const plan = planConditionalAppend(getHead(spaceHandle), records, (record) => {
         const key = `${record.collection}/${record.id}`;
-        if (!seen.has(key)) {
-          const before = existingBytes(key);
-          if (before !== undefined) seen.set(key, before);
+        if (!before.has(key)) {
+          before.set(
+            key,
+            existing.get(spaceHandle, record.collection, record.id) as (RecordRow & { bytes: number }) | undefined,
+          );
         }
-      }
-      const projected = projectUsage(usage.records, usage.bytes, records, (key) => seen.get(key));
-      if (quota !== null) assertWithinQuota(projected, options.resolveQuota?.(spaceHandle, quota, usage) ?? quota);
-
-      const upsert = db.prepare(
-        `INSERT INTO records (space_handle, collection, id, server_rev, updated_at, deleted_at, sealed, device_id)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
-         ON CONFLICT(space_handle, collection, id)
-         DO UPDATE SET server_rev = excluded.server_rev, updated_at = excluded.updated_at,
-                       deleted_at = excluded.deleted_at, sealed = excluded.sealed,
-                       device_id = excluded.device_id`,
-      );
-
-      for (const record of records) {
-        head += 1;
-        upsert.run(
-          spaceHandle,
-          record.collection,
-          record.id,
-          head,
-          record.updatedAt,
-          record.deletedAt,
-          JSON.stringify(record.sealed),
-          record.deviceId ?? null,
+        const row = before.get(key);
+        return row === undefined ? undefined : asPulledRecord(row);
+      });
+      // 全部被拒时是纯 no-op，即使管理员降低配额也不能把陈旧重发误报为写满。
+      if (plan.writes.length > 0) {
+        const projected = projectUsage(usage.records, usage.bytes, plan.writes, (key) => before.get(key)?.bytes);
+        if (quota !== null) assertWithinQuota(projected, options.resolveQuota?.(spaceHandle, quota, usage) ?? quota);
+        const upsert = db.prepare(
+          `INSERT INTO records (space_handle, collection, id, server_rev, updated_at, deleted_at, sealed, device_id)
+           VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+           ON CONFLICT(space_handle, collection, id)
+           DO UPDATE SET server_rev = excluded.server_rev, updated_at = excluded.updated_at,
+                         deleted_at = excluded.deleted_at, sealed = excluded.sealed,
+                         device_id = excluded.device_id`,
         );
-        accepted.push({ collection: record.collection, id: record.id, serverRev: head });
+        for (const record of plan.writes) {
+          upsert.run(
+            spaceHandle,
+            record.collection,
+            record.id,
+            record.serverRev,
+            record.updatedAt,
+            record.deletedAt,
+            JSON.stringify(record.sealed),
+            record.deviceId ?? null,
+          );
+        }
+        db.prepare(
+          `INSERT INTO heads (space_handle, head, record_count, byte_count) VALUES (?1, ?2, ?3, ?4)
+           ON CONFLICT(space_handle) DO UPDATE SET head = excluded.head,
+             record_count = excluded.record_count, byte_count = excluded.byte_count`,
+        ).run(spaceHandle, plan.result.head, projected.records, projected.bytes);
       }
-
-      db.prepare(
-        `INSERT INTO heads (space_handle, head, record_count, byte_count) VALUES (?1, ?2, ?3, ?4)
-         ON CONFLICT(space_handle) DO UPDATE SET head = excluded.head,
-           record_count = excluded.record_count, byte_count = excluded.byte_count`,
-      ).run(spaceHandle, head, projected.records, projected.bytes);
       db.exec('COMMIT');
+      return plan.result;
     } catch (error) {
       db.exec('ROLLBACK');
       throw error;
     }
-
-    return accepted;
   };
 
   return {
@@ -336,7 +325,7 @@ export function createSqliteSyncStore(
     },
 
     async append(spaceHandle, records: readonly SyncWireRecord[]) {
-      return appendRecords(spaceHandle, records, null);
+      return [...appendRecords(spaceHandle, records, null).accepted];
     },
 
     /**
@@ -344,6 +333,10 @@ export function createSqliteSyncStore(
      * 超了就回滚、一条都不写，抛 `SyncQuotaExceededError`（服务端翻成 413）。
      */
     async appendWithinQuota(spaceHandle, records, quota) {
+      return [...appendRecords(spaceHandle, records, quota).accepted];
+    },
+
+    async appendConditionalWithinQuota(spaceHandle, records, quota) {
       return appendRecords(spaceHandle, records, quota);
     },
 

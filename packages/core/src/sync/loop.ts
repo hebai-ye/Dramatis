@@ -11,7 +11,7 @@
  *
  * 从没从这个空间拉过（`pulledHead === 0`：新设备、换空间、状态被重置）时顺序是
  * **先拉、再推、再拉**：本机那份可能是旧的（快照恢复、服务端重建），先推会把服务端上
- * 更新的版本盖掉——服务端不做 LWW，只认最后一次写入。先拉回来合并，再只推
+ * 更新的版本盖掉——旧服务端只认最后一次写入，新服务端会拒绝低版本。先拉回来合并，再只推
  * 「本机确实更新」的那些，就不会拿旧的顶新的。
  *
  * 性质，都能在单测里验：
@@ -37,9 +37,19 @@ import { CryptoError } from '../crypto/errors.js';
 import { decryptRecord, encryptRecord } from '../crypto/records.js';
 import type { Repository } from '../storage/repository.js';
 import { mergeRemoteRecords } from './merge.js';
+import { pushSyncBatch, splitSyncPushBatches } from './push-batches.js';
+import {
+  type SyncReconciliationState,
+  type SyncRepairMarker,
+  type SyncRepairScope,
+  syncReconciliationKey,
+  syncRepairKey,
+  syncVersionKey as versionKey,
+} from './repair.js';
 import type {
   LocalSyncRecord,
   SyncOverriddenRecord,
+  SyncPulledRecord,
   SyncQuarantinedRecord,
   SyncReport,
   SyncResetReason,
@@ -69,26 +79,12 @@ export interface RunSyncInput {
  */
 const MAX_PULL_ROUNDS = 200;
 
-/**
- * 一次推多少条（顺序 13）。
- *
- * 原来是把「所有没推过的记录」塞进一个请求：一个用了半年、几千条消息的库
- * 第一次连同步，会发出一个几 MB 的请求——服务端还没限流，手机流量先受不了。
- * 200 条一包，和拉取那边的默认页大小对齐，两边都按同样的粒度走。
- */
-const PUSH_BATCH_SIZE = 200;
-
 /** 报告里最多列几条隔离明细（给人看的诊断，不是日志）。 */
 export const QUARANTINE_DETAIL_LIMIT = 20;
 
 function later(left: string | null, right: string): string {
   if (left === null) return right;
   return right > left ? right : left;
-}
-
-/** 一条记录的「版本坐标」：集合 + id + updatedAt。两边这三样相同就是同一个版本。 */
-function versionKey(record: { collection: string; id: string; updatedAt: string }): string {
-  return JSON.stringify([record.collection, record.id, record.updatedAt]);
 }
 
 /** 解密出来的实体里写的墓碑时间（审计 A6：只信这一份，线上明文那份只用来比对）。 */
@@ -129,9 +125,10 @@ export async function resetSyncState(
   await repository.writeSyncState({ spaceHandle, pulledHead: 0, pushedAt: null });
 }
 
-/** 跑一次同步。抛错表示「这一轮没成」——本地库与游标都保持原样，下次重来。 */
+/** 跑一次同步。抛错表示「这一轮没成」——已合并实体与补推标记保留，主游标不推进，下次重来。 */
 export async function runSync(input: RunSyncInput): Promise<SyncReport> {
   const repository = input.repository;
+  repository.requireAtomicSync();
   const credentials = { spaceHandle: input.spaceHandle, credential: input.credential };
   const fresh: SyncState = { spaceHandle: input.spaceHandle, pulledHead: 0, pushedAt: null };
   const stored = await repository.readSyncState();
@@ -167,6 +164,20 @@ export async function runSync(input: RunSyncInput): Promise<SyncReport> {
     state = fresh;
   }
 
+  const scope: SyncRepairScope = { spaceHandle: input.spaceHandle, epoch: remoteEpoch ?? null };
+  const reconciliationKey = syncReconciliationKey(scope);
+  const reconciliation = await repository.getMeta<SyncReconciliationState>(reconciliationKey);
+  // Upgrade reconciliation is resumable and independent of the old timestamp watermark.
+  const reconciling = reset !== null || state.pulledHead === 0 || reconciliation?.complete !== true;
+  const reconciliationCursor =
+    reset === null && state.pulledHead !== 0 && reconciliation?.complete === false ? reconciliation.cursor : 0;
+  if (reconciling && reconciliationCursor === 0) {
+    // Snapshot pending local versions before the one-time full pull. This also recovers
+    // rows missing entirely on the server, even when their timestamp is below pushedAt.
+    // Each marker is durable; replaying this phase after a crash is harmless.
+    for (const record of await repository.listSyncRecords()) await repository.markSyncRepair(scope, record);
+  }
+
   const deviceId = await repository.deviceId();
   /** 本轮真正推上去的版本（推送点只能越过它们与 `pulledVersions`）。 */
   const pushedVersions = new Set<string>();
@@ -176,24 +187,34 @@ export async function runSync(input: RunSyncInput): Promise<SyncReport> {
   let pushed = 0;
   let head = state.pulledHead;
 
-  // ---- 推 ----
+  // ---- 推：增量 + 持久补推，逐项确认后才能越过版本 ----
   const pushPhase = async (): Promise<void> => {
-    const outbound = (await repository.listSyncRecords({ since: state.pushedAt })).filter(
-      // 与刚拉回来的一模一样：服务端上已经有了，推回去只会让别的设备看到一条「回声」
-      (record) => !pulledVersions.has(versionKey(record)),
-    );
-    // 分块推（顺序 13）：一块失败了整轮就失败，推送点不推进，下次从同一块重来
-    for (let offset = 0; offset < outbound.length; offset += PUSH_BATCH_SIZE) {
-      const batch = outbound.slice(offset, offset + PUSH_BATCH_SIZE);
+    const candidates = new Map<string, LocalSyncRecord>();
+    for (const record of await repository.listSyncRecords({ since: state.pushedAt })) {
+      candidates.set(JSON.stringify([record.collection, record.id]), record);
+    }
+    for (const marker of await repository.listSyncRepairs(scope)) {
+      const current = await repository.getSyncRecord(marker.collection, marker.id);
+      if (current !== null) candidates.set(JSON.stringify([current.collection, current.id]), current);
+    }
+    const outbound = [...candidates.values()].filter((record) => !pulledVersions.has(versionKey(record)));
+    // Limit encryption working set as well as the actual wire payload.
+    for (let offset = 0; offset < outbound.length; offset += 200) {
       const wire: SyncWireRecord[] = [];
-      for (const record of batch) {
+      const originals = new Map<string, LocalSyncRecord>();
+      const markers = new Map<string, Awaited<ReturnType<Repository['markSyncRepair']>>>();
+      for (const record of outbound.slice(offset, offset + 200)) {
+        const key = versionKey(record);
+        originals.set(key, record);
+        // Persist BEFORE sending. Lost response / restart / partial failure must leave work to retry.
+        markers.set(key, await repository.markSyncRepair(scope, record));
         const value = sealable(record);
         wire.push({
           collection: record.collection,
           id: record.id,
           updatedAt: record.updatedAt,
-          // 线上这份只是给服务端看的副本，与密文里的逐字一致；收的一方只信密文（审计 A6）
           deletedAt: sealedDeletedAt(value),
+          deviceId,
           sealed: await encryptRecord(
             input.encKey,
             {
@@ -204,16 +225,37 @@ export async function runSync(input: RunSyncInput): Promise<SyncReport> {
             },
             value,
           ),
-          // 这台设备的号：跟着每条记录上线上，服务端与别的设备才知道「是谁写的」（顺序 14/19）
-          deviceId,
         });
       }
-
-      const result = await input.transport.push({ ...credentials, records: wire });
-
-      pushed += wire.length;
-      head = Math.max(head, result.head);
-      for (const record of batch) pushedVersions.add(versionKey(record));
+      for (const batch of splitSyncPushBatches(wire)) {
+        await pushSyncBatch(input.transport, credentials, batch, async (sent, result, accepted) => {
+          head = Math.max(head, result.head);
+          for (const index of accepted) {
+            const record = sent[index];
+            if (record === undefined) throw new Error('确认下标无效，停止同步。');
+            const key = versionKey(record);
+            const marker = markers.get(key);
+            const original = originals.get(key);
+            if (marker === undefined || original === undefined) throw new Error('补推记录缺失，停止同步。');
+            pushedVersions.add(key);
+            pushed += 1;
+            await repository.acknowledgeSyncRepair(marker, original);
+          }
+          for (const rejection of result.rejected ?? []) {
+            // A rejection is not an acknowledgement of our sent version.
+            // Validate/decrypt its winner exactly as pull does; a corrupt winner fails this round.
+            const decoded = await decodeRecords([rejection.current], true);
+            await mergeDecoded(decoded);
+            const confirmed = decoded[0];
+            const rejected = sent[rejection.index];
+            if (confirmed === undefined || rejected === undefined) throw new Error('拒绝写入的胜者缺失，停止同步。');
+            const marker = markers.get(versionKey(rejected));
+            if (marker === undefined) throw new Error('补推记录缺失，停止同步。');
+            pulledVersions.add(versionKey(confirmed));
+            await repository.acknowledgeSyncRepair(marker, confirmed);
+          }
+        });
+      }
     }
   };
 
@@ -222,7 +264,7 @@ export async function runSync(input: RunSyncInput): Promise<SyncReport> {
   // 服务端一页只给 200 条（见 sync/server.ts 的 DEFAULT_PULL_LIMIT），所以这里必须
   // **一直拉到追平**。曾经的写法只拉一页，并且把全局头号当成新游标——一台新设备
   // 同步一个超过一页的空间时，会「同步成功」出一份残缺的数据（换设备复现过）。
-  let cursor = state.pulledHead;
+  let cursor = reconciling ? reconciliationCursor : state.pulledHead;
   let serverHead = cursor;
   let pulledCount = 0;
   let applied = 0;
@@ -236,6 +278,104 @@ export async function runSync(input: RunSyncInput): Promise<SyncReport> {
   const quarantine = (collection: string, id: string, reason: string): void => {
     quarantinedCount += 1;
     if (quarantined.length < QUARANTINE_DETAIL_LIMIT) quarantined.push({ collection, id, reason });
+  };
+
+  const decodeRecords = async (records: readonly SyncPulledRecord[], strict = false): Promise<LocalSyncRecord[]> => {
+    const decoded: LocalSyncRecord[] = [];
+    for (const record of records) {
+      let value: unknown;
+      try {
+        value = await decryptRecord<unknown>(
+          input.encKey,
+          {
+            spaceHandle: input.spaceHandle,
+            collection: record.collection,
+            id: record.id,
+            updatedAt: record.updatedAt,
+          },
+          record.sealed,
+        );
+      } catch (error) {
+        /*
+         * 坏记录隔离（顺序 13）：**这一条**解不开，跳过它继续。
+         *
+         * 以前的写法是整轮抛错。听起来更安全，实际后果是：服务端上只要有一条
+         * 坏记录，这台设备的同步就永远停在它前面——用户的观感是「同步坏了」，
+         * 而且自己没有任何办法恢复。现在跳过它、把这件事记进报告，
+         * 界面上明说「跳过了 N 条」，其余数据照常同步。
+         */
+        if (strict) throw new Error('服务端拒绝写入但返回的胜者无法解密；补推记录已保留。', { cause: error });
+        quarantine(record.collection, record.id, error instanceof CryptoError ? error.message : String(error));
+        continue;
+      }
+
+      /*
+       * 墓碑只信密文里的那一份（审计 A6）。
+       *
+       * `deletedAt` 不在 AAD 里：恶意服务端可以保持密文与 `updatedAt` 不变、只改线上
+       * 明文的 `deletedAt`，而合并在时间戳相同时「墓碑赢」——于是能凭空删掉一条，
+       * 或者反过来复活一条。每个客户端推上去的墓碑密文里都带着同一个 `deletedAt`
+       * （仓储层的墓碑就是带 `deletedAt` 的整条实体），所以两者不一致只可能是被动过。
+       */
+      const deletedAt = sealedDeletedAt(value);
+      if (deletedAt !== (record.deletedAt ?? null)) {
+        if (strict) throw new Error('服务端拒绝写入但返回的胜者墓碑不一致；补推记录已保留。');
+        quarantine(
+          record.collection,
+          record.id,
+          '这条记录线上标的「已删除」与密文里的不一致，可能在服务端被动过，已跳过。',
+        );
+        continue;
+      }
+
+      decoded.push({
+        collection: record.collection,
+        id: record.id,
+        updatedAt: record.updatedAt,
+        deletedAt,
+        value,
+        ...(record.deviceId === undefined ? {} : { deviceId: record.deviceId }),
+      });
+    }
+
+    return decoded;
+  };
+
+  const mergeDecoded = async (decoded: readonly LocalSyncRecord[]): Promise<void> => {
+    // 逐页合并，而不是先攒齐再合并：空间大的时候内存不必扛下整份数据
+    const merged = await mergeRemoteRecords(decoded, {
+      merge: async (record) => {
+        const result = await repository.mergeSyncRecord(record);
+        if (
+          result.decision === 'keep-local' &&
+          result.local !== null &&
+          versionKey({ ...record, ...result.local }) !== versionKey(record)
+        ) {
+          const current = await repository.getSyncRecord(record.collection, record.id);
+          if (current !== null) await repository.markSyncRepair(scope, current);
+        } else {
+          const marker = await repository.getMeta<SyncRepairMarker>(syncRepairKey(scope, record));
+          if (marker !== null) await repository.acknowledgeSyncRepair(marker, record);
+        }
+        return result;
+      },
+    });
+    applied += merged.applied;
+    skipped += merged.skipped;
+    /*
+     * 覆盖可见性（顺序 19）：只统计**来自别的设备**的那些。
+     * 本机自己的旧版本被自己挡回去不算覆盖，「两台设备撞车」才是用户想看的。
+     */
+    for (const record of decoded) {
+      pulledVersions.add(versionKey(record));
+      if (record.deviceId === undefined || record.deviceId === deviceId) continue;
+      if (merged.overriddenIds.has(`${record.collection}/${record.id}`)) {
+        overriddenCount += 1;
+        if (overridden.length < QUARANTINE_DETAIL_LIMIT) {
+          overridden.push({ collection: record.collection, id: record.id, deviceId: record.deviceId });
+        }
+      }
+    }
   };
 
   const pullPhase = async (): Promise<void> => {
@@ -253,82 +393,9 @@ export async function runSync(input: RunSyncInput): Promise<SyncReport> {
       serverHead = Math.max(serverHead, page.serverHead ?? page.head);
       const hasMore = page.hasMore ?? pageEnd < (page.serverHead ?? page.head);
 
-      const decoded: LocalSyncRecord[] = [];
-      for (const record of page.records) {
-        let value: unknown;
-        try {
-          value = await decryptRecord<unknown>(
-            input.encKey,
-            {
-              spaceHandle: input.spaceHandle,
-              collection: record.collection,
-              id: record.id,
-              updatedAt: record.updatedAt,
-            },
-            record.sealed,
-          );
-        } catch (error) {
-          /*
-           * 坏记录隔离（顺序 13）：**这一条**解不开，跳过它继续。
-           *
-           * 以前的写法是整轮抛错。听起来更安全，实际后果是：服务端上只要有一条
-           * 坏记录，这台设备的同步就永远停在它前面——用户的观感是「同步坏了」，
-           * 而且自己没有任何办法恢复。现在跳过它、把这件事记进报告，
-           * 界面上明说「跳过了 N 条」，其余数据照常同步。
-           */
-          quarantine(record.collection, record.id, error instanceof CryptoError ? error.message : String(error));
-          continue;
-        }
+      const decoded = await decodeRecords(page.records);
 
-        /*
-         * 墓碑只信密文里的那一份（审计 A6）。
-         *
-         * `deletedAt` 不在 AAD 里：恶意服务端可以保持密文与 `updatedAt` 不变、只改线上
-         * 明文的 `deletedAt`，而合并在时间戳相同时「墓碑赢」——于是能凭空删掉一条，
-         * 或者反过来复活一条。每个客户端推上去的墓碑密文里都带着同一个 `deletedAt`
-         * （仓储层的墓碑就是带 `deletedAt` 的整条实体），所以两者不一致只可能是被动过。
-         */
-        const deletedAt = sealedDeletedAt(value);
-        if (deletedAt !== (record.deletedAt ?? null)) {
-          quarantine(
-            record.collection,
-            record.id,
-            '这条记录线上标的「已删除」与密文里的不一致，可能在服务端被动过，已跳过。',
-          );
-          continue;
-        }
-
-        decoded.push({
-          collection: record.collection,
-          id: record.id,
-          updatedAt: record.updatedAt,
-          deletedAt,
-          value,
-          ...(record.deviceId === undefined ? {} : { deviceId: record.deviceId }),
-        });
-      }
-
-      // 逐页合并，而不是先攒齐再合并：空间大的时候内存不必扛下整份数据
-      const merged = await mergeRemoteRecords(decoded, {
-        get: (record) => repository.getSyncRecord(record.collection, record.id),
-        put: (record) => repository.putSyncRecord(record),
-      });
-      applied += merged.applied;
-      skipped += merged.skipped;
-      /*
-       * 覆盖可见性（顺序 19）：只统计**来自别的设备**的那些。
-       * 本机自己的旧版本被自己挡回去不算覆盖，「两台设备撞车」才是用户想看的。
-       */
-      for (const record of decoded) {
-        pulledVersions.add(versionKey(record));
-        if (record.deviceId === undefined || record.deviceId === deviceId) continue;
-        if (merged.overriddenIds.has(`${record.collection}/${record.id}`)) {
-          overriddenCount += 1;
-          if (overridden.length < QUARANTINE_DETAIL_LIMIT) {
-            overridden.push({ collection: record.collection, id: record.id, deviceId: record.deviceId });
-          }
-        }
-      }
+      await mergeDecoded(decoded);
       pulledCount += decoded.length;
 
       cursor = pageEnd;
@@ -345,7 +412,7 @@ export async function runSync(input: RunSyncInput): Promise<SyncReport> {
     }
   };
 
-  if (state.pulledHead === 0 || state.pushedAt === null) {
+  if (reconciling || state.pulledHead === 0 || state.pushedAt === null) {
     // 新设备 / 换空间 / 被重置：先把服务端上的一切合并进来，再只推本机确实更新的，
     // 最后把自己刚推的收回来对齐游标（否则下一轮会把这一批当成新东西再拉一遍）
     await pullPhase();
@@ -395,6 +462,15 @@ export async function runSync(input: RunSyncInput): Promise<SyncReport> {
   // 拉到的位置（cursor）才是下次的起点；服务端头号只用于显示「还差多少」。
   // 到上限被迫停下时不装作成功——游标只推进到真正拿到的位置，下一次接着拉。
   head = Math.max(head, truncated ? cursor : reportedHead);
+
+  if (reconciling) {
+    await repository.setMeta<SyncReconciliationState>(reconciliationKey, {
+      ...scope,
+      version: 1,
+      cursor,
+      complete: !truncated,
+    });
+  }
 
   // 游标只在整轮走完之后推进（推送点同理）：中途抛错就下次重来，不会有半截状态
   await repository.writeSyncState({

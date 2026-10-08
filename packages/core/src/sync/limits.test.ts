@@ -106,6 +106,7 @@ describe('每空间配额与限流（顺序 16）', () => {
     });
     delete (bare as { spaceUsage?: unknown }).spaceUsage;
     delete (bare as { appendWithinQuota?: unknown }).appendWithinQuota;
+    delete (bare as { appendConditionalWithinQuota?: unknown }).appendConditionalWithinQuota;
     const server = createSyncServer(bare, { limits: { maxRecordsPerSpace: 0 } });
 
     const one = await wire(created.encKey, created.spaceHandle, 0);

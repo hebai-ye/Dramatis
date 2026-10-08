@@ -172,6 +172,7 @@ describe('错误与参数（审计 C9 / C12）', () => {
       throw new Error('SQLITE_CORRUPT: /var/lib/secret/path.db');
     };
     delete (store as { appendWithinQuota?: unknown }).appendWithinQuota;
+    delete (store as { appendConditionalWithinQuota?: unknown }).appendConditionalWithinQuota;
     const response = await push([await realistic(created.encKey, created.spaceHandle)]);
     expect(response.status).toBe(500);
     const text = await response.text();

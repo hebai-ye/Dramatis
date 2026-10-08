@@ -10,6 +10,7 @@ import {
   fetchRemoteSpace,
   normalizeRecoveryCode,
   openSpace,
+  pushSyncBatch,
   type RemoteSpaceMeta,
   resetSyncState,
   rotatePassword as rotateSpacePassword,
@@ -18,6 +19,7 @@ import {
   SyncHttpError,
   type SyncPulledRecord,
   type SyncReport,
+  splitSyncPushBatches,
 } from '@dramatis/core';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { type DramatisDb, readActiveAccount } from './db';
@@ -306,7 +308,7 @@ export function useSync(db: DramatisDb | null, options: { onChanged?: () => void
          * 以前这里写的是 `message.includes('存满')`：服务端把那句话改一个字，
          * 「空间满了」这个状态就静默失效，用户会以为一切正常而数据推不上去。
          */
-        if (error instanceof SyncHttpError && (error.code === 'space-full' || error.status === 413)) {
+        if (error instanceof SyncHttpError && error.code === 'space-full') {
           setSpaceFull(true);
         }
         throw error;
@@ -712,22 +714,22 @@ export function useSync(db: DramatisDb | null, options: { onChanged?: () => void
         const transport = createHttpSyncTransport({ endpoint: current.endpoint });
         let pushed = 0;
         let head = 0;
-        for (let offset = 0; offset < snapshot.records.length; offset += 200) {
-          const batch = snapshot.records.slice(offset, offset + 200).map((record) => ({
-            collection: record.collection,
-            id: record.id,
-            updatedAt: record.updatedAt,
-            deletedAt: record.deletedAt,
-            sealed: record.sealed,
-            ...(record.deviceId === undefined ? {} : { deviceId: record.deviceId }),
-          }));
-          const result = await transport.push({
-            spaceHandle: current.spaceHandle,
-            credential: session.credential,
-            records: batch,
-          });
-          pushed += batch.length;
-          head = result.head;
+        for (const batch of splitSyncPushBatches(snapshot.records)) {
+          await pushSyncBatch(
+            transport,
+            {
+              spaceHandle: current.spaceHandle,
+              credential: session.credential,
+            },
+            batch,
+            async (_sent, result, accepted) => {
+              pushed += accepted.size;
+              head = Math.max(head, result.head);
+              if ((result.rejected?.length ?? 0) > 0) {
+                throw new Error('快照包含比服务端更旧的版本，已保留服务端新版本；部分记录可能已恢复，请重新同步核对。');
+              }
+            },
+          );
         }
 
         /*

@@ -142,6 +142,7 @@ export function createHttpSyncTransport(options: HttpSyncTransportOptions): Sync
       const response = await doFetch(`${base(options.endpoint)}/spaces/${encodeURIComponent(input.spaceHandle)}/head`, {
         headers: auth(input.credential),
       });
+      // 能力只能取自响应；HTTP 适配器本身不能替旧后端声明 conditionalPush。
       return (await expectOk(response)) as SyncHeadResult;
     },
 
@@ -151,6 +152,8 @@ export function createHttpSyncTransport(options: HttpSyncTransportOptions): Sync
         headers: auth(input.credential),
         body: JSON.stringify({ records: input.records }),
       });
+      // 完整透传 rejected（原请求下标 + 当前密文记录），不能只投影 head/accepted。
+      // accepted 的逐项确认和 rejected 的解密合并由同步循环负责；旧响应不补造确认。
       return (await expectOk(response)) as SyncPushResult;
     },
 

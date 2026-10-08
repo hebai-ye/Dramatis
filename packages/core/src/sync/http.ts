@@ -340,6 +340,7 @@ async function route(request: Request, deps: SyncHttpDeps): Promise<Response> {
     }
 
     try {
+      // 返回完整条件写结果；rejected.current 的密文/版本/设备与原请求下标不能被 HTTP 层丢掉。
       return json(
         await deps.server.push({
           ...credentials,

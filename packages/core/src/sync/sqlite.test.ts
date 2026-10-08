@@ -1,9 +1,9 @@
 import { DatabaseSync } from 'node:sqlite';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, onTestFinished } from 'vitest';
 import { createSpaceCredentials } from '../crypto/keys.js';
 import { encryptRecord } from '../crypto/records.js';
 import { createSyncServer } from './server.js';
-import { applySqlitePragmas, createSqliteSyncStore, SYNC_SCHEMA_SQL } from './sqlite.js';
+import { applySqlitePragmas, createSqliteSyncStore, type SqliteDatabase, SYNC_SCHEMA_SQL } from './sqlite.js';
 import type { SyncWireRecord } from './types.js';
 
 /**
@@ -198,4 +198,99 @@ describe('SQLite 的并发设置（顺序 61）', () => {
    * 「为了一条断言给内核加 Node 依赖」。所以这一条留给部署后的冒烟：
    * 起服务端，`sqlite3 data/sync.db 'PRAGMA journal_mode;'` 应当回 `wal`。
    */
+});
+
+describe('A03 SQLite 条件写原子性', () => {
+  it.each(['record', 'head'] as const)('%s 写入中途异常回滚全部记录、用量和游标', async (failureAt) => {
+    const { db, store, server, created, wire } = await harness();
+    onTestFinished(() => db.close());
+    const credentials = { spaceHandle: created.spaceHandle, credential: created.credential };
+    const current = await wire('m', '2026-09-20T00:00:02.000Z');
+    await server.push({ ...credentials, records: [current] });
+    const before = await store.list(created.spaceHandle, { since: 0, limit: 500 });
+    const beforeUsage = await store.spaceUsage?.(created.spaceHandle);
+    db.exec(
+      failureAt === 'record'
+        ? `CREATE TRIGGER fixture_abort BEFORE INSERT ON records WHEN NEW.id = 'fail'
+          BEGIN SELECT RAISE(ABORT, 'fixture-write-failure'); END;`
+        : `CREATE TRIGGER fixture_abort BEFORE UPDATE ON heads
+          BEGIN SELECT RAISE(ABORT, 'fixture-write-failure'); END;`,
+    );
+    const batch = [
+      await wire('m', '2026-09-20T00:00:01.000Z'),
+      await wire('m', '2026-09-20T00:00:03.000Z'),
+      await wire('fail', '2026-09-20T00:00:03.000Z'),
+    ];
+    await expect(server.push({ ...credentials, records: batch })).rejects.toThrow('fixture-write-failure');
+    expect(await store.list(created.spaceHandle, { since: 0, limit: 500 })).toEqual(before);
+    expect(await store.spaceUsage?.(created.spaceHandle)).toEqual(beforeUsage);
+    expect(await store.head(created.spaceHandle)).toBe(1);
+    db.exec('DROP TRIGGER fixture_abort');
+    const retry = await server.push({ ...credentials, records: batch });
+    expect(retry.accepted.map((item) => item.serverRev)).toEqual([2, 3]);
+    expect(retry.rejected?.[0]?.current.serverRev).toBe(2);
+  });
+
+  it('版本读取、动态配额判定、记录与 head 写入全部位于 BEGIN IMMEDIATE 内', async () => {
+    const db = new DatabaseSync(':memory:');
+    onTestFinished(() => db.close());
+    const events: string[] = [];
+    let inTransaction = false;
+    const traced: SqliteDatabase = {
+      exec(sql) {
+        events.push(sql);
+        db.exec(sql);
+        if (sql === 'BEGIN IMMEDIATE') inTransaction = true;
+        if (sql === 'COMMIT' || sql === 'ROLLBACK') inTransaction = false;
+      },
+      prepare(sql) {
+        events.push(sql);
+        return db.prepare(sql);
+      },
+    };
+    let quotaCalls = 0;
+    const store = createSqliteSyncStore(traced, {
+      resolveQuota(_space, quota, usage) {
+        quotaCalls += 1;
+        expect(inTransaction).toBe(true);
+        expect(usage).toEqual({ records: 0, bytes: 0 });
+        return quota;
+      },
+    });
+    await store.createSpace({
+      spaceHandle: 'fixture-transaction',
+      credentialHash: 'fixture-hash',
+      recoveryCredentialHash: 'fixture-recovery',
+      keyWraps: {},
+      createdAt: AT,
+    });
+    events.length = 0;
+    const record: SyncWireRecord = {
+      collection: 'messages',
+      id: 'fixture',
+      updatedAt: AT,
+      deletedAt: null,
+      sealed: { algorithm: 'AES-256-GCM', iv: 'AAAAAAAAAAAAAAAA', ciphertext: 'AAAA' },
+    };
+    const result = await store.appendConditionalWithinQuota?.('fixture-transaction', [record], {
+      maxRecords: 1,
+      maxBytes: 1000,
+    });
+    expect(result?.head).toBe(1);
+    expect(events[0]).toBe('BEGIN IMMEDIATE');
+    expect(events[events.length - 1]).toBe('COMMIT');
+    expect(events.some((sql) => sql.includes('server_rev, updated_at, deleted_at, sealed'))).toBe(true);
+    expect(quotaCalls).toBe(1);
+    // 全旧 no-op 不调用可能收紧的配额策略，也不写 heads。
+    events.length = 0;
+    const rejected = await store.appendConditionalWithinQuota?.(
+      'fixture-transaction',
+      [{ ...record, updatedAt: '2026-09-19T00:00:00.000Z' }],
+      { maxRecords: 0, maxBytes: 0 },
+    );
+    expect(rejected?.accepted).toEqual([]);
+    expect(quotaCalls).toBe(1);
+    expect(events.some((sql) => sql.includes('INSERT INTO heads'))).toBe(false);
+    expect(events.some((sql) => sql.includes('INSERT INTO records'))).toBe(false);
+  });
 });

@@ -12,6 +12,11 @@ permissions:
 jobs:
   verify:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # pnpm 11.22.0 要求 Node >=22.13；覆盖支持下界与 Node 24。
+        node-version: ['22.13.0', '24']
     steps:
       # actions 固定到提交 SHA，注释里是对应的版本号（审计 B20）
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
@@ -22,7 +27,7 @@ jobs:
 
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
-          node-version: 22
+          node-version: ${{ matrix.node-version }}
           cache: pnpm
 
       - name: 安装依赖
@@ -35,8 +40,8 @@ jobs:
       - name: 类型检查
         run: pnpm typecheck
 
-      # 根 test 也构建并运行 tools/sync-admin 的真实 SQLite / HTTP 边界测试。
-      - name: 单元测试（含服务器管理台）
+      # 根 test 串行运行工作区、管理台 SQLite / HTTP 与本地助手 Node 专项，各一次。
+      - name: 单元测试（含服务器管理台与本地助手）
         run: pnpm test
 
       - name: 构建

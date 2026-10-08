@@ -94,6 +94,8 @@ export interface SyncHeadResult {
    * 单看 `head` 看不出「重建之后号又涨过了旧值」。老服务端不发，客户端要兜住。
    */
   epoch?: string;
+  /** 由实际存储实现声明；缺省表示旧服务端，客户端不得假定它会拒绝旧版本。 */
+  capabilities?: { conditionalPush?: true };
 }
 
 export interface SyncPushInput extends SyncCredentials {
@@ -101,15 +103,32 @@ export interface SyncPushInput extends SyncCredentials {
 }
 
 export interface SyncAcceptedRecord {
+  /** 新条件写实现填原请求零基下标；旧服务端仅返回坐标与号。 */
+  index?: number;
   collection: SyncCollection;
   id: string;
   /** 服务端分配的新号。 */
   serverRev: number;
 }
 
+export interface SyncRejectedRecord {
+  /** 原 push.records 的零基下标；重复坐标也能逐项对应。 */
+  index: number;
+  /** 同一原子批次结束时该坐标的胜出版本（含密文与游标），不是被拒的旧版本。 */
+  current: SyncPulledRecord;
+}
+
 export interface SyncPushResult {
   head: number;
+  /** 只含真正写入的项，按原请求顺序；被拒的项不能分配新号。 */
   accepted: readonly SyncAcceptedRecord[];
+  /** 旧服务端不发。不能把缺少确认的输入项当成写入成功。 */
+  rejected?: readonly SyncRejectedRecord[];
+}
+
+/** 支持条件写的存储必须给出完整逐项结果以及同事务的 head。 */
+export interface SyncConditionalPushResult extends SyncPushResult {
+  rejected: readonly SyncRejectedRecord[];
 }
 
 export interface SyncPullInput extends SyncCredentials {

@@ -12,6 +12,24 @@
 > 第二～五节的时间表是 23:05 的快照（当时仓库里还没有 T17/T18/T2/T2c 这些提交），
 > 之后新增或改过的文件统一记在第七节，以**提交时间**为准。
 
+## 顺序113：核心正确性续接（2026-10-04，本分支自有表）
+
+基线357c47a，分支codex/task-113-core-correctness-continue；恢复原顺序113未提交补丁后继续实施，原工作区不变。本表只记录本分支；未提交/未push/未部署。
+
+| 文件 | 动作 | 内容 |
+| --- | --- | --- |
+| packages/core/src/sync/{server,sqlite,types,http,http-client}.ts | 修改 | 可选条件写能力，服务端原子版本/配额/用量/head，完整逐项拒绝及胜者，HTTP透传 |
+| packages/core/src/sync/{loop,merge,index}.ts、packages/core/src/storage/repository.ts | 修改 | 原子update合并、事务CAS确认、升级全量复核与持久补推、只按完整确认推进水位线 |
+| packages/core/src/sync/{repair,push-batches}.ts | 新增 | 空间/epoch版本标记与复核结构，真实字节分批、单条超限定位、严格响应校验 |
+| packages/core/src/sync/{repair,push-batches,server,http-client}.test.ts | 新增 | 续接闭环24条及原补丁服务端/HTTP协议回归 |
+| packages/core/src/sync/{sqlite,devices,hardening,limits}.test.ts | 修改 | SQLite事务失败回滚；旧夹具区分条件写与legacy；拒绝和遗留覆盖来源同时验证 |
+| apps/web/src/lib/sync.ts | 修改 | 快照恢复复用字节分批/确认，配额告警不再泛化所有413 |
+| packages/core/src/storage/{archive,archive-roundtrip.test}.ts、archive-recovery.test.ts | 修改/新增 | 全量删前校验、坏标记隔离与warnings接口、共享/损坏/失败回归 |
+| packages/core/src/eval/{recall-eval,recall-baseline.test}.ts、recall-eval.test.ts | 修改/新增 | 指标分母区分及null空集，既有红线/新回归 |
+| tools/sync-server/src/{accounts,main}.ts、cors.ts、cors.test.mjs | 修改/新增 | 错误响应CORS与脱敏；7条隔离HTTP/账户回归 |
+| package.json、.github/workflows/ci.yml | 修改 | 根桥接/CORS测试门禁及Node22.13/24矩阵，不改依赖或锁文件 |
+| docs/{TASKS,STATUS,EVAL,FILE-LOG}.md | 修改 | 仅顺序113自有小节，真实门禁、限制、跨线交接与后续 |
+
 ## 时间列的含义
 
 | 列 | 来源 | 说明 |

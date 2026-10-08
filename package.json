@@ -6,7 +6,7 @@
   "description": "多角色扮演酒馆 —— 导演你的角色阵容，让每个角色记住属于自己的故事",
   "packageManager": "pnpm@11.22.0",
   "engines": {
-    "node": ">=22.5"
+    "node": "^22.13.0 || ^24.0.0"
   },
   "scripts": {
     "dev": "pnpm --filter @dramatis/web dev",
@@ -16,8 +16,9 @@
     "build:sync-server": "tsc -p tools/sync-server/tsconfig.json",
     "build:sync-admin": "tsc -p tools/sync-admin/tsconfig.json",
     "typecheck": "pnpm -r typecheck && tsc -p tools/sync-admin/tsconfig.json --noEmit",
-    "test": "pnpm -r test && pnpm test:sync-admin",
-    "test:sync-admin": "pnpm build:sync-server && pnpm build:sync-admin && node --test tools/sync-admin/*.test.mjs",
+    "test": "pnpm -r test && pnpm test:sync-admin && pnpm test:local-bridge",
+    "test:sync-admin": "pnpm build:sync-server && pnpm build:sync-admin && node --test tools/sync-admin/*.test.mjs tools/sync-server/src/*.test.mjs",
+    "test:local-bridge": "node --test tools/local-bridge/*.test.mjs",
     "lint": "biome check .",
     "format": "biome format --write .",
     "check": "biome check --write ."

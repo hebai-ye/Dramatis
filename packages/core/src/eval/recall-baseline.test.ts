@@ -32,6 +32,9 @@ describe('混合召回评测（P1-11 的决策依据）', () => {
 
   it('兜底上限确实把预算让给了命中的条目（T22）', () => {
     const unlimited = evaluateRecall(RECALL_SCENARIO, { fallbackLimit: null });
+    if (unlimited.hitRate === null || unlimited.inBudgetRate === null || unlimited.noisePerProbe === null) {
+      throw new Error('非空召回题库应产生可比较的评测结果');
+    }
     // 默认（与线上一致）不该带来回归：命中率与进预算都不掉
     expect(report.hitRate).toBeGreaterThanOrEqual(unlimited.hitRate);
     expect(report.inBudgetRate).toBeGreaterThanOrEqual(unlimited.inBudgetRate);

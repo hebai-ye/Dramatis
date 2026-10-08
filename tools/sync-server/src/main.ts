@@ -13,6 +13,7 @@ import {
   type SyncServerLimits,
 } from '../../../packages/core/src/index.js';
 import { createAccountProfileHandler } from './accounts.js';
+import { allowedOriginHeaders } from './cors.js';
 import { createSpaceQuotaResolver } from './storage-policy.js';
 
 /**
@@ -258,6 +259,11 @@ export function startServer(config: ServerConfig): RunningServer {
         });
         response.end(text);
       } catch (error) {
+        const origin = typeof request.headers.origin === 'string' ? request.headers.origin : null;
+        for (const [key, value] of Object.entries(allowedOriginHeaders(origin, config.allowedOrigins))) {
+          response.setHeader(key, value);
+        }
+        response.setHeader('cache-control', 'no-store');
         response.setHeader('content-type', 'application/json; charset=utf-8');
         if (error instanceof BodyTooLargeError) {
           response.statusCode = 413;

@@ -42,22 +42,39 @@ export interface MergeResult {
   overriddenIds: Set<string>;
 }
 
-/** 合并一批远端记录（写入由调用方提供的 `put` 完成，便于单测与内核复用同一套规则）。 */
-export async function mergeRemoteRecords(
-  records: readonly LocalSyncRecord[],
-  io: {
-    get: (record: LocalSyncRecord) => Promise<Pick<LocalSyncRecord, 'updatedAt' | 'deletedAt'> | null>;
-    put: (record: LocalSyncRecord) => Promise<void>;
-  },
-): Promise<MergeResult> {
+export interface AtomicMergeResult {
+  decision: MergeDecision;
+  /** The version actually read inside the transaction, not a preflight snapshot. */
+  local: Pick<LocalSyncRecord, 'updatedAt' | 'deletedAt'> | null;
+}
+
+export type MergeIO =
+  | { merge: (record: LocalSyncRecord) => Promise<AtomicMergeResult> }
+  | {
+      get: (record: LocalSyncRecord) => Promise<Pick<LocalSyncRecord, 'updatedAt' | 'deletedAt'> | null>;
+      put: (record: LocalSyncRecord) => Promise<void>;
+    };
+
+async function mergeWithSeparateIO(
+  record: LocalSyncRecord,
+  io: Extract<MergeIO, { get: unknown }>,
+): Promise<AtomicMergeResult> {
+  const local = await io.get(record);
+  const decision = decideMerge(local, record);
+  if (decision === 'take-remote') await io.put(record);
+  return { decision, local };
+}
+
+/** Repository callers must supply the atomic merge hook; get/put remains for pure in-memory consumers. */
+export async function mergeRemoteRecords(records: readonly LocalSyncRecord[], io: MergeIO): Promise<MergeResult> {
   let applied = 0;
   let skipped = 0;
   const overriddenIds = new Set<string>();
 
   for (const record of records) {
-    const local = await io.get(record);
-    if (decideMerge(local, record) === 'take-remote') {
-      await io.put(record);
+    const result = 'merge' in io ? await io.merge(record) : await mergeWithSeparateIO(record, io);
+    const { local } = result;
+    if (result.decision === 'take-remote') {
       applied += 1;
     } else {
       skipped += 1;

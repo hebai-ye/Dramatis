@@ -5,6 +5,7 @@ import {
   type SqliteDatabase,
   verifyCredential,
 } from '../../../packages/core/src/index.js';
+import { allowedOriginHeaders } from './cors.js';
 
 interface SpaceProof {
   credential_hash: string;
@@ -18,14 +19,6 @@ interface ProfileRow {
   display_name: string;
   claimed_at: string;
   space_epoch: string;
-}
-
-function reply(status: number, body: unknown): Response {
-  return Response.json(body, { status, headers: { 'cache-control': 'no-store' } });
-}
-
-function fail(status: number, code: string): Response {
-  return reply(status, { error: { code } });
 }
 
 // biome-ignore lint/suspicious/noControlCharactersInRegex: 运营资料拒绝控制字符
@@ -50,6 +43,10 @@ export function createAccountProfileHandler(db: SqliteDatabase) {
   ): Promise<Response> => {
     const url = new URL(request.url);
     const origin = request.headers.get('origin');
+    const corsHeaders = allowedOriginHeaders(origin, context.allowedOrigins ?? []);
+    const reply = (status: number, body: unknown): Response =>
+      Response.json(body, { status, headers: { 'cache-control': 'no-store', ...corsHeaders } });
+    const fail = (status: number, code: string): Response => reply(status, { error: { code } });
     if (origin !== null) {
       let sameHost = false;
       try {
@@ -157,7 +154,7 @@ export function createAccountProfileHandler(db: SqliteDatabase) {
       db.exec('ROLLBACK');
       throw error;
     }
-    const response = reply(created ? 201 : 200, {
+    return reply(created ? 201 : 200, {
       profile: {
         spaceHandle: profile.space_handle,
         accountId: profile.account_id,
@@ -165,10 +162,5 @@ export function createAccountProfileHandler(db: SqliteDatabase) {
         claimedAt: profile.claimed_at,
       },
     });
-    if (origin !== null && context.allowedOrigins?.includes(origin)) {
-      response.headers.set('access-control-allow-origin', origin);
-      response.headers.set('vary', 'Origin');
-    }
-    return response;
   };
 }

@@ -6,6 +6,7 @@ export * from './http-client.js';
 export * from './loop.js';
 export * from './memory-transport.js';
 export * from './merge.js';
+export * from './push-batches.js';
 export * from './server.js';
 export * from './sqlite.js';
 export * from './types.js';

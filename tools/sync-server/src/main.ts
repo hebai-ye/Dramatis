@@ -12,6 +12,7 @@ import {
   resolveClientKey,
   type SyncServerLimits,
 } from '../../../packages/core/src/index.js';
+import { assertDefaultStorageQuota, parseDefaultStorageMiB } from '../../sync-admin/src/quota-policy.js';
 import { createAccountProfileHandler } from './accounts.js';
 import { allowedOriginHeaders } from './cors.js';
 import { createSpaceQuotaResolver } from './storage-policy.js';
@@ -94,7 +95,7 @@ export function readConfig(argv: readonly string[], env: Record<string, string |
     return Number.isInteger(value) && value > 0 ? value : undefined;
   };
   const maxRecords = positive('max-records', 'DRAMATIS_SYNC_MAX_RECORDS');
-  const maxMb = positive('max-mb', 'DRAMATIS_SYNC_MAX_MB');
+  const maxBytes = parseDefaultStorageMiB(pick('max-mb', 'DRAMATIS_SYNC_MAX_MB'));
   const pushesPerMinute = positive('pushes-per-minute', 'DRAMATIS_SYNC_PUSHES_PER_MINUTE');
   const spacesPerMinute = positive('spaces-per-minute', 'DRAMATIS_SYNC_SPACES_PER_MINUTE');
   const maxSpaces = positive('max-spaces', 'DRAMATIS_SYNC_MAX_SPACES');
@@ -103,7 +104,7 @@ export function readConfig(argv: readonly string[], env: Record<string, string |
   const hops = hopsRaw === undefined ? Number.NaN : Number(hopsRaw);
   const limits: Partial<SyncServerLimits> = {
     ...(maxRecords === undefined ? {} : { maxRecordsPerSpace: maxRecords }),
-    ...(maxMb === undefined ? {} : { maxBytesPerSpace: maxMb * 1024 * 1024 }),
+    maxBytesPerSpace: maxBytes,
     ...(pushesPerMinute === undefined ? {} : { pushesPerMinute }),
     ...(spacesPerMinute === undefined ? {} : { spacesPerMinute }),
     ...(maxSpaces === undefined ? {} : { maxSpaces }),
@@ -176,6 +177,9 @@ export interface RunningServer {
 
 /** 起服务。返回一个可以停掉它的句柄（单测/脚本都用得上）。 */
 export function startServer(config: ServerConfig): RunningServer {
+  const defaultMaxBytes = assertDefaultStorageQuota(
+    config.limits.maxBytesPerSpace ?? parseDefaultStorageMiB(undefined),
+  );
   mkdirSync(dirname(config.dataPath), { recursive: true });
   const db = new DatabaseSync(config.dataPath);
   // WAL + busy_timeout（顺序 61）：服务端写入与 6 小时一次的备份不再互相顶掉
@@ -206,7 +210,14 @@ export function startServer(config: ServerConfig): RunningServer {
         if (path === '/' || path.startsWith('/health')) {
           response.statusCode = 200;
           response.setHeader('content-type', 'application/json; charset=utf-8');
-          response.end(JSON.stringify({ ok: true, uptimeMs: Date.now() - startedAt }));
+          response.setHeader('cache-control', 'no-store');
+          response.end(
+            JSON.stringify({
+              ok: true,
+              uptimeMs: Date.now() - startedAt,
+              storageQuota: { version: 1, defaultMaxBytes },
+            }),
+          );
           return;
         }
 

@@ -6,6 +6,8 @@ import { fileURLToPath } from 'node:url';
 import { appendAudit } from './audit.js';
 import { type BackupStatus, createAdminHandler } from './http.js';
 import { createAdminOperations } from './operations.js';
+import { QuotaConfigurationError, readSyncQuotaHealth, verifyQuotaHealth } from './quota-check.js';
+import { parseDefaultStorageMiB } from './quota-policy.js';
 import { createAdminStore } from './store.js';
 
 export function readAdminConfig(env: Record<string, string | undefined>) {
@@ -24,9 +26,7 @@ export function readAdminConfig(env: Record<string, string | undefined>) {
   if (env.DRAMATIS_ADMIN_WRITE !== undefined && !['0', '1'].includes(env.DRAMATIS_ADMIN_WRITE))
     throw new Error('写开关无效。');
   const writeEnabled = env.DRAMATIS_ADMIN_WRITE === '1';
-  const defaultMaxBytes = Number(env.DRAMATIS_ADMIN_DEFAULT_MAX_MB ?? '96') * 1024 ** 2;
-  if (!Number.isSafeInteger(defaultMaxBytes) || defaultMaxBytes <= 0 || defaultMaxBytes > 1024 ** 4)
-    throw new Error('默认配额无效。');
+  const defaultMaxBytes = parseDefaultStorageMiB(env.DRAMATIS_ADMIN_DEFAULT_MAX_MB);
   if (writeEnabled && !env.DRAMATIS_ADMIN_BACKUPS) throw new Error('可编辑管理台必须配置备份目录。');
   const dataPath = resolve(env.DRAMATIS_ADMIN_DATA);
   const auditPath = resolve(env.DRAMATIS_ADMIN_AUDIT);
@@ -93,6 +93,8 @@ export function startAdmin(config: ReturnType<typeof readAdminConfig>) {
         audit: (event) => appendAudit(config.auditPath, event),
       });
     const web = fileURLToPath(new URL('../web/', import.meta.url));
+    const syncHealth = () => readSyncQuotaHealth(config.healthPort);
+    const verifyQuota = async () => verifyQuotaHealth(await syncHealth(), config.defaultMaxBytes);
     const handler = createAdminHandler({
       store,
       ...(operations ? { operations } : {}),
@@ -105,20 +107,8 @@ export function startAdmin(config: ReturnType<typeof readAdminConfig>) {
       },
       audit: (event) => appendAudit(config.auditPath, event),
       backupStatus: () => backupStatus(config.backupPath, basename(config.dataPath)),
-      syncHealth: async () => {
-        try {
-          const response = await fetch(`http://127.0.0.1:${config.healthPort}/health`, {
-            signal: AbortSignal.timeout(1500),
-          });
-          const body = (await response.json()) as { ok?: unknown; uptimeMs?: unknown };
-          return {
-            ok: response.ok && body.ok === true,
-            ...(typeof body.uptimeMs === 'number' && body.uptimeMs >= 0 ? { uptimeMs: body.uptimeMs } : {}),
-          };
-        } catch {
-          return { ok: false };
-        }
-      },
+      syncHealth,
+      verifyQuota,
     });
     const server = createServer((request, response) => {
       void (async () => {
@@ -170,18 +160,39 @@ export function startAdmin(config: ReturnType<typeof readAdminConfig>) {
       process.stderr.write('管理服务监听失败。\n');
       process.exit(1);
     });
-    server.listen(config.port, '127.0.0.1', () => {
-      process.stdout.write(`Dramatis 管理台：http://127.0.0.1:${config.port}\n`);
-    });
+    let stopping = false;
+    // The existing start wrapper is synchronous; defer listening until verification finishes.
+    const ready = verifyQuota()
+      .then(() => {
+        if (stopping) return;
+        server.listen(config.port, '127.0.0.1', () => {
+          process.stdout.write(`Dramatis 管理台：http://127.0.0.1:${config.port}\n`);
+        });
+      })
+      .catch((error: unknown) => {
+        if (stopping) return;
+        operations?.close();
+        store.close();
+        process.stderr.write(
+          error instanceof QuotaConfigurationError ? `${error.message}\n` : '默认配额核验失败，管理台未启动。\n',
+        );
+        process.exit(1);
+      });
     return {
-      stop: () =>
-        new Promise<void>((done) => {
-          server.close(() => {
-            operations?.close();
-            store.close();
-            done();
-          });
-        }),
+      ready,
+      stop: () => {
+        stopping = true;
+        return ready.then(
+          () =>
+            new Promise<void>((done) => {
+              server.close(() => {
+                operations?.close();
+                store.close();
+                done();
+              });
+            }),
+        );
+      },
     };
   } catch (error) {
     operations?.close();

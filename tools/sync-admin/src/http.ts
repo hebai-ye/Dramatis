@@ -1,6 +1,7 @@
 import { timingSafeEqual } from 'node:crypto';
 import type { AuditEvent } from './audit.js';
 import { AdminOperationError, type createAdminOperations } from './operations.js';
+import { QuotaConfigurationError } from './quota-check.js';
 import type { AdminStore } from './store.js';
 import { VIP_PLANS } from './vip-plans.js';
 
@@ -18,6 +19,8 @@ interface Options {
   backupStatus(): BackupStatus;
   syncHealth(): Promise<{ ok: boolean; uptimeMs?: number }>;
   operations?: ReturnType<typeof createAdminOperations>;
+  /** Production wiring verifies live configuration before all authenticated data access. */
+  verifyQuota?(): Promise<void>;
 }
 
 const SECURITY = {
@@ -85,6 +88,7 @@ export function createAdminHandler(options: Options) {
       if ([...url.searchParams.keys()].some((key) => !allowedQueries.includes(key))) {
         return finish(400, { error: 'query-denied' });
       }
+      await options.verifyQuota?.();
       if (request.method === 'POST' && options.operations) {
         if (request.headers.get('origin') !== origin) return finish(403, { error: 'origin-denied' });
         if (request.headers.get('content-type')?.split(';')[0]?.trim() !== 'application/json')
@@ -141,7 +145,7 @@ export function createAdminHandler(options: Options) {
       }
       return finish(404, { error: 'not-found' });
     } catch (error) {
-      if (error instanceof AdminOperationError) {
+      if (error instanceof AdminOperationError || error instanceof QuotaConfigurationError) {
         try {
           return finish(error.status, { error: error.code, message: error.message });
         } catch {

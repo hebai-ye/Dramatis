@@ -12,6 +12,20 @@
 > 第二～五节的时间表是 23:05 的快照（当时仓库里还没有 T17/T18/T2/T2c 这些提交），
 > 之后新增或改过的文件统一记在第七节，以**提交时间**为准。
 
+## 顺序114：B14配额单源与漂移门禁（2026-10-04，本分支自有表）
+
+| 文件 | 动作 | 内容 |
+| --- | --- | --- |
+| tools/sync-admin/src/quota-policy.ts | 新增 | 无平台依赖的96MiB唯一默认与严格解析，供core及两宿主共用 |
+| packages/core/src/sync/server.ts | 修改 | 默认配额引用共享常量，不改其他护栏或版本规则 |
+| tools/sync-server/src/main.ts | 修改 | 共享配置解析、开库前校验、health报告真实有效配额与no-store |
+| tools/sync-admin/src/{main,store,http}.ts | 修改 | 默认值单源；启动ready与每次鉴权API漂移门禁；保留stop和修改前快照流程 |
+| tools/sync-admin/src/{quota-check.ts,quota.test.mjs} | 新增 | 本机健康解析、明确503错误及16条单元/真实隔离进程回归 |
+| package.json | 修改 | 根管理专项纳入src内新测试，无依赖或锁文件变化 |
+| docs/{STATUS,TASKS,EVAL,FILE-LOG}.md | 修改 | 仅114自有小节，重核、门禁、风险、部署次序与回退 |
+
+未提交/未push/未部署；改前快照及实际日志留在忽略目录build/task-114。
+
 ## 顺序113：核心正确性续接（2026-10-04，本分支自有表）
 
 基线357c47a，分支codex/task-113-core-correctness-continue；恢复原顺序113未提交补丁后继续实施，原工作区不变。本表只记录本分支；未提交/未push/未部署。

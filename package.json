@@ -17,7 +17,7 @@
     "build:sync-admin": "tsc -p tools/sync-admin/tsconfig.json",
     "typecheck": "pnpm -r typecheck && tsc -p tools/sync-admin/tsconfig.json --noEmit",
     "test": "pnpm -r test && pnpm test:sync-admin && pnpm test:local-bridge",
-    "test:sync-admin": "pnpm build:sync-server && pnpm build:sync-admin && node --test tools/sync-admin/*.test.mjs tools/sync-server/src/*.test.mjs",
+    "test:sync-admin": "pnpm build:sync-server && pnpm build:sync-admin && node --test tools/sync-admin/*.test.mjs tools/sync-admin/src/*.test.mjs tools/sync-server/src/*.test.mjs",
     "test:local-bridge": "node --test tools/local-bridge/*.test.mjs",
     "lint": "biome check .",
     "format": "biome format --write .",

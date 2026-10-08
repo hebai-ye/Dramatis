@@ -1,3 +1,4 @@
+import { DEFAULT_STORAGE_MAX_BYTES } from '../../../../tools/sync-admin/src/quota-policy.js';
 /**
  * 同步服务端的平台无关部分（P2-6 第四步，对应 SYNC.md §4）。
  *
@@ -246,7 +247,7 @@ export interface SyncServerLimits {
 
 export const DEFAULT_SYNC_LIMITS: SyncServerLimits = {
   maxRecordsPerSpace: 50_000,
-  maxBytesPerSpace: 96 * 1024 * 1024,
+  maxBytesPerSpace: DEFAULT_STORAGE_MAX_BYTES,
   pushesPerMinute: 120,
   maxRecordsPerPush: 500,
   // 一个人从头建一遍自己的空间只需要几个，20 已经宽松得离谱

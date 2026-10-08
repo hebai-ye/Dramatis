@@ -1,103 +1,139 @@
 import type { ConversationId, EventId, InstanceId, RoomId, SceneId } from '../model/ids.js';
 import type { CharacterInstance } from '../model/instance.js';
 import type { Repository } from '../storage/repository.js';
-import { applyAffectUpdates } from './affect.js';
+import { applyAffectUpdates, parseAffectUpdates } from './affect.js';
+import {
+  type AnalysisReceipt,
+  analysisReceiptKey,
+  analysisRevision,
+  readAnalysisGeneration,
+  StaleTurnAnalysisError,
+  type TurnAnalysisSource,
+  verifyTurnAnalysisSource,
+} from './analysis-revision.js';
 import { buildMemoryEvents } from './ingest.js';
 import { parseTurnAnalysis } from './turn-analysis.js';
 
-/**
- * 把「一轮分析」的结果落库（记忆 + 情绪关系）。
- *
- * 抽出来只有一个理由：**同一段输出有两个来源**——后台任务里模型直接返回的，
- * 与网页版桥接下用户粘回来的。两边的落库规则必须逐字一致（幂等、只清这一轮的旧记忆、
- * 已经推演过的不再叠加），否则「网页版玩出来的记忆」会和「API 玩出来的」不一样。
- *
- * 输入是**原始文本**而不是解析好的对象：解析层本来就宽容（模型只写一半也能收下），
- * 这个宽容度对粘贴回来的文本同样重要（网页版可能顺手加一句「好的，这是 JSON：」）。
- */
 export interface ApplyTurnAnalysisInput {
   repository: Repository;
   roomId: RoomId;
   sceneId: SceneId | null;
   conversationId: ConversationId | null;
   turnId: string;
-  /** 这一轮的世界内时间，写进记忆的时间线。 */
   worldTime: string;
-  /** 这一轮在场的角色（也是视角条目的候选）。 */
   participants: readonly CharacterInstance[];
-  /** 模型或用户粘回来的那段文本。 */
   raw: string;
-  /** 落库时间，默认现在。 */
   at?: string;
+  /** Capture before the model call. Missing only for the legacy pasted-analysis caller. */
+  source?: TurnAnalysisSource;
+  /** Old queued extraction/affect jobs share the same generation and completion receipt. */
+  mode?: 'combined' | 'memory' | 'affect';
 }
-
 export interface ApplyTurnAnalysisResult {
-  /** 写进去的记忆条数（1 条客观 + N 条视角）。 */
   memories: number;
-  /** 记了状态变化的角色数。 */
   updates: number;
-  /** 抽取结果里提到、但匹配不到角色的名字。 */
   unmatchedSpeakers: string[];
+  /** Existing unmarked memories cannot prove whether a past state update was applied. */
+  legacyPreserved: boolean;
+}
+function hasUnrevertedEffect(instance: CharacterInstance, turnId: string): boolean {
+  return [instance.affect.history, ...instance.relationships.map((edge) => edge.history)].some((history) => {
+    const reverted = new Set(history.map((change) => change.reversionOf).filter((id) => id !== null));
+    return history.some(
+      (change) => change.turnId === turnId && change.reversionOf === null && !reverted.has(change.id),
+    );
+  });
+}
+function checkedReceipt(value: AnalysisReceipt | null): AnalysisReceipt | null {
+  if (value === null) return null;
+  if (
+    value.version !== 1 ||
+    typeof value.generation !== 'string' ||
+    typeof value.memoryWritten !== 'boolean' ||
+    typeof value.effectsComplete !== 'boolean' ||
+    typeof value.legacyPreserved !== 'boolean' ||
+    !(value.sourceRevision === null || typeof value.sourceRevision === 'string')
+  )
+    throw new Error('分析完成凭证损坏，未改写记忆或角色状态。');
+  return value;
 }
 
+/** Source verification, memory/state writes and completion receipt commit together or all roll back. */
 export async function applyTurnAnalysis(input: ApplyTurnAnalysisInput): Promise<ApplyTurnAnalysisResult> {
-  const repository = input.repository;
-  const { extraction, updates } = parseTurnAnalysis(input.raw);
+  const { extraction, updates: combinedUpdates } = parseTurnAnalysis(input.raw);
+  const updates = input.mode === 'affect' ? parseAffectUpdates(input.raw) : combinedUpdates;
   const at = input.at ?? new Date().toISOString();
-
-  /*
-   * 参与者**从库里现取**，而不是用调用方手里的那份快照。
-   *
-   * 两个理由：① 幂等判断读的是 `affected[].affect.history`，拿旧快照会以为「这一轮没推演过」，
-   * 于是重贴一次就把关系翻一倍（写测试时当场撞上）；② 情绪推演是读-改-写，
-   * 基于旧快照写回去会把别人刚改的地方压掉。
-   */
-  const wanted = new Set(input.participants.map((instance) => instance.id));
-  const stored = await repository.listInstances(input.roomId);
-  const participants = stored.filter((instance) => wanted.has(instance.id));
-
-  const sequence = await repository.nextMemorySequence(input.roomId);
-  const { events, unmatchedSpeakers } = buildMemoryEvents({
+  // No WebCrypto await inside an IndexedDB transaction.
+  if (input.source && (await analysisRevision(input.source.snapshot)) !== input.source.revision)
+    throw new StaleTurnAnalysisError();
+  const scope = {
     roomId: input.roomId,
     sceneId: input.sceneId,
     conversationId: input.conversationId,
-    worldTime: input.worldTime,
-    sequence,
-    participants,
-    extraction,
     turnId: input.turnId,
-    createdAt: at,
-  });
-
-  // 先清掉这一轮可能残留的旧记忆，让重试（或重贴一次）天然幂等
-  await repository.deleteMemoriesByTurn(input.roomId, input.turnId);
-  await repository.saveMemories(events);
-
-  // 幂等：同一个回合已经推演过就不再叠加，否则重贴会让关系翻倍
-  const already = participants.some((instance) =>
-    instance.affect.history.some((change) => change.turnId === input.turnId),
-  );
-  let applied = 0;
-  if (!already) {
-    // 顺序 27d：状态变化要和刚刚写入的「这个角色眼中的记忆」绑定。
-    const sourceMemoryIdsByObserver = new Map<InstanceId, EventId[]>();
-    for (const event of events) {
-      if (event.observerId === null) continue;
-      const current = sourceMemoryIdsByObserver.get(event.observerId) ?? [];
-      current.push(event.id);
-      sourceMemoryIdsByObserver.set(event.observerId, current);
+  };
+  return input.repository.atomic(async (repository, store) => {
+    if (input.source) await verifyTurnAnalysisSource(repository, store, scope, input.source);
+    const generation = await readAnalysisGeneration(repository, input.roomId, input.turnId);
+    const previous = checkedReceipt(
+      await repository.getMeta<AnalysisReceipt>(analysisReceiptKey(input.roomId, input.turnId)),
+    );
+    const receipt = previous?.generation === generation ? previous : null;
+    if (receipt?.sourceRevision && input.source && receipt.sourceRevision !== input.source.revision) {
+      throw new StaleTurnAnalysisError('这轮已有其他修订的分析，必须先撤销旧分析再应用新修订。');
     }
-
-    const result = applyAffectUpdates(participants, updates, {
-      at,
-      turnId: input.turnId,
-      sourceMemoryIdsByObserver,
+    const wanted = new Set(input.participants.map((instance) => instance.id));
+    const participants = (await repository.listInstances(input.roomId)).filter((instance) => wanted.has(instance.id));
+    const existing = (await repository.listMemories(input.roomId)).filter((memory) =>
+      memory.sourceTurnIds.includes(input.turnId),
+    );
+    // No migration/backfill: old histories can have been pruned. Absence is not proof of non-application.
+    const legacyPreserved = receipt?.legacyPreserved ?? (previous === null && existing.length > 0);
+    const writeMemory = input.mode !== 'affect';
+    const writeEffects = input.mode !== 'memory';
+    let events = existing;
+    let unmatchedSpeakers: string[] = [];
+    if (writeMemory) {
+      const sequence = await repository.nextMemorySequence(input.roomId);
+      const built = buildMemoryEvents({
+        ...scope,
+        worldTime: input.worldTime,
+        sequence,
+        participants,
+        extraction,
+        createdAt: at,
+      });
+      events = built.events;
+      unmatchedSpeakers = built.unmatchedSpeakers;
+      // Preserve existing pasted-memory replacement semantics (A08 is not decided here).
+      await repository.deleteMemoriesByTurn(input.roomId, input.turnId);
+      await repository.saveMemories(events);
+    }
+    let applied = 0;
+    if (writeEffects && !receipt?.effectsComplete && !legacyPreserved) {
+      const sourceMemoryIdsByObserver = new Map<InstanceId, EventId[]>();
+      for (const event of events) {
+        if (event.observerId === null) continue;
+        const ids = sourceMemoryIdsByObserver.get(event.observerId) ?? [];
+        ids.push(event.id);
+        sourceMemoryIdsByObserver.set(event.observerId, ids);
+      }
+      // Per-participant legacy guard also checks relationship-only history, not just affect.
+      const eligible = participants.filter((instance) => !hasUnrevertedEffect(instance, input.turnId));
+      const result = applyAffectUpdates(eligible, updates, { at, turnId: input.turnId, sourceMemoryIdsByObserver });
+      for (const item of result.applied) {
+        await repository.saveInstance(item.next);
+        applied++;
+      }
+    }
+    await repository.setMeta<AnalysisReceipt>(analysisReceiptKey(input.roomId, input.turnId), {
+      version: 1,
+      generation,
+      sourceRevision: input.source?.revision ?? receipt?.sourceRevision ?? null,
+      memoryWritten: writeMemory || receipt?.memoryWritten === true,
+      effectsComplete: writeEffects || receipt?.effectsComplete === true,
+      legacyPreserved,
     });
-    for (const item of result.applied) {
-      await repository.saveInstance(item.next);
-      applied += 1;
-    }
-  }
-
-  return { memories: events.length, updates: applied, unmatchedSpeakers };
+    return { memories: writeMemory ? events.length : 0, updates: applied, unmatchedSpeakers, legacyPreserved };
+  });
 }

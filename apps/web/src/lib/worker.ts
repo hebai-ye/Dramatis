@@ -1,31 +1,32 @@
 import {
-  applyAffectUpdates,
   applyConsolidation,
   applyTurnAnalysis,
   buildAffectMessages,
   buildChapterSummaryMessages,
   buildConsolidationPrompt,
   buildExtractionMessages,
-  buildMemoryEvents,
   buildSceneSummaryMessages,
   buildTurnAnalysisMessages,
   type ConversationId,
+  captureTurnAnalysis,
   chapterCandidates,
   collectCompletionWithTools,
   createOpenAICompatibleProvider,
   evaluateBudget,
+  leaseBackgroundTask,
   type ModelProvider,
   newId,
   nowIso,
   type ProviderPrice,
-  parseAffectUpdates,
-  parseExtraction,
   parseSummary,
   pendingSummary,
   planConsolidation,
   type RoomId,
   type SceneId,
+  StaleTurnAnalysisError,
+  settleBackgroundTask,
   shouldSummarizeScene,
+  type TaskLease,
   type TokenUsage,
   type UsageCategory,
 } from '@dramatis/core';
@@ -84,6 +85,8 @@ export interface SummaryTaskPayload {
 interface TaskOutcome {
   called: boolean;
   usage: TokenUsage | null;
+  failure?: Error;
+  notice?: string;
 }
 
 export interface BackgroundProviderConfig {
@@ -177,25 +180,9 @@ export function useBackgroundWorker(options: {
 
   /** 读取一个回合的上下文：房间、消息、在场角色、场景。 */
   const loadTurn = useCallback(
-    async (payload: TurnTaskPayload) => {
+    async (payload: TurnTaskPayload, lease: TaskLease) => {
       if (!db) return null;
-
-      const room = await db.repository.getRoom(payload.roomId);
-      if (!room) return null;
-
-      const allMessages = await db.repository.listMessages(payload.roomId);
-      const messages = allMessages.filter((message) => message.turnId === payload.turnId);
-      if (messages.length === 0) return null;
-
-      const instances = await db.repository.listInstances(payload.roomId);
-      const audience = new Set(messages.flatMap((message) => message.audience));
-
-      return {
-        room,
-        messages,
-        participants: instances.filter((instance) => audience.has(instance.id)),
-        scene: payload.sceneId === null ? null : await db.repository.getScene(payload.sceneId),
-      };
+      return captureTurnAnalysis(db.repository, payload, lease);
     },
     [db],
   );
@@ -207,10 +194,11 @@ export function useBackgroundWorker(options: {
    * 省下来的调用额度给 P1-6 的意图调用。解析层宽容，模型偶尔只写一半也不会整轮作废。
    */
   const runTurnAnalysis = useCallback(
-    async (payload: TurnTaskPayload, config: BackgroundProviderConfig): Promise<TaskOutcome> => {
+    async (payload: TurnTaskPayload, config: BackgroundProviderConfig, lease: TaskLease): Promise<TaskOutcome> => {
       if (!db) return { called: false, usage: null };
-      const context = await loadTurn(payload);
-      if (!context) return { called: false, usage: null };
+      const context = await loadTurn(payload, lease);
+      if (!context)
+        return { called: false, usage: null, notice: '这轮任务的消息、归属或执行令牌已失效，未调用模型或写入旧结果。' };
 
       const completion = await collectCompletionWithTools(
         makeProvider(config),
@@ -223,32 +211,40 @@ export function useBackgroundWorker(options: {
         { temperature: 0.2 },
       );
 
-      /*
-       * 落库交给内核的那份共用实现（`applyTurnAnalysis`）：网页版桥接下用户粘回来的
-       * 那段输出走的是同一个函数，两条路的幂等与清理规则因此不会漂移。
-       */
-      await applyTurnAnalysis({
-        repository: db.repository,
-        roomId: payload.roomId,
-        sceneId: payload.sceneId,
-        conversationId: payload.conversationId,
-        turnId: payload.turnId,
-        worldTime: context.scene?.worldTime ?? '',
-        participants: context.participants,
-        raw: completion.text,
-      });
-
-      return { called: true, usage: completion.usage };
+      try {
+        const result = await applyTurnAnalysis({
+          repository: db.repository,
+          ...payload,
+          worldTime: context.scene?.worldTime ?? '',
+          participants: context.participants,
+          raw: completion.text,
+          source: context.source,
+          mode: 'combined',
+        });
+        return {
+          called: true,
+          usage: completion.usage,
+          ...(result.legacyPreserved ? { notice: '这轮有无法核验的旧分析记录，已保留角色状态，未重复累加。' } : {}),
+        };
+      } catch (error) {
+        // The model call already happened. Record its usage outside the transaction before reporting failure.
+        return {
+          called: true,
+          usage: completion.usage,
+          failure: error instanceof Error ? error : new Error(String(error)),
+        };
+      }
     },
     [db, loadTurn],
   );
 
   /** 旧任务类型：老库队列里可能还排着（抽取、推演各一次）。 */
   const runMemoryExtraction = useCallback(
-    async (payload: TurnTaskPayload, config: BackgroundProviderConfig): Promise<TaskOutcome> => {
+    async (payload: TurnTaskPayload, config: BackgroundProviderConfig, lease: TaskLease): Promise<TaskOutcome> => {
       if (!db) return { called: false, usage: null };
-      const context = await loadTurn(payload);
-      if (!context) return { called: false, usage: null };
+      const context = await loadTurn(payload, lease);
+      if (!context)
+        return { called: false, usage: null, notice: '这轮任务的消息、归属或执行令牌已失效，未调用模型或写入旧结果。' };
 
       const completion = await collectCompletionWithTools(
         makeProvider(config),
@@ -260,40 +256,39 @@ export function useBackgroundWorker(options: {
         }),
         { temperature: 0.2 },
       );
-      const raw = completion.text;
-
-      const extraction = parseExtraction(raw);
-      const sequence = await db.repository.nextMemorySequence(payload.roomId);
-      const { events } = buildMemoryEvents({
-        roomId: payload.roomId,
-        sceneId: payload.sceneId,
-        conversationId: payload.conversationId,
-        worldTime: context.scene?.worldTime ?? '',
-        sequence,
-        participants: context.participants,
-        extraction,
-        turnId: payload.turnId,
-      });
-
-      // 先清掉这一轮可能残留的旧记忆，让重试天然幂等
-      await db.repository.deleteMemoriesByTurn(payload.roomId, payload.turnId);
-      await db.repository.saveMemories(events);
-      return { called: true, usage: completion.usage };
+      try {
+        const result = await applyTurnAnalysis({
+          repository: db.repository,
+          ...payload,
+          worldTime: context.scene?.worldTime ?? '',
+          participants: context.participants,
+          raw: completion.text,
+          source: context.source,
+          mode: 'memory',
+        });
+        return {
+          called: true,
+          usage: completion.usage,
+          ...(result.legacyPreserved ? { notice: '这轮有无法核验的旧分析记录，已保留角色状态，未重复累加。' } : {}),
+        };
+      } catch (error) {
+        // The model call already happened. Record its usage outside the transaction before reporting failure.
+        return {
+          called: true,
+          usage: completion.usage,
+          failure: error instanceof Error ? error : new Error(String(error)),
+        };
+      }
     },
     [db, loadTurn],
   );
 
   const runAffectUpdate = useCallback(
-    async (payload: TurnTaskPayload, config: BackgroundProviderConfig): Promise<TaskOutcome> => {
+    async (payload: TurnTaskPayload, config: BackgroundProviderConfig, lease: TaskLease): Promise<TaskOutcome> => {
       if (!db) return { called: false, usage: null };
-      const context = await loadTurn(payload);
-      if (!context) return { called: false, usage: null };
-
-      // 幂等：同一个回合已经推演过就不再叠加，否则重试会让关系翻倍
-      const already = context.participants.some((instance) =>
-        instance.affect.history.some((change) => change.turnId === payload.turnId),
-      );
-      if (already) return { called: false, usage: null };
+      const context = await loadTurn(payload, lease);
+      if (!context)
+        return { called: false, usage: null, notice: '这轮任务的消息、归属或执行令牌已失效，未调用模型或写入旧结果。' };
 
       const completion = await collectCompletionWithTools(
         makeProvider(config),
@@ -305,14 +300,29 @@ export function useBackgroundWorker(options: {
         { temperature: 0.2 },
       );
 
-      const { applied } = applyAffectUpdates(context.participants, parseAffectUpdates(completion.text), {
-        at: new Date().toISOString(),
-        turnId: payload.turnId,
-      });
-      for (const item of applied) {
-        await db.repository.saveInstance(item.next);
+      try {
+        const result = await applyTurnAnalysis({
+          repository: db.repository,
+          ...payload,
+          worldTime: context.scene?.worldTime ?? '',
+          participants: context.participants,
+          raw: completion.text,
+          source: context.source,
+          mode: 'affect',
+        });
+        return {
+          called: true,
+          usage: completion.usage,
+          ...(result.legacyPreserved ? { notice: '这轮有无法核验的旧分析记录，已保留角色状态，未重复累加。' } : {}),
+        };
+      } catch (error) {
+        // The model call already happened. Record its usage outside the transaction before reporting failure.
+        return {
+          called: true,
+          usage: completion.usage,
+          failure: error instanceof Error ? error : new Error(String(error)),
+        };
       }
-      return { called: true, usage: completion.usage };
     },
     [db, loadTurn],
   );
@@ -546,12 +556,15 @@ export function useBackgroundWorker(options: {
 
         const candidate = pickRunnable(await db.tasks.listPending(200), { now: Date.now(), skip: failedThisRound });
         if (candidate === null) return;
-        const task = await db.tasks.claim(candidate.id);
+        const claimed = await db.tasks.claim(candidate.id);
+        const task = claimed === null ? null : await leaseBackgroundTask(db.store, claimed);
         // 被别处认领或撤销了：换下一条
         if (task === null) {
           failedThisRound.add(candidate.id);
           continue;
         }
+
+        const lease: TaskLease = { id: task.id, token: task.runToken };
 
         // 真拿到活了才置忙：空跑的 tick 不该惊动 React（顺序 62）
         if (!runningRef.current) {
@@ -572,7 +585,7 @@ export function useBackgroundWorker(options: {
             const state = evaluateBudget(await db.ledger.summary({ roomId: roomIdForBudget }), limits);
             if (state.burned) {
               // 直接收掉这一条：留着会让它每次启动都重跑一遍
-              await db.queue.complete(task.id);
+              await settleBackgroundTask(db.store, lease);
               setLastError(`${state.reason ?? '已达本局上限'}，后台任务已暂停（角色回复不受影响）`);
               continue;
             }
@@ -580,11 +593,11 @@ export function useBackgroundWorker(options: {
 
           let outcome: TaskOutcome = { called: false, usage: null };
           if (task.kind === TURN_ANALYSIS_TASK_KIND) {
-            outcome = await runTurnAnalysis(payload, config);
+            outcome = await runTurnAnalysis(payload, config, lease);
           } else if (task.kind === MEMORY_TASK_KIND) {
-            outcome = await runMemoryExtraction(payload, config);
+            outcome = await runMemoryExtraction(payload, config, lease);
           } else if (task.kind === AFFECT_TASK_KIND) {
-            outcome = await runAffectUpdate(payload, config);
+            outcome = await runAffectUpdate(payload, config, lease);
           } else if (task.kind === SCENE_SUMMARY_TASK_KIND) {
             outcome = await runSceneSummary(task.payload as SummaryTaskPayload, config);
           } else if (task.kind === CHAPTER_SUMMARY_TASK_KIND) {
@@ -610,20 +623,23 @@ export function useBackgroundWorker(options: {
             });
           }
 
+          if (outcome.failure) throw outcome.failure;
+
           // 场记更新完，顺手看看够不够滚一章（够了才入队，不够时那一趟是空跑）
           if (task.kind === SCENE_SUMMARY_TASK_KIND && outcome.called) {
             await enqueueChapterIfReady(task.payload as SummaryTaskPayload);
           }
 
-          await db.queue.complete(task.id);
-          setLastError(null);
+          await settleBackgroundTask(db.store, lease);
+          setLastError(outcome.notice ?? null);
           onChangedRef.current();
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
           setLastError(message);
           // 计一次失败；本轮不再碰它，下一次要等退避到点（审计 B2）
           failedThisRound.add(task.id);
-          await db.queue.fail(task.id, message);
+          if (error instanceof StaleTurnAnalysisError) await settleBackgroundTask(db.store, lease);
+          else await settleBackgroundTask(db.store, lease, message);
         }
       }
     },

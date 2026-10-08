@@ -12,6 +12,22 @@
 > 第二～五节的时间表是 23:05 的快照（当时仓库里还没有 T17/T18/T2/T2c 这些提交），
 > 之后新增或改过的文件统一记在第七节，以**提交时间**为准。
 
+## 顺序116：A06+B16后台提交防线（2026-10-04，本分支自有表）
+
+| 文件 | 动作 | 内容 |
+| --- | --- | --- |
+| packages/core/src/memory/analysis-revision.ts | 新增 | 来源捕获/精确重验、事务外修订hash、世代与完成凭证结构 |
+| packages/core/src/memory/apply-analysis.ts | 修改 | 强制事务、关系-only/零效果防重、旧数据保守处理、旧拆分任务共用提交 |
+| packages/core/src/platform/task-lease.ts | 新增 | 执行令牌及带令牌的完成/失败CAS |
+| packages/core/src/platform/background-runner.ts | 修改 | 可选runToken、恢复时CAS及旧执行失效 |
+| packages/core/src/platform/memory-store.ts | 修改 | 并发事务与普通操作隔离，保留空闲原时序与快照回滚 |
+| packages/core/src/storage/repository.ts、index.ts | 修改 | mandatory atomic作用域及新接口导出 |
+| apps/web/src/lib/{worker,turn-write}.ts | 修改 | 生成前source/lease、事务外用量记账、过期结果拒写、撤销同事务世代失效 |
+| packages/core/src/memory/analysis-revision.test.ts、platform/memory-store.test.ts | 新增/修改 | 22+2自动回归，不更改范围外web测试 |
+| docs/{STATUS,TASKS,EVAL,FILE-LOG}.md | 修改 | 仅116自有小节，自动与真实IDB证据、桥接/A08边界、回退 |
+
+改前快照与门禁/浏览器证据留在忽略目录build/task-116；临时HTML也在忽略目录，不进仓。无依赖/锁文件/schema迁移，未提交/未push/未部署。
+
 ## 顺序115：B15持久性与故障回归（2026-10-04，本分支自有表）
 
 | 文件 | 动作 | 内容 |

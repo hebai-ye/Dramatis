@@ -94,15 +94,14 @@ export function createMemoryEntityStore(): EntityStore {
      * 内存实现的每次写都是「克隆后整条替换」，**从不原地修改已存对象**，所以各集合
      * Map 的浅拷贝就是一份正确的快照——回滚时把 Map 换回快照即可，不需要深拷值。
      *
-     * 已知边界（写在这里免得被当成真事务）：这个实现**不隔离并发事务**。两个事务
-     * 交错跑时，后失败的那个会把先提交的那批一起带回快照。它服务的是测试与
-     * 「IndexedDB 不可用」时的降级运行，不是并发正确性模型。
+     * 事务与普通操作共用串行队列，作用域直达数据，不开嵌套事务。
+     * 外部操作等提交/回滚后才运行，失败事务不会回滚另一调用方的写入。
      */
     async transaction<T>(run: (scope: EntityStore) => Promise<T>): Promise<T> {
       const snapshot = new Map<string, Map<string, unknown>>();
       for (const [collection, rows] of collections) snapshot.set(collection, new Map(rows));
       try {
-        return await run(store);
+        return await run({ ...store, transaction: undefined });
       } catch (error) {
         collections.clear();
         for (const [collection, rows] of snapshot) collections.set(collection, rows);
@@ -111,5 +110,51 @@ export function createMemoryEntityStore(): EntityStore {
     },
   };
 
-  return store;
+  let tail: Promise<unknown> = Promise.resolve();
+  let queued = 0;
+  function serial<T>(run: () => Promise<T>): Promise<T> {
+    queued++;
+    const next = tail.then(run, run);
+    tail = next.then(
+      () => {
+        queued--;
+      },
+      () => {
+        queued--;
+      },
+    );
+    return next;
+  }
+  function operation<T>(run: () => Promise<T>): Promise<T> {
+    // Ordinary raw operations perform their work synchronously before returning a Promise.
+    // Preserve that fast path when idle; only queue behind an active/pending transaction.
+    return queued === 0 ? run() : serial(run);
+  }
+  // Generic signatures stay intact; the scope passed by transaction never calls these wrappers.
+  return {
+    kind: store.kind,
+    get: <T>(collection: string, id: string) => operation(() => store.get<T>(collection, id)),
+    put: <T extends { id: string }>(collection: string, value: T) => operation(() => store.put(collection, value)),
+    bulkPut: <T extends { id: string }>(collection: string, values: readonly T[]) =>
+      operation(() => store.bulkPut(collection, values)),
+    remove: (collection, id) => operation(() => store.remove(collection, id)),
+    list: <T>(collection: string, query?: EntityQuery) => operation(() => store.list<T>(collection, query)),
+    count: (collection, where) => operation(() => store.count(collection, where)),
+    listSince: <T>(collection: string, at: string, options?: { inclusive?: boolean }) =>
+      operation(() => {
+        if (!store.listSince) throw new Error('内存增量读口缺失。');
+        return store.listSince<T>(collection, at, options);
+      }),
+    update: <T extends { id: string }>(collection: string, id: string, mutate: (row: T | null) => T | undefined) =>
+      operation(() => {
+        if (!store.update) throw new Error('内存原子写口缺失。');
+        return store.update<T>(collection, id, mutate);
+      }),
+    clear: (collection) => operation(() => store.clear(collection)),
+    transaction: <T>(run: (scope: EntityStore) => Promise<T>) =>
+      serial(() => {
+        if (!store.transaction) throw new Error('内存事务缺失。');
+        return store.transaction(run);
+      }),
+  };
 }

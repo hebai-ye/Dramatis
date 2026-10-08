@@ -125,3 +125,54 @@ describe('顺序 77：EntityStore.transaction', () => {
     expect((await store.get<Row>('rows', 'a'))?.name).toBe('照写');
   });
 });
+
+describe('顺序116：事务隔离覆盖普通操作与失败回滚', () => {
+  it('外部读写等待事务完成，不读到中间值也不会被失败事务回滚掉', async () => {
+    const store = createMemoryEntityStore();
+    await store.put('rows', { id: 'a', name: 'before' });
+    let release: () => void = () => {};
+    let began: () => void = () => {};
+    const ready = new Promise<void>((resolve) => {
+      began = resolve;
+    });
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const failing = withStoreTransaction(store, async (scope) => {
+      expect(scope.transaction).toBeUndefined();
+      await scope.put('rows', { id: 'a', name: 'uncommitted' });
+      began();
+      await gate;
+      throw new Error('fixture rollback');
+    });
+    const rejected = expect(failing).rejects.toThrow('fixture rollback');
+    await ready;
+    let observed = false;
+    const read = store.get<Row>('rows', 'a').then((row) => {
+      observed = true;
+      return row;
+    });
+    const write = store.put('rows', { id: 'external', name: 'survives' });
+    await Promise.resolve();
+    expect(observed).toBe(false);
+    release();
+    await rejected;
+    expect((await read)?.name).toBe('before');
+    await write;
+    expect((await store.get<Row>('rows', 'external'))?.name).toBe('survives');
+  });
+  it('两个并发事务累加同一计数不丢更新，事务内只使用自己的scope', async () => {
+    const store = createMemoryEntityStore();
+    await store.put('counter', { id: 'one', count: 0 });
+    await Promise.all(
+      Array.from({ length: 5 }, () =>
+        withStoreTransaction(store, async (scope) => {
+          const row = await scope.get<{ id: string; count: number }>('counter', 'one');
+          if (!row) throw new Error('fixture');
+          await scope.put('counter', { ...row, count: row.count + 1 });
+        }),
+      ),
+    );
+    expect(await store.get('counter', 'one')).toEqual({ id: 'one', count: 5 });
+  });
+});

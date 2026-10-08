@@ -2,6 +2,74 @@
 
 这份文档记录「怎么知道它真的能工作」。分两部分：可以随时重跑的自动化基线，以及必须用真实模型做的人工验证。
 
+## 顺序116：A06业务幂等与B16后台提交防线（2026-10-04，本分支自有记录）
+
+### 基线、重核与范围
+
+fetch后origin/main仍为357c47a；登记空号116，在当前独立分支接续113–115。改前51个变更文件已复制到忽略目录build/task-116/baseline-115。无依赖/锁文件/schema迁移、无用户库访问；只改core、worker.ts、turn-write.ts与四份文档自有116节，不改App.tsx、bridge-store、task-queue.ts或其他线文件。
+
+复核：applyTurnAnalysis只检查affect.history且用some覆盖全体角色，纯关系更新不会留下情绪历史，因此可能重复累加；记忆清理/写入与角色状态原为多步提交。worker在网络返回后未验源消息版本，任务取消/重抽期间返回的旧结果仍会落库；账单/任务完成失败后的重试也没有独立业务完成凭证。现有内存transaction有快照回滚但不隔离并发，需要一并补齐以验证并发业务幂等，而非只加进程内函数锁。
+
+### 实施与数据结构
+
+| 文件/接口 | 变更 | 边界 |
+| --- | --- | --- |
+| Repository.atomic(run) | 强制底层transaction，作用域Repository与store同事务；不支持时抛错，不假装原子 | 回调仅await存储操作；网络、哈希、账单、通知均在外 |
+| analysis-revision.ts | captureTurnAnalysis(repo,scope,task?)在读事务取精确来源快照，事务外SHA-256；verifyTurnAnalysisSource在写事务重读比较 | scope为roomId/sceneId/conversationId/turnId。快照仅在调用内存中，不写进任务或meta；完成凭证只存修订摘要 |
+| analysis.generation.v1 | 每个room/turn的本地世代标识，缺省initial；撤销成功事务内换新标识 | 不迁移旧记录，不批量改消息时间戳；只撤记忆也使在途旧结果失效 |
+| analysis.receipt.v1 | version/generation/sourceRevision/memoryWritten/effectsComplete/legacyPreserved，与业务写一起提交 | 关系-only、零更新、失败重试、并发均不重复效果；无标记的旧记忆不能推出“从未应用” |
+| applyTurnAnalysis | 新增可选source与mode(combined/memory/affect)，保留原返回指标，新增legacyPreserved | 源校验→现取角色→记忆与效果→凭证同事务。旧历史按每角色检查情绪和关系；A08重贴记忆替换原语义不变 |
+| task-lease.ts / BackgroundTask.runToken | claim后原子旋转执行令牌；提交查同任务/房间/回合/running/token；完成/失败也做token CAS | recoverInterrupted以CAS重验后旋转令牌；旧worker不得完成或失败新的执行。不是分布式租约或超时抢占协议 |
+| worker.ts | combined及旧memory/affect三种任务统一guarded提交；错误先返回真实调用用量，再在事务外记账并报告 | 无效上下文不调用模型；旧结果拒写。仍可能因账单/网络故障产生真实重复模型调用，不承诺模型/计费exactly-once |
+| turn-write.ts | 整轮撤销、重抽在既有事务最后invalidateTurnAnalysis | 回滚失败会同时回滚世代，避免留下只失效一半的状态 |
+| memory-store.ts | 事务和排队外部读写隔离，作用域无嵌套transaction；空闲普通操作同步工作后返回Promise | 原有快照回滚保留；不会因一个失败事务回滚别的调用方。回调必须使用scope，不能等待根store上排在自己之后的操作 |
+
+旧队列无需schema迁移：runToken是可选字段，worker首次执行补上；世代/凭证是新增本地meta键。已有业务数据不被预扫描回填。旧记忆有无marker不能当作是否发过效果的证明；legacyPreserved会让worker给出保守保留提示。
+
+### 24条新增自动回归
+
+analysis-revision.test.ts **22条**：纯关系无情绪历史重放；四路并发/重建Repository共享凭证；零效果凭证；旧关系历史；旧记忆/历史清空不自动补加；拆分任务与合并任务共同防重；撤销后新世代可重做而旧世代拒绝；正文/说话人/受众/删除/同轮追加/场景/归档/世代八类在途变更；同updatedAt不同正文；提交现读角色保留手动变化；不支持事务失败关闭；实例与凭证两阶段故障整批回滚；任务恢复/清除和旧完成/失败；世代写入事务回滚。
+
+memory-store.test.ts **2条**：外部读写不能观察未提交值，失败事务不回滚外部写；五路事务累加不丢更新。
+
+第一次全量test发现既有provider-key-readiness的9条时序回归：内存实现把所有普通操作无条件排进微任务队列，改变了原有空闲读写时序。修复为仅在事务活动/排队期间等待，空闲普通操作走原快路径；既有断言未改，相关web16条专项重新通过，再重跑全部五门禁。
+
+### 真实浏览器 IndexedDB：6/6（单页、双独立连接）
+
+使用仓库既有Vite与真实createIndexedDbEntityStore，单独本机端口、随机dramatis-fixture-task116前缀数据库；没有调用openDramatisDb或打开用户库。两条连接共享同名原生IndexedDB对象仓库，不是内存或fake-indexeddb。
+
+1. 两连接并发提交相同来源的纯关系分析：updates合计1，关系只增加0.1。
+2. 连接B编辑消息后，连接A的旧模型来源抛StaleTurnAnalysisError，已有记忆不变。
+3. B清除运行任务后，A的旧令牌不得提交。
+4. 真实web revertTurnWrites撤销与世代更新同事务：旧来源失效，关系回原值。
+5. 在真实IDB事务的凭证写阶段注入异常：abort后B观察到记忆/效果均未部分提交。
+6. 关闭两条连接并重新打开真实IDB：已保存的完成凭证仍挡住同世代重复效果。
+
+页面结果“RESULT 6/6 PASS；测试库已清理”已从可见DOM和截图确认。证据：忽略目录build/task-116/idb-evidence.txt、idb-evidence.png；测试页apps/web/build/task-116-idb.html（忽略文件）。临时页已关闭、Vite已停止。本次双连接在同一浏览器页面内；不能据此宣称两个浏览器进程被杀/断电或跨设备同步已验证。
+
+### 五项门禁
+
+按typecheck → lint → test → build → build:sync-server顺序实跑，Node24.16.0 / pnpm11.22.0，全部退出0。
+
+| 门禁 | 实际结果 | 用时 |
+| --- | --- | --- |
+| pnpm typecheck | core、web及tools、sync-admin通过 | 5.90s |
+| pnpm lint | 396文件，0错误、0警告 | 2.08s |
+| pnpm test | Core967（81文件）+ Web319（41文件）+ 管理/网关/CORS/B14/B15 134 + 桥接15 = **1435/1435**；0失败、0跳过 | 48.11s |
+| pnpm build | core/web/sync-admin通过，web205模块 | 5.51s |
+| pnpm build:sync-server | 同步宿主编译通过 | 1.67s |
+
+完整输出见忽略目录build/task-116/final-*.log，gate-results.json记录退出码与用时。原生IDB 6项是额外浏览器验证，不混入1435条自动测试总数。
+
+### 未完成接线、风险与回退
+
+- **B16桥接输入版本仍待部分二**：App.tsx当前applyTurnAnalysis调用没有source，不能回推出粘贴文本生成时使用的修订。该入口兼容旧调用，可获得强制事务/本地效果凭证，但没有在途来源防护。部分二应在生成桥接提示前captureTurnAnalysis并保留对应source，提交时原样传入；不要在粘贴返回后才取source冒充生成前版本。
+- **A08未裁定**：重复分析仍替换这一轮记忆条目而不再次推演效果，既有sourceMemoryIds重贴关联问题不在本批关闭；没有偷偷改为“重贴即重新加状态”或回写历史关联。
+- meta世代/凭证与队列令牌不参与同步，不能代替跨设备exactly-once；对端删改消息可被本机来源重验发现，但跨设备仅撤状态而不改消息的全局世代需要另行协议设计。
+- source改变但旧效果未撤销时保守拒绝，不自动替用户回滚旧分析；被撤销/重抽的旧worker不自动重做。旧数据无法确认效果归属时保留状态并报告legacyPreserved，不猜测补发。
+- 摘要/章节/合并任务的语义与修订策略未在本批改写，A07和B08等仍按原排期。大世界多集合重读/来源快照/哈希开销、物理手机、双标签页进程崩溃、真模型与Node22/CI：**待验证（归 Codex）**。
+- 无schema/数据迁移，不清除旧meta以作回滚。回退用本批逆向补丁/新提交，保留消息、记忆、状态、凭证、世代及113补推数据；旧程序不使用新凭证会失去业务防重，不得以删除数据规避。未提交、未push、未部署。
+
 ## 顺序115：B15持久性与故障矩阵（2026-10-04，本分支自有记录）
 
 ### 重核、基线与范围

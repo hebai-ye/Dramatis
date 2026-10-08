@@ -2,6 +2,7 @@ import {
   type CharacterInstance,
   createBackgroundRunner,
   type EntityStore,
+  invalidateTurnAnalysis,
   type Message,
   type MessageId,
   Repository,
@@ -79,6 +80,8 @@ async function revertTurnOn(scope: EntityStore, roomId: RoomId, turnId: string):
     }
   }
 
+  // Invalidate even if there were no memories/effects: an older model response may still be in flight.
+  await invalidateTurnAnalysis(repository, roomId, turnId);
   return { removedMemories, revertedInstances };
 }
 

@@ -19,6 +19,8 @@ export interface BackgroundTask<TPayload = unknown> {
   payload: TPayload;
   status: BackgroundTaskStatus;
   attempts: number;
+  /** Each worker execution rotates this token; removed/recovered tasks invalidate old writers. */
+  runToken?: string;
   maxAttempts: number;
   lastError: string | null;
   /**
@@ -158,15 +160,26 @@ export function createBackgroundRunner(store: EntityStore): BackgroundRunner {
 
     async recoverInterrupted(): Promise<number> {
       const running = await store.list<BackgroundTask>(COLLECTION, { where: { status: 'running' } });
+      let recovered = 0;
       for (const task of running) {
-        await store.put(COLLECTION, {
-          ...task,
-          status: 'pending',
-          lastError: '上次运行被中断，已重新排队',
-          updatedAt: nowIso(),
+        await updateEntity<BackgroundTask>(store, COLLECTION, task.id, (current) => {
+          if (
+            current?.status !== 'running' ||
+            current.runToken !== task.runToken ||
+            current.updatedAt !== task.updatedAt
+          )
+            return undefined;
+          recovered++;
+          return {
+            ...current,
+            status: 'pending',
+            lastError: '上次运行被中断，已重新排队',
+            runToken: newId(),
+            updatedAt: nowIso(),
+          };
         });
       }
-      return running.length;
+      return recovered;
     },
 
     async pendingCount(): Promise<number> {

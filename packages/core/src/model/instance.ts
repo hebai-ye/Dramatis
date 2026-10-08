@@ -57,12 +57,13 @@ export interface AffectChange {
   afterValence: number;
   beforeArousal: number;
   afterArousal: number;
+  /** 新记录为 after - before 的实际变化；旧记录可能仍是请求增量，撤销以 before/after 为准。 */
   deltaValence: number;
   deltaArousal: number;
   reason: string;
   /** 触发这次变化的记忆条目（顺序 27d）。 */
   sourceMemoryIds: EventId[];
-  /** 这是一条撤销记录时，指向被撤销的原影响 id；原影响本身不改。 */
+  /** 撤销关联的原影响id。整轮净结算可附零变化关联记录，不能因delta为0删除这些幂等标记。 */
   reversionOf: string | null;
 }
 
@@ -89,6 +90,7 @@ export interface RelationshipChange {
   delta: number;
   reason: string;
   sourceMemoryIds: EventId[];
+  /** 同字段整轮净结算仍为每个原id保留关联；零变化记录同样表示已撤销。 */
   reversionOf: string | null;
 }
 

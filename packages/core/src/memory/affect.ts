@@ -1,5 +1,11 @@
 import { type EventId, type InstanceId, newId, PLAYER } from '../model/ids.js';
-import { type CharacterInstance, INITIAL_PLAYER_AFFINITY, type Relationship } from '../model/instance.js';
+import {
+  type AffectChange,
+  type CharacterInstance,
+  INITIAL_PLAYER_AFFINITY,
+  type Relationship,
+  type RelationshipChange,
+} from '../model/instance.js';
 import type { Message } from '../model/message.js';
 import type { ChatMessage } from '../prompt/types.js';
 import { toFinite } from '../util/json.js';
@@ -282,9 +288,11 @@ export function applyAffectUpdate(
     ...new Set([...(meta.sourceMemoryIds ?? []), ...(meta.sourceMemoryIdsByObserver?.get(instance.id) ?? [])]),
   ];
 
+  const afterValence = clamp(decayed.affect.valence + update.deltaValence, -1, 1);
+  const afterArousal = clamp(decayed.affect.arousal + update.deltaArousal, 0, 1);
   const nextAffect = {
-    valence: clamp(decayed.affect.valence + update.deltaValence, -1, 1),
-    arousal: clamp(decayed.affect.arousal + update.deltaArousal, 0, 1),
+    valence: afterValence,
+    arousal: afterArousal,
     updatedAt: meta.at,
     history:
       update.deltaValence !== 0 || update.deltaArousal !== 0
@@ -295,11 +303,11 @@ export function applyAffectUpdate(
               at: meta.at,
               turnId: meta.turnId,
               beforeValence: decayed.affect.valence,
-              afterValence: clamp(decayed.affect.valence + update.deltaValence, -1, 1),
+              afterValence,
               beforeArousal: decayed.affect.arousal,
-              afterArousal: clamp(decayed.affect.arousal + update.deltaArousal, 0, 1),
-              deltaValence: update.deltaValence,
-              deltaArousal: update.deltaArousal,
+              afterArousal,
+              deltaValence: afterValence - decayed.affect.valence,
+              deltaArousal: afterArousal - decayed.affect.arousal,
               reason: update.reason,
               sourceMemoryIds,
               reversionOf: null,
@@ -384,8 +392,16 @@ export function revertAffectChange(
 
     const beforeValence = instance.affect.valence;
     const beforeArousal = instance.affect.arousal;
-    const afterValence = clamp(beforeValence - affectChange.deltaValence, -1, 1);
-    const afterArousal = clamp(beforeArousal - affectChange.deltaArousal, 0, 1);
+    const afterValence = clamp(
+      beforeValence - actualChange(affectChange.beforeValence, affectChange.afterValence),
+      -1,
+      1,
+    );
+    const afterArousal = clamp(
+      beforeArousal - actualChange(affectChange.beforeArousal, affectChange.afterArousal),
+      0,
+      1,
+    );
     const reversal = {
       id: newId(),
       at,
@@ -423,7 +439,7 @@ export function revertAffectChange(
 
     const before = edge[change.field];
     const bounded = change.field === 'tension' || change.field === 'fear' ? [0, 1] : [-1, 1];
-    const after = clamp(before - change.delta, bounded[0] ?? 0, bounded[1] ?? 1);
+    const after = clamp(before - actualChange(change.before, change.after), bounded[0] ?? 0, bounded[1] ?? 1);
     const updatedEdge: Relationship = {
       ...edge,
       [change.field]: after,
@@ -455,26 +471,139 @@ export function revertAffectChange(
   return instance;
 }
 
+/** before/after is authoritative; historical requested deltas may predate clamping fixes. */
+function actualChange(before: number, after: number): number {
+  const delta = after - before;
+  if (!Number.isFinite(before) || !Number.isFinite(after) || !Number.isFinite(delta)) {
+    throw new Error('影响历史的 before/after 无效，未执行撤销；请先保留快照并核验历史。');
+  }
+  return delta;
+}
+
+function undoableForTurn<T extends { id: string; turnId: string; reversionOf: string | null }>(
+  history: readonly T[],
+  turnId: string,
+): T[] {
+  const reverted = new Set(history.map((change) => change.reversionOf).filter((id) => id !== null));
+  const seen = new Set<string>();
+  return history.filter((change) => {
+    if (change.turnId !== turnId || change.reversionOf !== null || reverted.has(change.id) || seen.has(change.id))
+      return false;
+    seen.add(change.id);
+    return true;
+  });
+}
+
+/** Stable summation order makes array reversal/permutation irrelevant even for floating-point input. */
+function netChange<T extends { id: string }>(changes: readonly T[], delta: (change: T) => number): number {
+  return [...changes]
+    .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
+    .reduce((sum, change) => sum + delta(change), 0);
+}
+
+function undoNet(before: number, delta: number, min: number, max: number): number {
+  if (!Number.isFinite(before) || !Number.isFinite(delta))
+    throw new Error('影响记录的当前值或净变化无效，未执行撤销。');
+  return clamp(before - delta, min, max);
+}
+
 /**
- * 撤销某个回合对情绪与关系造成的影响（P0-7 的回滚）。
- *
- * 27d 起也走 append-only：逐个按条目追加反向记录，不再把原历史删掉。
- * 夹紧导致的反向值可能有轻微偏差，但反复重抽不会继续单向漂移。
+ * 整轮按未撤销原始记录的实际净变化结算，每个维度只夹紧一次；不依赖历史数组正/逆序。
+ * 原历史不变，每个原id仍有一个reversionOf，兼容旧客户端的已撤销判断。
+ * 同一维度的首条反向记录承载整批实际净变化，其余是零变化关联标记；理由明确为合并结算。
+ * 这不是逐条撤销的伪造回放：不存在中间夹紧，也不回滚后续回合或改变自然衰减规则。
  */
 export function revertAffectForTurn(instance: CharacterInstance, turnId: string): CharacterInstance {
-  const historyIds = [
-    ...instance.affect.history.filter((change) => change.turnId === turnId).map((change) => change.id),
-    ...instance.relationships.flatMap((edge) =>
-      edge.history.filter((change) => change.turnId === turnId).map((change) => change.id),
-    ),
-  ];
-  if (historyIds.length === 0) return instance;
-
-  let next = instance;
-  for (const changeId of [...new Set(historyIds)]) {
-    next = revertAffectChange(next, changeId, { turnId: `undo:${turnId}` });
+  const affectChanges = undoableForTurn(instance.affect.history, turnId);
+  const edgeChanges = instance.relationships.map((edge) => undoableForTurn(edge.history, turnId));
+  if (affectChanges.length === 0 && edgeChanges.every((changes) => changes.length === 0)) return instance;
+  const at = new Date().toISOString();
+  const undoTurn = `undo:${turnId}`;
+  let affect = instance.affect;
+  if (affectChanges.length > 0) {
+    const valence = undoNet(
+      affect.valence,
+      netChange(affectChanges, (change) => actualChange(change.beforeValence, change.afterValence)),
+      -1,
+      1,
+    );
+    const arousal = undoNet(
+      affect.arousal,
+      netChange(affectChanges, (change) => actualChange(change.beforeArousal, change.afterArousal)),
+      0,
+      1,
+    );
+    const sourceMemoryIds = [...new Set(affectChanges.flatMap((change) => change.sourceMemoryIds))];
+    const reversals: AffectChange[] = affectChanges.map((change, index) => {
+      const first = index === 0;
+      const beforeValence = first ? affect.valence : valence;
+      const beforeArousal = first ? affect.arousal : arousal;
+      return {
+        id: newId(),
+        at,
+        turnId: undoTurn,
+        beforeValence,
+        afterValence: valence,
+        beforeArousal,
+        afterArousal: arousal,
+        deltaValence: valence - beforeValence,
+        deltaArousal: arousal - beforeArousal,
+        reason:
+          affectChanges.length === 1
+            ? `撤销影响：${change.reason || '未记录原因'}`
+            : (first ? `整轮撤销（合并${affectChanges.length}项的净变化）：` : '整轮撤销（已合并结算的关联标记）：') +
+              (change.reason || '未记录原因'),
+        sourceMemoryIds: first ? sourceMemoryIds : [...change.sourceMemoryIds],
+        reversionOf: change.id,
+      };
+    });
+    affect = { ...affect, valence, arousal, updatedAt: at, history: [...affect.history, ...reversals] };
   }
-  return next;
+  const relationships = instance.relationships.map((edge, index) => {
+    const changes = edgeChanges[index] ?? [];
+    if (changes.length === 0) return edge;
+    const next = { ...edge };
+    const settled = new Set<RelationshipField>();
+    const grouped = new Map(
+      RELATIONSHIP_FIELDS.map((field) => [field, changes.filter((change) => change.field === field)]),
+    );
+    const reversals: RelationshipChange[] = changes.map((change) => {
+      const group = grouped.get(change.field) ?? [];
+      const first = !settled.has(change.field);
+      const before = next[change.field];
+      const minimum = change.field === 'fear' || change.field === 'tension' ? 0 : -1;
+      const after = first
+        ? undoNet(
+            before,
+            netChange(group, (item) => actualChange(item.before, item.after)),
+            minimum,
+            1,
+          )
+        : before;
+      next[change.field] = after;
+      settled.add(change.field);
+      return {
+        id: newId(),
+        at,
+        turnId: undoTurn,
+        field: change.field,
+        before,
+        after,
+        delta: after - before,
+        reason:
+          group.length === 1
+            ? `撤销影响：${change.reason || '未记录原因'}`
+            : (first ? `整轮撤销（合并${group.length}项的净变化）：` : '整轮撤销（已合并结算的关联标记）：') +
+              (change.reason || '未记录原因'),
+        sourceMemoryIds: first
+          ? [...new Set(group.flatMap((item) => item.sourceMemoryIds))]
+          : [...change.sourceMemoryIds],
+        reversionOf: change.id,
+      };
+    });
+    return { ...next, updatedAt: at, history: [...edge.history, ...reversals] };
+  });
+  return { ...instance, affect, relationships, updatedAt: at };
 }
 
 /** 批量应用推演结果，返回需要落盘的实例。 */

@@ -11,12 +11,13 @@ import type { MemoryEvent } from '../model/message.js';
 import { applyConsolidation, buildConsolidationPrompt, isConsolidatable, planConsolidation } from './consolidate.js';
 
 const AT = '2026-09-21T10:00:00.000Z';
+const ROOM = roomId(newId());
 
 function memory(overrides: Partial<MemoryEvent> & { at?: string } = {}): MemoryEvent {
   const { at, ...rest } = overrides;
   return {
     id: eventId(newId()),
-    roomId: roomId(newId()),
+    roomId: ROOM,
     conversationId: null,
     sceneId: null,
     timeline: { worldTime: '第一日', sequence: 1 },
@@ -178,6 +179,7 @@ describe('记忆合并：把结果落成印象（顺序 27a 第二步）', () =>
     expect(result.impression?.id).toBe(id);
     expect(result.impression?.summary).toBe('这半个月我一直在替秦娘瞒着账房的事。');
     expect(result.impression?.observerId).toBe(observer);
+    expect(result.impression?.perception).toBe('');
     expect(result.impression?.supersedes).toHaveLength(40);
     expect(result.impression?.importance).toBeLessThanOrEqual(0.6);
     expect(result.impression?.importance).toBeGreaterThan(0.3);

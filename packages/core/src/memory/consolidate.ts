@@ -20,7 +20,7 @@
  *    宁可留在池子里占地方——它们本来就是「值得单独被想起来」的那几条。
  */
 
-import { type EventId, eventId, type InstanceId, newId } from '../model/ids.js';
+import { type EventId, eventId, type InstanceId, newId, type RoomId } from '../model/ids.js';
 import type { MemoryEvent } from '../model/message.js';
 
 export interface ConsolidationOptions {
@@ -38,6 +38,8 @@ export interface ConsolidationOptions {
 
 /** 一组准备合并的记忆：同一个视角、时间相邻、都够低调。 */
 export interface ConsolidationGroup {
+  /** 新计划记录房间；可选以兼容旧调用方构造的组（旧组必须能唯一确定房间）。 */
+  roomId?: RoomId;
   /** 这一组的视角（`null` = 客观经过） */
   observerId: InstanceId | null;
   conversationId: string | null;
@@ -101,11 +103,11 @@ export function planConsolidation(
   const gapMs = options.gapMs ?? DEFAULTS.gapMs;
   const maxGroups = options.maxGroups ?? DEFAULTS.maxGroups;
 
-  // 1) 按「视角 + 对话」分组：合并只在同一个角色的记忆之间发生
+  // 1) 按「房间 + 视角 + 对话」分组，不让不同空间或不同观察者的材料互相污染
   const byObserver = new Map<string, MemoryEvent[]>();
   for (const memory of memories) {
     if (!isConsolidatable(memory, minImportance)) continue;
-    const key = `${memory.observerId ?? 'objective'}::${memory.conversationId ?? ''}`;
+    const key = JSON.stringify([memory.roomId, memory.observerId, memory.conversationId]);
     const bucket = byObserver.get(key);
     if (bucket === undefined) byObserver.set(key, [memory]);
     else bucket.push(memory);
@@ -143,6 +145,7 @@ export function planConsolidation(
       const last = batch[batch.length - 1];
       if (first === undefined || last === undefined) continue;
       groups.push({
+        roomId: first.roomId,
         observerId: first.observerId,
         conversationId: first.conversationId,
         memoryIds: batch.map((memory) => memory.id),
@@ -157,27 +160,65 @@ export function planConsolidation(
   return groups;
 }
 
+/** 按计划取材料；手工构造或过期的组一旦跨域就整组拒绝，不部分盖章或混入来源。 */
+function groupMemories(group: ConsolidationGroup, memories: readonly MemoryEvent[]): MemoryEvent[] {
+  const ids = new Set(group.memoryIds);
+  const selected = memories.filter((memory) => ids.has(memory.id));
+  const roomId = group.roomId ?? selected[0]?.roomId;
+  if (
+    selected.some(
+      (memory) =>
+        memory.roomId !== roomId ||
+        memory.observerId !== group.observerId ||
+        memory.conversationId !== group.conversationId,
+    )
+  ) {
+    return [];
+  }
+  return selected;
+}
+
 /**
  * 给模型的那段提示词。
  *
  * 要求它做的事只有一件：**把这一串日常经过压成 1–3 句话的「印象」**，
- * 并且**保留能被问到的细节**（人名、地点、承诺、数字）。不要求它抒情、
- * 不要求它推断性格——那是情感推演那一层的事（`affect.ts`）。
+ * 并且**保留能被问到的细节**（人名、地点、承诺、数字）。角色组还要保留
+ * 已记录的主观观感与误解，但不能把它们当成客观事实，也不凭空推断性格。
+ * observerName 由调用方按 observerId 提供；缺省仍用实例 ID 明确谁在看。
  */
-export function buildConsolidationPrompt(group: ConsolidationGroup, memories: readonly MemoryEvent[]): string {
-  const lines = memories
-    .filter((memory) => group.memoryIds.includes(memory.id))
-    .map((memory) => `- [${memory.createdAt.slice(0, 10)}] ${memory.summary}`)
+export function buildConsolidationPrompt(
+  group: ConsolidationGroup,
+  memories: readonly MemoryEvent[],
+  observerName?: string,
+): string {
+  const objective = group.observerId === null;
+  const name = observerName?.trim();
+  const observer = name ? `${name}（实例 ID：${group.observerId}）` : `实例 ID：${group.observerId}`;
+  const lines = groupMemories(group, memories)
+    .sort((left, right) => left.createdAt.localeCompare(right.createdAt))
+    .map((memory) => {
+      const label = objective ? '客观经过' : '该观察者已记录的印象／经过';
+      const summary = `- [${memory.createdAt.slice(0, 10)}] ${label}：${memory.summary}`;
+      if (objective || memory.perception.trim() === '') return summary;
+      return `${summary}\n  该观察者的观感（perception，可能包含误解）：${memory.perception}`;
+    })
     .join('\n');
 
   return [
-    '你在帮一个角色整理记忆。下面是他视角里的一段时间的日常经过（按时间排序）。',
+    objective
+      ? '你在整理客观经过。这一组没有观察者，不属于任何角色的主观视角。'
+      : `你在帮一个角色整理记忆。观察者：${observer}。下面所有观感只属于这位观察者。`,
+    objective ? '下面是这一组客观经过（按时间排序）。' : '下面是这位观察者已记录的印象／经过（按时间排序）。',
     '',
     lines,
     '',
     '请把它们压成 1–3 句「印象」，要求：',
-    '1. 只写站得住的事实与承诺（人名、地点、约定、数字），不要抒情，不要编细节；',
-    '2. 用第一人称写（这是**他**记得的东西），例如「这半个月我一直在替秦娘瞒着账房的事」；',
+    objective
+      ? '1. 只写站得住的事实与承诺（人名、地点、约定、数字），不要抒情，不要编细节；'
+      : '1. 保留有依据的经过与承诺（人名、地点、约定、数字），也保留已记录的观感与误解，不要编细节；',
+    objective
+      ? '2. 用客观、中性的第三人称叙述，不要使用第一人称，不要添加角色的观感、猜测或心理活动；'
+      : '2. 用上述观察者的第一人称写，保留 summary 与 perception 中已有的主观限定（如「我以为／我觉得」）；perception 为空也不代表 summary 是客观事实，不得把观感或误解升级为客观事实，也不补写未记录的心理；',
     '3. 如果这几条之间没有共同线索，就直接说「这段时间没有值得单独记住的事」，不要硬凑。',
     '',
     '只输出那 1–3 句，不要解释、不要标题、不要 JSON。',
@@ -228,9 +269,9 @@ function cleanImpression(raw: string): string {
  */
 export function applyConsolidation(input: ApplyConsolidationInput): ConsolidationResult {
   const now = input.now ?? new Date().toISOString();
-  const inGroup = input.memories.filter((memory) => input.group.memoryIds.includes(memory.id));
+  const inGroup = groupMemories(input.group, input.memories);
   if (inGroup.length === 0)
-    return { impression: null, originals: [], note: '这一组的原文已经不在库里了（可能被删或已被合并）' };
+    return { impression: null, originals: [], note: '这一组的原文缺失或房间／对话／观察者不一致，未合并' };
 
   const text = cleanImpression(input.reply);
   const originals = inGroup.map((memory) => ({
@@ -267,6 +308,7 @@ export function applyConsolidation(input: ApplyConsolidationInput): Consolidatio
     summary: text,
     // 印象本身就是「他记得的那件事」，所以视角跟着这一组走（客观组仍然客观）
     observerId: input.group.observerId,
+    // 沿用 summary + observerId 表示印象；不复制正文，避免现有消费者双算预算、重复展示。
     perception: '',
     /*
      * 重要度：比这一组里最高的再高一点（印象比零散经过更值得被想起来），但封顶 0.6——

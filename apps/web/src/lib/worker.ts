@@ -351,9 +351,14 @@ export function useBackgroundWorker(options: {
       const group = planConsolidation(memories)[0];
       if (group === undefined) return { called: false, usage: null };
 
+      const observerName =
+        group.observerId === null
+          ? undefined
+          : (await db.repository.listInstances(payload.roomId)).find((instance) => instance.id === group.observerId)
+              ?.displayName;
       const completion = await collectCompletionWithTools(
         makeProvider(config),
-        [{ role: 'user', content: buildConsolidationPrompt(group, memories) }],
+        [{ role: 'user', content: buildConsolidationPrompt(group, memories, observerName) }],
         { temperature: 0.2 },
       );
 

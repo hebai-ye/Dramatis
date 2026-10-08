@@ -12,6 +12,21 @@
 > 第二～五节的时间表是 23:05 的快照（当时仓库里还没有 T17/T18/T2/T2c 这些提交），
 > 之后新增或改过的文件统一记在第七节，以**提交时间**为准。
 
+## 顺序117：A04/A05/A07团队实施（2026-10-08，本分支自有表）
+
+| 文件 | 动作 | 内容 |
+| --- | --- | --- |
+| packages/core/src/memory/affect.ts | 修改 | 实际delta、单条before/after撤销、同轮净结算与append-only关联 |
+| packages/core/src/model/instance.ts | 修改 | delta/reversionOf兼容语义注释，无新增字段或迁移 |
+| packages/core/src/memory/affect-reversal.test.ts | 新增 | 独立智能体35条回归，旧实现20失败/15通过，修复后全绿 |
+| packages/core/src/memory/affect-turn-write.test.ts | 新增 | 生产撤销入口、世代失效与失败整事务回滚2条 |
+| packages/core/src/memory/consolidate.ts | 修改 | 观察者/perception输入、客观与主观指令、房间隔离与兼容可选姓名 |
+| packages/core/src/memory/consolidate.test.ts、consolidate-perspective.test.ts | 修改/新增 | 原夹具统一同房间；24条新回归及单份正文预算/消费契约 |
+| apps/web/src/lib/worker.ts | 修改 | 按实例ID查观察者姓名传入合并提示词，不改任务类型或模型协议 |
+| docs/{STATUS,TASKS,EVAL,FILE-LOG}.md | 修改 | 仅117自有小节，团队证据、门禁、未拍板边界与回退 |
+
+基线与日志保存在忽略目录build/task-117。两名智能体均已结束，未更改分支或提交。无新依赖、schema或用户数据操作，未push/未部署。
+
 ## 顺序116：A06+B16后台提交防线（2026-10-04，本分支自有表）
 
 | 文件 | 动作 | 内容 |

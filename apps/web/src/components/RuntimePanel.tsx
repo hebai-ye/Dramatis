@@ -18,13 +18,17 @@ import type {
   WorldBookId,
 } from '@dramatis/core';
 import { memo, useEffect, useRef, useState } from 'react';
+import { createLazyModule } from '../lib/lazy-module';
 import { countRender } from '../lib/render-count';
 import { CastPanel } from './CastPanel';
 import { IconChart, IconDocument, IconMemory, IconScene } from './Icons';
+import { LazyPanel } from './LazyPanel';
 import { MemoryPanel } from './MemoryPanel';
 import { PromptInspector } from './PromptInspector';
 import { ScenePanel } from './ScenePanel';
-import { UsagePanel } from './UsagePanel';
+import usageModule from './UsagePanel?lazy-module-url';
+
+const loadUsagePanel = createLazyModule(usageModule, (module: typeof import('./UsagePanel')) => module.UsagePanel);
 
 type Tab = 'scene' | 'memory' | 'usage' | 'prompt';
 
@@ -52,13 +56,15 @@ interface Props {
   pending: number;
   /** 生成之外的调用次数（意图判断 + 后台分析），来自落盘的账单。 */
   extraCalls: number;
+  /** 明确世界标识，供用量面板隔离预算草稿；可选以兼容旧调用方。 */
+  worldId?: string | null;
   /** 账单：整个世界与当前对话各一份。 */
   usage: { world: UsageSummary | null; conversation: UsageSummary | null; latestTurn: UsageSummary | null };
   /** 本局的调用预算与熔断状态（P1-9）。 */
   budget: BudgetState;
   /** 已经保存的上限（草稿初值）。 */
   budgetLimits: BudgetLimits | null;
-  onSaveBudget: (limits: BudgetLimits | null) => void;
+  onSaveBudget: (limits: BudgetLimits | null) => void | Promise<void>;
   /** 当前对话名，给用量面板做标题。 */
   conversationTitle: string;
   workerError: string | null;
@@ -255,14 +261,19 @@ function RuntimePanelImpl(props: Props) {
       ) : null}
 
       {tab === 'usage' ? (
-        <UsagePanel
-          world={props.usage.world}
-          conversation={props.usage.conversation}
-          latestTurn={props.usage.latestTurn}
-          conversationTitle={props.conversationTitle}
-          budget={props.budget}
-          limits={props.budgetLimits}
-          onSaveBudget={props.onSaveBudget}
+        <LazyPanel
+          load={loadUsagePanel}
+          label="用量"
+          panelProps={{
+            worldId: props.worldId,
+            world: props.usage.world,
+            conversation: props.usage.conversation,
+            latestTurn: props.usage.latestTurn,
+            conversationTitle: props.conversationTitle,
+            budget: props.budget,
+            limits: props.budgetLimits,
+            onSaveBudget: props.onSaveBudget,
+          }}
         />
       ) : null}
 

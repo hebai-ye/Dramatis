@@ -748,7 +748,7 @@ export class Repository {
 
   /** Mandatory transaction for analysis: callbacks may await storage operations only. */
   async atomic<T>(run: (repository: Repository, store: EntityStore) => Promise<T>): Promise<T> {
-    if (this.store.transaction === undefined) throw new Error('分析写入需要存储事务，未执行非原子降级。');
+    if (this.store.transaction === undefined) throw new Error('此操作需要存储事务，未执行非原子降级。');
     return this.store.transaction((scope) => run(new Repository(scope, this.migrations), scope));
   }
 

@@ -2,6 +2,96 @@
 
 这份文档记录「怎么知道它真的能工作」。分两部分：可以随时重跑的自动化基线，以及必须用真实模型做的人工验证。
 
+<!-- task-120-owned:start -->
+## 顺序120：预算持久保存闭环与三项验收收口（2026-10-08，本分支自有记录）
+
+### 授权、基线与隔离边界
+
+用户补充授权App.tsx、RuntimePanel.tsx和session.ts的预算相关改动，并要求三名以上智能体协作；最后明确推进B12量化、原生6项、五门禁与120文档。沿用开工基线357c47a及codex/task-113-core-correctness-continue；80个前批文件的逐文件快照在build/task-120/baseline-119。没有撤销或整理113–119未提交变更，也没有重新解释未拍板的业务语义。
+
+团队使用不重叠写集：预算/session回归及忽略目录中的原生夹具；B12纯离线评测两文件；RuntimePanel/其测试及TASKS、FILE-LOG的120块。主代理负责core预算事务、App/session集成复核、生产页面冒烟、根门禁、STATUS/EVAL。环境的普通执行器和内置浏览器通道仍存在初始化故障；需要的命令均通过require_escalated审批执行，曾发生的超时/限流没有被当作测试成功，也未绕过审批。
+
+测试仅使用合成内存数据、随机原生IDB库及独立浏览器上下文。使用机器已有Playwright和Edge，未安装依赖、不读取用户profile、不打开用户数据库、不调用模型、不同步真实账号、不访问生产环境。临时服务仅本机回环并排除共享开发同步后端；具体地址仅留忽略产物，不写入本节。
+
+### 保存契约与修复内容
+
+- App向RuntimePanel传worldId，并返回真实async保存Promise；提交时携带roomId和budgetWriteVersion(world.budget)。RuntimePanel原样传递，编辑器等待落盘回调，不再依赖void回调或乐观回显来宣称完成。
+- 新BudgetWriteTarget明确目标与expectedVersion。budgetWriteVersion采用类型保真、键序无关的规范序列化，不混淆数字和数字字符串。新预算限制为已知合法字段、有限正数/正安全整数/空值；不猜币种、不自动换汇、合并或迁移旧标量。
+- saveRoomBudget在Repository.atomic内读取新鲜Room；目标不存在报room-missing，不重建；已是目标预算则确认持久状态并幂等返回；否则严格核对预算版本。只保存预算字段，写后读回核验，异常随事务撤回。BudgetWriteError的invalid-budget、room-missing、budget-conflict保持明确失败。
+- session以DB owner、当前世界和导航/加载代次隔离旧回调；预算完成后从最新快照只合并预算/更新时间，不覆盖新消息、场景及对话集合。冲突仍reject给编辑器，同时受控刷新当前世界用于对照，保留组件内草稿而非自动重试写。
+- renameWorld和openConversation事务内重读Room并仅修改自身字段，避免把并发保存的预算抹掉；迟到reload或导航结果不得恢复旧世界。切DB时render阶段隐藏旧快照与列表，旧owner完成回调不得发布到新账户。
+- 这些是预算入口及相关已发现路径的保护，不是所有session写口、任意Repository.saveRoom或旧客户端的通用CAS，也不保证跨设备exactly-once。未接线B16旧粘贴来源保护、A13的web恢复提示，未借预算授权修改A08等语义。
+- 用量页改为按需加载；同时复用现有createLazyModule、lazy-module-url和LazyPanel，避免只重建React.lazy却仍命中失败模块缓存。共享加载器、构建阈值与依赖均未更改。
+
+### 常驻回归、首次失败与最终五门禁
+
+新增136条：预算事务52、真实session代码的受控hook host34、RuntimePanel/LazyPanel/加载器接线16、B12离线评测34。定向受控hook证据不冒充原生React调度；原生结果另列。
+
+首轮门禁typecheck发现B12可选报告路径直接导入Node内置模块并使用process，而core故意不包含Node ambient types。只将测试的报告IO收口为显式最小Node ports、按环境开关动态导入；未加依赖、未用忽略类型检查逃避问题、未改变评测两臂。修复后重跑B12 34/34并重生成源码指纹匹配的JSON，再完整重跑全部五门禁。first-gates保留首轮1项失败/4项通过的原始证据，最终结果不使用旧119计数替代。
+
+| 命令 | 最终实跑结果 | 证据 |
+|---|---|---|
+| pnpm typecheck | 退出0；core/web/admin类型检查通过 | build/task-120/final-typecheck.log |
+| pnpm lint | 退出0；413文件，零错误/警告 | build/task-120/final-lint.log |
+| pnpm test | 退出0；Core1350（94文件）＋Web319（41文件）＋管理/网关134＋桥接15＝1818/1818 | build/task-120/final-test.log |
+| pnpm build | 退出0；web209模块，主包492.38kB；无500kB提示，另构建管理服务 | build/task-120/final-build.log |
+| pnpm build:sync-server | 退出0 | build/task-120/final-build-sync-server.log |
+
+运行时为Node24.16.0、pnpm11.22.0。相对119新增136例，主包由508.48kB降至492.38kB，未调高警告阈值；Node22/远端CI仍待验证（归 Codex）。五项退出码与时长另见build/task-120/gate-results.json。
+
+### B12：生产现状与仅离线候选的合成量化
+
+基线实际调用Repository.listMemories→recallForPrompt；候选从同池调用recallMemories→limitFallbackItems→dedupeRecalled→selectWithinBudget。两臂共享输入、观察者、参与者、地点、预算及固定时间2026-10-01T12:00:00.000Z，沿用默认阈值0.6和兜底上限2。逐场景断言不插去重的分解路径与真实生产基线完全一致，不复制新的召回或分词算法，不改生产导出/接线。
+
+下表每个箭头均为生产现状→离线候选；token以生产heuristic-cjk分别估算summary/perception后相加，不含提示包装与其他块，不等于供应商实际token。独有事实指当前观察者可见夹具池中仅一条记录支持的人工标签；标签不参与算法，不是真实语义金标准。
+
+| 合成场景 | 预算 | 入选数 | 估算token | 算法重复组成员占比 | 可移除token | 独有标签保留/分母 |
+|---|---:|---:|---:|---:|---:|---:|
+| 全唯一 | 800 | 6→6 | 87→87 | 0%→0% | 0→0 | 6/6→6/6 |
+| 10精确重复＋2独有 | 800 | 12→3 | 428→68 | 83.3%→0% | 360→0 | 2/2→2/2 |
+| 10近重复含关键事实＋2独有 | 800 | 12→3 | 464→68 | 83.3%→0% | 396→0 | 3/3→2/3 |
+| 跨观察者/私密边界：甲 | 800 | 3→2 | 91→51 | 66.7%→0% | 40→0 | 1/1→1/1 |
+| 跨观察者/私密边界：乙 | 800 | 2→2 | 51→51 | 0%→0% | 0→0 | 2/2→2/2 |
+| 低预算稀缺事实 | 120 | 3→3 | 120→68 | 100%→0% | 80→0 | 0/2→2/2 |
+| 空池 | 800 | 0→0 | 0→0 | 不适用 | 0→0 | 不适用：0/0 |
+| 零预算 | 0 | 0→0 | 0→0 | 不适用 | 0→0 | 0/2→0/2 |
+
+“重复组”按现有贪心函数解释，不取传递闭包，成员比例包含保留代表项、分母是该臂入选数；空分母为null。近重复候选损失emergency-code标签（独有紧急开锁口令），减少396token不能称安全收益。低预算候选新增保留ferry-tuesday、medicine-cold；基线可移除80token，但补入事实后净减少52token，不能混用两种指标。
+
+完整输入、入选ID、标签变化、源码指纹、方法及限制在build/task-120/recall-dedupe-audit-results.json和同名txt；最新定向日志为recall-dedupe-audit-vitest-final.log。34例覆盖对照公平、确定性、输入快照、人工标签独立性、空/零预算分母、世界/对话/观察者/墓碑边界、兜底限制、非传递分组及拒评条件。
+
+**结论与边界**：本批完成B12“先量化”交付，不接生产去重。数据全为合成，只评常规召回；遇supersededBy/supersedes来源链明确拒评，不冒充补充通路、完整App的场记/章节/audience隐私、原生大库或真实模型评价。应由用户决定保持现状、继续离线验证保守适用边界，或另行授权含关键事实/置顶/来源/时间矛盾保留及回滚规则的生产方案，不能由此自动改阈值。
+
+### 原生浏览器6项：真实React与IndexedDB
+
+Edge154.0.4258.62、Playwright1.62.1，使用已有运行时。夹具复用实际useSession、UsagePanel、saveRoomBudget和原生IDB适配器；延迟屏障放在事务外，没有fake-indexeddb或受控hook host。逐项通过：
+
+1. 两个独立原生连接以同base写不同预算仅一方成功；同目标幂等不重写。
+2. 真实IDB错误使事务回滚；已删除目标拒绝保存且不复活。
+3. 保存期间切世界，旧完成结果不回写到新世界。
+4. 同世界切对话及追加消息不被旧预算快照回退。
+5. 实际预算编辑器收到reject显示失败并保留草稿，不伪造成功。
+6. 迟到reload不覆盖导航或后续预算。
+
+报告completed=true、ok=true、passed=6、failed=0、cleanup.complete=true、pendingDatabases=[]；7个连接全关，6个独立随机DB全部原生删除成功；pageerror/console error/违规网络与storage操作均0。证据前缀为build/task-120/native-budget-result-2026-10-08T07-45-02-137Z-approved-native-fc1976b8，包含完整json、-page.json、txt及页面png；runner为native-budget-browser-runner.mjs。测试浏览器及其临时目录已清理，未清用户数据库。
+
+### 生产构建额外6项UI冒烟与体验入口
+
+对真正生产dist另用隔离浏览器实际点击，不靠夹具替代App：首次打开前不加载用量模块；精确阻断一次原生script导入后出现错误边界，新URL参数重试成功；真实App逐币种保存Promise完成；刷新后CNY/USD及调用上限仍在；重复币种禁止提交；清空仅改草稿，刷新仍读原预算；A/B世界预算不串写。按报告归并为6项，全部通过。
+
+build/task-120/production-budget-smoke.json保存逐步断言、模块资源类型/重试URL及console证据，production-budget-smoke.png为最终页面截图；0未捕获pageerror、0外部请求。故障注入有2条预期console error（网络失败和动态导入失败），已明确分类，非零console不是运行故障。该组为精确故障注入禁用service worker，不能声称离线缓存/升级恢复已验。早先探索脚本的标题定位错误已根据真实控件修正，不修改产品来迎合定位。
+
+本地候选体验服务保持运行、仅回环并禁用共享同步后端；地址/进程信息在忽略的build/task-120/local-experience.json。用户可从“新对话”创建测试世界，进入“面板→用量”，编辑并保存次数/逐币种上限，刷新及切世界核对；建议仅用测试数据，不导入正式存档或连接真实同步。浏览器测试没有调用模型；付费模型体验和正式数据操作不是本批自动授权。
+
+### 未闭项、回退与发布决定
+
+原附件标题写23项，实际列明22个ID（17实现类＋5先提案/量化类）；A08、A01、D05为表外待拍板/复审项，不补造第23项。上述三项交付完成不代表22项全部功能完成：B08/B09/B10/B11/A08语义未拍板；B12生产策略未选定；B16旧粘贴source、A13的web warnings展示、C08 README/Node22/远端CI仍有边界。D06仍O(N)、没有新增索引或真实大库性能结论；B15未验证物理断电/POSIX目录fsync；真实模型质量、PWA离线与跨设备保证仍待验证（归 Codex）。
+
+旧未绑定maxCost仍须用户明确选币种、确认并保存，不能宣称legacy漏拦已自动修复；未知费用也不自动换算为免费或默认熔断。回退仅逐文件比对本批改前快照，保留113–119，不做数据库逆迁移或覆盖正式库。回退前应保留已存预算和未保存草稿；旧客户端不认识maxCostByCurrency时不能保证同样的熔断策略。
+
+四份文档仅新增各自120标记块；剥除本批块后须与baseline-119逐字节一致。未新增依赖、未改锁文件/生产去重、未访问用户数据库、未提交、未push、未部署。用户真实体验与最终是否push/部署尚待用户决定，测试通过不构成发布授权。
+<!-- task-120-owned:end -->
+
 ## 顺序119：单次账单快照与预算编辑草稿（2026-10-08，本分支自有记录）
 
 ### 授权、基线与团队边界

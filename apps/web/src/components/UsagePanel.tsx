@@ -119,7 +119,7 @@ function BudgetEditor({
           setSaveStatus({ busy: false, error: false, unconfirmed: false, message: '保存回调已完成，请核对当前配置。' });
         }
       } else if (saveRequest.current === request) {
-        // The existing App callback returns void, discarding the persistence promise.
+        // Legacy integrations may return void instead of a persistence promise.
         // Neither its return nor an optimistic props echo proves durable success.
         setSaveStatus({
           busy: false,

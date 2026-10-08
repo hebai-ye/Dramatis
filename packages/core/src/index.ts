@@ -48,6 +48,7 @@ export * from './session/turn.js';
 export * from './storage/archive.js';
 export * from './storage/budget.js';
 export * from './storage/budget-editor.js';
+export * from './storage/budget-write.js';
 export * from './storage/repository.js';
 export * from './storage/transcript.js';
 export * from './storage/usage.js';

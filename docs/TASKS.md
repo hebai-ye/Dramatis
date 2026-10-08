@@ -26,6 +26,39 @@
 > 「2026-09-23 总排期」，下面各个带日期的小节是历史排期，只作上下文）
 > 顺序号说明：99／100 是分支 `codex/sync-admin-readonly` 的「账户关联与只读服务器管理台」（顺序 99）与「管理台显示名／存储配额与正式接入」（顺序 100），两批已在本次合并中并进主线；`docs/EVAL.md` 第九十一、九十二节属于它们，本批两节因此取顺序 103／104（EVAL 第一百零三、一百零四节）。
 
+<!-- task-120-owned:begin -->
+## 2026-10-08：顺序120 预算持久保存闭环、原生验收与 B12 仅量化补齐（授权内已收口）
+
+> 本节只记录120授权范围：预算持久保存闭环、两类隔离浏览器验收与B12先量化交付已完成，不改113–119及其他线原记录，不等于全部功能或所有任务全端验证。用户最终体验及是否push／部署仍待决定；未提交、未push、未部署。
+
+| 顺序 | 范围 | 状态 |
+| --- | --- | --- |
+| 120 | 119预算编辑的持久保存闭环；原生及实际生产构建UI验收；B12仅离线量化补齐 | **授权内本地收口完成**：最终五门禁全绿，1818/1818；原生6/6、生产构建UI6/6；B12先量化完成，生产去重仍未接线／待拍板 |
+
+**闭环与保证范围**：
+
+- App传明确的worldId，保存回调返回真实Promise；请求带上由当前世界及预算快照生成的`BudgetWriteTarget`（roomId／expectedVersion）。`saveRoomBudget`复用既有`Repository.atomic`，在事务内读取新Room、比较预算版本、仅补丁budget并回读核验；缺少事务支持时不做非原子降级。
+- session检查当前数据库／owner、快照owner及世界归属；保存失败保持拒绝，完成后只在归属及版本仍允许时合并到最新快照，避免旧请求覆盖新预算、消息、场景或对话。相关重命名／切换对话路径从新Room补丁写入，不回写旧整份预算快照。
+- Runtime仅usage页挂载既有LazyPanel，模块级稳定loader复用`createLazyModule`与`?lazy-module-url`；worldId和原保存Promise透传。错误边界重试配合目标URL更新、依赖原地址缓存刷新，而不只重建React.lazy。
+- CAS保证限于上述受保护预算事务及本轮session路径；**不等于任意底层saveRoom都有CAS，也不承诺跨设备exactly-once**。
+
+| 验收项 | 最终证据与边界 |
+| --- | --- |
+| 最新五门禁 | `pnpm typecheck`、`pnpm lint`、`pnpm test`、`pnpm build`、`pnpm build:sync-server`均退出0；见`build/task-120/gate-results.json`。typecheck包含B12测试报告辅助端最小Node类型port修复；lint检查413文件，无错误／警告 |
+| 全量回归与新增量 | **1818/1818**＝Core1350（94文件）＋Web319（41文件）＋管理／网关134＋桥接15；新增 **136**＝budget-write52＋session-budget34＋runtime16＋B12量化34。既有加载器7/7另做定向复跑，不计入新增136；完整门禁证据见`build/task-120/final-test.log` |
+| 构建 | web转换209模块，主包 **492.38kB**（119为508.48kB）；没有500kB体积警告，未调整构建阈值；sync构建通过。见`build/task-120/final-build.log`、`build/task-120/final-build-sync-server.log` |
+| 原生隔离验收 | **6/6**，真实Edge 154.0.4258.62／Playwright 1.62.1；7个连接全部关闭、6个随机数据库全部删除，pending为空、cleanup为true，pageerror／consoleerror均0，无远端访问。见`build/task-120/native-budget-result-2026-10-08T07-45-02-137Z-approved-native-fc1976b8.json`及同前缀的-page.json／.txt／.png；这不是所有任务全端验收 |
+| 实际生产构建UI | **6/6**，按`build/task-120/production-budget-smoke.json`的六个步骤计数：首次不加载及原生module script故障后边界／新query URL重试恢复；真实App Promise逐币种保存；重载持久；重复标签禁止保存；清空仅改草稿；A/B预算隔离。0个未捕获pageerror；有 **2条故障注入预期console error**，不能写成零console。service worker为故障注入禁用，不声称PWA离线已验；隔离验收浏览器已关闭，截图见`build/task-120/production-budget-smoke.png` |
+| B12先量化 | **34/34回归、8行离线对照已交付**；详`build/task-120/recall-dedupe-audit-results.txt`及`build/task-120/recall-dedupe-audit-results.json`，结果报告sourceHashes已刷新并核对当前源码。仅人工标签合成样本，常规召回两臂公平对照，来源链拒评；token是估算值，不是服务商token，不启用生产去重 |
+
+**保留失败经过**：`build/task-120/first-gates/`保留首轮typecheck因B12测试报告辅助端缺少Node类型而失败的记录，其余四门禁通过。主代理仅修测试报告端的最小Node类型接口（port，非生产逻辑），随后B12复跑34/34，全部五门禁重跑全绿；最终结论使用最新日志，不覆盖或冒充首轮失败已不存在。
+
+**B12量化结论不外推上线**：精确重复估算token **428→68**；近重复 **464→68**，但独有标签 **3/3→2/3**，丢失合成标签`emergency-code`；低预算 **120→68**、独有标签 **0/2→2/2**；全唯一 **87→87**。节省估算token不代表安全回收或生产质量改善；**B12先量化交付完成，生产去重仍不接线／待拍板**。
+
+**盘点与交付边界**：原方案实际列明 **22个ID，而非23个**；工作项与测试用例分开，不补造第23项，不宣称所有功能完成。**B08–B11、B12生产语义、A08仍待拍板**；C08 README、B16粘贴source、A13 web提示等边界不借120扩大。本地体验入口已由主代理启动，仅回环新origin，共享同步后端禁用；地址只保留在忽略产物`build/task-120/local-experience.json`，由主代理完成文档后打开给用户。用户最终体验和是否push／部署待决定，未提交／未push／未部署。
+
+<!-- task-120-owned:end -->
+
 ## 2026-10-08：顺序119 授权内批量刷新/预算编辑（本分支自有记录）
 
 | 顺序 | 范围 | 状态 |

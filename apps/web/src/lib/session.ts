@@ -3,6 +3,9 @@ import {
   conversationId as asConversationId,
   roomId as asRoomId,
   type BudgetLimits,
+  BudgetWriteError,
+  type BudgetWriteTarget,
+  budgetWriteVersion,
   buildCardMemoryAttachment,
   type Card,
   type CardId,
@@ -32,6 +35,7 @@ import {
   reuseUnchangedCollections,
   revertAffectChange as revertAffectChangeForInstance,
   type Scene,
+  saveRoomBudget,
   setRelationshipField as setRelationshipFieldForInstance,
   syncPresenceForScene,
   type WorldBook,
@@ -199,7 +203,7 @@ export interface SessionApi {
    *
    * 存在世界（房间）上：花销是按世界算的，一条线跑疯了不该牵连另一个世界。
    */
-  setBudget: (limits: BudgetLimits | null) => Promise<void>;
+  setBudget: (limits: BudgetLimits | null, target: BudgetWriteTarget) => Promise<void>;
 
   openConversation: (id: ConversationId) => Promise<void>;
   /**
@@ -331,41 +335,91 @@ export function useSession(db: DramatisDb | null): SessionApi {
     worldBooks: [],
   });
   const [personas, setPersonas] = useState<Persona[]>([]);
-  const [snapshot, setSnapshotState] = useState<RoomSnapshot | null>(null);
+  const [ownedSnapshot, setSnapshotState] = useState<{
+    owner: { db: DramatisDb | null };
+    value: RoomSnapshot | null;
+  } | null>(null);
+  const [renderOwner, setRenderOwner] = useState(() => ({ db }));
+  let owner = renderOwner;
+  if (owner.db !== db) {
+    // Guarded render-phase state adjustment: no old account data is exposed during the next paint.
+    owner = { db };
+    setRenderOwner(owner);
+  }
+  const snapshot = ownedSnapshot?.owner === owner ? ownedSnapshot.value : null;
 
   // 用一个 ref 跟随快照，避免每个回调都依赖 snapshot 而频繁重建
   const snapshotRef = useRef<RoomSnapshot | null>(null);
   // 仓储的 localSeq 是「读计数器 → 写消息 → 写计数器」；同一 session 内追加必须串行。
   const appendQueueRef = useRef<Promise<void>>(Promise.resolve());
-  const setSnapshot = useCallback((next: RoomSnapshot | null) => {
-    snapshotRef.current = next;
-    setSnapshotState(next);
-  }, []);
+  const activeOwnerRef = useRef<typeof owner | null>(owner);
+  const snapshotOwnerRef = useRef<typeof owner | null>(null);
+  const navigationRef = useRef(0);
+  const reloadRequestRef = useRef(0);
+  const setSnapshot = useCallback(
+    (next: RoomSnapshot | null) => {
+      if (activeOwnerRef.current !== owner) return;
+      snapshotRef.current = next;
+      snapshotOwnerRef.current = owner;
+      setSnapshotState({ owner, value: next });
+    },
+    [owner],
+  );
+
+  useEffect(() => {
+    activeOwnerRef.current = owner;
+    if (snapshotOwnerRef.current !== owner) {
+      navigationRef.current++;
+      reloadRequestRef.current++;
+      setSnapshot(null);
+      setReady(false);
+      setWorlds([]);
+      setLibrary({ cards: [], worldBooks: [] });
+      setPersonas([]);
+      setError(null);
+    }
+    return () => {
+      if (activeOwnerRef.current === owner) {
+        activeOwnerRef.current = null;
+        navigationRef.current++;
+        reloadRequestRef.current++;
+      }
+    };
+  }, [owner, setSnapshot]);
 
   const refreshWorlds = useCallback(async () => {
-    if (!db) return;
-    setWorlds(await db.repository.listRooms());
-  }, [db]);
+    if (!db || activeOwnerRef.current !== owner) return;
+    const rows = await db.repository.listRooms();
+    if (activeOwnerRef.current === owner) setWorlds(rows);
+  }, [db, owner]);
 
   const refreshLibrary = useCallback(async () => {
-    if (!db) return;
+    if (!db || activeOwnerRef.current !== owner) return;
     const [cards, worldBooks] = await Promise.all([db.repository.listCards(), db.repository.listWorldBooks()]);
-    setLibrary({ cards, worldBooks });
-  }, [db]);
+    if (activeOwnerRef.current === owner) setLibrary({ cards, worldBooks });
+  }, [db, owner]);
 
   const refreshPersonas = useCallback(async () => {
-    if (!db) return;
-    setPersonas(await db.repository.listPersonas());
-  }, [db]);
+    if (!db || activeOwnerRef.current !== owner) return;
+    const rows = await db.repository.listPersonas();
+    if (activeOwnerRef.current === owner) setPersonas(rows);
+  }, [db, owner]);
 
   const reloadWorld = useCallback(async () => {
     const current = snapshotRef.current;
-    if (!db || !current) return;
+    if (!db || !current || activeOwnerRef.current !== owner || snapshotOwnerRef.current !== owner) return;
+    const request = ++reloadRequestRef.current;
+    const navigation = navigationRef.current;
     const loaded = await db.repository.loadRoom(current.room.id);
-    // 没变的集合沿用旧数组引用（顺序 62）：一轮收尾写的是记忆/情绪/章节/账单，
-    // 消息本身没动，不该让 600 条消息整体重画。
-    if (loaded) setSnapshot(reuseUnchangedCollections(current, loaded));
-  }, [db, setSnapshot]);
+    if (
+      activeOwnerRef.current !== owner ||
+      navigationRef.current !== navigation ||
+      reloadRequestRef.current !== request ||
+      snapshotRef.current !== current
+    )
+      return;
+    setSnapshot(loaded ? reuseUnchangedCollections(current, loaded) : null);
+  }, [db, owner, setSnapshot]);
 
   const refreshAll = useCallback(async () => {
     if (!db) return;
@@ -378,13 +432,21 @@ export function useSession(db: DramatisDb | null): SessionApi {
   useEffect(() => {
     if (!db) return;
     let cancelled = false;
+    const navigation = navigationRef.current;
 
     void (async () => {
       try {
         const lastRoomId = await db.repository.getMeta<RoomId>(META_KEYS.lastRoomId);
         if (lastRoomId !== null) {
           const loaded = await db.repository.loadRoom(lastRoomId);
-          if (loaded && !cancelled) setSnapshot(loaded);
+          if (
+            loaded &&
+            !cancelled &&
+            activeOwnerRef.current === owner &&
+            navigationRef.current === navigation &&
+            snapshotRef.current === null
+          )
+            setSnapshot(loaded);
         }
         await refreshWorlds();
         await refreshLibrary();
@@ -401,27 +463,31 @@ export function useSession(db: DramatisDb | null): SessionApi {
     return () => {
       cancelled = true;
     };
-  }, [db, refreshLibrary, refreshPersonas, refreshWorlds, setSnapshot]);
+  }, [db, owner, refreshLibrary, refreshPersonas, refreshWorlds, setSnapshot]);
 
   // 没有身份就先造一个，否则新世界无从创建
   useEffect(() => {
     if (!db || !ready) return;
     void (async () => {
       const list = await db.repository.listPersonas();
+      if (activeOwnerRef.current !== owner) return;
       if (list.length > 0) {
         setPersonas(list);
         return;
       }
       await db.repository.savePersona(createPersona({ name: '玩家' }));
-      setPersonas(await db.repository.listPersonas());
+      await refreshPersonas();
       await reloadWorld();
     })();
-  }, [db, ready, reloadWorld]);
+  }, [db, owner, ready, refreshPersonas, reloadWorld]);
 
   const openWorld = useCallback(
     async (id: RoomId) => {
-      if (!db) return;
+      if (!db || activeOwnerRef.current !== owner) return;
+      const request = ++navigationRef.current;
+      reloadRequestRef.current++;
       const loaded = await db.repository.loadRoom(id);
+      if (activeOwnerRef.current !== owner || navigationRef.current !== request) return;
       if (!loaded) {
         setError('这个世界已经不存在了');
         return;
@@ -430,7 +496,7 @@ export function useSession(db: DramatisDb | null): SessionApi {
       await db.repository.setMeta(META_KEYS.lastRoomId, id);
       await refreshWorlds();
     },
-    [db, refreshWorlds, setSnapshot],
+    [db, owner, refreshWorlds, setSnapshot],
   );
 
   const createWorld = useCallback(
@@ -513,51 +579,134 @@ export function useSession(db: DramatisDb | null): SessionApi {
   const renameWorld = useCallback(
     async (title: string) => {
       const current = snapshotRef.current;
-      if (!db || !current) return;
-
-      const room = { ...current.room, title };
-      await db.repository.saveRoom(room);
-      setSnapshot({ ...current, room });
+      if (!db || !current || activeOwnerRef.current !== owner || snapshotOwnerRef.current !== owner) return;
+      const worldId = current.room.id;
+      const beforeBudget = budgetWriteVersion(current.room.budget);
+      const saved = await db.repository.atomic(async (repository) => {
+        const room = await repository.getRoom(worldId);
+        if (!room) throw new Error('这个世界已经不存在了');
+        if (room.title !== current.room.title && room.title !== title)
+          throw new Error('世界名称已被其他操作修改，请重新核对。');
+        await repository.saveRoom({ ...room, title });
+        const result = await repository.getRoom(worldId);
+        if (!result) throw new Error('世界名称保存后无法核验。');
+        return result;
+      });
+      const latest = snapshotRef.current;
+      if (activeOwnerRef.current !== owner || latest?.room.id !== worldId) return;
+      const budget =
+        budgetWriteVersion(latest.room.budget) === beforeBudget && latest.room.updatedAt <= saved.updatedAt
+          ? saved.budget
+          : latest.room.budget;
+      setSnapshot({
+        ...latest,
+        room: {
+          ...latest.room,
+          title: latest.room.title === current.room.title ? saved.title : latest.room.title,
+          budget,
+          updatedAt: latest.room.updatedAt > saved.updatedAt ? latest.room.updatedAt : saved.updatedAt,
+        },
+      });
       await refreshWorlds();
     },
-    [db, refreshWorlds, setSnapshot],
+    [db, owner, refreshWorlds, setSnapshot],
   );
 
   const setBudget = useCallback(
-    async (limits: BudgetLimits | null) => {
+    async (limits: BudgetLimits | null, target: BudgetWriteTarget) => {
       const current = snapshotRef.current;
-      if (!db || !current) return;
-
-      const room = { ...current.room, budget: limits };
-      await db.repository.saveRoom(room);
-      setSnapshot({ ...current, room });
+      if (!target || typeof target.expectedVersion !== 'string' || !target.roomId)
+        throw new Error('预算保存缺少明确世界和确认版本。');
+      if (!db || !current || activeOwnerRef.current !== owner || snapshotOwnerRef.current !== owner)
+        throw new Error('当前世界不可用，预算未保存。');
+      const roomId = target.roomId;
+      if (current.room.id !== roomId) throw new Error('世界已切换，未将旧草稿保存到新世界。');
+      const expectedVersion = target.expectedVersion;
+      let saved: Room;
+      try {
+        saved = await saveRoomBudget(db.repository, { roomId, expectedVersion, limits });
+      } catch (saveError) {
+        if (
+          saveError instanceof BudgetWriteError &&
+          ['budget-conflict', 'room-missing'].includes(saveError.code) &&
+          activeOwnerRef.current === owner &&
+          snapshotRef.current?.room.id === roomId
+        ) {
+          // Keep the failed request rejected, but fetch current values so the preserved draft can be reviewed.
+          void reloadWorld().catch(() => undefined);
+          if (saveError.code === 'room-missing') void refreshWorlds().catch(() => undefined);
+        }
+        throw saveError;
+      }
+      const latest = snapshotRef.current;
+      if (activeOwnerRef.current !== owner || snapshotOwnerRef.current !== owner || latest?.room.id !== saved.id)
+        return;
+      const latestVersion = budgetWriteVersion(latest.room.budget);
+      const savedVersion = budgetWriteVersion(saved.budget);
+      if (latestVersion === savedVersion) return;
+      // Preserve a newer UI budget, and never replace newer messages/scenes/conversation with the old snapshot.
+      if (latestVersion !== expectedVersion || latest.room.updatedAt > saved.updatedAt) return;
+      setSnapshot({ ...latest, room: { ...latest.room, budget: saved.budget ?? null, updatedAt: saved.updatedAt } });
     },
-    [db, setSnapshot],
+    [db, owner, refreshWorlds, reloadWorld, setSnapshot],
   );
 
   const openConversation = useCallback(
     async (id: ConversationId) => {
       const current = snapshotRef.current;
-      if (!db || !current) return;
+      if (!db || !current || activeOwnerRef.current !== owner || snapshotOwnerRef.current !== owner) return;
       if (current.room.activeConversationId === id) return;
-
-      const room: Room = { ...current.room, activeConversationId: id, updatedAt: nowIso() };
-      await db.repository.saveRoom(room);
-
-      // 换了对话就换了一条场景线，存在状态要跟着对齐（T10）：
-      // 否则会出现「右栏说在场、这条线的名单里却没有他」的角色
-      const target = current.conversations.find((item) => item.id === id) ?? null;
-      const scene = current.scenes.find((item) => item.id === target?.activeSceneId) ?? null;
-      const synced = scene === null ? [] : syncPresenceForScene(current.instances, scene);
-      for (const instance of synced) await db.repository.saveInstance(instance);
-
+      const worldId = current.room.id;
+      const beforeBudget = budgetWriteVersion(current.room.budget);
+      const navigation = ++navigationRef.current;
+      reloadRequestRef.current++;
+      const switched = await db.repository.atomic(async (repository) => {
+        const room = await repository.getRoom(worldId);
+        const conversation = await repository.getConversation(id);
+        if (!room || !conversation || conversation.roomId !== worldId)
+          throw new Error('目标对话已删除或不属于这个世界。');
+        const scene =
+          conversation.activeSceneId === null ? null : await repository.getScene(conversation.activeSceneId);
+        if (scene && (scene.roomId !== worldId || scene.conversationId !== id))
+          throw new Error('对话场景归属不一致，未切换。');
+        // Patch the fresh Room, rather than overwriting a concurrent budget from an old UI snapshot.
+        await repository.saveRoom({ ...room, activeConversationId: id });
+        const instances = await repository.listInstances(worldId);
+        if (scene)
+          for (const instance of syncPresenceForScene(instances, scene)) await repository.saveInstance(instance);
+        const saved = await repository.getRoom(worldId);
+        if (!saved) throw new Error('世界已删除。');
+        return { room: saved, conversation, scene };
+      });
+      const latest = snapshotRef.current;
+      if (activeOwnerRef.current !== owner || navigationRef.current !== navigation || latest?.room.id !== worldId)
+        return;
+      const merge = <T extends { id: string; updatedAt: string }>(items: T[], incoming: T): T[] => {
+        const previous = items.find((item) => item.id === incoming.id);
+        if (!previous) return [...items, incoming];
+        return items.map((item) => (item.id === incoming.id && item.updatedAt <= incoming.updatedAt ? incoming : item));
+      };
+      const conversations = merge(latest.conversations, switched.conversation);
+      const scenes = switched.scene ? merge(latest.scenes, switched.scene) : latest.scenes;
+      const scene = scenes.find((item) => item.id === switched.scene?.id) ?? null;
+      const budget =
+        budgetWriteVersion(latest.room.budget) === beforeBudget && latest.room.updatedAt <= switched.room.updatedAt
+          ? switched.room.budget
+          : latest.room.budget;
       setSnapshot({
-        ...current,
-        room,
-        instances: current.instances.map((item) => synced.find((next) => next.id === item.id) ?? item),
+        ...latest,
+        conversations,
+        scenes,
+        room: {
+          ...latest.room,
+          activeConversationId: id,
+          budget,
+          updatedAt: latest.room.updatedAt > switched.room.updatedAt ? latest.room.updatedAt : switched.room.updatedAt,
+        },
+        instances: scene ? syncPresenceForScene(latest.instances, scene) : latest.instances,
       });
     },
-    [db, setSnapshot],
+    [db, owner, setSnapshot],
   );
 
   const startConversation = useCallback(
@@ -762,13 +911,14 @@ export function useSession(db: DramatisDb | null): SessionApi {
       const run = async (): Promise<void> => {
         // 等前一笔真正写完后再读最新快照；两个调用不能并发读到相同的 localSeq。
         const current = snapshotRef.current;
-        if (!db || batch.length === 0) return;
+        if (!db || batch.length === 0 || activeOwnerRef.current !== owner) return;
         const roomId = batch[0]?.roomId;
         if (roomId === undefined || batch.some((message) => message.roomId !== roomId)) {
           throw new Error('一次只能向同一个世界追加消息');
         }
 
         const stamped = await db.repository.appendMessages(roomId, batch);
+        if (activeOwnerRef.current !== owner) return;
         // 写库期间同步可能已更新快照；按最新快照合并，不能覆盖它。
         const latest = snapshotRef.current;
         if (latest === null || latest.room.id !== roomId) {
@@ -792,6 +942,7 @@ export function useSession(db: DramatisDb | null): SessionApi {
           setSnapshot({ ...fresh, messages: nextMessages });
         }
         // 与快照更新同批提交；并发全量刷新若已经读到这批消息，不重复加数。
+        if (activeOwnerRef.current !== owner) return;
         setWorlds((previous) => {
           let changed = false;
           const next = previous.map((world) => {
@@ -808,7 +959,7 @@ export function useSession(db: DramatisDb | null): SessionApi {
       appendQueueRef.current = task.catch(() => {});
       return task;
     },
-    [db, refreshWorlds, setSnapshot],
+    [db, owner, refreshWorlds, setSnapshot],
   );
 
   const updateMessage = useCallback(
@@ -1165,8 +1316,9 @@ export function useSession(db: DramatisDb | null): SessionApi {
   const savePersona = useCallback(
     async (persona: Persona) => {
       const targetWorldId = snapshotRef.current?.room.id;
-      if (!db) return;
+      if (!db || activeOwnerRef.current !== owner) return;
       await db.repository.savePersona(persona);
+      if (activeOwnerRef.current !== owner) return;
       setPersonas((previous) =>
         previous.some((item) => item.id === persona.id)
           ? previous.map((item) => (item.id === persona.id ? persona : item))
@@ -1202,21 +1354,23 @@ export function useSession(db: DramatisDb | null): SessionApi {
         ),
       });
     },
-    [db, setSnapshot],
+    [db, owner, setSnapshot],
   );
 
   const listPersonas = useCallback(async (): Promise<Persona[]> => {
-    if (!db) return [];
+    if (!db || activeOwnerRef.current !== owner) return [];
     const list = await db.repository.listPersonas();
+    if (activeOwnerRef.current !== owner) return [];
     setPersonas(list);
     return list;
-  }, [db]);
+  }, [db, owner]);
 
   const deletePersona = useCallback(
     async (id: string) => {
       const targetWorldId = snapshotRef.current?.room.id;
-      if (!db) return;
+      if (!db || activeOwnerRef.current !== owner) return;
       await db.repository.deletePersona(id);
+      if (activeOwnerRef.current !== owner) return;
       setPersonas((previous) => previous.filter((persona) => persona.id !== id));
       const current = snapshotRef.current;
       if (!current || current.room.id !== targetWorldId) return;
@@ -1232,7 +1386,7 @@ export function useSession(db: DramatisDb | null): SessionApi {
         ),
       });
     },
-    [db, setSnapshot],
+    [db, owner, setSnapshot],
   );
 
   const revertTurn = useCallback(
@@ -1554,6 +1708,8 @@ export function useSession(db: DramatisDb | null): SessionApi {
 
   const clearError = useCallback(() => setError(null), []);
 
+  const ownerActive = activeOwnerRef.current === owner;
+
   /*
    * 返回对象要稳定（顺序 59）：App 里二十多个 useCallback 拿 `session` 当依赖，
    * 每次渲染新造一个字面量就等于把所有 memo 都作废。派生的几个数组（当前对话的消息、
@@ -1582,10 +1738,10 @@ export function useSession(db: DramatisDb | null): SessionApi {
             .sort((left, right) => left.createdAt.localeCompare(right.createdAt));
 
     return {
-      ready,
-      error,
+      ready: ownerActive && ready,
+      error: ownerActive ? error : null,
       clearError,
-      worlds,
+      worlds: ownerActive ? worlds : [],
       world: snapshot?.room ?? null,
       conversations: snapshot === null ? [] : snapshot.conversations.filter((item) => item.archivedAt === null),
       archivedConversations: snapshot === null ? [] : snapshot.conversations.filter((item) => item.archivedAt !== null),
@@ -1603,8 +1759,8 @@ export function useSession(db: DramatisDb | null): SessionApi {
           ? []
           : snapshot.chapters.filter((chapter) => chapter.conversationId === conversation.id),
       allChapters: snapshot?.chapters ?? [],
-      personas,
-      library,
+      personas: ownerActive ? personas : [],
+      library: ownerActive ? library : { cards: [], worldBooks: [] },
       openWorld,
       createWorld,
       deleteWorld,
@@ -1681,6 +1837,7 @@ export function useSession(db: DramatisDb | null): SessionApi {
     openConversation,
     openSideConversation,
     openWorld,
+    ownerActive,
     personas,
     ready,
     refreshAll,

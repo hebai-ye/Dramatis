@@ -2,6 +2,7 @@ import {
   type AdminArtifact,
   type AssembledPrompt,
   applyTurnAnalysis,
+  budgetWriteVersion,
   buildSceneTransitionNarration,
   buildSignatures,
   buildTurnAnalysisMessages,
@@ -1209,7 +1210,14 @@ export function App() {
                       usage={{ world: usage.world, conversation: usage.conversation, latestTurn: usage.latestTurn }}
                       budget={budget}
                       budgetLimits={world?.budget ?? null}
-                      onSaveBudget={(limits) => void session.setBudget(limits)}
+                      worldId={world?.id ?? null}
+                      onSaveBudget={async (limits) => {
+                        if (!world) throw new Error('没有当前世界，预算未保存。');
+                        await session.setBudget(limits, {
+                          roomId: world.id,
+                          expectedVersion: budgetWriteVersion(world.budget),
+                        });
+                      }}
                       conversationTitle={conversation?.title ?? ''}
                       workerError={worker.lastError}
                       failedTasks={worker.failed}

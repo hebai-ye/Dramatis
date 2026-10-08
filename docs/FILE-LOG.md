@@ -12,6 +12,45 @@
 > 第二～五节的时间表是 23:05 的快照（当时仓库里还没有 T17/T18/T2/T2c 这些提交），
 > 之后新增或改过的文件统一记在第七节，以**提交时间**为准。
 
+<!-- task-120-owned:begin -->
+## 顺序120：预算持久保存闭环、原生验收与 B12 仅量化补齐（2026-10-08，授权内已收口）
+
+> 本表只维护120自有记录，113–119及其他线原文不动。最终五门禁、预算保存原生／生产构建UI验收及B12先量化交付已完成；不是全部功能或所有任务全端验收，用户最终体验及是否push／部署仍待决定。STATUS/EVAL由主代理负责。
+
+| 文件 | 动作 | 内容 |
+| --- | --- | --- |
+| packages/core/src/storage/budget-write.ts | 新增 | BudgetWriteTarget、类型保真的预算快照版本与BudgetWriteError；saveRoomBudget复用既有事务，读取新Room后比较预算、仅改budget并回读核验，保留其他更新字段；不承诺通用saveRoom CAS或跨设备exactly-once |
+| packages/core/src/index.ts | 修改 | 导出预算写入契约及helper，供App/session接线 |
+| packages/core/src/storage/repository.ts | 修改（相对119仅报错措辞） | 将既有atomic的缺事务错误改为通用操作说明；没有把所有saveRoom改造成CAS，也没有新增非原子降级 |
+| apps/web/src/lib/session.ts | 修改 | setBudget接收明确目标并返回Promise；owner／快照owner／世界归属检查，失败拒绝与受控刷新，完成后保留更新快照；重命名和切换对话按新Room补丁写入，避免旧预算回写 |
+| apps/web/src/App.tsx | 修改 | 传worldId，真实async保存回调等待session.setBudget，并带world.id及budgetWriteVersion(world.budget)作为目标与期望版本；实际生产构建UI验证了保存及重载持久 |
+| apps/web/src/components/RuntimePanel.tsx | 修改 | 可选worldId及原Promise透传；仅usage页挂载LazyPanel，稳定loader复用createLazyModule与模块URL元数据；实际生产构建的原生module script故障注入验证边界显示和新query URL重试恢复 |
+| apps/web/src/components/UsagePanel.tsx | 修改（相对119仅注释） | 将丢失Promise的旧App特指说明改为legacy集成兼容说明；未据此重写预算草稿算法 |
+| packages/core/src/storage/budget-write.test.ts | 新增 | **52条**预算写入常驻回归 |
+| packages/core/src/storage/session-budget.test.ts | 新增 | **34条**session预算闭环常驻回归 |
+| packages/core/src/storage/runtime-budget.test.ts | 新增 | **16条**真实RuntimePanel／LazyPanel／createLazyModule接线回归；保留失败模块Promise和HTTP缓存的受控网络夹具，不以替换成功mock冒充原生恢复 |
+| packages/core/src/eval/recall-dedupe-audit.ts | 新增 | B12仅离线合成对照量化，复用现有召回函数，记录重复、估算token及人工标签保留指标；8行结果已交付，不启用生产去重，不修改生产阈值／语义政策 |
+| packages/core/src/eval/recall-dedupe-audit.test.ts | 新增 | **34条**离线审计回归；首轮报告辅助端缺少Node类型后，仅修测试报告端的最小Node类型接口（port，非生产逻辑），复跑34/34并纳入最新全绿五门禁 |
+| docs/{TASKS,FILE-LOG}.md | 修改（仅120标记块） | 回填最终证据、首轮失败与修复经过、量化限制和用户体验／发布待定状态；剥除120块后与baseline-119旧内容逐字节／哈希一致，未改STATUS/EVAL |
+
+**门禁与用例口径**：最新`pnpm typecheck`、`pnpm lint`、`pnpm test`、`pnpm build`、`pnpm build:sync-server`全部退出0；lint **413文件**无错误／警告。全量 **1818/1818**＝Core1350（94文件）＋Web319（41文件）＋管理／网关134＋桥接15；新增 **136条**＝52＋34＋16＋34。Runtime16/16与既有加载器7/7另有定向日志；既有7条不计新增，`LazyPanel.tsx`、`lib/lazy-module.ts`及其原测试仅复用／定向执行，不登记为120代码改动。web转换 **209模块**，主包 **492.38kB**（119为508.48kB），没有500kB体积警告且未改阈值；sync构建通过。
+
+| 忽略产物路径（不转写运行地址／凭据） | 证据与限制 |
+| --- | --- |
+| build/task-120/gate-results.json；build/task-120/final-{typecheck,lint,test,build,build-sync-server}.log | 最新五门禁全部退出0，包含B12最小Node类型port修复后的重新执行 |
+| build/task-120/first-gates/ | 保留首轮typecheck缺少Node类型的失败，其余四项通过；未删除或将首轮改写成全绿 |
+| build/task-120/runtime-budget-tests.log；build/task-120/runtime-budget-loader-tests.log | 16/16与7/7受控定向回归；不冒充原生浏览器证据 |
+| build/task-120/native-budget-result-2026-10-08T07-45-02-137Z-approved-native-fc1976b8{.json,-page.json,.txt,.png} | 原生 **6/6**，真实Edge 154.0.4258.62／Playwright 1.62.1；7连接全部关闭、6随机DB全部删除，pending为空／cleanup为true；pageerror及consoleerror均0、无远端访问；不是所有任务全端验证 |
+| build/task-120/production-budget-smoke.{json,png}；build/task-120/production-budget-smoke-failure.png | 实际生产构建UI **6/6**：首次懒加载隔离及原生脚本故障后边界／新query URL重试恢复、App Promise逐币种保存、重载持久、重复标签禁止保存、清空仅草稿、A/B预算隔离，按JSON六步骤计数；0未捕获pageerror，**2条故障注入预期console error**，不是零console；service worker为故障注入禁用，不声称PWA离线已验，隔离验收浏览器已关闭 |
+| build/task-120/recall-dedupe-audit-results.{txt,json} | B12八行离线量化及34/34回归完成，最新结果报告sourceHashes已刷新并核对源码；人工标签合成样本、常规召回两臂公平、来源链拒评、估算非服务商token；生产去重仍未接线／待拍板 |
+| build/task-120/local-experience.json | 主代理已启动的本地体验入口，仅回环新origin、共享同步后端禁用；地址只留此忽略产物，将由主代理完成文档后打开给用户，不写入tracked文档 |
+
+**量化风险必须保留**：精确重复估算token **428→68**；近重复 **464→68**，但独有标签 **3/3→2/3**并丢失`emergency-code`；低预算 **120→68**且独有标签 **0/2→2/2**；全唯一 **87→87**。B12先量化交付已完成，这些合成估算不代表安全回收、真实服务商token、模型质量或生产收益，不能据此启用生产去重。
+
+**范围保持**：原方案实际列明 **22个ID，不是23个**，不补造编号或宣称所有功能完成；B08–B11、B12生产语义和A08继续待拍板，B12本轮仅离线量化。C08 README、B16粘贴source、A13 web提示不扩线；受保护预算事务不等于任意saveRoom都有CAS或跨设备exactly-once。用户最终体验与是否push／部署待决定；未提交、未push、未部署。
+
+<!-- task-120-owned:end -->
+
 ## 顺序119：批量刷新及预算编辑准备（2026-10-08，本分支自有表）
 
 | 文件 | 动作 | 内容 |

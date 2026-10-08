@@ -176,6 +176,12 @@ export interface UsageSummary {
   lastAt: string | null;
 }
 
+/** Budget checks need no speaker/model/category breakdown tables. Totals remain currency-separated. */
+export interface UsageBudgetSummary {
+  total: UsageTotals;
+  extraCalls: number;
+}
+
 /** 负数、NaN、Infinity 一律按 0 记：账单里出现这些只可能是上游数据有问题。 */
 export function sanitizeTokens(value: number | undefined | null): number {
   if (typeof value !== 'number' || !Number.isFinite(value)) return 0;
@@ -334,6 +340,17 @@ export function summarizeUsage(records: readonly UsageRecord[]): UsageSummary {
   };
 }
 
+/** O(N) budget projection: fresh raw rows, no cache, no incomplete invalidation protocol. */
+export function summarizeUsageForBudget(records: readonly UsageRecord[]): UsageBudgetSummary {
+  const total = emptyTotals();
+  let extraCalls = 0;
+  for (const record of records) {
+    addInto(total, record);
+    if (record.category !== 'generation') extraCalls++;
+  }
+  return { total: finalizeTotals(total), extraCalls };
+}
+
 /**
  * 从一份汇总里读出校准结果（顺序 71）。
  *
@@ -366,6 +383,8 @@ export interface UsageLedger {
    * 结果与记录的到达顺序无关。
    */
   summary(filter?: UsageFilter): Promise<UsageSummary>;
+  /** Optional for legacy adapters; avoids unused breakdowns, NOT the underlying row scan. */
+  budgetSummary?(filter?: UsageFilter): Promise<UsageBudgetSummary>;
   /** 世界被彻底删除时一并清账，返回删掉的条数。 */
   removeByRoom(roomId: RoomId): Promise<number>;
 }
@@ -456,6 +475,10 @@ export function createUsageLedger(store: EntityStore): UsageLedger {
        * 一条任务就重算一次熔断账单）。
        */
       return summarizeUsage(await read(filter));
+    },
+
+    async budgetSummary(filter: UsageFilter = {}): Promise<UsageBudgetSummary> {
+      return summarizeUsageForBudget(await read(filter));
     },
 
     async removeByRoom(roomId: RoomId): Promise<number> {

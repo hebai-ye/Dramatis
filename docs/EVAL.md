@@ -2,6 +2,105 @@
 
 这份文档记录「怎么知道它真的能工作」。分两部分：可以随时重跑的自动化基线，以及必须用真实模型做的人工验证。
 
+## 顺序118：D06量化/预算投影与D07显式币种内核（2026-10-08，本分支自有记录）
+
+### 基线与范围
+
+fetch确认origin/main仍为357c47a，登记空号118；前批68个变更文件快照存于忽略目录build/task-118/baseline-117。只改core/storage/usage.ts、budget.ts的兼容输入及显式币种分支、允许的worker.ts、新回归与四份文档118节。未改前端账单/预算面板或db.ts，未新增依赖、schema、迁移、缓存或持久聚合表，无用户库读写、模型调用、提交、push或部署。
+
+### D06先量化，再做边界内优化
+
+现状不是“全站所有查询都全表扫描”：summary本来就不排序，带roomId时Web适配器使用byCollectionRoom，带since时使用byCollectionUpdated；但对话/回合条件在读到房间记录后再过滤，UI连续取世界/对话/最近回合三份汇总，worker每次预算检查又做完整多维聚合。list的limit在读取与排序后才截取；导出完整流水则是预期的全量读取。
+
+不能用不可靠缓存遮掩这些成本：Repository.deleteRoom直接清usageRecords，旧迁移可bulkPut，另一个连接可以补录旧时间、同ID覆盖或同数量删除/新增；单看行数/时间水位/本ledger.record都不足以保证失效正确。既定文件范围又不包含db.ts和useUsage，所以本批不引入缓存或伪造“已下推新索引”。
+
+新增：
+
+- UsageBudgetSummary = {total, extraCalls}，summarizeUsageForBudget只累计总计/额外调用，不建立类别、模型、角色分组。
+- UsageLedger.budgetSummary为可选能力，createUsageLedger实现它并复用原read过滤路径；旧适配器仍能只实现summary。
+- evaluateBudget/extraCallsOf接受完整或预算投影；**D06投影本身不改金额规则**；后续新增的D07显式映射分支见下，旧maxCost兼容模式仍保留。worker优先使用投影，不可用时回退原summary；UI完整账单与导出不受影响。
+
+### 内存合成基准（实际执行）
+
+数据量1k/10k/100k，80%属于目标世界，其余属于另一个世界；含两币种、多模型/角色/对话、无单价、零token与校准样本。原始过滤后的summarizeUsage为数值参考；首次查询、三份汇总、最近50条、全量导出、追加一条后的结果均核对一致。
+
+| 全库记录 | 目标世界 | 完整聚合CPU中位 | 预算聚合CPU中位 | 完整查询样本 | 预算查询样本 |
+| --- | --- | --- | --- | --- | --- |
+| 1,000 | 800 | 0.25ms | 0.07ms | 2.59ms | 1.51ms |
+| 10,000 | 8,000 | 0.94ms | 0.28ms | 17.33ms | 15.16ms |
+| 100,000 | 80,000 | 8.19ms | 2.01ms | 150.27ms | 170.96ms |
+
+CPU中位是交替调用两种纯聚合、预热后6次测量的中位；查询耗时是该次包含内存克隆/读取的单样本，不是生产延迟承诺，也不代表不同规模/设备必然同等收益。GC等会使重复运行有波动；只对CPU构造减少作局部结论。首次样本CPU为10.00/3.43ms、含读为202.63/172.09ms，均留存；补齐全部参考断言后复跑如表，预算路径含读单样本反而较慢，故不能宣称已稳定改善端到端延迟。
+
+读取量没有神奇消失：预算一次仍返回800/8,000/80,000条；最近50条同样先读完目标世界，完整导出按预期读取全部目标流水。UI三份汇总一次刷新发出3次读取，在内存fixture中分别返回合计1,002/10,002/100,002条。按当前内存后端每次遍历全部Map的实现核计，检查行数为3,000/30,000/300,000；这不是原生IndexedDB扫描数。
+
+证据与复现：忽略目录build/task-118/usage-benchmark.mjs、memory-baseline.json、memory-optimized.json、memory-verified.json（表中复跑数据）。先pnpm build:sync-server，再node build/task-118/usage-benchmark.mjs current，可在同次运行比较原summary和预算投影，并重新校验全部数值。无真实业务数据。
+
+### 原生IDB / React：尚未验证
+
+已准备apps/web/build/task-118-usage.html（忽略文件），使用真实createIndexedDbEntityStore和useUsage、随机fixture库，计划记录原生IDBIndex.getAll返回行数、请求数及隔离hook宿主渲染数。临时Vite成功启动，但两次浏览器工具启动均因宿主沙箱初始化错误失败；页面测试没有执行。服务已停止。
+
+**待验证（归 Codex）**：1k/10k/100k原生IDB耗时/扫描行数、实际useUsage渲染次数、双连接与浏览器重启、真实App渲染行为。不能把116的事务验证或本次内存基准充当D06浏览器性能证据。
+
+### 20条新常驻回归
+
+覆盖逐币种总计/未知价格/零token/校准与完整summary一致；不访问无关模型/角色字段；空集；10种世界/对话/回合/类别/时间及组合过滤；索引时间边界与无listSince回退；另一个ledger补录旧时间；同ID覆盖及同数量替换；ledger删除/Repository直接删世界；每次读最新原始数据与读取错误上抛；既有迁移11之后的索引/回退结果；旧适配器没有专用口仍可工作。
+
+这些测试证明投影与现有规则一致，**不是证明现有D07规则正确**。D06投影不改变旧预算规则来让性能测试更容易通过；新D07映射另有13条独立回归。
+
+### D07旧模式复核与新显式币种分支
+
+只读智能体实际执行21组合成输入，保存完整输入、输出及依赖源码哈希于build/task-118/d07-review/results.json，复现脚本为同目录reproduce.mjs。没有改策略源码或常驻测试。21组完整/轻量预算结果一致。
+
+固定旧maxCost=100（未绑定币种），费用来自generation，额外调用始终0：
+
+| 追加后的状态 | CNY金额/计费条数 | USD金额/计费条数 | 当前采用值 | burned |
+| --- | --- | --- | --- | --- |
+| CNY两笔、USD两笔 | 120 / 2 | 2 / 2 | CNY120 | true |
+| 再加USD一笔 | 120 / 2 | 3 / 3 | USD3 | false |
+| 再加CNY零token计费调用 | 120 / 3 | 3 / 3 | CNY120 | true |
+| 再加USD零token计费调用 | 120 / 3 | 3 / 4 | USD3 | false |
+
+最后两行金额未变仍能解除熔断。根因是total.cost只代表按计费条数选择的展示主币种，而预算没有比较total.costs各项。旧maxCost兼容模式仍存在此问题；本批只有显式配置maxCostByCurrency才采用逐币种判断，旧数据不被自动分配币种，不能标成全端修复。
+
+其他实际结果：全无价格时cost/remainingCost为null，金额上限不触发；3次无价分析在maxExtraCalls=3时触发次数护栏；有价零token计数但费用0；100次未知价加已知CNY2时旧金额上限100仍显示98余量，不能视作真实剩余额度。缺失usage也会记0 token，目前无法据零token证明免费；无累计token上限。本轮不私自设置兜底阈值。
+
+### D07已实现的显式内核契约（13条新增回归）
+
+- BudgetLimits新增可选maxCostByCurrency: Record<string,number|null>|null。字段缺省时保留旧maxCost模式；显式传入映射（包括空对象/null）时，以映射为准，不再叠加旧标量。空映射是主动清空金额限制，不是自动迁移。
+- 逐项读取total.costs，对每个已配置币种分别算known cost/limit/remaining/exceeded，任一超限则burned，并在reason说明币种；次数护栏独立保留。金额数值不换汇、不合并符号/代码，按原币种标签精确匹配。
+- 未列在映射中的币种limit为null，不仅因混币就停；无该币种计价记录时cost/remaining为null，不编成免费。上限仍沿用正数有效、null/非正数无上限的兼容口径。
+- BudgetState新增兼容可选字段costPolicy、currencyBudgets、unpricedCalls、needsCurrencySelection。旧正数maxCost标needsCurrencySelection；此标志目前未被旧UI展示。per-currency模式的remainingCost不塞入任一单币种结果，而为null，逐币种余量在currencyBudgets内。
+- 只比较已知已计价费用，不是预扣费或结算余额；缺失usage记0的历史问题没有被该字段解决。没有新的强制次数阈值或token上限。
+
+13条回归覆盖：非主币种超限、零token变主币种不解除超限、各自阈值/绝不相加、到点及多个原因、未设限币种、空/null映射优先级、旧配置待绑定、无价格与次数护栏、有价零token、完整/投影输入一致且不变历史、标签不合并、只读映射自有键。与D06的20条合计33条新增测试。
+
+### 建议方案与需用户确认的边界
+
+原审计D07明确列为产品选择，建议A：每币种独立上限，任一达到上限停止导演/后台，正文策略不变，不换汇、不改历史账单币种。内核已新增可选maxCostByCurrency及逐币种状态，复用total.costs，不改展示主币种排序；尚未接前端，也未启用或迁移任何用户配置。
+
+前端需要确认并展示：显式映射仅约束已配置币种、未设限项继续但应标明；旧maxCost由用户明确指定币种后迁移，确认前是否暂停辅助调用或保留旧模式并警告；未知费用是否强制次数护栏及阈值；旧客户端不理解新字段时的升级要求。不能自动把旧100分配给某个币种或复制为所有币种各100。
+
+D06若继续减少三次UI读取，应先复用单次原始快照批量产生三份汇总，需修改范围外apps/web/src/lib/usage.ts；实际索引/分页能力涉及db.ts，必须先量化原生路径并遵守迁移前快照要求。D07完整编辑/说明涉及范围外UsagePanel.tsx；优先复用App.tsx/RuntimePanel.tsx/session.ts既有透传，不先改这些文件。旧表单仅保存maxCost/maxExtraCalls，若直接启用新映射后仍用旧表单保存，会丢掉映射，因此必须先接编辑器。下一批建议授权useUsage所在usage.ts与UsagePanel.tsx，或交部分二接线；db.ts索引改动另外确认，不擅自越界。
+
+### 五项门禁
+
+按typecheck → lint → test → build → build:sync-server顺序实跑；Node24.16.0 / pnpm11.22.0，全部退出0。
+
+| 门禁 | 实际结果 | 用时 |
+| --- | --- | --- |
+| pnpm typecheck | core、web及tools、sync-admin通过 | 2.39s |
+| pnpm lint | 401文件，0错误、0警告 | 0.87s |
+| pnpm test | Core1061（86文件）+ Web319（41文件）+ 管理/网关/CORS 134 + 桥接15 = **1529/1529**，0失败、0跳过 | 24.77s |
+| pnpm build | core/web/sync-admin通过，web205模块 | 2.18s |
+| pnpm build:sync-server | 同步宿主编译通过 | 0.68s |
+
+常驻新增测试为D06 20条+D07 13条＝33条；独立智能体21组合成复现和内存性能样本不重复计入1529。日志见build/task-118/final-*.log及gate-results.json。
+
+### 回退与未关闭项
+
+无迁移/缓存/持久聚合，无账单写法变化，预算路径回退可恢复原summary读取，不删流水、库、WAL或113–117元数据；撤回币种内核会失去对新映射的保护，不能删除新字段伪装兼容，回退前须说明降级风险。不使用禁止的Git恢复命令。D06索引/刷新与原生验证未完成，D07只有显式内核、旧配置迁移/前端仍待确认；B08–B12/A08和跨线接线仍未关闭。未提交、未push、未部署。
+
 ## 顺序117：情绪撤销与观察者合并（2026-10-08，本分支自有记录）
 
 ### 基线、分工与文件边界

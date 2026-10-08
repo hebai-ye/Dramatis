@@ -12,6 +12,19 @@
 > 第二～五节的时间表是 23:05 的快照（当时仓库里还没有 T17/T18/T2/T2c 这些提交），
 > 之后新增或改过的文件统一记在第七节，以**提交时间**为准。
 
+## 顺序118：D06投影与D07显式币种内核（2026-10-08，本分支自有表）
+
+| 文件 | 动作 | 内容 |
+| --- | --- | --- |
+| packages/core/src/storage/usage.ts | 修改 | UsageBudgetSummary、纯预算投影及可选ledger专用读口，复用旧过滤、不加缓存 |
+| packages/core/src/storage/budget.ts | 修改 | 兼容投影输入；显式maxCostByCurrency及逐币种状态，旧maxCost不自动迁移 |
+| apps/web/src/lib/worker.ts | 修改 | 预算检查优先专用口，旧适配器回退summary |
+| packages/core/src/storage/usage-budget.test.ts | 新增 | 20条等价、过滤、补录、迁移、删除与失效安全回归 |
+| packages/core/src/storage/budget-currency.test.ts | 新增 | 13条显式映射、主币种变化、未知价格与旧配置兼容回归 |
+| docs/{STATUS,TASKS,EVAL,FILE-LOG}.md | 修改 | 仅118自有小节，实际基准、D07旧模式复现/新分支、未完成接线与范围确认 |
+
+合成基准、只读智能体脚本/结果与门禁日志留在忽略目录build/task-118；待执行原生基准页在apps/web/build（忽略）。未改任何范围外前端源文件、依赖、锁文件或schema。未提交/未push/未部署。
+
 ## 顺序117：A04/A05/A07团队实施（2026-10-08，本分支自有表）
 
 | 文件 | 动作 | 内容 |

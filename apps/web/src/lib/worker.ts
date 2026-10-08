@@ -587,7 +587,9 @@ export function useBackgroundWorker(options: {
           const room = await db.repository.getRoom(roomIdForBudget);
           const limits = room?.budget ?? null;
           if (limits !== null) {
-            const state = evaluateBudget(await db.ledger.summary({ roomId: roomIdForBudget }), limits);
+            const filter = { roomId: roomIdForBudget };
+            const summary = await (db.ledger.budgetSummary?.(filter) ?? db.ledger.summary(filter));
+            const state = evaluateBudget(summary, limits);
             if (state.burned) {
               // 直接收掉这一条：留着会让它每次启动都重跑一遍
               await settleBackgroundTask(db.store, lease);

@@ -1,4 +1,4 @@
-import type { UsageSummary } from './usage.js';
+import type { UsageBudgetSummary, UsageSummary } from './usage.js';
 
 /**
  * 调用预算与熔断（ROADMAP P1-9）。
@@ -16,6 +16,17 @@ export interface BudgetLimits {
   maxExtraCalls?: number | null;
   /** 本局最多花多少钱（用配置里的币种）。null / undefined 表示不限。 */
   maxCost?: number | null;
+  /** Explicit map; present (including null/empty) overrides maxCost. No automatic currency migration. */
+  maxCostByCurrency?: Record<string, number | null> | null;
+}
+
+export interface CurrencyBudgetState {
+  currency: string;
+  /** Known priced amount only; null if there are no priced records in this currency. */
+  cost: number | null;
+  limit: number | null;
+  remaining: number | null;
+  exceeded: boolean;
 }
 
 export interface BudgetState {
@@ -31,6 +42,11 @@ export interface BudgetState {
   remainingCalls: number | null;
   /** 还剩多少钱；不限或没单价时是 null。已经超了按 0 记。 */
   remainingCost: number | null;
+  /** Additive diagnostics; optional for consumers constructing legacy BudgetState objects. */
+  costPolicy?: 'legacy-primary' | 'per-currency';
+  currencyBudgets?: CurrencyBudgetState[];
+  unpricedCalls?: number;
+  needsCurrencySelection?: boolean;
 }
 
 function numberOrNull(value: number | null | undefined): number | null {
@@ -38,18 +54,44 @@ function numberOrNull(value: number | null | undefined): number | null {
   return value;
 }
 
-export function evaluateBudget(summary: UsageSummary | null, limits: BudgetLimits | null): BudgetState {
+export function evaluateBudget(
+  summary: UsageSummary | UsageBudgetSummary | null,
+  limits: BudgetLimits | null,
+): BudgetState {
   const extraCalls = summary === null ? 0 : extraCallsOf(summary);
   const cost = summary?.total.cost ?? null;
 
   const maxCalls = numberOrNull(limits?.maxExtraCalls);
   const maxCost = numberOrNull(limits?.maxCost);
 
+  const perCurrency = limits?.maxCostByCurrency !== undefined;
+  const configured: Record<string, number | null> = perCurrency ? (limits?.maxCostByCurrency ?? {}) : {};
+  const costs = summary?.total.costs ?? [];
+  const currencies = new Set([...costs.map((entry) => entry.currency), ...Object.keys(configured)]);
+  const currencyBudgets: CurrencyBudgetState[] = [...currencies].sort().map((currency) => {
+    const amount = costs.find((entry) => entry.currency === currency)?.cost ?? null;
+    const limit = numberOrNull(Object.hasOwn(configured, currency) ? configured[currency] : undefined);
+    return {
+      currency,
+      cost: amount,
+      limit,
+      remaining: limit === null || amount === null ? null : Math.max(0, limit - amount),
+      exceeded: limit !== null && amount !== null && amount >= limit,
+    };
+  });
   const callsExceeded = maxCalls !== null && extraCalls >= maxCalls;
-  const costExceeded = maxCost !== null && cost !== null && cost >= maxCost;
+  const exceededCurrencies = currencyBudgets.filter((entry) => entry.exceeded);
+  const costExceeded = perCurrency
+    ? exceededCurrencies.length > 0
+    : maxCost !== null && cost !== null && cost >= maxCost;
 
   let reason: string | null = null;
-  if (callsExceeded && costExceeded) reason = `额外调用已到 ${String(maxCalls)} 次，花费也到了上限`;
+  if (perCurrency && costExceeded) {
+    const moneyReason = exceededCurrencies
+      .map((entry) => `${entry.currency}花费已到${String(entry.limit)}上限`)
+      .join('；');
+    reason = callsExceeded ? `额外调用已到${String(maxCalls)}次；${moneyReason}` : moneyReason;
+  } else if (callsExceeded && costExceeded) reason = `额外调用已到 ${String(maxCalls)} 次，花费也到了上限`;
   else if (callsExceeded) reason = `额外调用已到 ${String(maxCalls)} 次`;
   else if (costExceeded) reason = '本局花费已到上限';
 
@@ -59,12 +101,17 @@ export function evaluateBudget(summary: UsageSummary | null, limits: BudgetLimit
     burned: reason !== null,
     reason,
     remainingCalls: maxCalls === null ? null : Math.max(0, maxCalls - extraCalls),
-    remainingCost: maxCost === null || cost === null ? null : Math.max(0, maxCost - cost),
+    remainingCost: perCurrency || maxCost === null || cost === null ? null : Math.max(0, maxCost - cost),
+    costPolicy: perCurrency ? 'per-currency' : 'legacy-primary',
+    currencyBudgets,
+    unpricedCalls: summary === null ? 0 : Math.max(0, summary.total.calls - summary.total.pricedCalls),
+    needsCurrencySelection: !perCurrency && maxCost !== null,
   };
 }
 
 /** 生成之外的调用次数：总次数减去角色生成那部分。 */
-export function extraCallsOf(summary: UsageSummary): number {
+export function extraCallsOf(summary: UsageSummary | UsageBudgetSummary): number {
+  if ('extraCalls' in summary) return summary.extraCalls;
   const generation = summary.byCategory.find((group) => group.key === 'generation');
   return summary.total.calls - (generation?.totals.calls ?? 0);
 }

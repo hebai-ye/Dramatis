@@ -90,6 +90,63 @@ build/task-120/production-budget-smoke.json保存逐步断言、模块资源类�
 旧未绑定maxCost仍须用户明确选币种、确认并保存，不能宣称legacy漏拦已自动修复；未知费用也不自动换算为免费或默认熔断。回退仅逐文件比对本批改前快照，保留113–119，不做数据库逆迁移或覆盖正式库。回退前应保留已存预算和未保存草稿；旧客户端不认识maxCostByCurrency时不能保证同样的熔断策略。
 
 四份文档仅新增各自120标记块；剥除本批块后须与baseline-119逐字节一致。未新增依赖、未改锁文件/生产去重、未访问用户数据库、未提交、未push、未部署。用户真实体验与最终是否push/部署尚待用户决定，测试通过不构成发布授权。
+<!-- task-120-release:begin -->
+### 2026-10-08正式发布续记：已推送，正式部署等待执行
+
+#### 授权、代码链与远端证据
+
+用户追加明确push／部署／保留回滚授权，并在安全检查要求下分别确认现有Windows正式机的独立staging目录、现有代码仓库的main／工作／回滚分支目的地。没有改用未确认的目的地或规避审批。此前本节本地交付的“未提交／未push／未部署”为当时时态；以下为之后实际进展。
+
+已从357c47a按留存稀疏快照叠加完整基线，形成连续八个单号提交；独立审查逐项比较完整tree、blob原始字节、文件模式、父链，删除数与内容异常均0，116使用baseline-116-clean，保留112的全部41个相关路径。不是用稀疏快照替代完整仓库，也未运行reset／restore／checkout／stash／clean。只调整独立索引和当前分支引用，工作文件字节保持，激活后工作区干净。
+
+| 顺序 | 代码提交 | 快照累计文件数 |
+|---|---|---:|
+| 113 | 599e5563ef1eef3d4932adf0e7d8028e66c0c7f9 | 36 |
+| 114 | fea950bda6fb54e3ed7faf5665ef5ef0bbcb20e3 | 42 |
+| 115 | 20680c3234cec513e02175fa77e3b50791e569bf | 51 |
+| 116 | 0bbe0f54e8034efc19b39558a22a1cd652604556 | 61 |
+| 117 | d6ef1d893d52814240fcc3b322f4ad2003b9d338 | 68 |
+| 118 | 95f6d46cd02c5426f58c13c67c6836902042394b | 72 |
+| 119 | e72db8790b0345f7495d818cd491f8555152ceed | 80 |
+| 120 | baa35c8f877216ae79a62f53abd987857a869a6a | 89 |
+
+没有逐一重跑八个新提交节点的门禁，历史日志仅证明当时批次；最终tree对应本节1818/1818及五门禁实跑版本。主线、codex/task-113-core-correctness-continue以非强制原子push到baa35c8，codex/rollback-task120-20261008-186b1ed6同时保留357c47a基线；push-code-verified.txt记录ls-remote三个ref结果。发布续记是后续仅文档提交，不改变上述程序构建来源。
+
+#### 暂存包与正式运行时隔离验证
+
+上传候选包328文件、27313035B，SHA-256 ad4236676f60524dfe7b12dc59e4b7bae67636fab9a213ef4caa81798b1e00fd。保留monorepo相对布局：同步dist完整树及内嵌quota-policy／api-accounting／vip-plans，start／gateway／backup启动脚本，管理dist与web、ESM标记，15项已有测试及2个durability辅助模块，验收runner／回环guard，以及183个候选网页文件。包中不含服务秘密配置、凭据或数据库。
+
+远端解包前检查SHA与条目边界，解包后328项长度／SHA匹配；runner的144文件验证闭包通过，三份内嵌共享模块配对一致。正式Node22.23.3、SQLite3.51.3运行既有15个mjs测试，测试134、通过134、失败／取消／跳过／todo均0；accepted=true，候选运行期间变化0，临时夹具剩余0。runner为每次测试创建独立TMP／HOME／cwd，清空DRAMATIS和供应商环境，仅允许回环网络，不启动正式服务、不发真实模型请求。不能将134称为1818项全量门禁已在Node22执行，远端CI仍另列未验。
+
+首次使用PowerShell原生stderr重定向时，SQLite实验性warning触发NativeCommandError并中止，未产出有效summary；只读确认无残留测试进程后，改用Start-Process Hidden分别保存stdout／stderr，再按实际退出码验收。警告保留、不改变断言，不把首测写成成功。原始Node22 summary、TAP、stderr和invocation留在本批远端独立暂存目录；本地node22-result.json记录精确索引。
+
+#### 正式环境预检、运维自检与当前阻塞
+
+实际部署拓扑沿用既有Windows六服务，正式同步／管理／网关仍为4c5169a程序，网页仍为112；未用过时Linux模板替换当前拓扑。已只读核对三写入角色实际env／WinSW路径均指同库；同步／管理配额为96MiB，回环监听，管理审计文件具备服务身份读写权限；网关stop timeout为20秒，覆盖应用10＋2秒有界排空。未显示token／模型key，不将真实地址／账户写进仓库。
+
+本地与服务器PS5脚本自检均通过：四脚本ParseFile、受保护ACL、状态文件更新、危险程序路径拒绝；Node22只读VACUUM INTO在合成accounts／spaces／records／heads夹具的quick_check、schema／计数一致性通过。独立审查发现原快照统计误用sync_spaces／sync_records、重解析路径及metadata重试前置不足，已改为真实表名、realpath核验及已存在metadata拒绝；不代表正式快照已经生成。File.Replace的null参数绑定问题通过唯一previous状态文件保留修正。所有这些修改只在忽略运维脚本，不改产品源码或测试结论。
+
+**截至本续记，正式prepare-release命令两次审批服务均因content_filter／stream中断返回未执行。**没有发生正式程序或配置备份、正式DB一致性快照、停服务、目录切换或新版本HTTP验收。没有改用其他通道绕过。当前代码已push、候选已暂存并通过Node22隔离测试，但仍不是部署完成；不把旧服务Running当新服务上线证据。
+
+#### 回滚资源及恢复执行清单
+
+| 资源／步骤 | 实际状态与规则 |
+|---|---|
+| 源码退路 | 本地及远端基线分支已保存；89个改动文件逐文件SHA副本在working-copy-before-commit；pre-publish.bundle与verified-release.bundle均verify通过 |
+| 正式程序／配置退路 | 尚未执行；prepare脚本计划完整复制旧sync／admin／api／web、WinSW XML与Caddy配置到仅管理员/SYSTEM可访问的独立目录，核验manifest后才许可切换；准确路径仅在LOCAL-NOTES与忽略release状态 |
+| 数据一致性退路 | 尚未执行；应先协调停止gateway、admin、sync并确认Node子进程退出及端口释放，再用只读源连接VACUUM INTO唯一partial、校验quick_check／schema／表计数、文件fsync后发布bak并记录SHA。保留partial／失败证据，不清WAL，不改定时备份保留策略 |
+| 新旧静态兼容 | 计划以183新网页文件为主，补入旧实际目录的哈希JS／CSS及传递依赖；同路径不同SHA必须停止。绝不覆盖新index／sw／shell清单，不合并新旧shell；旧资源可取不等于旧PWA已更新 |
+| 切换顺序 | 备份通过后保留旧目录、逐组件改名换新；先sync且核对storageQuota.version=1／100663296，再鉴权admin API就绪，再gateway无模型请求探活，最后网页；两次移动不宣称原子零中断 |
+| 自动失败恢复 | 脚本尚未在正式环境运行。只按已验证retired/copy恢复兼容程序，保留失败新目录和状态日志；恢复后须核对旧首页SHA、服务／端口／配额。禁止从旧快照覆盖当前DB／WAL／SHM或删除新账本、repair、analysis世代等数据 |
+| 发布验收 | 尚未执行。候选实盘全文件哈希；新shell24项及旧保留JS/CSS经HTTP状态／MIME／SHA核验；SW必须重验，HTML／shell若无缓存头如实记录既有启发式缓存风险；另做标准TLS公网探针，不将包文件数冒充HTTP验收数 |
+
+如果需要时间点数据恢复，须另行明确授权并说明数据损失窗口，先保全当前状态；日常程序回退不能用旧库回拷来丢弃上线后写入。新逐币种预算在旧网页可能失去金额熔断或被覆盖，新本地分析凭证也不受旧worker遵守，回滚前须停旧/新并行写入并评估客户端版本，不能只降级网页就声称保护相同。B12生产仍不接线、B08–B11/A08等待拍板和前述跨线边界保持。
+
+本续记仅追加四份文档各自120块；旧120及113–119正文逐字节保留。已完成的是代码push、远端暂存验证和运维脚本自检；正式部署因执行审批阻塞仍待完成，任何上线完成或生产回滚演练结论都必须以后续实际证据追加。
+
+独立回滚审查另确认两项潜在故障，已只在本地忽略脚本修正：部分目录移动后live环境文件不存在时，恢复旧目录前不得读取live配置；网页回退应预构造保留新旧哈希资源的旧HTML恢复目录，避免已加载新版的客户端缺分包。修复后本地语法／ACL／状态自检通过，尚未重新上传或实机执行最新回滚脚本；恢复部署前必须再次核验版本和结果。
+<!-- task-120-release:end -->
+
 <!-- task-120-owned:end -->
 
 ## 顺序119：单次账单快照与预算编辑草稿（2026-10-08，本分支自有记录）

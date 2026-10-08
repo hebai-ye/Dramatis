@@ -49,6 +49,30 @@
 
 **范围保持**：原方案实际列明 **22个ID，不是23个**，不补造编号或宣称所有功能完成；B08–B11、B12生产语义和A08继续待拍板，B12本轮仅离线量化。C08 README、B16粘贴source、A13 web提示不扩线；受保护预算事务不等于任意saveRoom都有CAS或跨设备exactly-once。用户最终体验与是否push／部署待决定；未提交、未push、未部署。
 
+<!-- task-120-release:begin -->
+### 顺序120发布续记（已推送，部署待完成）
+
+用户已确认SSH及GitHub目标并追加明确发布授权；本段只记录此前120本地验收之后的真实动作，不覆盖113–120已验收段落，也不删除当时“未push／未部署”的历史状态。113–120八批代码已实际push；本次四md发布续记属于随后文档变更，由主代理另行commit／push。STATUS/EVAL仍由主代理维护。
+
+| 文件／引用 | 动作／阶段 | 真实结果与证据 |
+| --- | --- | --- |
+| 113–120代码提交及远端分支 | 八提交已激活、push成功并核验 | `main`与`codex/task-113-core-correctness-continue`均为`baa35c8f877216ae79a62f53abd987857a869a6a`；成功工具回执与远端校验见`build/task-120/release/push-code-verified.txt`。这里是代码push结果，不把本次尚待单独提交的发布文档算作已推送 |
+| 远端`rollback-task120-20261008-186b1ed6` | 已建立并核验的Git退路 | 精确指向`357c47ac274d8b59a9c53810f88eef0d4d3c5d1e`；不把Git回退引用当作数据库备份或线上程序目录已恢复 |
+| build/task-120/release/pre-publish.bundle；build/task-120/release/verified-release.bundle | 两份本地bundle及rollback refs均验证 | 连同既有89文件源码保全，构成代码／提交层保全；89不是上传包文件数，bundle不能替代正式SQLite一致性快照 |
+| build/task-120/release/candidate.tar.gz | 候选包及hash已核验；尚未正式部署 | 328文件、27313035B；SHA-256 `ad4236676f60524dfe7b12dc59e4b7bae67636fab9a213ef4caa81798b1e00fd`；source `baa35c8`对应上述完整代码HEAD。144文件验证闭包及328文件artifact hash匹配；候选校验不等于正式安装目录或HTTP逐项验收 |
+| build/task-120/release/node22-result.json | 正式Node22候选验证通过 | Node22.23.3、15文件134/134全部pass、accepted=true，临时夹具无残留；兼容验证复跑不计新增，也不证明正式服务已升级 |
+| build/task-120/release/node22-attempt-status.json | 保留首次捕获问题与修正经过 | 首次PowerShell stderr捕获把SQLite ExperimentalWarning当错误；改用`Start-Process -WindowStyle Hidden`分流stdout／stderr，核对退出码与两路输出，没有忽略测试或警告制造成功 |
+| build/task-120/release/（模板／运维脚本准备产物） | local及远端PowerShell5 selftest通过 | 主代理确认脚本自测通过；这不是正式prepare、停服、SQLite备份或目录切换的执行结果 |
+| 远端prepare-release审批／工具回执 | 两次stream中断，均明确未执行 | 审批服务返回`content_filter`导致stream断开；未执行stop、正式备份、replaceDB或目录替换。保留该未执行事实，不写成生产部署失败后已回滚，不编造运行日志 |
+| 正式旧产物／SQLite一致性快照／部署后验收 | 尚未执行，部署待完成 | 尚无可认领的正式备份、切换或切换后健康／静态hash结论。实际生产及备份路径只索引主代理维护的忽略`LOCAL-NOTES`，不转写到tracked文档 |
+| docs/{TASKS,FILE-LOG}.md | 仅在120块追加本发布续记 | 旧验收段落原字节保留；STATUS/EVAL由主代理更新，四md发布记录最后由主代理单独commit／push。本次没有新增tracked发布报告或修改代码／测试 |
+
+**退路状态**：精确Git回滚分支与两份bundle已经验证，但正式备份／部署尚未执行，未发生生产回滚，也不宣称生产恢复演练通过。后续程序／静态回退须先有兼容性及正式旧产物证据，协调sync/admin/gateway共享库的写入者并复核恢复后的健康；**禁止旧DB、WAL、SHM覆盖当前数据或丢弃新写入**，禁止用回灌旧库或未经批准的降级schema强行兼容旧程序。代码bundle不是数据库快照；数据灾难恢复必须独立授权与保全，不能夹带在程序回滚中。
+
+**当前交付边界**：代码push已实证，正式部署待完成；可能须用户恢复审批通道后由主代理继续，不绕过审批或把未执行请求当作已执行。正式发布后服务版本／健康／静态hash、用户体验及实际生产回滚能力尚不能从本地1818绿灯、6原生＋6UI或Node22的134复跑外推。原方案22个列明ID而非23个、B08–B11／B12生产语义／A08待拍板及C08 README／B16粘贴source／A13 web提示边界保留；B12仅离线量化，CAS及PWA／全端验证不扩大。所有真实host、IP、用户名、密钥及绝对生产路径仅留主代理忽略运维记录。
+
+<!-- task-120-release:end -->
+
 <!-- task-120-owned:end -->
 
 ## 顺序119：批量刷新及预算编辑准备（2026-10-08，本分支自有表）

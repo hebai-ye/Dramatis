@@ -57,6 +57,28 @@
 
 **盘点与交付边界**：原方案实际列明 **22个ID，而非23个**；工作项与测试用例分开，不补造第23项，不宣称所有功能完成。**B08–B11、B12生产语义、A08仍待拍板**；C08 README、B16粘贴source、A13 web提示等边界不借120扩大。本地体验入口已由主代理启动，仅回环新origin，共享同步后端禁用；地址只保留在忽略产物`build/task-120/local-experience.json`，由主代理完成文档后打开给用户。用户最终体验和是否push／部署待决定，未提交／未push／未部署。
 
+<!-- task-120-release:begin -->
+### 顺序120发布续记（已推送，部署待完成）
+
+用户后续已确认SSH及GitHub目标，并明确授权push、部署、回滚退路和完整四md记录。本子节只追加后续事实；上文“未提交／未push／未部署”是本地验收收口时的状态，原文保留。**此处“已推送”指113–120八批代码提交；本次发布文档续记将由主代理另行commit／push，正式部署尚未执行。**
+
+| 环节 | 已核验事实与当前状态 |
+| --- | --- |
+| 八批代码激活与push | 113–120八个提交已激活并实际推送成功；远端`main`与`codex/task-113-core-correctness-continue`均为`baa35c8f877216ae79a62f53abd987857a869a6a`。工具回执及远端核验见`build/task-120/release/push-code-verified.txt`，不再沿用之前仅prepare／push待回执的阶段状态 |
+| 精确Git退路 | 远端`rollback-task120-20261008-186b1ed6`已核验指向`357c47ac274d8b59a9c53810f88eef0d4d3c5d1e`；本地rollback refs及`build/task-120/release/pre-publish.bundle`、`build/task-120/release/verified-release.bundle`均验证。它们是代码／提交层退路，不是正式旧程序目录备份或SQLite一致性快照 |
+| 候选包与来源 | `build/task-120/release/candidate.tar.gz`为328文件、27313035B，SHA-256 `ad4236676f60524dfe7b12dc59e4b7bae67636fab9a213ef4caa81798b1e00fd`，candidate source `baa35c8`对应上述代码HEAD；144文件验证闭包与328文件artifact hash匹配已核验。328不是HTTP验收数，候选校验不等于正式安装或目录切换 |
+| 正式Node22候选验证 | Node22.23.3，15文件、134/134全部通过，accepted=true，临时夹具无残留；见`build/task-120/release/node22-result.json`。这是兼容验证复跑，不累加为上段1818之外的新增用例，也不等于运行服务已换版 |
+| Node22首次捕获问题 | 首次PowerShell把stderr中的SQLite ExperimentalWarning当错误；随后以`Start-Process -WindowStyle Hidden`分流stdout／stderr，检查真实退出码与两路输出，未忽略测试或警告。首次尝试留痕见`build/task-120/release/node22-attempt-status.json` |
+| 模板与运维脚本自测 | 主代理确认local及远端PowerShell5 selftest均通过；相关准备产物留在忽略目录`build/task-120/release/`。selftest与正式prepare执行分开，不将自测通过记为停服、备份或部署已完成 |
+| 正式prepare的阻塞 | 申请远端`prepare-release`两次，均在审批服务层因`content_filter`导致stream断开，工具回执明确未执行。没有执行stop、正式备份、replaceDB或目录替换；不是部署开始后的失败回滚，不编造正式执行成功日志 |
+| 正式部署及后验收 | **部署待完成**。正式旧产物备份、SQLite一致性快照、安装切换及切换后的服务健康／静态hash验收均尚未执行；此前本地五门禁1818、原生6/6及本地生产构建UI6/6不替代这一阶段 |
+
+**回滚路径与禁忌**：目前可核验的退路是上述精确Git分支与两份bundle；正式应用／数据备份尚未建立，不能声称生产回滚准备或演练已经完成。常规回滚只回退经验证兼容的程序／静态产物，**禁止用旧DB、WAL、SHM覆盖当前生产数据**。sync/admin/gateway同库时必须协调相关写入者，禁止未验证的新旧混版写库；旧程序与当前schema／数据不兼容时停止自动回退，不降级schema或回灌旧库。保留旧产物、失败新产物及日志；真实生产／备份操作路径只索引主代理维护的忽略`LOCAL-NOTES`，本节不复制地址、用户名或凭据。
+
+**下一阶段与边界**：当前阻塞在审批服务，可能需要用户恢复审批通道后，由主代理重新核对现场并按授权流程执行prepare、一致性备份、切换及正式验收，不绕过审批。此次已完成代码push，不宣称正式上线或用户最终体验完成；发布文档由主代理单独commit／push。原方案22个列明ID而非23个、B08–B11／B12生产语义／A08待拍板、C08 README／B16粘贴source／A13 web提示跨线边界继续保留；B12仍仅离线量化，CAS不泛化为任意saveRoom或跨设备exactly-once，PWA升级／离线等未实证范围不因代码推送而关闭。
+
+<!-- task-120-release:end -->
+
 <!-- task-120-owned:end -->
 
 ## 2026-10-08：顺序119 授权内批量刷新/预算编辑（本分支自有记录）

@@ -176,6 +176,35 @@ export interface UsageSummary {
   lastAt: string | null;
 }
 
+export interface UsageScope {
+  roomId: RoomId | null;
+  conversationId: ConversationId | null;
+  turnId?: string | null;
+}
+
+export interface UsageScopeSummary {
+  world: UsageSummary | null;
+  conversation: UsageSummary | null;
+  latestTurn: UsageSummary | null;
+}
+
+/** All three views derive from the same raw-row snapshot, never a persistent summary cache. */
+export function summarizeUsageScope(records: readonly UsageRecord[], scope: UsageScope): UsageScopeSummary {
+  if (scope.roomId === null) return { world: null, conversation: null, latestTurn: null };
+  const world = records.filter((record) => record.roomId === scope.roomId);
+  const conversation =
+    scope.conversationId === null ? null : world.filter((record) => record.conversationId === scope.conversationId);
+  const turn = scope.turnId ?? null;
+  return {
+    world: summarizeUsage(world),
+    conversation: conversation === null ? null : summarizeUsage(conversation),
+    latestTurn:
+      conversation === null || turn === null
+        ? null
+        : summarizeUsage(conversation.filter((record) => record.turnId === turn)),
+  };
+}
+
 /** Budget checks need no speaker/model/category breakdown tables. Totals remain currency-separated. */
 export interface UsageBudgetSummary {
   total: UsageTotals;
@@ -383,6 +412,8 @@ export interface UsageLedger {
    * 结果与记录的到达顺序无关。
    */
   summary(filter?: UsageFilter): Promise<UsageSummary>;
+  /** Optional for old adapters; createUsageLedger reads the requested world just once. */
+  scopeSummary?(scope: UsageScope): Promise<UsageScopeSummary>;
   /** Optional for legacy adapters; avoids unused breakdowns, NOT the underlying row scan. */
   budgetSummary?(filter?: UsageFilter): Promise<UsageBudgetSummary>;
   /** 世界被彻底删除时一并清账，返回删掉的条数。 */
@@ -475,6 +506,12 @@ export function createUsageLedger(store: EntityStore): UsageLedger {
        * 一条任务就重算一次熔断账单）。
        */
       return summarizeUsage(await read(filter));
+    },
+
+    async scopeSummary(scope: UsageScope): Promise<UsageScopeSummary> {
+      if (scope.roomId === null) return { world: null, conversation: null, latestTurn: null };
+      const selected = { roomId: scope.roomId, conversationId: scope.conversationId, turnId: scope.turnId ?? null };
+      return summarizeUsageScope(await read({ roomId: selected.roomId }), selected);
     },
 
     async budgetSummary(filter: UsageFilter = {}): Promise<UsageBudgetSummary> {

@@ -2,6 +2,87 @@
 
 这份文档记录「怎么知道它真的能工作」。分两部分：可以随时重跑的自动化基线，以及必须用真实模型做的人工验证。
 
+## 顺序119：单次账单快照与预算编辑草稿（2026-10-08，本分支自有记录）
+
+### 授权、基线与团队边界
+
+用户批准新增写范围apps/web/src/lib/usage.ts和apps/web/src/components/UsagePanel.tsx，并要求多智能体。fetch后origin/main仍为357c47a，登记空号119，前批72个改动文件快照保存在build/task-119/baseline-118。其他原有允许范围不变。两名智能体在共享工作区以不重叠文件分工：UI/纯草稿helper及其测试；独立只读审查、调度器和真实hook接线测试。主代理做批量数据读取、useUsage、导出和总集成。
+
+独立审查发现保存链路还涉及未获授权的App.tsx/RuntimePanel.tsx/session.ts，已向用户提出最小扩范围请求，本轮没有擅自修改。无新依赖、锁文件/schema变化、用户库或模型调用，不提交、push、部署。
+
+### D06实现：一次读取，不是持久缓存
+
+- UsageScope / UsageScopeSummary / summarizeUsageScope：从同一数组派生世界、对话、最近回合，复用原完整summarizeUsage，所有币种、角色、模型、校准、首末时间均保持原数值。
+- 可选UsageLedger.scopeSummary：createUsageLedger只read({roomId})一次；null世界不读取。公共入参在await前复制，避免外部修改scope令结果漂移。空世界返回空汇总，未选对话/回合返回null，不混入其他世界的同名ID。
+- readUsageScope给旧适配器保留多请求回退；回退结果也一起发布，但不冒充单物理快照。生产适配器支持新口。
+- createUsageScopeReader只保存归属和请求号，不缓存账单值。以ledger对象身份和room/conversation/turn区分作用域，A→B→A不会复活第一轮A的结果；最后发起的请求获胜，旧reload引用不能取消新请求。
+- useUsage用一次state setter发布三份汇总；在render只创建纯owner并按owner遮住旧数据，layout提交时activate、cleanup时deactivate。废弃render不影响当前作用域；旧卸载回调不能重启读取。
+- 当前读取失败保留同scope上次结果并暴露UsageApi.error，主动reload仍reject；hook自身自动effect捕获错误，失效请求的成功/失败都丢弃。范围外的void reload调用者仍需处理主动Promise，未宣称全站错误提示已完成。
+
+### D07实现：草稿和明确确认
+
+UsagePanel与纯budget-editor模块实现：
+
+- 逐币种已知费用、上限、剩余、触发状态；包含已经配置但还没有账单的币种。未知价格或缺失usage不能宣称免费，不自动设置次数阈值。
+- 旧maxCost初始不选币种，用户必须先选原标签、再按确认按钮、最后保存；选择/清空/增删都仅改草稿。不会复制旧阈值到多个币种，也不把当前展示主币种当作用户选择。
+- 显式空映射与未迁移区分；编辑次数保留已存映射；非法/重复币种、非有限/非正金额和非整数调用次数报错，保留草稿而非清空设置。
+- 币种是显示标签而非固定ISO代码，支持US $、人民币(元)、空格/标点，保留原值。CNY与尾随空格的CNY仍为不同键。仅拒绝纯空白、超长、控制字符及危险保留键。
+- 外部配置变化和乐观回滚保留当前组件内的脏草稿并提示冲突；草稿仅在内存中，刷新/卸载不会承诺保留，回退前应人工留存未保存输入。配置回显不当作落盘确认。返回void的上游仅显示“已提交，等待状态确认”，不伪造成功。
+- 可选worldId为编辑器key；**当前上游没传，因此新逐币种映射/迁移/清空在提交入口和按钮同时关闭**。legacy模式仍兼容旧接口，其上游竞态未关闭。这里是已实现的编辑器准备，不是完整可用的保存链路。
+
+### 独立审查：为何还需三份文件授权
+
+实际链路：App.tsx把onSaveBudget写为(limits)=>void session.setBudget(limits)，RuntimePanel原样透传；session.setBudget读取调用时snapshotRef.current，以整份Room保存，await后setSnapshot旧current。造成：
+
+1. 编辑器拿不到实际Promise，不能判断保存失败/成功；session无db/快照时还会正常resolve而不写。
+2. A的草稿留到B才点保存，会按当时current写到B；A/B预算数值相同不足以作为世界身份。
+3. A点击保存后切B，原写仍针对A，但完成回调可把界面回退成A的旧快照；同世界切对话或刷新消息也可能被旧快照回退。
+4. 外部预算修改未同步到props时，仅有UI草稿冲突检查不能代替存储事务内CAS。世界身份、保存结果与持久化版本检查需要贯通真实调用链。
+
+后续最小方向：App绑定明确世界与预览预算/版本并保留Promise，RuntimePanel传worldId/异步回调，session只更新对应世界预算、在事务内重验，完成时不得覆盖新世界/新快照；core已有atomic可复用。未获授权前不实现、不标完成。session.reloadWorld等其他入口也有独立旧快照风险，不因useUsage保护而自动消失。
+
+### 新增153条常驻回归
+
+| 测试 | 数量 | 覆盖 |
+| --- | --- | --- |
+| budget-editor.test.ts | 80 | 显式迁移/清空、旧模式、字段保留、数值/标签验证、未知费用、保存冲突/回显、无世界标识阻止新映射提交 |
+| usage-scope-reader.test.ts | 44 | owner/请求代次、A→B→A、旧回调、ledger/null切换、取消/停用/重新激活、错误、旧适配器和批量能力兼容 |
+| usage-hook.test.ts | 15 | 实际web useUsage+真实core reader，受控React host模拟layout/passive effect及cleanup、废弃render、一次setter批量发布、并行和卸载、当前失败保留数据 |
+| usage-scope-batch.test.ts | 14 | 三视图逐字段对账、至多一次读、null与缺失范围、跨世界隔离、单次快照一致、可变入参、结果不共享累计值、删除与读取故障 |
+
+整合定向153/153通过。没有改既有web测试或配置，core hook测试mock到web已安装的React模块，不新增依赖。受控host只证明调用/失效逻辑，**一次setter不等于原生React的一次render/commit，也不等于浏览器验收**。既有组件SSR测试1/1仍通过，但SSR不执行交互effect。
+
+### 1k/10k/100k合成内存对照
+
+目标世界占80%，真实ledger接口对比旧的三次summary与新的scopeSummary；每组交替执行、预热后3个样本取中位，所有三视图逐字段相同。后续补录旧时间的新记录再刷新也与三次参考汇总一致，无时间水位缓存。
+
+| 总流水 | 目标世界 | 旧/新读取次数 | 旧/新返回行数 | 旧中位 | 新中位 |
+| --- | --- | --- | --- | --- | --- |
+| 1,000 | 800 | 3 / 1 | 1,002 / 800 | 2.69ms | 1.86ms |
+| 10,000 | 8,000 | 3 / 1 | 10,002 / 8,000 | 27.96ms | 19.33ms |
+| 100,000 | 80,000 | 3 / 1 | 100,002 / 80,000 | 268.73ms | 197.02ms |
+
+按当前内存Map实现，检查行数为3N→N；不是原生IDB扫描统计。新路径仍O(N)，没有建立索引、物化聚合或取消完整账单读取。GC/机器负载会影响时延，结果不是设备性能承诺。脚本/JSON在忽略目录build/task-119/scope-benchmark.mjs及scope-benchmark.json。需先build:sync-server再执行脚本。
+
+### 五项门禁
+
+| 门禁 | 实际结果 | 用时 |
+| --- | --- | --- |
+| pnpm typecheck | core、web及tools、sync-admin通过 | 2.33s |
+| pnpm lint | 407文件，0错误、0警告 | 0.82s |
+| pnpm test | Core1214（90文件）+ Web319（41文件）+ 管理/网关/CORS134 + 桥接15 = **1682/1682**，0失败/跳过 | 24.94s |
+| pnpm build | 退出0，web207模块；主包508.48kB，有500kB体积提示 | 2.04s |
+| pnpm build:sync-server | 退出0 | 0.68s |
+
+全部按规定顺序实跑，Node24.16.0 / pnpm11.22.0。构建体积提示如实保留，未改阈值掩盖。RuntimePanel获得授权后可评估将预算面板按需加载，不扩展为大模块重构。日志见build/task-119/final-*.log、gate-results.json。
+
+### 未完成、验证与回退
+
+- 保存链路的三个额外文件仍待明确授权，未修改；新映射提交目前关闭。不能用80条纯逻辑回归或SSR结果称端到端保存已经可用。
+- 原生浏览器、React实际调度/渲染数、跨标签页保存/切世界/外部预算变化、物理手机、Node22/CI：**待验证（归 Codex）**。本机沙箱初始化问题尚未解除，本轮未复跑真实浏览器，不套用116的旧证据。
+- 当前只在内存/受控host/SSR验证；没有调用真实模型、修改用户预算、打开用户库或做schema迁移。币种/未知费用策略与118显式内核契约一致。
+- 回退保留原始流水、新币种映射、草稿/审计和113–118元数据，不删库/WAL；恢复旧UI会不理解新映射，必须说明降级风险。只用逆向补丁/新提交，不使用禁止的Git恢复/清理命令。未提交、未push、未部署。
+
 ## 顺序118：D06量化/预算投影与D07显式币种内核（2026-10-08，本分支自有记录）
 
 ### 基线与范围

@@ -1,9 +1,29 @@
-import type { BudgetLimits, BudgetState, UsageGroup, UsageSummary, UsageTotals } from '@dramatis/core';
-import { useEffect, useState } from 'react';
+import {
+  type BudgetDraftSave,
+  type BudgetEditorDraft,
+  type BudgetLimits,
+  type BudgetState,
+  budgetCurrencyRows,
+  budgetDraftSaveBlockReason,
+  budgetDraftSignature,
+  budgetLimitsSignature,
+  clearBudgetCostDraft,
+  confirmBudgetMigration,
+  createBudgetDraft,
+  evaluateBudget,
+  reconcileBudgetDraft,
+  type UsageGroup,
+  type UsageSummary,
+  type UsageTotals,
+  validateBudgetDraft,
+} from '@dramatis/core';
+import { useEffect, useId, useRef, useState } from 'react';
 import { formatTime } from '../lib/format';
-import { CATEGORY_LABELS, formatCalibrationNote, formatCost, formatMoney, formatTokens } from '../lib/usage';
+import { CATEGORY_LABELS, formatCalibrationNote, formatCost, formatTokens } from '../lib/usage';
 
 interface Props {
+  /** Explicit identity supplied by the caller; summaries/limits cannot identify a world. */
+  worldId?: string | null;
   world: UsageSummary | null;
   conversation: UsageSummary | null;
   latestTurn: UsageSummary | null;
@@ -11,139 +31,404 @@ interface Props {
   budget: BudgetState;
   /** 已经保存的上限（草稿的初值）。 */
   limits: BudgetLimits | null;
-  onSaveBudget: (limits: BudgetLimits | null) => void;
+  onSaveBudget: (limits: BudgetLimits | null) => void | Promise<void>;
   /** 当前对话名，用来给「本对话」那一段做标题。 */
   conversationTitle: string;
 }
 
-/** 上限的草稿：按字符串收，「留空」比 0 更诚实。 */
-interface BudgetDraft {
-  calls: string;
-  cost: string;
-}
-
-function toDraft(limits: BudgetLimits | null | undefined): BudgetDraft {
-  return {
-    calls: limits?.maxExtraCalls == null ? '' : String(limits.maxExtraCalls),
-    cost: limits?.maxCost == null ? '' : String(limits.maxCost),
-  };
-}
-
-function toLimits(draft: BudgetDraft): BudgetLimits | null {
-  const calls = draft.calls.trim() === '' ? null : Number(draft.calls);
-  const cost = draft.cost.trim() === '' ? null : Number(draft.cost);
-  const limits: BudgetLimits = {
-    maxExtraCalls: calls !== null && Number.isFinite(calls) && calls > 0 ? calls : null,
-    maxCost: cost !== null && Number.isFinite(cost) && cost > 0 ? cost : null,
-  };
-  return limits.maxExtraCalls === null && limits.maxCost === null ? null : limits;
-}
-
-/**
- * 本局预算（ROADMAP P1-9 的熔断）。
- *
- * 管的是**生成之外的调用**：意图判断、一轮分析、分层摘要。到上限就停这些，
- * 角色回复照常——聊到一半突然说不出话，比多花几分钱糟糕得多。
- */
+/** Only an explicit save writes; selection, confirmation and clearing are draft operations. */
 function BudgetEditor({
+  worldId,
   limits,
   state,
-  currency,
+  summary,
   onSave,
 }: {
+  worldId?: string | null;
   limits: BudgetLimits | null | undefined;
   state: BudgetState;
-  currency: string | null;
-  onSave: (limits: BudgetLimits | null) => void;
+  summary: UsageSummary | null;
+  onSave: (limits: BudgetLimits | null) => void | Promise<void>;
 }) {
-  const [draft, setDraft] = useState<BudgetDraft>(() => toDraft(limits));
-  const [savedAt, setSavedAt] = useState<string | null>(null);
+  const [editor, setEditor] = useState(() => {
+    const draft = createBudgetDraft(limits);
+    return { draft, baseSignature: budgetLimitsSignature(limits), cleanSignature: budgetDraftSignature(draft) };
+  });
+  const [actionErrors, setActionErrors] = useState<string[]>([]);
+  const [saveStatus, setSaveStatus] = useState({ busy: false, error: false, unconfirmed: false, message: '' });
+  const saveRequest = useRef<BudgetDraftSave | null>(null);
+  const saving = useRef(false);
+  const currencyListId = useId();
+  const signature = budgetLimitsSignature(limits);
+  const { draft } = editor;
+  const dirty = budgetDraftSignature(draft) !== editor.cleanSignature;
+  const conflict = signature !== editor.baseSignature;
+  const validation = validateBudgetDraft(draft);
+  const hasChanges = validation.ok && budgetLimitsSignature(validation.limits) !== signature;
+  const canRetry = saveStatus.error || saveStatus.unconfirmed;
+  const saveBlockReason = budgetDraftSaveBlockReason(draft, worldId);
 
-  // 换世界或在别处改过上限时重置草稿；依赖是具体值，避免把正在输入的内容冲掉
-  const signature = `${String(limits?.maxExtraCalls ?? '')}|${String(limits?.maxCost ?? '')}`;
-  // biome-ignore lint/correctness/useExhaustiveDependencies: 依赖就是上面那串值
+  // A new object with identical values must not erase text; real changes preserve dirty drafts.
   useEffect(() => {
-    setDraft(toDraft(limits));
-    setSavedAt(null);
-  }, [signature]);
+    const request = saveRequest.current;
+    const snapshot =
+      request === null
+        ? null
+        : {
+            ...request,
+            confirmed: request.confirmed && !saveStatus.busy && !saveStatus.error && !saveStatus.unconfirmed,
+          };
+    setEditor((previous) => reconcileBudgetDraft(previous, limits, snapshot));
+  }, [limits, saveStatus.busy, saveStatus.error, saveStatus.unconfirmed]);
 
-  const current = JSON.stringify(toLimits(draft)) !== JSON.stringify(toLimits(toDraft(limits)));
+  useEffect(
+    () => () => {
+      // Keyed world changes/unmounts must not let a prior request update this editor.
+      saveRequest.current = null;
+    },
+    [],
+  );
+
+  function edit(update: (previous: BudgetEditorDraft) => BudgetEditorDraft) {
+    setEditor((previous) => ({ ...previous, draft: update(previous.draft) }));
+    setActionErrors([]);
+    setSaveStatus({ busy: false, error: false, unconfirmed: false, message: '' });
+  }
+
+  async function save() {
+    if (budgetDraftSaveBlockReason(draft, worldId) !== null) return;
+    if (!validation.ok || conflict || (!hasChanges && !canRetry) || saving.current) return;
+    const request = {
+      signature: budgetLimitsSignature(validation.limits),
+      draftSignature: budgetDraftSignature(draft),
+      baseSignature: signature,
+      confirmed: false,
+    };
+    saveRequest.current = request;
+    saving.current = true;
+    setSaveStatus({ busy: true, error: false, unconfirmed: false, message: '正在提交保存请求，尚未确认落盘。' });
+    try {
+      const completion = onSave(validation.limits);
+      if (completion !== undefined && typeof completion.then === 'function') {
+        await completion;
+        if (saveRequest.current === request) {
+          request.confirmed = true;
+          // The reconciliation effect checks CURRENT limits before acknowledging this draft.
+          // A late fulfillment must not clear a conflict with a newer external budget.
+
+          setSaveStatus({ busy: false, error: false, unconfirmed: false, message: '保存回调已完成，请核对当前配置。' });
+        }
+      } else if (saveRequest.current === request) {
+        // The existing App callback returns void, discarding the persistence promise.
+        // Neither its return nor an optimistic props echo proves durable success.
+        setSaveStatus({
+          busy: false,
+          error: false,
+          unconfirmed: true,
+          message:
+            '已提交，等待状态确认；当前回调未提供落盘结果，配置回显也不等于保存成功。若应用报错，请保留草稿后重试。',
+        });
+      }
+    } catch (error) {
+      if (saveRequest.current === request) {
+        setSaveStatus({
+          busy: false,
+          error: true,
+          unconfirmed: false,
+          message: `保存失败，草稿已保留：${error instanceof Error ? error.message : String(error)}`,
+        });
+      }
+    } finally {
+      saving.current = false;
+    }
+  }
+
+  // Optional diagnostics remain compatible with legacy callers of UsagePanel.
+  const diagnostics = state.currencyBudgets === undefined ? evaluateBudget(summary, limits ?? null) : state;
+  const currencyRows = budgetCurrencyRows(diagnostics, limits);
+  const unpricedCalls =
+    state.unpricedCalls ?? Math.max(0, (summary?.total.calls ?? 0) - (summary?.total.pricedCalls ?? 0));
+  const costPolicy = state.costPolicy ?? (limits?.maxCostByCurrency === undefined ? 'legacy-primary' : 'per-currency');
+  const needsSelection =
+    state.needsCurrencySelection === true ||
+    (costPolicy === 'legacy-primary' && typeof limits?.maxCost === 'number' && limits.maxCost > 0);
+  const oldDraft = draft.mode === 'legacy' && draft.legacyCost !== '';
+  const currencies = [
+    ...new Set([
+      'CNY',
+      'USD',
+      'EUR',
+      'GBP',
+      'JPY',
+      'HKD',
+      '¥',
+      '$',
+      '€',
+      ...currencyRows.map((row) => row.currency),
+      ...draft.currencies.map((row) => row.currency).filter(Boolean),
+    ]),
+  ];
+  const errors = [...actionErrors, ...(validation.ok ? [] : validation.errors)];
 
   return (
     <section className="panel">
       <h2>本局上限</h2>
-      <div className="grid-2">
-        <label>
-          额外调用上限
-          <input
-            type="number"
-            min="1"
-            step="1"
-            placeholder="留空＝不限"
-            value={draft.calls}
-            onChange={(event) => {
-              setDraft((previous) => ({ ...previous, calls: event.target.value }));
-              setSavedAt(null);
-            }}
-          />
-        </label>
-        <label>
-          花费上限
-          <input
-            type="number"
-            min="0"
-            step="0.01"
-            placeholder="留空＝不限"
-            value={draft.cost}
-            onChange={(event) => {
-              setDraft((previous) => ({ ...previous, cost: event.target.value }));
-              setSavedAt(null);
-            }}
-          />
-        </label>
-      </div>
+      {typeof worldId !== 'string' || worldId.trim() === '' ? (
+        <p className="hint">
+          调用方尚未接通明确世界标识，无法保证草稿跨世界隔离；逐币种配置、迁移和清空暂不开放提交。旧 legacy
+          模式仅保留兼容保存，不代表已解决上游旧快照回写。
+        </p>
+      ) : null}
       <p className="hint">
-        到上限后只停后台调用（意图判断、一轮分析、分层摘要），角色回复照常生成。 花费上限要先在设置里填单价才生效。
+        当前金额策略：{costPolicy === 'per-currency' ? '逐币种' : '旧展示主币种兼容模式'}。
+        到上限只停后台调用（意图判断、一轮分析、分层摘要），角色回复照常；不会仅因混用币种就暂停。
       </p>
-
-      <ul className="usage-list">
-        <li>
-          <span className="usage-name">本局已用</span>
-          <span className="usage-figure">
-            {state.extraCalls} 次额外调用
-            {state.cost === null ? '' : ` · ${formatMoney(state.cost, currency)}`}
-          </span>
-        </li>
-        {state.remainingCalls === null ? null : (
-          <li>
-            <span className="usage-name">还能再调</span>
-            <span className="usage-figure">{state.remainingCalls} 次</span>
-          </li>
-        )}
-      </ul>
-
-      {state.burned ? (
+      {needsSelection ? (
         <div className="notice warn">
-          <strong>已熔断</strong>
-          <p>{state.reason}——后台调用已停，聊天不受影响。调高上限或清空即可恢复。</p>
+          <strong>旧金额上限尚未迁移：存在漏拦风险</strong>
+          <p>
+            旧标量上限为 {String(limits?.maxCost ?? '未知')}，未绑定币种，仍按旧展示主币种策略运行；
+            展示主币种变化可能改变判断。不会自动暂停、换汇或复制此上限。
+            只有明确选币种、确认并保存，或主动清除并保存，才会退出旧模式。
+          </p>
         </div>
       ) : null}
 
+      <label>
+        额外调用上限
+        <input
+          type="text"
+          inputMode="numeric"
+          placeholder="留空＝不限"
+          disabled={saveStatus.busy}
+          value={draft.calls}
+          onChange={(event) => edit((previous) => ({ ...previous, calls: event.target.value }))}
+        />
+      </label>
+      <datalist id={currencyListId}>
+        {currencies.map((currency) => (
+          <option key={currency} value={currency} />
+        ))}
+      </datalist>
+
+      {oldDraft ? (
+        <div className="notice warn">
+          <p>迁移草稿：将旧上限 {draft.legacyCost} 仅绑定到你选择的一个币种，不预选展示主币种。</p>
+          <label>
+            旧上限对应币种（必须主动选择）
+            <input
+              type="text"
+              list={currencyListId}
+              placeholder="请选择或输入原币种标签"
+              disabled={saveStatus.busy}
+              value={draft.migrationCurrency}
+              onChange={(event) => edit((previous) => ({ ...previous, migrationCurrency: event.target.value }))}
+            />
+          </label>
+          <button
+            type="button"
+            disabled={saveStatus.busy}
+            onClick={() => {
+              const result = confirmBudgetMigration(draft);
+              if (result.ok) edit(() => result.draft);
+              else setActionErrors(result.errors);
+            }}
+          >
+            确认仅绑定此币种（暂存草稿）
+          </button>
+          <p className="hint">仅选择币种不会迁移；未确认时保存次数上限也会保留旧金额策略。</p>
+        </div>
+      ) : (
+        <>
+          <h3>逐币种金额上限草稿</h3>
+          {draft.currencies.map((row) => (
+            <div key={row.id}>
+              <div className="grid-2">
+                <label>
+                  币种（原标签）
+                  <input
+                    type="text"
+                    list={currencyListId}
+                    placeholder="如 CNY、USD、¥ 或新币种"
+                    disabled={saveStatus.busy}
+                    value={row.currency}
+                    onChange={(event) =>
+                      edit((previous) => ({
+                        ...previous,
+                        currencies: previous.currencies.map((item) =>
+                          item.id === row.id ? { ...item, currency: event.target.value } : item,
+                        ),
+                      }))
+                    }
+                  />
+                </label>
+                <label>
+                  金额上限
+                  <input
+                    type="text"
+                    inputMode="decimal"
+                    placeholder="有限正数；留空＝该币种未设限"
+                    disabled={saveStatus.busy}
+                    value={row.amount}
+                    onChange={(event) =>
+                      edit((previous) => ({
+                        ...previous,
+                        currencies: previous.currencies.map((item) =>
+                          item.id === row.id ? { ...item, amount: event.target.value } : item,
+                        ),
+                      }))
+                    }
+                  />
+                </label>
+              </div>
+              <button
+                type="button"
+                disabled={saveStatus.busy}
+                onClick={() =>
+                  edit((previous) => ({
+                    ...previous,
+                    currencies: previous.currencies.filter((item) => item.id !== row.id),
+                  }))
+                }
+              >
+                移除此币种上限（暂存草稿）
+              </button>
+            </div>
+          ))}
+          {draft.currencies.length === 0 ? <p className="hint">草稿中未设置任何逐币种上限。</p> : null}
+          <button
+            type="button"
+            disabled={saveStatus.busy}
+            onClick={() =>
+              edit((previous) => ({
+                ...previous,
+                mode: 'per-currency',
+                currencies: [
+                  ...previous.currencies,
+                  {
+                    id: Math.max(-1, ...previous.currencies.map((row) => row.id)) + 1,
+                    currency: '',
+                    amount: '',
+                  },
+                ],
+              }))
+            }
+          >
+            新增币种（可无历史账单）
+          </button>
+        </>
+      )}
+      <button type="button" disabled={saveStatus.busy} onClick={() => edit(clearBudgetCostDraft)}>
+        清空全部金额上限（暂存草稿，保留次数上限）
+      </button>
+      <p className="hint">
+        币种允许可打印空格和标点，按原标签精确匹配，不自动 trim。CNY 与「CNY 」不同，CNY 与 ¥、USD 与 $
+        也不合并或换汇。未配置的币种明确保持未设限。
+      </p>
+
+      {errors.length === 0 ? null : (
+        <div className="notice error" role="alert">
+          {errors.join('；')}
+        </div>
+      )}
+      {conflict ? (
+        <div className="notice warn" role="alert">
+          当前配置已在别处改变；你的草稿已保留。为避免覆盖已存币种映射，保存暂不可用，请先核对当前配置。
+        </div>
+      ) : null}
+      {dirty || conflict ? (
+        <button
+          type="button"
+          disabled={saveStatus.busy}
+          onClick={() => {
+            const fresh = createBudgetDraft(limits);
+            saveRequest.current = null;
+            setEditor({ draft: fresh, baseSignature: signature, cleanSignature: budgetDraftSignature(fresh) });
+            setActionErrors([]);
+            setSaveStatus({ busy: false, error: false, unconfirmed: false, message: '' });
+          }}
+        >
+          放弃草稿，载入当前配置
+        </button>
+      ) : null}
+      {saveBlockReason === null ? null : (
+        <p className="notice warn" role="status">
+          {saveBlockReason}
+        </p>
+      )}
       <div className="save-bar">
         <button
           type="button"
-          disabled={!current}
-          onClick={() => {
-            onSave(toLimits(draft));
-            setSavedAt(new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }));
-          }}
+          disabled={
+            saveBlockReason !== null || !validation.ok || (!hasChanges && !canRetry) || conflict || saveStatus.busy
+          }
+          onClick={() => void save()}
         >
-          保存上限
+          {saveStatus.busy
+            ? '正在提交…'
+            : canRetry && !hasChanges
+              ? '重试保存上限（点击后写入）'
+              : '保存上限（点击后写入）'}
         </button>
         <span className="hint">
-          {current ? '有未保存的改动' : savedAt === null ? '改动只在点保存后生效' : `已保存（${savedAt}）`}
+          {dirty ? '草稿有改动；确认、增删或清空均须再点保存才写入。' : '编辑不会自动保存。'}
         </span>
       </div>
+      {saveStatus.message ? (
+        <p className={saveStatus.error ? 'notice error' : 'hint'} role={saveStatus.error ? 'alert' : 'status'}>
+          {saveStatus.message}
+        </p>
+      ) : null}
+
+      <h3>当前配置与用量（不是草稿预览）</h3>
+      <ul className="usage-list">
+        <li>
+          <span className="usage-name">额外调用</span>
+          <span className="usage-figure">
+            已用 {state.extraCalls} 次 · 上限 {limits?.maxExtraCalls ?? '未设限'} · 剩余{' '}
+            {state.remainingCalls ?? '未设限'}
+          </span>
+        </li>
+        {currencyRows.map((row) => (
+          <li key={row.currency}>
+            <span className="usage-name">{row.currency}</span>
+            <span className="usage-figure">
+              已知花费 {row.cost === null ? '未知（无已定价账单）' : String(row.cost)}
+              {' · '}上限 {row.limit === null ? '未设限' : String(row.limit)}
+              {' · '}剩余{' '}
+              {row.limit === null
+                ? '未设限'
+                : row.remaining === null
+                  ? '未知（不能据此当作全额可用）'
+                  : String(row.remaining)}
+              {' · '}触发原因：
+              {row.exceeded
+                ? `${row.currency} 已知花费达到上限`
+                : row.limit === null
+                  ? '无逐币种限制'
+                  : row.cost === null
+                    ? '金额未知，无法判断'
+                    : '已知花费未达上限'}
+            </span>
+          </li>
+        ))}
+      </ul>
+      {currencyRows.length === 0 ? <p className="hint">暂无已定价币种或逐币种配置，不代表免费。</p> : null}
+      <div className="notice warn">
+        <p>
+          {unpricedCalls > 0
+            ? `${unpricedCalls} 次调用没有可用价格，费用未知，不能当作免费。`
+            : '已知花费只是按已记录用量和单价得到的估算。'}
+          服务商未返回 usage 时记为 0 token 也不能证明免费；上限与剩余只反映已知费用，实际账单可能更高。
+          未知费用不会自动触发金额熔断，可另设次数上限。
+        </p>
+      </div>
+      {state.burned ? (
+        <div className="notice warn">
+          <strong>已熔断</strong>
+          <p>{state.reason}——后台调用已停，聊天不受影响。调整或清空已触发的上限并保存后重新判断。</p>
+        </div>
+      ) : null}
     </section>
   );
 }
@@ -186,6 +471,7 @@ function GroupList({
  * 花费只在配了单价时出现：没配就只报 token，绝不用一个编出来的价格糊弄。
  */
 export function UsagePanel({
+  worldId,
   world,
   conversation,
   latestTurn,
@@ -194,6 +480,8 @@ export function UsagePanel({
   limits,
   onSaveBudget,
 }: Props) {
+  // Explicit identity isolates equal-budget worlds too; this cannot repair upstream stale writes.
+  const budgetEditorKey = JSON.stringify(['budget-editor', worldId ?? null]);
   const calibrationNote = world === null ? null : formatCalibrationNote(world.total);
 
   if (world === null || world.total.calls === 0) {
@@ -206,7 +494,14 @@ export function UsagePanel({
             花费需要单价：在设置 → 模型接入里填「每百万 token 的输入 / 输出价格」，这里就会换算成钱。
           </p>
         </section>
-        <BudgetEditor limits={limits} state={budget} currency={null} onSave={onSaveBudget} />
+        <BudgetEditor
+          key={budgetEditorKey}
+          worldId={worldId}
+          limits={limits}
+          state={budget}
+          summary={world}
+          onSave={onSaveBudget}
+        />
       </>
     );
   }
@@ -231,7 +526,7 @@ export function UsagePanel({
         </ul>
         <p className="hint">
           {formatCost(world.total) === null
-            ? '还没设单价，所以只报 token。填上单价后，历史账单也会一起换算出来。'
+            ? '没有可用的价格快照，所以只报 token，费用未知。新单价只用于后续调用，不会补算旧账单。'
             : `第一条记录：${formatTime(world.firstAt)}；最近一次：${formatTime(world.lastAt)}。`}
         </p>
         {calibrationNote === null ? null : <p className="hint">{calibrationNote}</p>}
@@ -281,7 +576,14 @@ export function UsagePanel({
         <GroupList groups={world.byModel} labelOf={(group) => group.label || '（未命名）'} />
       </section>
 
-      <BudgetEditor limits={limits} state={budget} currency={world.total.currency} onSave={onSaveBudget} />
+      <BudgetEditor
+        key={budgetEditorKey}
+        worldId={worldId}
+        limits={limits}
+        state={budget}
+        summary={world}
+        onSave={onSaveBudget}
+      />
     </>
   );
 }

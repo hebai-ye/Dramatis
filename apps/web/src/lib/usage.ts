@@ -1,11 +1,15 @@
 import {
   type ConversationId,
+  createUsageScopeOwner,
+  createUsageScopeReader,
   type RoomId,
+  type UsageScopeOwner,
+  type UsageScopeSummary,
   type UsageSummary,
   type UsageTotals,
   usageCalibration,
 } from '@dramatis/core';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { DramatisDb } from './db';
 
 export interface UsageApi {
@@ -16,6 +20,8 @@ export interface UsageApi {
   /** 最近一轮，按 turnId 从现有流水汇总。 */
   latestTurn: UsageSummary | null;
   reload: () => Promise<void>;
+  /** Latest active-scope read failure; stale failures are discarded. */
+  error?: string | null;
 }
 
 /**
@@ -29,35 +35,55 @@ export function useUsage(
   db: DramatisDb | null,
   scope: { roomId: RoomId | null; conversationId: ConversationId | null; turnId?: string | null },
 ): UsageApi {
-  const [world, setWorld] = useState<UsageSummary | null>(null);
-  const [conversation, setConversation] = useState<UsageSummary | null>(null);
-  const [latestTurn, setLatestTurn] = useState<UsageSummary | null>(null);
-  const { roomId, conversationId, turnId } = scope;
-
+  const readerRef = useRef<ReturnType<typeof createUsageScopeReader> | null>(null);
+  if (readerRef.current === null) readerRef.current = createUsageScopeReader();
+  const reader = readerRef.current;
+  const ledger = db?.ledger ?? null;
+  const { roomId, conversationId } = scope;
+  const turnId = scope.turnId ?? null;
+  const owner = useMemo(
+    () => createUsageScopeOwner(ledger, { roomId, conversationId, turnId }),
+    [ledger, roomId, conversationId, turnId],
+  );
+  // Activate only committed ownership; a discarded concurrent render must not cancel the visible scope.
+  useLayoutEffect(() => {
+    reader.activate(owner);
+    return () => reader.deactivate(owner);
+  }, [reader, owner]);
+  const [snapshot, setSnapshot] = useState<{
+    owner: UsageScopeOwner;
+    value: UsageScopeSummary;
+    error: string | null;
+  } | null>(null);
   const reload = useCallback(async () => {
-    if (!db) return;
-    if (roomId === null) {
-      setWorld(null);
-      setConversation(null);
-      setLatestTurn(null);
-      return;
+    const result = await reader.read(owner);
+    if (result === null || !reader.isLatest(result)) return;
+    if (result.error !== null) {
+      const failure = result.error;
+      setSnapshot((previous) => ({
+        owner,
+        value: previous?.owner === owner ? previous.value : { world: null, conversation: null, latestTurn: null },
+        error: failure.message,
+      }));
+      throw failure;
     }
-
-    setWorld(await db.ledger.summary({ roomId }));
-    setConversation(conversationId === null ? null : await db.ledger.summary({ roomId, conversationId }));
-    setLatestTurn(
-      conversationId === null || turnId === null || turnId === undefined
-        ? null
-        : await db.ledger.summary({ roomId, conversationId, turnId }),
-    );
-  }, [conversationId, db, roomId, turnId]);
-
+    setSnapshot({ owner, value: result.value, error: null });
+  }, [reader, owner]);
   useEffect(() => {
-    void reload();
+    // Automatic reads must not create unhandled rejections; explicit reload callers still receive the failure.
+    void reload().catch(() => undefined);
   }, [reload]);
-
-  // 返回对象要稳定（顺序 59）：它是 App 里一串 useCallback 的依赖，每次渲染新造一个就等于没 memo
-  return useMemo(() => ({ world, conversation, latestTurn, reload }), [world, conversation, latestTurn, reload]);
+  const visible = snapshot?.owner === owner ? snapshot : null;
+  return useMemo(
+    () => ({
+      world: visible?.value.world ?? null,
+      conversation: visible?.value.conversation ?? null,
+      latestTurn: visible?.value.latestTurn ?? null,
+      error: visible?.error ?? null,
+      reload,
+    }),
+    [visible, reload],
+  );
 }
 
 /** 生成之外的所有调用（意图、后台分析、副对话的旧任务）。 */

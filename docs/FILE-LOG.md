@@ -12,6 +12,21 @@
 > 第二～五节的时间表是 23:05 的快照（当时仓库里还没有 T17/T18/T2/T2c 这些提交），
 > 之后新增或改过的文件统一记在第七节，以**提交时间**为准。
 
+## 顺序119：批量刷新及预算编辑准备（2026-10-08，本分支自有表）
+
+| 文件 | 动作 | 内容 |
+| --- | --- | --- |
+| packages/core/src/storage/usage.ts | 修改 | scope类型、单次读取三份完整汇总，可选旧适配器兼容 |
+| packages/core/src/storage/usage-scope.ts | 新增 | 读取兼容、纯owner、提交期激活/停用、请求代次保护，无缓存 |
+| apps/web/src/lib/usage.ts | 修改（本轮用户新增授权） | 一次状态发布、即时遮住旧归属、layout生命周期、受控错误 |
+| packages/core/src/storage/budget-editor.ts | 新增 | 草稿、显式迁移、验证、签名/冲突、币种状态和未接worldId提交保护 |
+| apps/web/src/components/UsagePanel.tsx | 修改（本轮用户新增授权） | 逐币种UI、旧值明确确认、保存状态保守显示、无世界ID禁止新映射提交 |
+| packages/core/src/storage/{budget-editor,usage-scope-reader,usage-hook,usage-scope-batch}.test.ts | 新增 | 80+44+15+14＝153条常驻回归 |
+| packages/core/src/index.ts | 修改 | 新pure helper/调度器导出 |
+| docs/{STATUS,TASKS,EVAL,FILE-LOG}.md | 修改 | 仅119自有小节，授权边界、实际门禁/基准、保存链路阻碍与构建提示 |
+
+App.tsx、RuntimePanel.tsx、session.ts仍未修改，额外授权待确认。快照与日志保留在忽略目录build/task-119；两个智能体已结束。无依赖/锁文件/schema变化，未提交/未push/未部署。
+
 ## 顺序118：D06投影与D07显式币种内核（2026-10-08，本分支自有表）
 
 | 文件 | 动作 | 内容 |

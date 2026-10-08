@@ -12,6 +12,22 @@
 > 第二～五节的时间表是 23:05 的快照（当时仓库里还没有 T17/T18/T2/T2c 这些提交），
 > 之后新增或改过的文件统一记在第七节，以**提交时间**为准。
 
+## 顺序115：B15持久性与故障回归（2026-10-04，本分支自有表）
+
+| 文件 | 动作 | 内容 |
+| --- | --- | --- |
+| tools/sync-admin/src/durability.ts | 新增 | 文件fsync及支持平台目录持久化屏障，Windows限制明确 |
+| tools/sync-admin/src/backup.ts | 修改 | 快照验证后partial/成品刷盘、发布持久化，保留失败现场 |
+| tools/sync-admin/src/audit.ts | 修改 | 破损尾部拒绝追加、目录屏障、票据摘要白名单 |
+| tools/sync-admin/src/operations.ts | 修改 | FULL写连接、BEGIN/回滚失败处理、未知状态关闭连接、预览操作号与票据关联 |
+| tools/sync-admin/src/http.ts | 修改 | 相关错误返回安全operationId/confirmationHash，保留B14门禁 |
+| tools/sync-admin/src/node.d.ts | 修改 | 本机fs读尾部与platform所需最小类型 |
+| tools/sync-admin/src/{durability.test,durability-crash.test}.mjs | 新增 | 23条故障/持久性回归，其中8个真实强杀检查点 |
+| tools/sync-admin/src/{durability-fixtures,durability-worker}.mjs | 新增 | 隔离WAL库、Node/SQLite故障注入、进程断点与限定临时路径清理；无生产测试后门 |
+| docs/{STATUS,TASKS,EVAL,FILE-LOG}.md | 修改 | 仅115自有小节，真实门禁、矩阵与待验证边界 |
+
+改前快照、门禁日志与退出码保存在忽略目录build/task-115；未提交、未push、未部署，无依赖/锁文件/schema变化。
+
 ## 顺序114：B14配额单源与漂移门禁（2026-10-04，本分支自有表）
 
 | 文件 | 动作 | 内容 |

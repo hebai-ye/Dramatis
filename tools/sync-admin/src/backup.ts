@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { existsSync, lstatSync, renameSync } from 'node:fs';
 import { basename, join, resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
+import { syncFile, syncParentDirectory } from './durability.js';
 
 /** 唯一文件名、独立目标目录；只返回文件名，没有网页下载能力。 */
 export function backupBeforeChange(db: DatabaseSync, dataPath: string, directory: string) {
@@ -23,6 +24,10 @@ export function backupBeforeChange(db: DatabaseSync, dataPath: string, directory
   } finally {
     snapshot.close();
   }
+  // Failed partials/published backups are retained. Authorize no mutation before flushing.
+  syncFile(partial);
   renameSync(partial, target);
+  syncFile(target);
+  syncParentDirectory(target);
   return file;
 }

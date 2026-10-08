@@ -24,6 +24,8 @@ declare module 'node:crypto' {
   export function timingSafeEqual(a: Uint8Array, b: Uint8Array): boolean;
 }
 declare module 'node:fs' {
+  export function fstatSync(fd: number): { size: number };
+  export function readSync(fd: number, buffer: Uint8Array, offset: number, length: number, position: number): number;
   export function existsSync(path: string): boolean;
   export function readFileSync(path: string, encoding: 'utf8'): string;
   export function mkdirSync(path: string, options: { recursive: true }): void;
@@ -55,6 +57,7 @@ declare module 'node:url' {
 }
 declare module 'node:process' {
   const process: {
+    platform: string;
     env: Record<string, string | undefined>;
     exit(code: number): never;
     on(event: string, handler: () => void): void;

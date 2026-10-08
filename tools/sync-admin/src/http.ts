@@ -147,7 +147,14 @@ export function createAdminHandler(options: Options) {
     } catch (error) {
       if (error instanceof AdminOperationError || error instanceof QuotaConfigurationError) {
         try {
-          return finish(error.status, { error: error.code, message: error.message });
+          return finish(error.status, {
+            error: error.code,
+            message: error.message,
+            ...(error instanceof AdminOperationError && error.operationId ? { operationId: error.operationId } : {}),
+            ...(error instanceof AdminOperationError && error.confirmationHash
+              ? { confirmationHash: error.confirmationHash }
+              : {}),
+          });
         } catch {
           /* 审计失败时关闭响应。 */
         }

@@ -17,6 +17,8 @@ import {
 import { getVipPlan, type VipPlan } from './vip-plans.js';
 
 export class AdminOperationError extends Error {
+  operationId?: string;
+  confirmationHash?: string;
   constructor(
     readonly status: number,
     readonly code: string,
@@ -49,6 +51,7 @@ interface Changes {
   purchaseAt?: string;
 }
 interface Pending {
+  operationId: string;
   handle: string;
   version: string;
   changes: Changes;
@@ -67,7 +70,7 @@ export function createAdminOperations(options: {
 }) {
   if (!existsSync(options.dataPath)) throw new Error('数据库不存在。');
   const db = new DatabaseSync(options.dataPath);
-  db.exec('PRAGMA busy_timeout=5000');
+  db.exec('PRAGMA busy_timeout=5000; PRAGMA synchronous=FULL;');
   const columns = (table: string) =>
     (db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[]).map((c) => c.name);
   const membershipsAvailable =
@@ -100,8 +103,19 @@ export function createAdminOperations(options: {
   };
   const now = options.now ?? Date.now;
   const pending = new Map<string, Pending>();
+  let closed = false;
+  const close = () => {
+    if (closed) return;
+    closed = true;
+    pending.clear();
+    db.close();
+  };
+  const requireOpen = () => {
+    if (closed) deny(503, 'operations-closed', '管理写连接已关闭，请先核对上一次操作状态再重新连接。');
+  };
   return {
     prepare(input: Record<string, unknown>) {
+      requireOpen();
       if (
         !input ||
         typeof input !== 'object' ||
@@ -252,8 +266,16 @@ export function createAdminOperations(options: {
       if (pending.size >= 128) return deny(429, 'too-many-previews', '待确认修改过多，请稍后再试。');
       const confirmationId = randomBytes(32).toString('base64url');
       const expiresAt = now() + 120000;
-      pending.set(confirmationId, { handle: snapshot.space_handle, version: version(snapshot), changes, expiresAt });
+      const operationId = randomUUID();
+      pending.set(confirmationId, {
+        operationId,
+        handle: snapshot.space_handle,
+        version: version(snapshot),
+        changes,
+        expiresAt,
+      });
       return {
+        operationId,
         confirmationId,
         expiresAt,
         spaceHandle: snapshot.space_handle,
@@ -294,26 +316,51 @@ export function createAdminOperations(options: {
       };
     },
     commit(input: Record<string, unknown>) {
+      requireOpen();
       if (
         !input ||
         typeof input !== 'object' ||
         Object.keys(input).some((key) => !['confirmationId', 'confirmSpaceHandle'].includes(key)) ||
-        typeof input.confirmationId !== 'string'
+        typeof input.confirmationId !== 'string' ||
+        input.confirmationId.length > 128
       )
         return deny(400, 'bad-confirmation', '确认资料无效。');
+      const confirmationHash = createHash('sha256').update(input.confirmationId).digest('hex');
       const item = pending.get(input.confirmationId);
+      const fail = (status: number, code: string, message: string): never => {
+        const error = new AdminOperationError(status, code, message);
+        error.operationId = item?.operationId;
+        error.confirmationHash = confirmationHash;
+        throw error;
+      };
       pending.delete(input.confirmationId);
-      if (!item || item.expiresAt <= now() || input.confirmSpaceHandle !== item.handle)
-        return deny(409, 'confirmation-invalid', '确认已过期或空间句柄不匹配，请重新预览。');
+      if (!item || item.expiresAt <= now() || input.confirmSpaceHandle !== item.handle) {
+        try {
+          options.audit({
+            action: 'confirmation-rejected',
+            status: 409,
+            durationMs: 0,
+            confirmationHash,
+            ...(item === undefined ? {} : { operationId: item.operationId }),
+          });
+        } catch {
+          return fail(503, 'audit-failed', '票据拒绝审计失败；未执行修改，请检查审计存储。');
+        }
+        return fail(
+          409,
+          'confirmation-invalid',
+          '确认已失效或空间句柄不匹配；失效不表示原操作未提交，请按操作编号/票据摘要核对后重新预览。',
+        );
+      }
       if (version(read(item.handle)) !== item.version)
-        return deny(409, 'stale-preview', '空间资料已改变，请重新预览。');
+        return fail(409, 'stale-preview', '空间资料已改变，请重新预览。');
       let backupFile: string;
       try {
         backupFile = backupBeforeChange(db, options.dataPath, options.backupPath);
       } catch {
-        return deny(503, 'backup-failed', '自动备份失败，修改未执行。');
+        return fail(503, 'backup-failed', '自动备份失败，修改未执行。');
       }
-      const operationId = randomUUID();
+      const operationId = item.operationId;
       const action = item.changes.membershipAction
         ? `membership-${item.changes.membershipAction}`
         : item.changes.accountId
@@ -321,6 +368,7 @@ export function createAdminOperations(options: {
           : 'change';
       const event = {
         operationId,
+        confirmationHash,
         spaceHandle: item.handle,
         backupFile,
         ...('maxBytes' in item.changes ? { maxBytes: item.changes.maxBytes } : {}),
@@ -336,10 +384,12 @@ export function createAdminOperations(options: {
       try {
         options.audit({ ...event, action: `${action}-intent`, status: 200 });
       } catch {
-        return deny(503, 'audit-failed', '操作审计失败，修改未执行。');
+        return fail(503, 'audit-failed', '操作审计失败，修改未执行。');
       }
-      db.exec('BEGIN IMMEDIATE');
+      let transactionStarted = false;
       try {
+        db.exec('BEGIN IMMEDIATE');
+        transactionStarted = true;
         const snapshot = read(item.handle);
         if (version(snapshot) !== item.version) deny(409, 'stale-preview', '空间资料已改变，请重新预览。');
         if (item.changes.accountId) {
@@ -405,19 +455,45 @@ export function createAdminOperations(options: {
             snapshot.revision + 1,
           );
         db.exec('COMMIT');
+        transactionStarted = false;
       } catch (error) {
-        db.exec('ROLLBACK');
+        let uncertain = false;
+        if (transactionStarted) {
+          try {
+            db.exec('ROLLBACK');
+          } catch {
+            uncertain = true;
+          }
+        }
+        if (uncertain) {
+          // Do not reuse an ambiguous connection or accidentally claim COMMIT was undone.
+          try {
+            close();
+          } catch {
+            /* Preserve the unknown-outcome diagnostic. */
+          }
+        }
         try {
           options.audit({
             ...event,
-            action: `${action}-rejected`,
+            action: `${action}-${uncertain ? 'uncertain' : 'rejected'}`,
             status: error instanceof AdminOperationError ? error.status : 503,
           });
         } catch {
           /* 已有意图审计；绝不泄漏内部错误。 */
         }
-        if (error instanceof AdminOperationError) throw error;
-        return deny(503, 'change-failed', '修改失败，事务已回滚。');
+        if (uncertain)
+          return fail(
+            503,
+            'change-uncertain',
+            '修改结果未能确认，已关闭写连接；请按操作编号核对数据库与意图审计，勿盲目重试。',
+          );
+        if (error instanceof AdminOperationError) return fail(error.status, error.code, error.message);
+        return fail(
+          503,
+          'change-failed',
+          transactionStarted ? '修改失败，事务已回滚。' : '未能开启写事务，修改未执行。',
+        );
       }
       let auditWarning: string | null = null;
       try {
@@ -425,11 +501,8 @@ export function createAdminOperations(options: {
       } catch {
         auditWarning = '修改已保存，但结果审计追加失败；操作意图已记录，请检查审计权限与磁盘。';
       }
-      return { applied: true, spaceHandle: item.handle, operationId, backupFile, auditWarning };
+      return { applied: true, spaceHandle: item.handle, operationId, confirmationHash, backupFile, auditWarning };
     },
-    close() {
-      pending.clear();
-      db.close();
-    },
+    close,
   };
 }

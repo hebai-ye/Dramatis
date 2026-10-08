@@ -2,6 +2,77 @@
 
 这份文档记录「怎么知道它真的能工作」。分两部分：可以随时重跑的自动化基线，以及必须用真实模型做的人工验证。
 
+## 顺序115：B15持久性与故障矩阵（2026-10-04，本分支自有记录）
+
+### 重核、基线与范围
+
+fetch确认origin/main仍为357c47a；沿用当前独立分支接续113/114，登记空号115。改前42个已变更文件复制至忽略目录build/task-115/baseline-114。未新增依赖、改锁文件或schema，不读取/修改真实用户库，不提交、push或部署。修改仅在tools/sync-admin/src与四份文档自有115小节。
+
+复核保留原结论：membership.test.mjs已有备份/意图失败与提交后auditWarning回归，vip-purchases.test.mjs已有票据不双发及购买事务回滚，不重做。真正补的是backupBeforeChange在quick_check后直接rename、BEGIN IMMEDIATE在结果处理try之外、回滚再次报错没有未知状态表达，以及崩溃/短写/fsync/实际SQLITE_FULL后的原票据与账本关联证据。
+
+### 实施与接口兼容
+
+| 模块 | 变更 | 安全边界 |
+| --- | --- | --- |
+| backup.ts + durability.ts | VACUUM INTO→quick_check→partial文件fsync→rename→成品文件fsync→支持平台的父目录fsync；原接口仍返回文件名 | 任一步失败都不允许业务修改，保留partial或已发布副本。Windows只保证调用文件fsync，目录屏障返回unsupported，不伪造成功 |
+| audit.ts | 每次追加前用同一文件描述符检查末尾换行，拒绝破损尾部；追加后文件fsync及支持平台的父目录fsync；新增可选confirmationHash白名单 | 不截断、不自动修补日志；原始confirmationId不写审计。审计文件从仅追加权限变为需要读写权限，部署需核对ACL |
+| operations.ts | 写连接显式PRAGMA synchronous=FULL；BEGIN纳入失败处理；只对已开启事务尝试回滚，回滚无法确认时关闭连接并返回change-uncertain | 不把未知结果宣称未提交；有时SQLite自动回滚后再ROLLBACK失败也会保守报unknown，需人工核验，不做盲目重试 |
+| operations.ts票据 | 预览即生成operationId；成功/失败使用同号；intent/applied/rejected/uncertain记录confirmationHash，失效票据增加confirmation-rejected审计 | 既有短期单次票据语义不变；重启票据仍失效，不增加重放发放或新持久票据表 |
+| http.ts | AdminOperationError响应可带operationId/confirmationHash；其他错误脱敏与B14门禁不变 | 新增字段向后兼容，管理web页面未改，不能宣称已新增编号展示界面 |
+
+预览响应新增operationId；提交成功保留applied/spaceHandle/backupFile/auditWarning，operationId与预览一致，新增confirmationHash。相关失败返回结构化操作号/票据摘要；重放409的含义明确为“此票据不可再用”，不表示原操作从未提交。已有会员事件、购买及credit记录用相同operationId关联，无schema迁移。
+
+### 新增23条离线回归
+
+**15条持久性/故障断言**：
+
+- 备份partial/成品fsync及发布顺序在意图/BEGIN前；Windows目录分支明确unsupported。
+- partial的ENOSPC/EIO、成品EIO、rename的EACCES、VACUUM部分输出/ENOSPC、quick_check坏结果：全部不写业务表、不追加意图，残留文件保留。
+- 支持平台的目录fsync失败关闭；本机Windows只实跑“不支持”的分支，POSIX真实分支未在本机执行。
+- 实际Node文件函数注入意图fsync失败；审计短写/ENOSPC后保留坏尾部，后续追加拒绝且字节不变。
+- 真实第二条SQLite连接持有写锁导致BEGIN失败：同operationId/hash的intent+rejected，无业务写入。
+- 真实SQLite max_page_count配合触发器耗尽页容量，触发SQLITE_FULL，断言会员/购买/额度不能部分成功；这不是把物理系统盘填满。
+- 原生COMMIT已经成功后再注入EIO，验证回滚不可确认→unknown→关闭连接，数据库仍有完整购买，绝不报“已回滚”。
+- 预览号/意图/结果/购买账本/credit关联，重开后的原票据不再次发放，审计不包含原始票据；HTTP只保留安全关联字段。
+
+**8条真正强杀子进程/WAL恢复断言**（均为本测试新建的临时库）：
+
+| 强杀检查点 | 恢复后会员/购买/credit等五表 | 审计与原票据 |
+| --- | --- | --- |
+| partial已刷盘、发布前 | 全无 | 保留可校验partial；原票据重开后拒绝 |
+| 完整备份完成、意图前 | 全无 | 保留完整快照；原票据拒绝 |
+| 意图JSONL写到一半 | 全无 | 坏尾部原样保留，再次追加/确认失败关闭 |
+| 意图fsync完成后 | 全无 | 可查意图、操作号、票据摘要与备份 |
+| 会员事件已写、事务未提交 | 全无 | SQLite恢复回滚，不出现仅会员成功 |
+| credit已写、事务未提交 | 全无 | SQLite恢复回滚，不出现重复/孤立额度 |
+| COMMIT成功、结果审计前 | 全有且各1条 | 仅意图也能用operationId对购买/credit；原票据重放不双发 |
+| 结果审计fsync后、响应前 | 全有且各1条 | intent/applied同号；丢响应后原票据不双发 |
+
+每次重开均检查quick_check=ok，会员状态、会员事件、购买、额度事件、API账户五表全0或全1；备份仍为操作前全0。测试只强杀自己创建的子进程，清理前核验绝对临时目录与fixture前缀，不接触现有服务。
+
+### 五项门禁（实跑）
+
+按typecheck → lint → test → build → build:sync-server顺序执行；Node24.16.0 / pnpm11.22.0，全部退出0。
+
+| 门禁 | 实际结果 | 用时 |
+| --- | --- | --- |
+| pnpm typecheck | core、web及tools、sync-admin通过 | 3.20s |
+| pnpm lint | 393文件，0错误、0警告 | 0.88s |
+| pnpm test | Core943 + Web319 + 管理/网关/CORS/B14/B15 134 + 桥接15 = **1411/1411**，0失败、0跳过 | 26.24s |
+| pnpm build | core/web/sync-admin通过，web203模块 | 2.15s |
+| pnpm build:sync-server | 同步宿主编译通过 | 0.70s |
+
+完整输出保存在忽略目录build/task-115/final-*.log，gate-results.json保存退出码与用时。目录屏障测试在Windows执行unsupported分支，不把“0跳过”当作POSIX分支实测。
+
+### 限制、迁移与回退
+
+1. **待验证（归 Codex）**：真实主机断电、存储控制器掉电缓存、真实磁盘/文件系统故障、POSIX目录fsync实机、Node22最低支持版本和GitHub CI。SIGKILL只证明进程崩溃恢复；注入EIO/ENOSPC与限制SQLite页数不等同于硬件故障。
+2. Windows Node没有通用目录fsync接口，命名空间断电耐久性不作保证；已强制刷盘文件。不能宣称已实现跨平台断电exactly-once。
+3. 审计尾部破损时不会自动删改历史；需要先保留独立副本再人工核对。新增读尾部要求审计文件读写权限；目录屏障失败也会拒绝操作。仍假定一个管理服务写该审计文件，没有扩展为多进程日志锁。
+4. 未引入新schema或迁移。所有实际业务写仍在快照与意图之后；剩余快照/日志/WAL不得以“重试清理”为由删除。不确定结果先按operationId核对购买与credit，原票据失效本身不能证明未发放。
+5. 程序回退仅做本批逆向补丁/新提交，保留库、WAL、快照、审计和113补推meta，不使用禁止的Git恢复/清理命令。旧程序不认识新增审计字段但仍可读JSON；会失去本批刷盘、坏尾部拒写与unknown诊断能力。
+6. A06+B16及后续记忆项未在本批实现；语义待拍板项未动。未提交、未push、未部署。
+
 ## 顺序114：B14默认配额与漂移门禁（2026-10-04，本分支自有记录）
 
 ### 重核、基线与实施边界

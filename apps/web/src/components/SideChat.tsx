@@ -1,4 +1,14 @@
-import type { AdminArtifact, Conversation, Message, MessageId } from '@dramatis/core';
+import {
+  type AdminArtifact,
+  type Conversation,
+  type ConversationId,
+  isCompleteWorldBook,
+  isModifiedWorldBookArtifact,
+  type Message,
+  type MessageId,
+  type WorldBook,
+  worldBookArtifactConflict,
+} from '@dramatis/core';
 import { memo, useCallback, useEffect, useRef, useState } from 'react';
 import { useChatViewportVisibility } from '../lib/chat-visibility';
 import { countRender } from '../lib/render-count';
@@ -7,6 +17,7 @@ import { acknowledgeStreamHandoff, resetStreamState, useStreamState } from '../l
 import { useCoarsePointer } from '../lib/viewport';
 import { Composer } from './Composer';
 import { WebBridgePanel } from './WebBridgePanel';
+import { WorldBookDiff } from './WorldBookDiff';
 
 interface Props {
   conversation: Conversation;
@@ -14,12 +25,15 @@ interface Props {
   busy: boolean;
   ready: boolean;
   archived: boolean;
-  onSend: (text: string) => void;
+  onSend: (text: string, targetConversationId?: ConversationId) => void;
   onStop: () => void;
-  onAdopt: (messageId: MessageId, artifact: AdminArtifact) => void;
-  onDiscard: (messageId: MessageId, artifact: AdminArtifact) => void;
-  onRevoke?: (messageId: MessageId, artifact: AdminArtifact) => void;
-  /** 素材库里现在有哪些 id（判「整本替换」用：草稿的 payload.id 已经在那儿了）。 */
+  onAdopt: (messageId: MessageId, artifact: AdminArtifact) => void | Promise<void>;
+  onDiscard: (messageId: MessageId, artifact: AdminArtifact) => void | Promise<void>;
+  onRevoke?: (messageId: MessageId, artifact: AdminArtifact) => void | Promise<void>;
+  onReverse?: (messageId: MessageId, artifact: AdminArtifact) => void | Promise<void>;
+  worldBooks?: readonly WorldBook[];
+  conversations?: readonly Conversation[];
+  /** 兼容现有调用；世界书冲突由完整 worldBooks 判断。 */
   existingIds?: readonly string[];
   /** 没有 API Key 时，起草这一步走网页版桥接。 */
   bridge?: { prompt: string } | null;
@@ -54,19 +68,50 @@ const ARTIFACT_LABEL: Record<AdminArtifact['kind'], string> = {
 function ArtifactCard({
   artifact,
   disabled,
-  exists,
+  currentBook,
   onAdopt,
   onDiscard,
   onRevoke,
+  onReverse,
 }: {
   artifact: AdminArtifact;
   disabled: boolean;
-  /** 这个草稿要落成的东西**现在**在不在素材库里（在 = 这是「整本替换」）。 */
-  exists: boolean;
-  onAdopt: () => void;
-  onDiscard: () => void;
-  onRevoke?: () => void;
+  /** 当前素材库中的原书，用于显示实时版本冲突。 */
+  currentBook: WorldBook | null;
+  onAdopt: () => void | Promise<void>;
+  onDiscard: () => void | Promise<void>;
+  onRevoke?: () => void | Promise<void>;
+  onReverse?: () => void | Promise<void>;
 }) {
+  const [operation, setOperation] = useState<string | null>(null);
+  const [operationError, setOperationError] = useState<string | null>(null);
+  const operationRef = useRef(false);
+  const mountedRef = useRef(true);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+  const locked = disabled || operation !== null;
+  const perform = async (label: string, action: () => void | Promise<void>): Promise<void> => {
+    if (disabled || operationRef.current) return;
+    operationRef.current = true;
+    setOperation(label);
+    setOperationError(null);
+    try {
+      await action();
+      // A resolved request can also mean a rejected version conflict. The saved artifact status owns success.
+    } catch (error) {
+      if (mountedRef.current) {
+        const detail = error instanceof Error ? error.message : String(error);
+        setOperationError(`操作未完成：${detail || '请稍后再试'}。请核对当前素材状态后再操作。`);
+      }
+    } finally {
+      operationRef.current = false;
+      if (mountedRef.current) setOperation(null);
+    }
+  };
   /*
    * 草稿预览（顺序 26）：卡片在采纳之前要能看出「它到底长什么样」。
    * 世界书给前几条词条，让人看得到粒度。
@@ -82,8 +127,11 @@ function ArtifactCard({
   const description = typeof payload?.description === 'string' ? payload.description.trim() : '';
   const entryCount = Array.isArray(payload?.entries) ? payload.entries.length : 0;
 
+  const conflict =
+    artifact.conflict ?? (artifact.status === 'pending' ? worldBookArtifactConflict(artifact, currentBook) : null);
+  const modifiedBook = isModifiedWorldBookArtifact(artifact);
   return (
-    <div className={`artifact ${artifact.status}`}>
+    <div className={`artifact ${artifact.status}`} aria-busy={operation !== null}>
       <div className="artifact-head">
         <span className="tag accent">{ARTIFACT_LABEL[artifact.kind]}</span>
         <strong>{artifact.title}</strong>
@@ -98,48 +146,75 @@ function ArtifactCard({
       )}
       {entryCount === 0 ? null : <p className="hint">共 {String(entryCount)} 条词条</p>}
 
-      {/*
-        顺序 26：「整本替换」必须说清楚。
-        世界书的采纳是**整份覆盖**（id 相同就替换），而用户很容易以为它是「追加几条」。
-      */}
-      {artifact.kind === 'world-book' && exists ? (
-        <p className="hint warn">
-          采纳会<strong>整本替换</strong>素材库里同名那一份（不是追加）。
-        </p>
+      {artifact.kind === 'world-book' &&
+      isCompleteWorldBook(artifact.payload) &&
+      (!modifiedBook || isCompleteWorldBook(artifact.previousPayload)) ? (
+        <WorldBookDiff
+          before={isCompleteWorldBook(artifact.previousPayload) ? artifact.previousPayload : null}
+          after={artifact.payload}
+        />
       ) : null}
-
-      {/*
-        顺序 86（审计 B6）：草稿过期时**不能**采纳。
-        起草之后用户自己改过这张卡/这本书，直接采纳会把那次修改盖掉——
-        以前会默默盖掉，现在把理由摆在按钮上面。
-      */}
-      {artifact.conflict === undefined ? null : <p className="hint warn">⚠️ {artifact.conflict}</p>}
+      {conflict == null ? null : <p className="hint warn">⚠️ {conflict}</p>}
+      {operation === null ? null : (
+        <p className="hint" role="status">
+          {operation}
+        </p>
+      )}
+      {operationError === null ? null : (
+        <p className="notice error" role="alert">
+          {operationError}
+        </p>
+      )}
 
       {artifact.status === 'pending' ? (
         <div className="inline">
           <button
             type="button"
             className={artifact.kind === 'persona-delete' ? 'ghost danger' : undefined}
-            disabled={disabled || artifact.conflict !== undefined}
-            onClick={onAdopt}
+            disabled={locked || conflict != null}
+            onClick={() => void perform('正在采纳…', onAdopt)}
           >
             {artifact.kind === 'persona-delete' ? '确认删除' : '采纳'}
           </button>
-          <button type="button" className="ghost danger" disabled={disabled} onClick={onDiscard}>
+          <button
+            type="button"
+            className="ghost danger"
+            disabled={locked}
+            onClick={() => void perform('正在丢弃…', onDiscard)}
+          >
             丢弃
           </button>
         </div>
       ) : null}
 
-      {artifact.status === 'adopted' && onRevoke !== undefined && artifact.kind !== 'persona-delete' ? (
+      {artifact.status === 'adopted' && modifiedBook ? (
+        <div className="inline">
+          <span className="hint">修改类采纳需核对后反向修改</span>
+          <button
+            type="button"
+            className="ghost"
+            disabled={locked || !onReverse}
+            onClick={() => {
+              if (onReverse) void perform('正在起草反向修改…', onReverse);
+            }}
+          >
+            起草反向修改
+          </button>
+        </div>
+      ) : null}
+
+      {artifact.status === 'adopted' &&
+      !modifiedBook &&
+      onRevoke !== undefined &&
+      artifact.kind !== 'persona-delete' ? (
         <div className="inline">
           <span className="hint">已进素材库</span>
           <button
             type="button"
             className="ghost"
-            disabled={disabled}
+            disabled={locked}
             title="删掉刚进素材库的那一份，草稿退回「待采纳」——当作这次采纳没发生过"
-            onClick={onRevoke}
+            onClick={() => void perform('正在撤回…', onRevoke)}
           >
             撤回这次采纳
           </button>
@@ -170,7 +245,9 @@ function SideChatImpl({
   onAdopt,
   onDiscard,
   onRevoke,
-  existingIds = [],
+  onReverse,
+  worldBooks = [],
+  conversations = [],
   bridge = null,
   manualMode = false,
   onBridgeCommit,
@@ -250,11 +327,23 @@ function SideChatImpl({
     node.style.height = `${String(Math.min(node.scrollHeight, 200))}px`;
   }, [input]);
 
+  const [selection, setSelection] = useState<{ roomId: string; id: ConversationId } | null>(null);
+  const mains = conversations.filter(
+    (item) =>
+      item.roomId === conversation.roomId &&
+      item.kind === 'main' &&
+      item.archivedAt === null &&
+      item.deletedAt === null,
+  );
+  const selected =
+    selection?.roomId === conversation.roomId ? mains.find((item) => item.id === selection.id) : undefined;
+  const target = selected ?? (mains.length === 1 ? mains[0] : undefined);
+
   const submit = (): void => {
-    if (!ready || busy || archived) return;
+    if (!ready || busy || archived || bridge !== null) return;
     const text = input.trim();
     if (text === '') return;
-    onSend(text);
+    onSend(text, target?.id);
     setInput('');
   };
 
@@ -263,7 +352,9 @@ function SideChatImpl({
       <div className="chat-body" ref={bodyRef} onScroll={onBodyScroll}>
         <div className="admin-hint">
           <strong>世界管理员</strong>
-          <span className="hint">帮你起草角色卡、世界书与场景设置。它不扮演任何角色，产出的素材由你决定去留。</span>
+          <span className="hint">
+            帮你起草角色卡、世界书与场景设置。它不扮演任何角色，素材由你采纳，场景修改会即时生效。
+          </span>
         </div>
 
         {error === null ? null : (
@@ -289,13 +380,10 @@ function SideChatImpl({
                 key={artifact.id}
                 artifact={artifact}
                 disabled={busy || archived}
-                exists={
-                  (artifact.kind === 'character-card' ||
-                    artifact.kind === 'world-book' ||
-                    artifact.kind === 'persona-upsert') &&
-                  typeof (artifact.payload as { id?: unknown } | null)?.id === 'string' &&
-                  (existingIds ?? []).includes((artifact.payload as { id: string }).id)
+                currentBook={
+                  worldBooks.find((book) => book.id === (artifact.payload as { id?: unknown } | null)?.id) ?? null
                 }
+                {...(onReverse === undefined ? {} : { onReverse: () => onReverse(message.id, artifact) })}
                 onAdopt={() => onAdopt(message.id, artifact)}
                 onDiscard={() => onDiscard(message.id, artifact)}
                 {...(onRevoke === undefined ? {} : { onRevoke: () => onRevoke(message.id, artifact) })}
@@ -333,6 +421,36 @@ function SideChatImpl({
           onSkip={onBridgeCancel ?? (() => {})}
         />
       )}
+
+      <div className="admin-scene-target">
+        <label>
+          场景目标{' '}
+          <select
+            aria-label="场景目标"
+            value={target?.id ?? ''}
+            disabled={mains.length === 0 || busy || bridge !== null || archived}
+            onChange={(event) =>
+              setSelection(
+                event.target.value ? { roomId: conversation.roomId, id: event.target.value as ConversationId } : null,
+              )
+            }
+          >
+            <option value="">{mains.length === 0 ? '没有主对话，不能设置场景' : '请选择场景目标'}</option>
+            {mains.map((item) => (
+              <option key={item.id} value={item.id}>
+                {item.title}
+              </option>
+            ))}
+          </select>
+        </label>
+        {!target ? (
+          <p className="hint">
+            {mains.length === 0 ? '请先新建主对话。' : '多条主对话时需要明确选择。'}角色卡、世界书和身份仍可起草。
+          </p>
+        ) : (
+          <p className="hint">场景将即时修改「{target.title}」。本轮发送后固定目标。</p>
+        )}
+      </div>
 
       {/* 与主对话同一个输入区形态（用户 2026-09-21 要求照 Codex 的样子） */}
       <Composer

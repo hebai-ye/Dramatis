@@ -20,6 +20,14 @@
 const CACHE = 'dramatis-shell-v5';
 const SHELL_ASSETS = '/assets/shell-assets.json';
 const PREVIOUS_ASSETS = '/assets/shell-previous.json';
+const GENERATION_PREFIX = 'dramatis-shell-generation-v1-';
+const CONTROL_CACHE = 'dramatis-shell-control-v1';
+const ACTIVE_POINTER = '/__dramatis/active-shell';
+const IMAGE_CACHE = 'dramatis-images-v1';
+const STATIC_CACHE = 'dramatis-static-runtime-v1';
+const REFRESH_LOCK = 'dramatis-shell-publish-v1';
+const IMAGE_LOCK_PREFIX = 'dramatis-image-update-v1:';
+const REFRESH_INTERVAL = 30_000;
 
 function isShellModule(path) {
   return typeof path === 'string' && /^\/assets\/[a-zA-Z0-9._-]+\.(js|css)$/.test(path) && !path.includes('..');
@@ -29,7 +37,7 @@ async function moduleList(response) {
   if (!response?.ok) throw new Error('离线模块清单读取失败');
   const manifest = await response.json();
   if (!Array.isArray(manifest.files) || !manifest.files.every(isShellModule)) throw new Error('离线模块清单无效');
-  return manifest.files;
+  return [...new Set(manifest.files)];
 }
 
 /**
@@ -63,8 +71,7 @@ const STATIC_FILES = new Set([
  * 不写进白名单的后果很具体——装到桌面之后断网打开，所有头像与立绘都变成破图。
  *
  * 这些名字是**稳定**的（`/portraits/01.webp`，不是带哈希的构建产物），所以顺手存下来
- * 有可能拿到旧图；不要紧：`refreshShell()` 每次 activate 都会把「不在外壳清单里」的缓存
- * 删掉，换过一次部署就自愈了。
+ * 通过独立运行时图片缓存与 no-store 后台更新保持新鲜，换外壳不会删除头像。
  */
 const STATIC_PREFIXES = ['/assets/', '/portraits/', '/brand/'];
 
@@ -99,6 +106,7 @@ function classifyRequest(method, href, mode, origin) {
  * 改成自己发现之后，构建产物叫什么名字都不用管：装的时候抓一次首页，把里面的
  * `<script src>` 与 `<link href>` 全收进来。同源 GET 才收，模型接口一个都不碰。
  */
+// biome-ignore lint/correctness/noUnusedVariables: Keep the discovery contract covered by the existing policy tests; publication uses stricter staging validation.
 async function discoverShell(html) {
   const urls = new Set(['/', '/index.html', '/manifest.webmanifest']);
   const patterns = [/<script[^>]+src="([^"]+)"/g, /<link[^>]+href="([^"]+)"/g];
@@ -130,45 +138,189 @@ async function discoverShell(html) {
   return [...urls];
 }
 
-/**
- * 抓一份最新的外壳并把过期的产物清掉。
- *
- * 每次 activate 都跑一遍：部署新版本时 sw.js 本身可能一个字都没变（浏览器就不会
- * 重新安装），靠 install 一次是不够的——那会一直拿着上一版的哈希文件。
- */
-async function refreshShell() {
-  const response = await fetch('/index.html', { cache: 'no-store' });
-  if (!response.ok) throw new Error('离线外壳读取失败');
-  const urls = await discoverShell(await response.text());
-  const cache = await caches.open(CACHE);
-  const currentModules = urls.filter(isShellModule).sort();
-  const priorManifest = await cache.match(SHELL_ASSETS);
-  const priorModules = priorManifest ? (await moduleList(priorManifest)).sort() : [];
-  const changed = JSON.stringify(priorModules) !== JSON.stringify(currentModules);
-  const previousManifest = await cache.match(PREVIOUS_ASSETS);
-  let previous = changed ? priorModules : previousManifest ? await moduleList(previousManifest) : [];
+function isRuntimeImage(path) {
+  return path.startsWith('/portraits/') || path.startsWith('/brand/');
+}
 
-  // 从旧缓存迁入已下载的上一版模块；失败时不先销毁旧外壳。
-  for (const key of await caches.keys()) {
-    if (key === CACHE || !key.startsWith('dramatis-shell-')) continue;
-    const old = await caches.open(key);
-    const oldModules = (await old.keys()).map((request) => new URL(request.url).pathname).filter(isShellModule);
-    if (previous.length === 0) previous = oldModules;
-    for (const file of previous) {
-      if (await cache.match(file)) continue;
-      const cached = await old.match(file);
-      if (cached) await cache.put(file, cached);
+function validNetworkResponse(response) {
+  return (
+    response.ok && response.type === 'basic' && (!response.url || new URL(response.url).origin === self.location.origin)
+  );
+}
+
+function imageResponse(response) {
+  return validNetworkResponse(response) && /^image\//i.test(response.headers.get('content-type') ?? '');
+}
+
+function validateDownload(path, response) {
+  if (!validNetworkResponse(response)) throw new Error(`离线资源下载失败: ${path}`);
+  const mime = (response.headers.get('content-type') ?? '').split(';')[0].trim().toLowerCase();
+  if (
+    (path === '/index.html' && mime !== 'text/html') ||
+    (path.endsWith('.js') &&
+      !['text/javascript', 'application/javascript', 'application/ecmascript', 'text/ecmascript'].includes(mime)) ||
+    (path.endsWith('.css') && mime !== 'text/css') ||
+    (/\.(png|webp|jpe?g|gif|svg|ico)$/i.test(path) && !mime.startsWith('image/'))
+  ) {
+    throw new Error(`离线资源类型无效: ${path}`);
+  }
+}
+
+async function readPointer() {
+  const response = await (await caches.open(CONTROL_CACHE)).match(ACTIVE_POINTER, { ignoreVary: true });
+  if (!response) return undefined;
+  const pointer = await response.json();
+  if (
+    typeof pointer.active !== 'string' ||
+    !pointer.active.startsWith(GENERATION_PREFIX) ||
+    (pointer.previous != null &&
+      (typeof pointer.previous !== 'string' || !pointer.previous.startsWith(GENERATION_PREFIX)))
+  ) {
+    throw new Error('离线外壳指针无效');
+  }
+  return pointer;
+}
+
+async function matchShell(request) {
+  let pointer;
+  try {
+    pointer = await readPointer();
+  } catch {
+    /* v5 仍可作为迁移前的离线兜底。 */
+  }
+  for (const name of [pointer?.active, pointer?.previous, CACHE].filter(Boolean)) {
+    try {
+      const response = await (await caches.open(name)).match(request, { ignoreVary: true });
+      if (response) return response;
+    } catch {
+      /* 单个缓存不可读时继续尝试上一代。 */
     }
   }
+  return undefined;
+}
 
-  // addAll 原子成功后才清旧资源；install / activate 连跑不会丢上一代。
-  await cache.addAll(urls);
-  await cache.put(PREVIOUS_ASSETS, Response.json({ files: previous }));
-  const retained = new Set([...urls, ...previous, PREVIOUS_ASSETS]);
-  for (const request of await cache.keys()) {
-    if (!retained.has(new URL(request.url).pathname)) await cache.delete(request);
+function withImageLock(request, task) {
+  const url = new URL(typeof request === 'string' ? request : request.url, self.location.origin).href;
+  if (typeof navigator !== 'undefined' && typeof navigator.locks?.request === 'function')
+    return navigator.locks.request(`${IMAGE_LOCK_PREFIX}${url}`, { mode: 'exclusive' }, task);
+  // 无锁平台不执行 shell 迁移；运行时保持既有按 worker 去重的降级行为。
+  return Promise.resolve().then(task);
+}
+
+// 只在持有跨 worker 的同源锁时调用。导航响应本身不作为 staging 输入。
+async function stageShell() {
+  const pointer = await readPointer();
+  const prior = await caches.open(pointer?.active ?? CACHE);
+  const index = await fetch('/index.html', { cache: 'no-store' });
+  validateDownload('/index.html', index);
+  const html = await index.clone().text();
+  const assets = await fetch(SHELL_ASSETS, { cache: 'no-store' });
+  validateDownload(SHELL_ASSETS, assets);
+  const modules = (await moduleList(assets.clone())).sort();
+  const manifestResponse = await fetch('/manifest.webmanifest', { cache: 'no-store' });
+  validateDownload('/manifest.webmanifest', manifestResponse);
+  const manifest = await manifestResponse.clone().json();
+  if (
+    !manifest ||
+    typeof manifest !== 'object' ||
+    Array.isArray(manifest) ||
+    (manifest.icons != null && !Array.isArray(manifest.icons))
+  )
+    throw new Error('应用 manifest 无效');
+
+  const urls = new Set(['/', '/index.html', '/manifest.webmanifest', SHELL_ASSETS, ...modules]);
+  for (const match of html.matchAll(/<(?:script|link)\b[^>]*\b(?:src|href)\s*=\s*["']([^"']+)["']/gi)) {
+    const url = new URL(match[1], `${self.location.origin}/index.html`);
+    if (url.origin !== self.location.origin) continue;
+    // 即使部署切换只发生在 index 与清单之间，也不能发布混合外壳。
+    if (/\.(js|css)$/i.test(url.pathname) && !modules.includes(url.pathname))
+      throw new Error('HTML 与模块清单版本不一致');
+    if (isCacheablePath(url.pathname)) urls.add(`${url.pathname}${url.search}`);
   }
-  return urls;
+  for (const icon of manifest.icons ?? []) {
+    if (typeof icon?.src !== 'string') throw new Error('应用图标路径无效');
+    const url = new URL(icon.src, `${self.location.origin}/manifest.webmanifest`);
+    if (url.origin === self.location.origin && isCacheablePath(url.pathname)) urls.add(`${url.pathname}${url.search}`);
+  }
+
+  const priorManifest = await prior.match(SHELL_ASSETS, { ignoreVary: true });
+  const priorModules = priorManifest ? (await moduleList(priorManifest)).sort() : [];
+  const previousManifest = await prior.match(PREVIOUS_ASSETS, { ignoreVary: true });
+  const changed = JSON.stringify(priorModules) !== JSON.stringify(modules);
+  const previous = changed ? priorModules : previousManifest ? await moduleList(previousManifest) : [];
+  const name = `${GENERATION_PREFIX}${crypto.randomUUID()}`;
+  const staged = await caches.open(name);
+  // Cache API 没有跨 cache 事务：只写未引用的新 generation，最后一次 pointer put 才发布。
+  const downloads = new Map([
+    ['/', index.clone()],
+    ['/index.html', index],
+    [SHELL_ASSETS, assets],
+    ['/manifest.webmanifest', manifestResponse],
+  ]);
+  for (const path of urls) {
+    const response = downloads.get(path) ?? (await fetch(path, { cache: 'no-store' }));
+    validateDownload(new URL(path, self.location.origin).pathname, response);
+    await staged.put(path, response);
+  }
+  for (const path of previous) {
+    if (modules.includes(path)) continue;
+    const cached = await prior.match(path, { ignoreVary: true });
+    if (!cached) throw new Error(`上一代模块不可用: ${path}`);
+    validateDownload(path, cached);
+    await staged.put(path, cached);
+  }
+  await staged.put(PREVIOUS_ASSETS, Response.json({ files: previous }));
+
+  // 旧 v5 与先前 generation 中按需存过的头像单独迁移，清理外壳不会删除图片。
+  const images = await caches.open(IMAGE_CACHE);
+  for (const oldName of new Set([CACHE, pointer?.active, pointer?.previous].filter(Boolean))) {
+    const old = await caches.open(oldName);
+    for (const request of await old.keys()) {
+      if (!isRuntimeImage(new URL(request.url).pathname)) continue;
+      await withImageLock(request, async () => {
+        if (await images.match(request, { ignoreVary: true })) return;
+        const cached = await old.match(request, { ignoreVary: true });
+        if (cached && imageResponse(cached)) await images.put(request, cached);
+      });
+    }
+  }
+  await (await caches.open(CONTROL_CACHE)).put(
+    ACTIVE_POINTER,
+    Response.json({ active: name, previous: pointer?.active ?? null }),
+  );
+
+  // 发布以后才清理本应用未引用的 generation。失败只留下垃圾，不回滚有效 pointer。
+  try {
+    for (const key of await caches.keys()) {
+      if (key.startsWith(GENERATION_PREFIX) && key !== name && key !== pointer?.active) await caches.delete(key);
+    }
+  } catch {
+    /* 下一次成功发布会再次清理。v5、图片及其它应用缓存不在删除范围。 */
+  }
+  return [...urls];
+}
+
+let refreshPromise;
+let lastRefresh = 0;
+function refreshShell() {
+  if (refreshPromise) return refreshPromise;
+  // 无 Web Locks 时保留已有外壳；不能拿单 worker promise 冒充跨 worker 互斥。
+  if (typeof navigator === 'undefined' || typeof navigator.locks?.request !== 'function') return Promise.resolve(null);
+  refreshPromise = navigator.locks
+    .request(REFRESH_LOCK, { mode: 'exclusive' }, stageShell)
+    .then((urls) => {
+      lastRefresh = Date.now();
+      return urls;
+    })
+    .finally(() => {
+      refreshPromise = undefined;
+    });
+  return refreshPromise;
+}
+
+function navigationRefresh() {
+  if (refreshPromise) return refreshPromise;
+  return Date.now() - lastRefresh < REFRESH_INTERVAL ? Promise.resolve(null) : refreshShell();
 }
 
 self.addEventListener('install', (event) => {
@@ -179,11 +331,6 @@ self.addEventListener('activate', (event) => {
   event.waitUntil(
     (async () => {
       await refreshShell();
-      // 新外壳准备好后再清理本应用旧缓存。
-      const keys = await caches.keys();
-      await Promise.all(
-        keys.filter((key) => key !== CACHE && key.startsWith('dramatis-shell-')).map((key) => caches.delete(key)),
-      );
       await self.clients.claim();
     })(),
   );
@@ -197,6 +344,27 @@ self.addEventListener('activate', (event) => {
  * 记录，代价可以忽略，下次再出问题一眼就能看出来。
  */
 const recent = [];
+const imageRefreshes = new Map();
+
+function refreshImage(request) {
+  const key = request.url;
+  if (imageRefreshes.has(key)) return imageRefreshes.get(key);
+  const pending = withImageLock(request, async () => {
+    const response = await fetch(request, { cache: 'no-store' });
+    if (imageResponse(response)) {
+      try {
+        await (await caches.open(IMAGE_CACHE)).put(request, response.clone());
+      } catch {
+        /* 配额失败保留旧图，网络响应仍可使用。 */
+      }
+    }
+    return response;
+  }).finally(() => {
+    imageRefreshes.delete(key);
+  });
+  imageRefreshes.set(key, pending);
+  return pending;
+}
 
 self.addEventListener('message', (event) => {
   if (event.data !== 'dramatis:debug') return;
@@ -220,11 +388,50 @@ self.addEventListener('fetch', (event) => {
 
   // 页面导航：网络优先；断网时给缓存的外壳
   if (policy === 'navigate') {
+    const network = fetch(request);
+    // waitUntil 在 dispatch 内同步注册，接续网络成功后的 refresh；不能在 .then 内晚注册。
+    event.waitUntil(
+      network
+        .then((response) => {
+          if (validNetworkResponse(response) && (event.clientId || event.resultingClientId)) return navigationRefresh();
+          return undefined;
+        })
+        .catch(() => {
+          /* 离线 / HTTP 错误 / staging 失败均保留原外壳，下一导航可重试。 */
+        }),
+    );
     event.respondWith(
-      fetch(request).catch(async () => {
-        const cached = await caches.match('/index.html', { ignoreVary: true });
+      network.catch(async () => {
+        const cached = await matchShell('/index.html');
         record(cached ? 'navigate:缓存兜底' : 'navigate:无兜底');
         return cached ?? Response.error();
+      }),
+    );
+    return;
+  }
+
+  if (isRuntimeImage(new URL(request.url).pathname)) {
+    // 先捕获当前缓存响应，再启动网络更新，避免极快的网络把本次旧图返回值替换。
+    const cached = (async () => {
+      try {
+        const images = await caches.open(IMAGE_CACHE);
+        const image = await images.match(request, { ignoreVary: true });
+        if (image) return image;
+      } catch {
+        /* 图片缓存不可用时仍尝试旧壳和在线网络。 */
+      }
+      return matchShell(request);
+    })();
+    const network = cached.then(() => refreshImage(request));
+    // 缓存命中立即返回旧图；后台仅以 basic/image 的成功响应替换。
+    event.waitUntil(network.then(() => undefined).catch(() => {}));
+    event.respondWith(
+      cached.then(async (response) => {
+        if (response) {
+          record('image:缓存命中，后台更新');
+          return response;
+        }
+        return (await network).clone();
       }),
     );
     return;
@@ -238,26 +445,38 @@ self.addEventListener('fetch', (event) => {
    * 的 module script 是 cors 模式）——于是按 Vary 一比就「不匹配」，白白白屏一次。
    * 这条是实测抓出来的：缓存里明明躺着那个文件，页面却加载失败。
    */
-  event.respondWith(
-    caches.match(request, { ignoreVary: true }).then((cached) => {
-      if (cached) {
-        record('cache hit');
-        return cached;
+  const staticResponse = (async () => {
+    let cached = await matchShell(request);
+    if (!cached) {
+      try {
+        cached = await (await caches.open(STATIC_CACHE)).match(request, { ignoreVary: true });
+      } catch {
+        /* 运行时缓存不可读仍继续网络，不让在线页面因为缓存错误白屏。 */
       }
-      return fetch(request)
-        .then((response) => {
-          record(`network ${String(response.status)}`);
-          // 只缓存成功的同源响应；opaque 与错误响应不入库
-          if (response.ok && response.type === 'basic') {
-            const copy = response.clone();
-            void caches.open(CACHE).then((cache) => cache.put(request, copy));
+    }
+    if (cached) {
+      record('cache hit');
+      return cached;
+    }
+    return fetch(request)
+      .then(async (response) => {
+        record(`network ${String(response.status)}`);
+        // 只缓存成功的同源响应；opaque 与错误响应不入库
+        if (validNetworkResponse(response)) {
+          // 已发布 generation 保持不变；运行时 miss 写独立缓存。
+          try {
+            await (await caches.open(STATIC_CACHE)).put(request, response.clone());
+          } catch {
+            /* 配额失败仍返回网络响应。 */
           }
-          return response;
-        })
-        .catch((error) => {
-          record(`network 失败: ${String(error).slice(0, 40)}`);
-          throw error;
-        });
-    }),
-  );
+        }
+        return response;
+      })
+      .catch((error) => {
+        record(`network 失败: ${String(error).slice(0, 40)}`);
+        throw error;
+      });
+  })();
+  event.waitUntil(staticResponse.then(() => undefined).catch(() => {}));
+  event.respondWith(staticResponse);
 });

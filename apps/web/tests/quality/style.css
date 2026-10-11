@@ -1,0 +1,79 @@
+:root {
+  font-family: system-ui, sans-serif;
+  color: #e7edf6;
+  background: #101720;
+  color-scheme: dark;
+}
+body {
+  margin: 0;
+}
+main {
+  max-width: 1060px;
+  margin: auto;
+  padding: 30px;
+}
+h1 {
+  font-size: 26px;
+}
+p {
+  line-height: 1.7;
+  color: #b9c7d8;
+}
+fieldset {
+  border: 1px solid #34465c;
+  border-radius: 12px;
+  padding: 18px;
+  margin: 20px 0;
+}
+legend {
+  color: #8dc2f6;
+}
+label {
+  display: inline-flex;
+  gap: 10px;
+  align-items: center;
+  margin: 8px 14px 8px 0;
+}
+input,
+select,
+textarea,
+button {
+  font: inherit;
+  padding: 9px;
+  border-radius: 6px;
+  border: 1px solid #526981;
+  background: #1b293a;
+  color: #eef5ff;
+}
+#upstream {
+  width: 420px;
+}
+button {
+  cursor: pointer;
+  background: #244566;
+  margin: 5px;
+}
+button:hover {
+  background: #325c84;
+}
+pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  background: #0c121a;
+  padding: 15px;
+  border-radius: 8px;
+  max-height: 440px;
+  overflow: auto;
+}
+a {
+  color: #91c8ff;
+}
+textarea {
+  min-width: 420px;
+}
+#ready {
+  color: #9cd5aa;
+}
+#rubric label {
+  display: flex;
+}

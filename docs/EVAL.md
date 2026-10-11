@@ -1744,7 +1744,7 @@ APK 侧：`gradlew assembleDebug` **构建成功**（4.8 MB），包内确认有
 改成禁用并说明；**改归属**（会排一个注定失败的后台任务）改成让用户把第二步再贴一次，
 按新的归属重写记忆与情绪。
 
-### 线上验证（dramatissync.com:8443）
+### 线上验证（app.example.com:8443）
 
 把这一批（含之前的分页修复、T11/T12、自动同步）构建后部署到线上，
 再用全新浏览器访问**真实域名**跑一遍同样的流程：
@@ -1813,7 +1813,7 @@ APK 侧：`gradlew assembleDebug` **构建成功**（4.8 MB），包内确认有
 
 ### 线上复验（侧边浏览器，390×844）
 
-部署到 `dramatissync.com:8443` 之后，在侧边浏览器里把视口设成 390×844、刷新、
+部署到 `app.example.com:8443` 之后，在侧边浏览器里把视口设成 390×844、刷新、
 点「面板」，实测盒子：
 
 | 元素 | 宽度 | 定位 |
@@ -1824,7 +1824,7 @@ APK 侧：`gradlew assembleDebug` **构建成功**（4.8 MB），包内确认有
 | `.runtime-scrim` | 390px | fixed（整屏，点击关闭） |
 | `.drawer-close`（收起面板） | 319px | 面板顶部，点得到 |
 
-同步面板在同一台侧边浏览器里读到：「用本站地址（**https://dramatissync.com:8443/sync**）」、
+同步面板在同一台侧边浏览器里读到：「用本站地址（**https://app.example.com:8443/sync**）」、
 `placeholder` 同址、`inputmode=url`、`autocapitalize=none`。截图见
 `mobile-panel-overlay.png`（本机复验）。
 
@@ -1860,7 +1860,7 @@ APK 侧：`gradlew assembleDebug` **构建成功**（4.8 MB），包内确认有
 | 账单与后台任务 | ✅ 网页版这一轮**不记账、不排后台任务**（没有服务商调用） |
 | 控制台 | ✅ 0 条错误 |
 
-### 线上验证（侧边浏览器，dramatissync.com:8443）
+### 线上验证（侧边浏览器，app.example.com:8443）
 
 点「创建」→ 副对话打开、「生成提示词」可用；发一句后桥接面板给出 **1964 字**的提示词
 （含三个工具与特殊说明），实测 `upsert_character_card / upsert_world_book / set_scene` 都在里面。
@@ -1937,7 +1937,7 @@ APK 侧：`gradlew assembleDebug` **构建成功**（4.8 MB），包内确认有
 用户已在网页里存好 API Key，要求我自己跑一遍。这是这一轮最有分量的一次验证：
 **前面所有界面改动（流式阶段提示、意图收起）第一次在真实模型上跑**。
 
-### 一、真机真模型一轮（线上 dramatissync.com:8443，用户在用的那个 profile）
+### 一、真机真模型一轮（线上 app.example.com:8443，用户在用的那个 profile）
 
 | 检查 | 结果 |
 | --- | --- |
@@ -2098,7 +2098,7 @@ Token；手机长按出同样的菜单；并且**手机上那几颗按钮已经�
 裁掉了。所以第 40 条不是设计出来的，是回归里撞出来的：菜单改挂 `document.body`
 （portal + `position: fixed`），挂载后量一次尺寸再推回可视区（边距 8px）。
 
-### 线上（https://dramatissync.com:8443/，13/13 通过）
+### 线上（https://app.example.com:8443/，13/13 通过）
 
 部署后另写一份脚本跑**线上站点**，一条 API Key 都不用：导入一张卡（`阿箬`）→ 发一句 →
 应用给「生成提示词」→ 把回复贴回桥接框 → 线上真的出现一条角色消息，再在这一条上验：
@@ -2156,7 +2156,7 @@ PASS  线上没有控制台错误
 | 12 | 手机 390×844：输入框 16px（iOS 不放大）/ 发送键 40px / 整页无横向溢出 | 16px / 40px / 0px ✅ |
 | 13 | 控制台错误 | 0 条 ✅ |
 
-### 线上（https://dramatissync.com:8443/，15/15 通过）
+### 线上（https://app.example.com:8443/，15/15 通过）
 
 同一套脚本打到线上（导入卡 → 桥接一轮 → 再验上一轮那套没被改坏）：
 
@@ -2218,7 +2218,7 @@ PASS  线上没有控制台错误
 「归档」「导入素材」这些会退化成纯灰字、看不出能点——所以 `@media (hover: none)` 里给
 `button.ghost` 一层常驻的浅底，桌面仍然是「平时只是灰字、鼠标过去才浮出来」。
 
-### 线上（https://dramatissync.com:8443/，17/17 通过）
+### 线上（https://app.example.com:8443/，17/17 通过）
 
 ```text
 PASS  线上加载的是刚部署的这版  — /assets/index-ChH54jVP.js
@@ -2662,13 +2662,13 @@ PASS  没有页面级错误
 | --- | --- |
 | 服务器 `ss -ltnp` | 对外只有 **8443**（nginx）；另有 Tailscale 自己的 443，在 100.x 内网地址上 |
 | 服务器 `curl 127.0.0.1:80` | 000（nginx 早已不听 80——上一批把 default 站点移出去了） |
-| **外网** `http://dramatissync.com` | **502**，由云厂商的网关回（不是我们的 nginx） |
+| **外网** `http://app.example.com` | **502**，由云厂商的网关回（不是我们的 nginx） |
 | 防火墙 | `ufw` inactive（唯一的门是云安全组） |
 
 结论：**「对外只留 8443」这条已经在事实上成立**，80 上没有任何我们提供的内容；
 未备案之前，外网到 80 的请求被云厂商接走，我们改不了。
 所以这一项的动作是：把「备案之后要用的那条跳转」写成
-`deploy/nginx-80-redirect.conf.example`（`return 301 https://dramatissync.com:8443$request_uri`），
+`deploy/nginx-80-redirect.conf.example`（`return 301 https://app.example.com:8443$request_uri`），
 留着备案通过那天直接启用——现在装上也没有意义（公网到不了）。
 
 ### 顺序 26：世界管理员工具体验
@@ -3535,7 +3535,7 @@ Chromium 的 390×844 触屏模拟。
 | 项目 | 结果 |
 | --- | --- |
 | `git push` | `2d4f09a..6086096  main -> main`（136 个提交；仓库是**公开**的，域名与本地路径一并公开了，IP/凭据/LOCAL-NOTES 都没进去） |
-| 网页 | `/var/www/dramatis` 换成新构建，`https://dramatissync.com:8443/` 返回 200 且引用 `index-CqzQpPAn.js` |
+| 网页 | `/var/www/dramatis` 换成新构建，`https://app.example.com:8443/` 返回 200 且引用 `index-CqzQpPAn.js` |
 | 同步服务端 | `/opt/dramatis-sync/dist` 换成新构建，`systemctl is-active dramatis-sync` = active，`127.0.0.1:8787/health` = 200，`…/sync/health` = 200 |
 | **61 的 WAL 真的生效** | `sqlite3 /var/lib/dramatis-sync/sync.db "PRAGMA journal_mode;"` → **`wal`**（这一条之前在本地验不了，因为 core 的 tsconfig 不带 Node 类型、写不了文件库的测试） |
 | **同步冒烟 6/6** | 一次性随机账户：建空间 → 设备 A 推两条 → 设备 B 拉到并合并 → 设备 B 再推一条 → 设备 A 合并成三条 → 设备 A 删掉一条 → 设备 B 拉到墓碑后那条消失 |
@@ -4057,7 +4057,7 @@ Biome 的 `useExhaustiveDependencies` 也会要求）。其余逐字一致。
 
 ### 验证记录
 
-- 线上只做**修复前基线**的只读核对：真实站点 `https://dramatissync.com:8443/` 在已有「秦娘」世界时，点顶部「新对话」仍弹出旧版单名表单。未在生产数据里创建测试世界或发送消息。
+- 线上只做**修复前基线**的只读核对：真实站点 `https://app.example.com:8443/` 在已有「秦娘」世界时，点顶部「新对话」仍弹出旧版单名表单。未在生产数据里创建测试世界或发送消息。
 - 本地独立空库 `127.0.0.1:5274` 的真实浏览器 UI：先从顶部建「测试世界甲 / 甲的首轮 / 雨夜 / 旧城」，再从顶部建「测试世界乙 / 乙的首轮」。结果两个世界各有 1 条对话，甲首轮显示场景「雨夜」和地点「旧城」。切在乙时点击甲世界行的续开入口，弹窗明确写「在测试世界甲继续」；提交「甲的第二轮」后，甲 2 条、乙仍 1 条。两条分流均通过。
 - 在 390×844 手机视口，两个世界的行内续开按钮均测得 **166×44 px**、字号 12 px；左栏入口与层级截图已人工审阅。这里是浏览器视口模拟，真机触摸与安全区仍待 Codex 验证。
 - 同一独立本地库导入两张**合成测试卡**后，从顶部新建双角色世界：自动开场分别显示「测试乙角：他摆了摆手 / 『路上好走吗？』」与「测试甲角：『请坐。』 / 她推开门 / 『风大。』」。390×844 截图中两段动作位于气泡外、对白位于各自气泡内，未显示字面 `/n`，第二张卡没有冒领第一张的台词。没有调用模型或使用真实 Key。
@@ -4351,7 +4351,7 @@ B = `since` 下推；原方案里的「`summary` 增量缓存」按实测拆出�
 
 | 位置 | 原状（审计发现） | 现状 |
 | --- | --- | --- |
-| `tools/local-bridge/server.mjs` 的 CORS | `access-control-allow-origin: *`——**任何网页**都能调用用户的本机助手 | 只回显白名单来源（默认 `https://dramatissync.com` / `:8443`、`http://127.0.0.1:5273`、`http://localhost:5273`），加 `vary: Origin`；被拒的请求**一个 CORS 头都不回**（脚本连错误内容都读不到）；新增 `access-control-allow-private-network`（Chrome 的公网页面访问 127.0.0.1 预检要求） |
+| `tools/local-bridge/server.mjs` 的 CORS | `access-control-allow-origin: *`——**任何网页**都能调用用户的本机助手 | 只回显白名单来源（默认 `https://app.example.com` / `:8443`、`http://127.0.0.1:5273`、`http://localhost:5273`），加 `vary: Origin`；被拒的请求**一个 CORS 头都不回**（脚本连错误内容都读不到）；新增 `access-control-allow-private-network`（Chrome 的公网页面访问 127.0.0.1 预检要求） |
 | 同上：Host / Origin / 令牌 | 完全不校验（可被 DNS rebinding 打） | 每个请求先过 `checkAccess`：Host 必须是 `127.0.0.1:PORT` 或 `localhost:PORT`；Origin 不在白名单 → 403；支持可选配对令牌 `--token` / `DRAMATIS_BRIDGE_TOKEN`（常量时间比较） |
 | 同上：请求体 / 超时 / 并发 | 请求体不限长；`timeoutMs` 不夹；`/ask` 能并发任意多 | 请求体 ≤ 1MB（413）；`timeoutMs` 夹在 5–600 秒；`/ask` 串行，最多再排 2 个（429） |
 | 同上：端口参数 | `Number(args[...])`，`--port abc` 变 `NaN` 后行为不明 | `parsePort` 校验 1–65535，非法**启动即退出**并说明原因 |
@@ -4374,7 +4374,7 @@ B = `since` 下推；原方案里的「`summary` 增量缓存」按实测拆出�
   → `tools/*` 的测试不会被跑到。这是审计没提、本批自己撞出来的**结构性缺口**，已记入 TASKS。
 
 **行为变更（用户需要知道的一条）**：本机助手**从「谁都能调」变成白名单**。如果你的应用不是从
-`https://dramatissync.com`（或 `:8443`）与本机 `:5273` 打开的，调用会被 403——用 `--allow-origin <你的来源>`
+`https://app.example.com`（或 `:8443`）与本机 `:5273` 打开的，调用会被 403——用 `--allow-origin <你的来源>`
 或 `DRAMATIS_BRIDGE_ORIGINS=a,b` 追加。**没有 Origin 头的本机脚本（curl 等）仍然可用**（Host 校验还在），
 这是刻意的：要挡的是**网页**，不是用户自己敲的命令。
 
@@ -4647,7 +4647,7 @@ Core **709** 条 / 63 文件、Web **12** 条 / 4 文件全绿；build ✓（495
 - 站点配置改动（`diff` 三处，全部逐行核对）：`ssl_certificate_key` 后加 server 级 `include …`；`location = /sw.js` 内 `add_header Cache-Control "no-cache";` 后加同一个 `include`（nginx 的 `add_header` 在 location 里不继承 server 级，所以必须再 include 一次）；`location /sync/` 内加 `client_max_body_size 8m`。
 - **保留 `listen 8443 ssl http2;`**：`deploy/nginx-8443.conf.example` 已经改成 `http2 on;`，但线上 nginx 1.24 不认那两行。
 - 流程：`cp` 前先 `cp -a` 存一份 `dramatis.bak-headers-20260926-183113` → `nginx -t` 通过 → `systemctl reload nginx`；不通过就自动回滚（本次没走到）。
-- 线上实测（外部，`https://dramatissync.com:8443/`）：`/` 与 `/sw.js` **都**返回全套安全头；`/sync/health` 经 nginx 反代 = `{"ok":true,…}`。
+- 线上实测（外部，`https://app.example.com:8443/`）：`/` 与 `/sw.js` **都**返回全套安全头；`/sync/health` 经 nginx 反代 = `{"ok":true,…}`。
 
 **网页**：
 
@@ -5503,3 +5503,82 @@ session仅窄改既有前端素材发布：异步读完后合并最新快照，�
 正式服务器转发IAB1280×720实测：首次新标签仍命中旧index-DVy2mNMQ.js，刷新一次后实际加载index-BPMnmEUW.js。身份／世界书／角色卡三份内容与编辑分包成功，左栏空世界列表保留；身份列表／详情、全部／已挂载及无世界提示可见，同项收起、Esc回角色卡入口、关闭回身份入口通过。发布前保留的旧109页面在发布后仍可首次延迟加载旧设置及模型配置分包。截图与DOM证据保存忽略out/task-112/release；未登录真实账户、提交正式素材数据或调用真实模型，测试标签与本轮SSH转发均已关闭。
 
 HTML／清单缺显式缓存头是既有宿主策略，仍可能启发式缓存或需要刷新；SW重验及24资源字节检查不能替代PWA完整跨版本更新、真实离线或长期旧页面驻留验证。物理手机、真实软键盘／IME、真实模型和长会话压力继续待验证。发布日志、审查、回退状态、包与私有运维信息留忽略路径。主线交付采用本批一个112提交的普通快进推送；将发布续记纳入尚未推送的本地提交后再推，最终SHA以git工具结果核验，保留分支和worktree，不强推。
+
+## 2026-10-04 界面、桥接与文档组阶段证据（4c5169a）
+
+本节是新批次记录，不替代顺序109及此前的测量。完整命令与每轮独立复核见 [执行台账](./superpowers/plans/2026-10-03-ui-bridge-ops-execution.md) 及各 report。
+
+| 范围 | 已观察结果 | 验证边界 |
+| --- | --- | --- |
+| 执行前基线 | pnpm test：core857、web209、sync-admin88；生产web构建187模块 | 是修改前基线，不能当最终门禁 |
+| D05复审 | 本轮基线首屏三个静态JS共649412B；109历史649422B与686708B均保留 | 分包/懒加载已有；不重写历史10B差异，不当真PWA性能验收 |
+| C02 | 同5文件27行、30处字面替换，残留0；私有映射仅ignored LOCAL-NOTES | 未重写Git历史；程序访问控制默认值未在此项改动 |
+| A11/B04/B05 | 4测试文件22项通过、web typecheck与9文件Biome通过，独立fix1复核通过 | React回调/effect harness；真实CSS滚动/焦点和B07联测尚待 |
+| B01/B02 | 最终44/44、语法与Biome通过；两轮fix后独立复核通过；10-05默认原生worker loopback探针通过 | 真实握手/IPC/正常关闭/父断开退出/卡住强制终止已补验；真实DeepSeek DOM/发送未验 |
+| B03 | 9/9；fix1规格与质量均PASS | 测试产物入口/清单/全树摘要；最终真实Vite产物及prod入口仍待验 |
+| D01 | Fake6/6；系统Edge154.0.4258.48、新context双页6/6；独立复核通过，根锁hash未变 | 真实升级/阻塞/持久/回滚/clone与auto-commit；不代替worker通知/跨标签CAS |
+| D02/C05 | 12固定production夹具基线schema2冻结；当前真实0/48次、0/5元 | 页面与预算准备/fake仅证链路，候选管理员改完须重生成，CSP真BYOK待验 |
+| C06/D08 | 隔离恢复/真机方案 | 无真实服务器恢复或Android真机通过证据 |
+
+D01负向例明确验证：生产transaction callback越出IDB请求链、等原生complete后第二笔写入拒绝，第一笔已持久化；这属于违反callback约束，不能称失败后整批回滚。正常仅await存储操作与显式throw回滚另有独立通过用例。D02没有真模型评分/改进结论；C05正式Report-Only保留，待验证（归 Codex）。
+
+2026-10-08主任务集中验证（按用户多功能完成后总测策略）：B07真实useSession/Repository固定Promise时序5/5行为断言失败，确认迟到选择/局部更新覆盖、reload抹掉新消息与ABA旧快照回写；失败后尚未达到lastRoom断言，不推定其结果。隔离quality fake4文件37项、全仓typecheck通过；后续session/SW改动与最终浏览器/构建仍须验证，真实模型0请求。
+
+### 2026-10-08 本组最终候选集中证据
+
+| 范围 | root实际结果 | 限制 |
+| --- | --- | --- |
+| Core / Web / Sync-admin | 前一完整`pnpm test`为878/319/88；最终session修补后完整Web48文件328项通过 | Core与管理源码没有后续改变，未为重复计数再次运行；不把汇总数字写成新的单次全仓命令 |
+| B07 | 最后九用例使27例先7fail/20pass，修补后27/27；独立两遍规格/质量PASS | 完整world集合未过滤；UI选择保护不修存储active/CAS，background读取仍可能接受存储选择 |
+| 全仓类型 / lint | typecheck退出0；lint439文件通过 | 新夹具长断言有1个格式错误，格式修复后通过；后续只写报告不改产品 |
+| B03真实构建 | 190模块；fresh=true；第二次reused | 首屏index507.76kB、keystore141.97kB；既有大chunk警告保留，D05本轮仅复审 |
+| B05 / D03真实UI | Edge12/12；新提前scroll例先red gap145px，layout跟随后通过 | 实际DOM91条及sentinel；合成scroll只固定竞争，不能确定首轮历史flaky根因；3项Modal含在12项内 |
+| B06 | VM44/44、策略11/11、Edge6/6 | WorkerNavigator原生锁、相同SW字节更新、公有资源刷新、并发代际/失败保旧等；未证明常驻worker跨30秒节流不重启路径 |
+| D01 | 最新runner实际Edge双页6/6；fake6/6 | 不代替worker通知/跨标签CAS；10-08时中断/升级分支未实测，10-11已补SIGINT与受控Vite三秒升级证据，见[补验报告](./superpowers/plans/2026-10-11-d01-runner-exit-report.md)；不覆盖全部退出路径 |
+| D02准备 | 最终freeze9共同/3管理员差异、baseline完整hash不变；quality专用类型/构建及增强Edge fake smoke通过 | 共同Low shim、双盲背景/下载/完整wire hash/保账/清Key/强制策略探针；非真实模型质量结论 |
+| C05实际App候选 | 最终dist下Edge fake 7通过/1已知skip；最小标签/保存状态/既有透明动作对齐，独立复审PASS | strict Low工具续传明确skip且归部分一；非真BYOK。正式保持Report-Only，待验证（归 Codex） |
+
+最终日志在ignored `logs/*-closeout.log`与`logs/csp-browser-final-pass.log`，固定时序red/green及各真实浏览器日志见执行台账和报告。fake门禁之后用户在隔离页填Key并手动发送1次真实请求；最新总账1/48、保守扣记¥0.01213/5，budget-truncation停止，不能质量评分。shared affect-1 repeat2导出无完整text/usage/parse，原账本及指定三份非秘密下载保留，不重试/退款/重置。root未读取Key或推理链；没有服务器恢复、Android真机或提交/部署。后续执行上限和停止恢复见单独提案，尚未实施。
+
+### 2026-10-08 4096执行profile集中增量
+
+用户批准4096并保留账本后，root的validation全部40项与quality50项、专用类型、lint449文件、27模块隔离构建及增强fake smoke通过；三种关闭对照与helper正常/发送后停止/指令损坏/fake启动失败均有证据。独立两遍复审通过，子任务未测试。原1200冻结baseline保持，actual4096与upstream准确序列化字节hash单记，不能把新参数称原wire相同。原账本恢复只追加一次审计，旧entries/字节历史/1请求/¥0.01213保留；新host locked、空闲，新窗口等待用户填Key，无后续真实样本/评分。详见[增量记录](./superpowers/plans/2026-10-08-live-validation-browser-report.md)；C05继续Report-Only待验证（归 Codex）。
+
+### 2026-10-09 本组文档收口（无新增运行门禁）
+
+用户要求停止初始化排障并继续项目；官方CLI重新获取Computer Use成功，只确认本地installed/enabled、版本不变，不确认UI或控制恢复。本组补齐三处部署CSP的隔离actual enforced+真实BYOK门槛、安装后备份30为份数的说明，active headers/policy与命令不变。systemd只读模板差异列为部分一交接；没有越界修改或削弱installer。最新6285离线、不等待Key窗口，账本SHA仍270e...、真实1/48、quality1/44、¥0.01213，无新增模型调用或评分。既有门禁不重跑，26项状态与未关闭条件见[收口矩阵](./superpowers/plans/2026-10-09-ui-bridge-ops-closeout.md)。
+
+### 2026-10-09 C06真实Windows副本与旁路验证
+
+root沿用户授权的现有运维连接执行，两位子任务仅静态复核。20,156,416B已完成历史快照同卷复制481ms、只读SQLite检查16ms，源/两副本SHA一致；quick_check通过，spaces4/records6880/heads4/account_profiles1、孤儿及外键违规0。固定现役94个JS的清单摘要，已知与本地候选差异仅为本组未部署admin代码，未升级程序。实际Sync工作副本迁移/回环health200/优雅停机exit0/端口释放/后只读检查通过，源和原始副本hash不变；缺失运营表迁移为空表0，核心行数保持，六生产服务Running。两副本保留。账户读写/正文解密/增量同步仍未跑，RPO/应用RTO未测，保留策略尚归部分一，不能整体关闭C06。
+
+初轮stdin查询超时未知态，经精确进程核验/收尾和只读确认无目录/相关进程后解除；长度守卫未派发、时钟偏差守卫复制前拒绝、平铺入口查询失败均保留。最终旁路只执行一次并退出0；未删WAL/SHM、未复制在线生产主库、未打开或改写生产SQLite、未停生产服务。静态载荷语法由root集中检查，子任务未测试；本轮未重跑稳定产品门禁或新增模型调用。完整hash、窗口、版本边界和失败处置见[实演记录](./superpowers/plans/2026-10-09-c06-recovery-report.md)。
+
+### 2026-10-09 B06同一worker跨30秒补验
+
+root独立Edge单例1/1通过、退出0：437 ms受控导航保持A pointer且不新增staging，31,020 ms后真实导航发布C HTML/manifest/icon，SW字节及A模块清单不变；timeOrigin、target未close/数量1、CDP无stopping/stopped交叉证明同一执行实例。新离线页C及首次lazy A可用。实际用例32.1秒、runner33.3秒。未重跑既有六例/VM/策略门禁、未改产品SW或依赖；子任务只静态复核。ESM配置启动两次失败和首次实际case的75秒屏障超时保留；按已测的 `Sec-Fetch-Dest: empty` 修正新夹具后通过，没有放宽断言。完整Android离线/系统回收仍未验，不把真实事件保活称后台常驻，详见[补验报告](./superpowers/plans/2026-10-09-b06-standing-worker-report.md)。无新增模型调用。
+
+### 2026-10-09 C06真实App合成账户双端往返
+
+root在新目录/新30分钟窗口的恢复副本上执行，最终六阶段全部PASS、退出0：A注册/claim及首次密文写入，B空白context登录/HTTP拉取/精确UI解密核对，B写回，A非空增量拉取并分别核对旧/新合成实体，A页面重载后新拉取及实体复核。游标首次7→B15，A最终17；A push2/accepted9、pull5/累计17，B push2/accepted8、pull3/累计15；这些累计量不是唯一新增实体数。quarantine及非预期外连计数0，没有模型Key或请求。
+
+服务端UTC14:29:28.7134583—14:29:59.0473575，包含操作/收尾约30.33秒，不称完整应用RTO；停机后spaces5/records6894/heads5/profiles2，quick_check/孤儿/外键检查通过、运营表均0。工作副本hash `801bc00f…`，schema与前次迁移相同，源/原始副本hash仍 `687e381b…`；优雅停机及随后只读核对确认wrapper/端口/本机代理0，六生产服务Running。前五次失败属于验证器入口/定位，均独立留存并先收尾核对再换新副本，最终修正固定描述placeholder及显式世界/主对话选择后通过，断言未跳过。
+
+历史账户正文尚未验，RPO/完整应用RTO及部分一保留规则仍待；C06不整体关闭。未重跑已稳定产品门禁、未修改产品/禁区代码。D02账本仍1/48、quality1/44、¥0.01213，C05正式Report-Only待验证（归Codex）。完整结果和失败边界见[客户端报告](./superpowers/plans/2026-10-09-c06-account-client-report.md)。
+
+### 2026-10-11 D01运行器退出路径补验
+
+root集中运行真实Windows/Edge的本地API-ready隔离探针，再通过自有PTY发出原生Ctrl+C：现有runner收到SIGINT，清理Playwright/Vite，父Node记录退出码130。另一轮只对自有Vite隔离控制台、单次丢弃首次SIGTERM传输，3002 ms后runner实际发SIGKILL，Vite退出，父Node再次130。两次按PID及创建时间记录13个自有进程（含9个Edge），退出后身份残留0、6273监听0。外层PowerShell/tool均为1，未改写该状态或算作IDB断言失败；这是故意中断的生命周期观察，无新增用例通过数。
+
+首次body-visible就绪判定不适用于空测试页，修为已有q7 API后取得正式证据；失败探针不计产品缺陷。三秒升级属于受控信号传输故障注入，未证明原生OS不响应，也未测父SIGTERM/Playwright强制升级/全部退出分支；worker通知和跨标签CAS仍待部分一。运行器及产品源码/依赖未改，稳定Fake6/Edge6门禁未重跑。Luna仅静态复核；root node语法检查、差异空白检查及真实账本SHA核对退出0，仍270e...、1/48、¥0.01213，无新增模型/服务器操作。完整证据见[退出报告](./superpowers/plans/2026-10-11-d01-runner-exit-report.md)。
+
+### 2026-10-11 UI首批集中回归
+
+用户批准后root集中验证，子任务仅实现/静态复审：首轮Web49文件341项通过；场景补丁后2文件7项再通过；产品两套tsc及新增UI夹具专用类型、11文件Biome、差异空白检查通过，最终190模块构建通过（主JS520.57 kB，既有500 kB提醒保留）。真实Edge最终23/23：既有12项与新增11项，覆盖异步失败/保留/重试/摘要串行/输入法/同行确认/partial/外部换场零新写/素材权威状态/复制迟到/助手过期/diff及主题矩阵；没有把六个截图组合算六项测试。视觉核对360/390/640/1280与三主题，展开diff长文本不横向撑页、原始JSON/扩展仍可查；窄桥接内部滚动到放弃按钮的补断言单例1/1通过。
+
+首轮浏览器20通过2失败，均为控件禁用/移除后焦点落body导致Esc未进入弹窗；保留断言，修DialogShell提交后检查，定向2/2、完整22/22，再补固定开窗sceneId后23/23。受控助手/剪贴板/保存响应不能当实际模型或真实App存储验收，App共享Map跨重挂载仅静态复核；持久CAS/真实桥接/BYOK/C06历史/Android不据此关闭。runner退出0，TCP6287拒绝连接；Windows连接清点API权限不足，未宣称全进程清点。共享D02账本最新只读合计2次/¥0.01667，旧SHA探针不再匹配；UI本批未调用、重置或改写账本。完整失败、文件、复审及回退边界见[实施报告](./superpowers/plans/2026-10-11-ui-optimization-report.md)。
+
+
+### 2026-10-11 顺序121：主线集成与发布门禁
+
+最终集中Web59文件451/451、预算并发34/34、桥接/桌面/VM97/97、真实Edge SW6/6；Core首轮95文件1337通过，预算文件冲突解析失败后34/34再通过。UI在开发预构建错误后22/23通过，唯一旧滚动接口探针对齐后定向1/1通过，覆盖23个不同用例，不冒称一次全套全绿。Web两套/Core类型及Biome511文件通过；正式构建212模块、主JS517.44kB，保留500kB提示。见[发布报告](./superpowers/plans/2026-10-11-ui-release-report.md)。

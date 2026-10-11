@@ -1,0 +1,3974 @@
+{
+  "schema": 2,
+  "fixedTime": "2026-10-03T00:00:00.000Z",
+  "baselineCommit": "4c5169a23ecc901ab892bae182f8f4ac78c4b8b8",
+  "candidateCommit": "4c5169a23ecc901ab892bae182f8f4ac78c4b8b8",
+  "dependencyHashes": {
+    "packages/core/src/admin/bridge.ts": {
+      "baseline": "b3832197a1ab935e3189cfc3e6ede3c78348589f550056800156e16dfbfaa73e",
+      "candidate": "852d9956095b03b10a3298f8e2f246fcd251567ecf906c808e90fbe27a3a05dd"
+    },
+    "packages/core/src/admin/prompt.ts": {
+      "baseline": "bc6410a17cc7215e6f3a6f69efdf602ae40940cd434945cac743d81ff43c8b8b",
+      "candidate": "eb879545bc6bf74c6fbb8f8d05bb55563ee90098d55f7df88fe785304e3d51ce"
+    },
+    "packages/core/src/admin/tools.ts": {
+      "baseline": "a7abbb00a6a645294ebf4d95929513e7ed7d4bf5854eb840b4c078e4c2959f97",
+      "candidate": "b4c533c95c0580c94f5b39f7dfff173f30b5c13d010f9772fa8f7e14c60f8c81"
+    },
+    "packages/core/src/admin/turn.ts": {
+      "baseline": "71326bbcdc2bfb271276164fe554b75c7a0e16a095943cadd4e3643a5523f89e",
+      "candidate": "71326bbcdc2bfb271276164fe554b75c7a0e16a095943cadd4e3643a5523f89e"
+    },
+    "packages/core/src/compat/sillytavern/card.ts": {
+      "baseline": "72bc870b4fdbc7547b1f7e847d23e4dfbeb4eb01c89bad4f42475da3479d4878",
+      "candidate": "72bc870b4fdbc7547b1f7e847d23e4dfbeb4eb01c89bad4f42475da3479d4878"
+    },
+    "packages/core/src/compat/sillytavern/index.ts": {
+      "baseline": "36ed1cecd70a7418cb7943b3d096113d6bf4e86fd73c3712a669c75ab998ba4b",
+      "candidate": "36ed1cecd70a7418cb7943b3d096113d6bf4e86fd73c3712a669c75ab998ba4b"
+    },
+    "packages/core/src/compat/sillytavern/inflate.ts": {
+      "baseline": "8306d1396f47075513690bbfec6adcb96aee29186e0bde643954f0679adeb34a",
+      "candidate": "8306d1396f47075513690bbfec6adcb96aee29186e0bde643954f0679adeb34a"
+    },
+    "packages/core/src/compat/sillytavern/png.ts": {
+      "baseline": "ae811b72d8286ea6f1f60a40b22b3b76183a344ed7c7b556349b3f994bd92041",
+      "candidate": "ae811b72d8286ea6f1f60a40b22b3b76183a344ed7c7b556349b3f994bd92041"
+    },
+    "packages/core/src/compat/sillytavern/worldbook.ts": {
+      "baseline": "8af532aeb53e99487220033ed257332af33f54eb56df61a9727ac57d580f9444",
+      "candidate": "8af532aeb53e99487220033ed257332af33f54eb56df61a9727ac57d580f9444"
+    },
+    "packages/core/src/crypto/encoding.ts": {
+      "baseline": "f50b9b3d59172e25cf3c5b249649c404909cdf181eefbcdc0d5d328b8f9dc895",
+      "candidate": "f50b9b3d59172e25cf3c5b249649c404909cdf181eefbcdc0d5d328b8f9dc895"
+    },
+    "packages/core/src/crypto/errors.ts": {
+      "baseline": "df38727f5658bb2bb1dfddfbaef6ac1e03f2130f88d8ad95c694a503adc4e094",
+      "candidate": "df38727f5658bb2bb1dfddfbaef6ac1e03f2130f88d8ad95c694a503adc4e094"
+    },
+    "packages/core/src/crypto/index.ts": {
+      "baseline": "32368de7136784199e07b3e573eb43d3d2b896c3f7deae800ebf7700a1a33cb2",
+      "candidate": "32368de7136784199e07b3e573eb43d3d2b896c3f7deae800ebf7700a1a33cb2"
+    },
+    "packages/core/src/crypto/keys.ts": {
+      "baseline": "e1497831bec862ef584c4fd64b49d24e53c9eaf3aa80078fd41d277df11eefd1",
+      "candidate": "e1497831bec862ef584c4fd64b49d24e53c9eaf3aa80078fd41d277df11eefd1"
+    },
+    "packages/core/src/crypto/records.ts": {
+      "baseline": "f8629c3837dcea97421df02284022dee2446c7d2fecc84f41c614c9cae659d60",
+      "candidate": "f8629c3837dcea97421df02284022dee2446c7d2fecc84f41c614c9cae659d60"
+    },
+    "packages/core/src/director/intent-plan.ts": {
+      "baseline": "8085a475e86562026e7466db6105f29570210306e64b2b34ee775ef657c88cd1",
+      "candidate": "8085a475e86562026e7466db6105f29570210306e64b2b34ee775ef657c88cd1"
+    },
+    "packages/core/src/director/scheduler.ts": {
+      "baseline": "90191f0257bf9c2ddb6842b66e97068b1554744e6a285196051da52c77f39499",
+      "candidate": "90191f0257bf9c2ddb6842b66e97068b1554744e6a285196051da52c77f39499"
+    },
+    "packages/core/src/director/turn-speakers.ts": {
+      "baseline": "2895bd6f4c2a55c577a9bcdff7100ab836398b0f256cde3edb18fa92217d7fb7",
+      "candidate": "2895bd6f4c2a55c577a9bcdff7100ab836398b0f256cde3edb18fa92217d7fb7"
+    },
+    "packages/core/src/index.ts": {
+      "baseline": "bc245b7d02125f570eb04971842bf0cb5cb290e9f6f83f29832042c217b08aad",
+      "candidate": "bc245b7d02125f570eb04971842bf0cb5cb290e9f6f83f29832042c217b08aad"
+    },
+    "packages/core/src/memory/affect.ts": {
+      "baseline": "f23fcdbbf850ff8377d225d2ca494a73880b3c57483905e476eb6dcd13f9e4d5",
+      "candidate": "f23fcdbbf850ff8377d225d2ca494a73880b3c57483905e476eb6dcd13f9e4d5"
+    },
+    "packages/core/src/memory/apply-analysis.ts": {
+      "baseline": "bb0de5dd8cf7535b134381d15427e35f5892702bfa4c92c9dfe59e83204dda47",
+      "candidate": "bb0de5dd8cf7535b134381d15427e35f5892702bfa4c92c9dfe59e83204dda47"
+    },
+    "packages/core/src/memory/attachment.ts": {
+      "baseline": "316db4329c167d0429646e32f8b613301ab292bedf397adce792b97ba3da4341",
+      "candidate": "316db4329c167d0429646e32f8b613301ab292bedf397adce792b97ba3da4341"
+    },
+    "packages/core/src/memory/consolidate.ts": {
+      "baseline": "8e4a28e7e1e070a1cc5241ecec7b103c4093319b2ea200f6963a87c6f65d9337",
+      "candidate": "8e4a28e7e1e070a1cc5241ecec7b103c4093319b2ea200f6963a87c6f65d9337"
+    },
+    "packages/core/src/memory/extract.ts": {
+      "baseline": "7beaa02db8edbc11759fa942bc1e173d2c61781cf1bf4160c94dd62eac80fe79",
+      "candidate": "7beaa02db8edbc11759fa942bc1e173d2c61781cf1bf4160c94dd62eac80fe79"
+    },
+    "packages/core/src/memory/ingest.ts": {
+      "baseline": "78006828b1ddc6c5604a7ed1c660f0d03f4e46fc6652c9e0a2234e4f22a28a9d",
+      "candidate": "78006828b1ddc6c5604a7ed1c660f0d03f4e46fc6652c9e0a2234e4f22a28a9d"
+    },
+    "packages/core/src/memory/panel-view.ts": {
+      "baseline": "e2784b9df7f0c9374ff0e422a4fa9d13a9c2ddf310d216f4f0fb19c39f1c8145",
+      "candidate": "e2784b9df7f0c9374ff0e422a4fa9d13a9c2ddf310d216f4f0fb19c39f1c8145"
+    },
+    "packages/core/src/memory/recall.ts": {
+      "baseline": "97c1d11aa6f0f11fd9bf9772b3eea697f16a117707ba03c8ddde4865de0256d6",
+      "candidate": "97c1d11aa6f0f11fd9bf9772b3eea697f16a117707ba03c8ddde4865de0256d6"
+    },
+    "packages/core/src/memory/summary.ts": {
+      "baseline": "c98716e67fcc93b461232c7eb8dcc599da56a30456343d8af02a7b015262ab8f",
+      "candidate": "c98716e67fcc93b461232c7eb8dcc599da56a30456343d8af02a7b015262ab8f"
+    },
+    "packages/core/src/memory/turn-analysis.ts": {
+      "baseline": "89048c624eaed2cbdff15928864866375778ffd98e862f02743545fac239193b",
+      "candidate": "89048c624eaed2cbdff15928864866375778ffd98e862f02743545fac239193b"
+    },
+    "packages/core/src/memory/types.ts": {
+      "baseline": "a51ce502a9fe06ec86d39410b0208d0f266ed52118e44092650258475eb0e42f",
+      "candidate": "a51ce502a9fe06ec86d39410b0208d0f266ed52118e44092650258475eb0e42f"
+    },
+    "packages/core/src/model/card.ts": {
+      "baseline": "09c7d32ccff2207c8ca4ea2498e7c6a0927686d9df5d52d6979668609506f490",
+      "candidate": "09c7d32ccff2207c8ca4ea2498e7c6a0927686d9df5d52d6979668609506f490"
+    },
+    "packages/core/src/model/conversation.ts": {
+      "baseline": "184d2bee11e5cf0a476735785a22320a4fcf71a5ce9cbc34155e731fabcc5d03",
+      "candidate": "184d2bee11e5cf0a476735785a22320a4fcf71a5ce9cbc34155e731fabcc5d03"
+    },
+    "packages/core/src/model/ids.ts": {
+      "baseline": "6bf8189bde695a58f06bf1e5ddab6f872ea4dbd725c220a2ce0c3c6c7cc123c9",
+      "candidate": "6bf8189bde695a58f06bf1e5ddab6f872ea4dbd725c220a2ce0c3c6c7cc123c9"
+    },
+    "packages/core/src/model/index.ts": {
+      "baseline": "ba467cae125374c3b36ec0e3a61ad51b28142530c569bf191b48e6c28843827e",
+      "candidate": "ba467cae125374c3b36ec0e3a61ad51b28142530c569bf191b48e6c28843827e"
+    },
+    "packages/core/src/model/instance.ts": {
+      "baseline": "dba551be39e8de1e0cab814b3358bd6a5d96e8b2db161862dd3f6a1bfbf4fbc5",
+      "candidate": "dba551be39e8de1e0cab814b3358bd6a5d96e8b2db161862dd3f6a1bfbf4fbc5"
+    },
+    "packages/core/src/model/lifecycle.ts": {
+      "baseline": "edd757c4571e07a0f4ea67fa0e1efd609fe7e384c6def18f575550356602dec9",
+      "candidate": "edd757c4571e07a0f4ea67fa0e1efd609fe7e384c6def18f575550356602dec9"
+    },
+    "packages/core/src/model/message.ts": {
+      "baseline": "e63462b8b2f5ffcdaab0247ace8178cf7fa3171f0b6d60811f176f6f82652238",
+      "candidate": "e63462b8b2f5ffcdaab0247ace8178cf7fa3171f0b6d60811f176f6f82652238"
+    },
+    "packages/core/src/model/persona.ts": {
+      "baseline": "b6b31077566cc0a0f46fee24278e01df72f5cd8c1d3123945014d0d64ae3decc",
+      "candidate": "b6b31077566cc0a0f46fee24278e01df72f5cd8c1d3123945014d0d64ae3decc"
+    },
+    "packages/core/src/model/provider.ts": {
+      "baseline": "7f418aea7cb8bad107f1659ae5c52bb000b009846ebdd3478803c3529f4ed44f",
+      "candidate": "7f418aea7cb8bad107f1659ae5c52bb000b009846ebdd3478803c3529f4ed44f"
+    },
+    "packages/core/src/model/room.ts": {
+      "baseline": "e346d8c3015f24a3003aa47766fd72f2f36e62f89a7df361eea8b635bced0882",
+      "candidate": "e346d8c3015f24a3003aa47766fd72f2f36e62f89a7df361eea8b635bced0882"
+    },
+    "packages/core/src/platform/background-runner.ts": {
+      "baseline": "8506c8c0a18321283ec2e4c2284acbbff518b6d33139f8807c928857d2bdbe41",
+      "candidate": "8506c8c0a18321283ec2e4c2284acbbff518b6d33139f8807c928857d2bdbe41"
+    },
+    "packages/core/src/platform/entity-store.ts": {
+      "baseline": "db414ba0f9b94aa1c0c6e90778da11a75b4d8d16c81420588f515d817df8e925",
+      "candidate": "db414ba0f9b94aa1c0c6e90778da11a75b4d8d16c81420588f515d817df8e925"
+    },
+    "packages/core/src/platform/file-io.ts": {
+      "baseline": "7248792b8d16bd62e5e4f7add4aede3dd07be9edf115097a67e0d457d68c59d6",
+      "candidate": "7248792b8d16bd62e5e4f7add4aede3dd07be9edf115097a67e0d457d68c59d6"
+    },
+    "packages/core/src/platform/key-store.ts": {
+      "baseline": "b681da59828c17aedd6cda6ea8a7f4fee7275f3b8cac272247512eb1f3381a64",
+      "candidate": "b681da59828c17aedd6cda6ea8a7f4fee7275f3b8cac272247512eb1f3381a64"
+    },
+    "packages/core/src/platform/key-vault.ts": {
+      "baseline": "4fb68bc9b434050c01bf16097c74ccc7bbc9aa23414725f84e842b5a1a79b08c",
+      "candidate": "4fb68bc9b434050c01bf16097c74ccc7bbc9aa23414725f84e842b5a1a79b08c"
+    },
+    "packages/core/src/platform/memory-store.ts": {
+      "baseline": "82f1472c44e5fd56c2b85bd6300cd042ca45a9ac40f9630553080a462c0a8025",
+      "candidate": "82f1472c44e5fd56c2b85bd6300cd042ca45a9ac40f9630553080a462c0a8025"
+    },
+    "packages/core/src/prompt/assemble.ts": {
+      "baseline": "5d121e1df0ea1ed12a91d7fe568cc60621a20939e3a8591b82343eda5d89e5f8",
+      "candidate": "5d121e1df0ea1ed12a91d7fe568cc60621a20939e3a8591b82343eda5d89e5f8"
+    },
+    "packages/core/src/prompt/budget.ts": {
+      "baseline": "637b5bae80e9cc6c98072975d2f793b1087d32205cea641323da43163cc5ba3f",
+      "candidate": "637b5bae80e9cc6c98072975d2f793b1087d32205cea641323da43163cc5ba3f"
+    },
+    "packages/core/src/prompt/history.ts": {
+      "baseline": "5d23e7a4733b8e31754565cc45614c0a379cb0df739bbae70ee57f8d9d180eff",
+      "candidate": "5d23e7a4733b8e31754565cc45614c0a379cb0df739bbae70ee57f8d9d180eff"
+    },
+    "packages/core/src/prompt/reply-style.ts": {
+      "baseline": "79bf85ef9705b8a5bd5840cac5bb5baf95953e43cd4154170b6ef3067b37aa23",
+      "candidate": "79bf85ef9705b8a5bd5840cac5bb5baf95953e43cd4154170b6ef3067b37aa23"
+    },
+    "packages/core/src/prompt/types.ts": {
+      "baseline": "db139e3b146908dc66e1cddc3d1c92309eba7952d2d9fc3a927996940361d380",
+      "candidate": "db139e3b146908dc66e1cddc3d1c92309eba7952d2d9fc3a927996940361d380"
+    },
+    "packages/core/src/prompt/unlimited.ts": {
+      "baseline": "79df3bf2adf2642fc7892630ae97558e514d8603514662820fb25f0b5f3adff7",
+      "candidate": "79df3bf2adf2642fc7892630ae97558e514d8603514662820fb25f0b5f3adff7"
+    },
+    "packages/core/src/prompt/web-bridge.ts": {
+      "baseline": "f3367bdb28ccf4f7543675ebb2ba1d7c4b0b14c2cd346e7bc15f707dc0edf6ae",
+      "candidate": "f3367bdb28ccf4f7543675ebb2ba1d7c4b0b14c2cd346e7bc15f707dc0edf6ae"
+    },
+    "packages/core/src/provider/collect.ts": {
+      "baseline": "e4019adcd180093eef67194ca8bc222a0bd6dadd8b5df6b27933fe720d0db673",
+      "candidate": "e4019adcd180093eef67194ca8bc222a0bd6dadd8b5df6b27933fe720d0db673"
+    },
+    "packages/core/src/provider/manual.ts": {
+      "baseline": "83ba33a2d85d4aedcd5374e2c48b9cca73af20c67964eb5e8ad2b2675442256a",
+      "candidate": "83ba33a2d85d4aedcd5374e2c48b9cca73af20c67964eb5e8ad2b2675442256a"
+    },
+    "packages/core/src/provider/openai-compatible.ts": {
+      "baseline": "548f9321a02b748ac76be27f66f5b5ac06f221b7f089685e0496026998c95947",
+      "candidate": "548f9321a02b748ac76be27f66f5b5ac06f221b7f089685e0496026998c95947"
+    },
+    "packages/core/src/render/attribution.ts": {
+      "baseline": "f76dd1793cc04c3da496015b8bc82cfe69bfc39ddbb59a4e72ccc4227e65b28d",
+      "candidate": "f76dd1793cc04c3da496015b8bc82cfe69bfc39ddbb59a4e72ccc4227e65b28d"
+    },
+    "packages/core/src/render/bleed.ts": {
+      "baseline": "76fe2d6f1e9dc3cdc420a67bf2ae5a003ba2434483b6099112264adcd3918ffc",
+      "candidate": "76fe2d6f1e9dc3cdc420a67bf2ae5a003ba2434483b6099112264adcd3918ffc"
+    },
+    "packages/core/src/render/intent.ts": {
+      "baseline": "2bef98d191926808d68fd7bdd556f1eeb808af3c23eef0e9e9dad7cd4c42f827",
+      "candidate": "2bef98d191926808d68fd7bdd556f1eeb808af3c23eef0e9e9dad7cd4c42f827"
+    },
+    "packages/core/src/render/narration.ts": {
+      "baseline": "b7bef3c02760197c90e5f5a9ce624a50254afb8c6b5e5e4ad2871da670feb9d7",
+      "candidate": "b7bef3c02760197c90e5f5a9ce624a50254afb8c6b5e5e4ad2871da670feb9d7"
+    },
+    "packages/core/src/render/segments.ts": {
+      "baseline": "8c2affd6915a0c8eaa4d42b36265dfe3264194134eb059041ae7402e91bf5d4b",
+      "candidate": "8c2affd6915a0c8eaa4d42b36265dfe3264194134eb059041ae7402e91bf5d4b"
+    },
+    "packages/core/src/session/presence.ts": {
+      "baseline": "5bf902dc6896bd71e59ccda1254aa84ffae6d5f7886fa513250c193218e55cbb",
+      "candidate": "5bf902dc6896bd71e59ccda1254aa84ffae6d5f7886fa513250c193218e55cbb"
+    },
+    "packages/core/src/session/setup.ts": {
+      "baseline": "f5fdbabefaa9baec93a5cf8e4d9147f17cc528e8d6a98fb09fd3a42882808183",
+      "candidate": "f5fdbabefaa9baec93a5cf8e4d9147f17cc528e8d6a98fb09fd3a42882808183"
+    },
+    "packages/core/src/session/turn.ts": {
+      "baseline": "77c2969b468e225a0bcf941f209682a441d97ee1b6b1726e422dae89f5fc36e8",
+      "candidate": "77c2969b468e225a0bcf941f209682a441d97ee1b6b1726e422dae89f5fc36e8"
+    },
+    "packages/core/src/storage/archive.ts": {
+      "baseline": "32d1ef1bbc861d27e568326fb41bd32c2b538043937c02ae3998fc1f1e49ff6d",
+      "candidate": "32d1ef1bbc861d27e568326fb41bd32c2b538043937c02ae3998fc1f1e49ff6d"
+    },
+    "packages/core/src/storage/budget.ts": {
+      "baseline": "12a74503408015a664fec69f48324b5c2a9179bea2351f786cb6f3c92cf75d18",
+      "candidate": "12a74503408015a664fec69f48324b5c2a9179bea2351f786cb6f3c92cf75d18"
+    },
+    "packages/core/src/storage/repository.ts": {
+      "baseline": "fce88d452c8cfd04e21d7cd445e559031567af077a17e43157b14c41e40ed81d",
+      "candidate": "fce88d452c8cfd04e21d7cd445e559031567af077a17e43157b14c41e40ed81d"
+    },
+    "packages/core/src/storage/transcript.ts": {
+      "baseline": "f16db0815ecc571d1b250b16eb450ea89d9612d7811c4f2891ca36b1f7508291",
+      "candidate": "f16db0815ecc571d1b250b16eb450ea89d9612d7811c4f2891ca36b1f7508291"
+    },
+    "packages/core/src/storage/usage.ts": {
+      "baseline": "efd67c24291a7e44cc3ee734ae68d130725c16b7f47da0952ab178589da988d8",
+      "candidate": "efd67c24291a7e44cc3ee734ae68d130725c16b7f47da0952ab178589da988d8"
+    },
+    "packages/core/src/sync/auto-sync.ts": {
+      "baseline": "53af520cf97c4399aa2048544af9e9a922a289d992854934ec1562e43301d2b2",
+      "candidate": "53af520cf97c4399aa2048544af9e9a922a289d992854934ec1562e43301d2b2"
+    },
+    "packages/core/src/sync/client-key.ts": {
+      "baseline": "5e6834ff7b3fc99a0406bcad0d3bb5fac55eedeeebf74e8a2e061132d676209a",
+      "candidate": "5e6834ff7b3fc99a0406bcad0d3bb5fac55eedeeebf74e8a2e061132d676209a"
+    },
+    "packages/core/src/sync/credential.ts": {
+      "baseline": "7772fe982e8fe4e6404a178c7a14974a8aa64ca3ff435b19a418506022bc81a4",
+      "candidate": "7772fe982e8fe4e6404a178c7a14974a8aa64ca3ff435b19a418506022bc81a4"
+    },
+    "packages/core/src/sync/http-client.ts": {
+      "baseline": "4879c1df22b5d080ee4e6db18d55ef010458c5a65a68d9cff6cdb6ec088d38f1",
+      "candidate": "4879c1df22b5d080ee4e6db18d55ef010458c5a65a68d9cff6cdb6ec088d38f1"
+    },
+    "packages/core/src/sync/http.ts": {
+      "baseline": "40c4983b115cd73939c2798fc84bc84d50bdaed210926ce7948f58f007f03b58",
+      "candidate": "40c4983b115cd73939c2798fc84bc84d50bdaed210926ce7948f58f007f03b58"
+    },
+    "packages/core/src/sync/index.ts": {
+      "baseline": "32025282deacaefe9a03bf033ddbec6711a176fa15b6f18798f839a5db1ff304",
+      "candidate": "32025282deacaefe9a03bf033ddbec6711a176fa15b6f18798f839a5db1ff304"
+    },
+    "packages/core/src/sync/loop.ts": {
+      "baseline": "bceb8daeaeee1eb8d2e88a740a989dddb252e0c03a94859c9c736ad021f6645f",
+      "candidate": "bceb8daeaeee1eb8d2e88a740a989dddb252e0c03a94859c9c736ad021f6645f"
+    },
+    "packages/core/src/sync/memory-transport.ts": {
+      "baseline": "6e17c5913ed9e524b50786741110c3203e1790d6c5474cdc8899d94a851904c2",
+      "candidate": "6e17c5913ed9e524b50786741110c3203e1790d6c5474cdc8899d94a851904c2"
+    },
+    "packages/core/src/sync/merge.ts": {
+      "baseline": "246cd2c8ef882b31f89880e935e15173ff00000e00d38b307f0505cb909ff3dc",
+      "candidate": "246cd2c8ef882b31f89880e935e15173ff00000e00d38b307f0505cb909ff3dc"
+    },
+    "packages/core/src/sync/server.ts": {
+      "baseline": "de4a39f28fa0aa494202dc94232ac86a9d248b8aeb5466eae2c8c29e8523c4d2",
+      "candidate": "de4a39f28fa0aa494202dc94232ac86a9d248b8aeb5466eae2c8c29e8523c4d2"
+    },
+    "packages/core/src/sync/sqlite.ts": {
+      "baseline": "34a365c54a484e4edff73aea46fcb268319e96578b2258335230959d3c7819e0",
+      "candidate": "34a365c54a484e4edff73aea46fcb268319e96578b2258335230959d3c7819e0"
+    },
+    "packages/core/src/sync/types.ts": {
+      "baseline": "65f6dad248c4d6a1faa6c483f5112bef932485ff8211300d61c79008b3818242",
+      "candidate": "65f6dad248c4d6a1faa6c483f5112bef932485ff8211300d61c79008b3818242"
+    },
+    "packages/core/src/token/calibrate.ts": {
+      "baseline": "cf6807e5bbe0731416c42172398c72e31def9bf31f0e8f5c023fc47f9ee21317",
+      "candidate": "cf6807e5bbe0731416c42172398c72e31def9bf31f0e8f5c023fc47f9ee21317"
+    },
+    "packages/core/src/token/estimate.ts": {
+      "baseline": "bb999e14344d4d159594ee822dfbbd4aba877b9df9d9dd5f333de2fbfaa3d616",
+      "candidate": "bb999e14344d4d159594ee822dfbbd4aba877b9df9d9dd5f333de2fbfaa3d616"
+    },
+    "packages/core/src/types/node-sqlite.d.ts": {
+      "baseline": "f9971edf2083a294a74313972a4f1bfe7fa32cab36f71127cca3f278c7d55b98",
+      "candidate": "f9971edf2083a294a74313972a4f1bfe7fa32cab36f71127cca3f278c7d55b98"
+    },
+    "packages/core/src/util/json.ts": {
+      "baseline": "a1d03a3d077cb9c4a3891ce189f5738b7d4eee2e9fa819a5ab1009e6206a3de9",
+      "candidate": "a1d03a3d077cb9c4a3891ce189f5738b7d4eee2e9fa819a5ab1009e6206a3de9"
+    }
+  },
+  "candidateOnlyDependencyHashes": {
+    "packages/core/src/admin/world-book.ts": "e24e7c07bf8262294b9207c6d226445e68fd5302710a1597f81f383537519826"
+  },
+  "baseline": [
+    {
+      "caseId": "roleplay-1",
+      "family": "roleplay",
+      "label": "信件与边界",
+      "input": {
+        "room": {
+          "id": "quality-room",
+          "title": "雨夜酒馆",
+          "personaId": null,
+          "playerName": "旅人",
+          "playerPersona": "独自赶路，背着旧剑。",
+          "cardIds": ["quality-card-alice"],
+          "instanceIds": ["quality-instance-alice"],
+          "worldBookIds": [],
+          "activeConversationId": null,
+          "createdAt": "2026-10-03T00:00:00.000Z",
+          "updatedAt": "2026-10-03T00:00:00.000Z",
+          "deletedAt": null
+        },
+        "scene": {
+          "id": "quality-scene",
+          "roomId": "quality-room",
+          "conversationId": null,
+          "title": "雨夜",
+          "location": "旧城酒馆",
+          "worldTime": "第三日 · 黄昏",
+          "castPolicy": "locked",
+          "cast": ["quality-instance-alice"],
+          "summary": "雨下了一整天。",
+          "endedAt": null,
+          "createdAt": "2026-10-03T00:00:00.000Z",
+          "updatedAt": "2026-10-03T00:00:00.000Z",
+          "deletedAt": null
+        },
+        "card": {
+          "id": "quality-card-alice",
+          "name": "Alice",
+          "nickname": "",
+          "description": "在旧城书铺工作，夜里常来酒馆。上个月托商队给姐姐送过一封信。",
+          "personality": "话少，对熟人实在，不愿主动谈家事。",
+          "creator": "",
+          "characterVersion": "1",
+          "tags": [],
+          "embeddedWorldBook": null,
+          "extensions": {},
+          "source": {
+            "kind": "manual",
+            "spec": "dramatis",
+            "specVersion": "1",
+            "importedAt": "2026-10-03T00:00:00.000Z"
+          },
+          "createdAt": "2026-10-03T00:00:00.000Z",
+          "updatedAt": "2026-10-03T00:00:00.000Z",
+          "deletedAt": null
+        },
+        "instance": {
+          "id": "quality-instance-alice",
+          "roomId": "quality-room",
+          "cardId": "quality-card-alice",
+          "displayName": "Alice",
+          "presence": "onstage",
+          "traits": { "extroversion": -0.3, "aggression": 0, "empathy": 0.3, "playfulness": 0, "caution": 0.3 },
+          "affect": { "valence": 0.1, "arousal": 0.3, "updatedAt": "2026-10-03T00:00:00.000Z", "history": [] },
+          "relationships": [
+            {
+              "target": "player",
+              "trust": 0.4,
+              "affinity": 0.4,
+              "fear": 0,
+              "respect": 0.2,
+              "tension": 0.1,
+              "updatedAt": "2026-10-03T00:00:00.000Z",
+              "history": []
+            }
+          ],
+          "traitsLocked": false,
+          "createdAt": "2026-10-03T00:00:00.000Z",
+          "updatedAt": "2026-10-03T00:00:00.000Z",
+          "deletedAt": null
+        },
+        "history": [
+          {
+            "id": "quality-message-0-player",
+            "roomId": "quality-room",
+            "conversationId": null,
+            "sceneId": "quality-scene",
+            "turnId": "quality-turn-0",
+            "localSeq": 1,
+            "deviceId": "quality-device",
+            "role": "player",
+            "speakerInstanceId": null,
+            "speakerName": "旅人",
+            "audience": ["quality-instance-alice"],
+            "content": "商队出事前，有没有把你的信送到？",
+            "createdAt": "2026-10-03T00:00:00.000Z",
+            "updatedAt": "2026-10-03T00:00:00.000Z",
+            "deletedAt": null
+          },
+          {
+            "id": "quality-message-0-alice",
+            "roomId": "quality-room",
+            "conversationId": null,
+            "sceneId": "quality-scene",
+            "turnId": "quality-turn-0",
+            "localSeq": 2,
+            "deviceId": "quality-device",
+            "role": "character",
+            "speakerInstanceId": "quality-instance-alice",
+            "speakerName": "Alice",
+            "audience": ["quality-instance-alice"],
+            "content": "只知道他们到了北门。# 她把杯子放下。别问信里写了什么。",
+            "createdAt": "2026-10-03T00:00:00.000Z",
+            "updatedAt": "2026-10-03T00:00:00.000Z",
+            "deletedAt": null
+          }
+        ],
+        "playerInput": "好，不问信。北门是谁看见他们的？",
+        "cast": [
+          {
+            "id": "quality-instance-alice",
+            "roomId": "quality-room",
+            "cardId": "quality-card-alice",
+            "displayName": "Alice",
+            "presence": "onstage",
+            "traits": { "extroversion": -0.3, "aggression": 0, "empathy": 0.3, "playfulness": 0, "caution": 0.3 },
+            "affect": { "valence": 0.1, "arousal": 0.3, "updatedAt": "2026-10-03T00:00:00.000Z", "history": [] },
+            "relationships": [
+              {
+                "target": "player",
+                "trust": 0.4,
+                "affinity": 0.4,
+                "fear": 0,
+                "respect": 0.2,
+                "tension": 0.1,
+                "updatedAt": "2026-10-03T00:00:00.000Z",
+                "history": []
+              }
+            ],
+            "traitsLocked": false,
+            "createdAt": "2026-10-03T00:00:00.000Z",
+            "updatedAt": "2026-10-03T00:00:00.000Z",
+            "deletedAt": null
+          }
+        ],
+        "memories": [],
+        "modes": { "playerFirst": false, "silent": false },
+        "budget": { "maxTokens": 16384, "reserveForReply": 1200 }
+      },
+      "request": {
+        "messages": [
+          {
+            "role": "system",
+            "content": "### 基本规则\n请以角色卡里「」内的身份进行沉浸式对话演绎，把自己完全代入这个角色，相信此刻你就是此人。\n\n输出只包含角色的行为与对话，不要旁白解说、不要提示词或规则说明。\n\n角色性格：以角色卡的设定为准。\n角色身份：以角色卡的设定为准。\n用户身份：以玩家的身份设定为准，用「你」指代玩家。\n\n输出格式：\n- 动作与环境描写用 # 开头，独占一行。\n- 对白不加引号，也不加角色名前缀，用第一人称直接写。\n- 多角色场景下，每个角色的动作与对白分开成段，保证清晰可读。\n- 除对白以外的一切内容，用角色名指代角色、用「你」指代玩家。\n\n剧情主导权：主动推进剧情，每轮都让故事往前走一点，不要被动等待玩家输入。\n保持逻辑连贯（角色离开后不可突然出现）；冲突类型要多样，避免反复用同一种事件推进。\n\n长动作处理：直接完成长动作，略写过程、只给结果；角色或玩家提出长时间行动时，一轮把它写完整。\n\n角色语气贴合设定：允许符合人物个性的粗口、幽默与威胁，但同一句话或相似内容不要重复多次。\n\n动态世界观：可以适时引入新角色，但不要超过场景能承载的量，且必须逻辑自洽。\n每次回应至少包含一项环境细节描写（五感优先），避免连续使用相同或相似的场景描写。\n\n战斗场景：进入战斗后持续输出直到战斗结束，不等待玩家额外输入；胜负要符合角色的能力设定，不得无理由地胜利或失败。\n\n交互逻辑：玩家回复简短（如「好」「是」「走」）时主动推进剧情，推进可以大胆、意料之外，但应保持逻辑性。\n玩家提出不合理或违反设定的行为时，明确告知并维持合理的剧情。\n需要玩家表态或做决定时，用征求意见的疑问句收尾；事情已经说清、没什么可问的，就自然收住，不要为了凑一个问句硬加。\n可以补充玩家角色的侧面描写，但禁止输出本应属于玩家角色的对话。\n上一段与下一段的衔接必须恰当，必要时平滑过渡。\n\n禁用缓存：遇到与之前相同的玩家输入时，直接推进剧情，不要重放上一次的回复。\n\n禁止事项：\n- 被动等待玩家推进剧情\n- 重复使用单一冲突类型\n- 破坏世界观合理性的设定\n- 长时间输出重复语句\n- 输出本应属于玩家角色的对话\n\n特殊事项：玩家持续回复「好」「走」「是」这类短句时，总是大胆推进剧情。\n\n### 角色：Alice\n你现在扮演的是「Alice」。\n\n在旧城书铺工作，夜里常来酒馆。上个月托商队给姐姐送过一封信。\n\n性格：话少，对熟人实在，不愿主动谈家事。\n\n性格倾向：内向寡言、共情敏锐、谨慎多疑\n\n### 关系与情绪状态\n对玩家的态度：信任 +0.40、好感 +0.40、畏惧 +0.00、敬重 +0.20、紧张感 +0.10\n\n### 当前场景\n地点：旧城酒馆\n时间：第三日 · 黄昏\n导演指令：本场景名单已锁定。不得引入任何新角色，也不要提及未在场角色进入场景。\n场景摘要：雨下了一整天。\n在场角色：Alice（正在与你对话）\n\n### 本轮指令\n现在轮到你发言。请以「Alice」的身份回应，保持角色不跳出。人设是你的底子，不是这一轮非说不可的台词：只在当前这件事真的用得上、或者玩家问起时才提。玩家「旅人」的身份设定：独自赶路，背着旧剑。\n不要代替玩家行动，也不要描写玩家的内心想法。未知设定先问，不编造既定事实。只写本角色这一轮的简短回应；不续演别人，那是他的回合。直接写你的对白与动作，不要在回复开头写任何角色名（不要出现「某某：」这样的前缀）。历史记录里的【名字】只是给你看的说话人标记，你的回复里不要出现这种标记。\n本轮模式（场记）：较早的经过已经由场记、章节与记忆代表，不再逐条重复原文。需要细节时先从这些材料里找，不要凭空补写没看过的事。\n格式（必须遵守）：动作与神态用 `#` 独占一行开头；对白不加任何名字前缀。\n先写一行 `意图：<这一轮你想做什么，一句话>`，然后空一行再写对白与动作。意图只写你自己的打算，不要写别人。\n\n### 回答长度、反重复与人设收敛\n这一段可以连着做几个不同的动作，但同一个动作、同一件道具不要重复；同一个意思不要换句话再说一遍。\n动作句不要用你自己的名字当主语：写「她把杯子放下」，不要写「（角色名）把杯子放下」。\n已经答过的事不要复述，把篇幅留给这一轮的新内容。\n人设要挑场合：性格、身世、口头禅、随身物件是你的底子，不是每轮都要说的台词——只有当前这件事真的用得上、或者玩家问起时才提。\n同一个设定点（身份、往事、习惯、随身物件）不要连着几轮反复说；隔开几轮、或者它有了新变化时再提一次就够。\n不要为了表现人设，把话头从眼前正在发生的事上拽回自己身上。\n回答长度（标准）：这一轮写三到五句，总长不超过 150 字；把这一件事说清就收住，不要为了凑字数铺陈。\n\n### 格式示范\n正确：\n# 她把杯子往桌上一放。\n「你问这个做什么。」\n# 她抬眼看了看门口。\n也正确（动作不加 `#`，但也没有放进引号里）：\n她把杯子往桌上一放。\n「你问这个做什么。」\n错误（把动作也写进引号，读起来像她在念旁白）：\n「她把杯子往桌上一放。」\n\n格式示范（只是示范，不是本轮内容）：对白带「」，没带引号的一律当动作。\n玩家：你们两个怎么看？\n# 他把袖口的水拧了一把。\n「先看看货再说。」\n他抬眼看了看门口。"
+          },
+          { "role": "user", "content": "商队出事前，有没有把你的信送到？" },
+          { "role": "assistant", "content": "只知道他们到了北门。# 她把杯子放下。别问信里写了什么。" },
+          { "role": "user", "content": "好，不问信。北门是谁看见他们的？" }
+        ],
+        "tools": [],
+        "params": {
+          "model": "deepseek-flash",
+          "reasoning_effort": "low",
+          "thinking": { "type": "enabled" },
+          "max_tokens": 1200
+        }
+      },
+      "fixtureHash": "cd0246b7e3d814d93254d9fa7ccff4d17e2e1c71bbb30ca6bf5e9da47625a727",
+      "requestHash": "d2daeef211f8430daaca1608cd7a59e07ce83e27d411d0b447314ce102b3e1d6",
+      "commit": "4c5169a23ecc901ab892bae182f8f4ac78c4b8b8",
+      "source": "git-blob-4c5169a-admin + hash-verified-shared-dependencies",
+      "sourceHash": "1764ca9f0ac4ad7bcff50527adbd539679d6867002eeea8fe11d27f82ac42794"
+    },
+    {
+      "caseId": "extraction-1",
+      "family": "extraction",
+      "label": "信件与边界",
+      "input": {
+        "scene": {
+          "id": "quality-scene",
+          "roomId": "quality-room",
+          "conversationId": null,
+          "title": "雨夜",
+          "location": "旧城酒馆",
+          "worldTime": "第三日 · 黄昏",
+          "castPolicy": "locked",
+          "cast": ["quality-instance-alice"],
+          "summary": "雨下了一整天。",
+          "endedAt": null,
+          "createdAt": "2026-10-03T00:00:00.000Z",
+          "updatedAt": "2026-10-03T00:00:00.000Z",
+          "deletedAt": null
+        },
+        "cast": [
+          {
+            "id": "quality-instance-alice",
+            "roomId": "quality-room",
+            "cardId": "quality-card-alice",
+            "displayName": "Alice",
+            "presence": "onstage",
+            "traits": { "extroversion": -0.3, "aggression": 0, "empathy": 0.3, "playfulness": 0, "caution": 0.3 },
+            "affect": { "valence": 0.1, "arousal": 0.3, "updatedAt": "2026-10-03T00:00:00.000Z", "history": [] },
+            "relationships": [
+              {
+                "target": "player",
+                "trust": 0.4,
+                "affinity": 0.4,
+                "fear": 0,
+                "respect": 0.2,
+                "tension": 0.1,
+                "updatedAt": "2026-10-03T00:00:00.000Z",
+                "history": []
+              }
+            ],
+            "traitsLocked": false,
+            "createdAt": "2026-10-03T00:00:00.000Z",
+            "updatedAt": "2026-10-03T00:00:00.000Z",
+            "deletedAt": null
+          }
+        ],
+        "playerName": "旅人",
+        "messages": [
+          {
+            "id": "quality-message-0-player",
+            "roomId": "quality-room",
+            "conversationId": null,
+            "sceneId": "quality-scene",
+            "turnId": "quality-turn-0",
+            "localSeq": 1,
+            "deviceId": "quality-device",
+            "role": "player",
+            "speakerInstanceId": null,
+            "speakerName": "旅人",
+            "audience": ["quality-instance-alice"],
+            "content": "商队出事前，有没有把你的信送到？",
+            "createdAt": "2026-10-03T00:00:00.000Z",
+            "updatedAt": "2026-10-03T00:00:00.000Z",
+            "deletedAt": null
+          },
+          {
+            "id": "quality-message-0-alice",
+            "roomId": "quality-room",
+            "conversationId": null,
+            "sceneId": "quality-scene",
+            "turnId": "quality-turn-0",
+            "localSeq": 2,
+            "deviceId": "quality-device",
+            "role": "character",
+            "speakerInstanceId": "quality-instance-alice",
+            "speakerName": "Alice",
+            "audience": ["quality-instance-alice"],
+            "content": "只知道他们到了北门。# 她把杯子放下。别问信里写了什么。",
+            "createdAt": "2026-10-03T00:00:00.000Z",
+            "updatedAt": "2026-10-03T00:00:00.000Z",
+            "deletedAt": null
+          }
+        ]
+      },
+      "request": {
+        "messages": [
+          {
+            "role": "system",
+            "content": "你是一个叙事记录员。阅读刚发生的一段对话，然后只输出一个 JSON 对象。\n不要写解释，不要写代码块标记，除了那个 JSON 对象什么都不要输出。"
+          },
+          {
+            "role": "user",
+            "content": "地点：旧城酒馆\n时间：第三日 · 黄昏\n玩家扮演：旅人\n在场角色：Alice\n\n对话：\n旅人：商队出事前，有没有把你的信送到？\nAlice：只知道他们到了北门。# 她把杯子放下。别问信里写了什么。\n\n字段要求：\n- summary：客观描述发生了什么，一到三句，不要写角色的内心。\n- importance：0 到 1。改变了关系、暴露了秘密、推进了情节的，给高分；寒暄与日常给低分。\n- location：只有对话里明确发生了地点变化时才填，否则留空字符串。\n- observations：为每个在场角色各写一条，描述他在这个视角下注意到了什么、\n  误解了什么、在意什么。同一件事在不同角色眼里应当有差异，允许互相矛盾。\n  没有明显反应的角色可以省略。speaker 必须用上面给出的角色名。\n\n输出格式：\n{\"summary\":\"客观经过，一到三句\",\"importance\":0.6,\"location\":\"\",\"observations\":[{\"speaker\":\"角色名\",\"perception\":\"他的印象\"}]}"
+          }
+        ],
+        "tools": [],
+        "params": {
+          "model": "deepseek-flash",
+          "reasoning_effort": "low",
+          "thinking": { "type": "enabled" },
+          "max_tokens": 1200
+        }
+      },
+      "fixtureHash": "b0dc8a3d6cc7ef3e918a7d79eb17cb01188abcbce7919f34f6ddcefdc61ec349",
+      "requestHash": "4c08efb1852089584af6526bc135bc997c64a5a1f66d0b30a63703f58d820c33",
+      "commit": "4c5169a23ecc901ab892bae182f8f4ac78c4b8b8",
+      "source": "git-blob-4c5169a-admin + hash-verified-shared-dependencies",
+      "sourceHash": "1764ca9f0ac4ad7bcff50527adbd539679d6867002eeea8fe11d27f82ac42794"
+    },
+    {
+      "caseId": "affect-1",
+      "family": "affect",
+      "label": "信件与边界",
+      "input": {
+        "cast": [
+          {
+            "id": "quality-instance-alice",
+            "roomId": "quality-room",
+            "cardId": "quality-card-alice",
+            "displayName": "Alice",
+            "presence": "onstage",
+            "traits": { "extroversion": -0.3, "aggression": 0, "empathy": 0.3, "playfulness": 0, "caution": 0.3 },
+            "affect": { "valence": 0.1, "arousal": 0.3, "updatedAt": "2026-10-03T00:00:00.000Z", "history": [] },
+            "relationships": [
+              {
+                "target": "player",
+                "trust": 0.4,
+                "affinity": 0.4,
+                "fear": 0,
+                "respect": 0.2,
+                "tension": 0.1,
+                "updatedAt": "2026-10-03T00:00:00.000Z",
+                "history": []
+              }
+            ],
+            "traitsLocked": false,
+            "createdAt": "2026-10-03T00:00:00.000Z",
+            "updatedAt": "2026-10-03T00:00:00.000Z",
+            "deletedAt": null
+          }
+        ],
+        "playerName": "旅人",
+        "messages": [
+          {
+            "id": "quality-message-0-player",
+            "roomId": "quality-room",
+            "conversationId": null,
+            "sceneId": "quality-scene",
+            "turnId": "quality-turn-0",
+            "localSeq": 1,
+            "deviceId": "quality-device",
+            "role": "player",
+            "speakerInstanceId": null,
+            "speakerName": "旅人",
+            "audience": ["quality-instance-alice"],
+            "content": "商队出事前，有没有把你的信送到？",
+            "createdAt": "2026-10-03T00:00:00.000Z",
+            "updatedAt": "2026-10-03T00:00:00.000Z",
+            "deletedAt": null
+          },
+          {
+            "id": "quality-message-0-alice",
+            "roomId": "quality-room",
+            "conversationId": null,
+            "sceneId": "quality-scene",
+            "turnId": "quality-turn-0",
+            "localSeq": 2,
+            "deviceId": "quality-device",
+            "role": "character",
+            "speakerInstanceId": "quality-instance-alice",
+            "speakerName": "Alice",
+            "audience": ["quality-instance-alice"],
+            "content": "只知道他们到了北门。# 她把杯子放下。别问信里写了什么。",
+            "createdAt": "2026-10-03T00:00:00.000Z",
+            "updatedAt": "2026-10-03T00:00:00.000Z",
+            "deletedAt": null
+          }
+        ]
+      },
+      "request": {
+        "messages": [
+          { "role": "system", "content": "你在推演一段角色扮演对话之后的状态变化。只输出一个 JSON 对象，不要写解释。" },
+          {
+            "role": "user",
+            "content": "玩家扮演：旅人\n角色当前状态：\n- Alice：愉悦度 0.10 / 激动度 0.30；对玩家 trust 0.40 affinity 0.40 fear 0.00 respect 0.20 tension 0.10\n\n对话：\n旅人：商队出事前，有没有把你的信送到？\nAlice：只知道他们到了北门。# 她把杯子放下。别问信里写了什么。\n\n要求：\n- 只为真的被触动的角色输出一条；没有变化的角色不要出现。\n- deltaValence 与 deltaArousal 在 -0.3 到 0.3 之间，没有变化就填 0。\n- relationship 只写发生变化的维度，field 取值：trust / affinity / fear / respect / tension。\n- 每个 delta 同样在 -0.3 到 0.3 之间。\n- reason 用一句话说明变化的原因，会被记录进角色状态史。\n\n输出格式：\n{\"updates\":[{\"observer\":\"角色名\",\"deltaValence\":0.1,\"deltaArousal\":0.05,\"reason\":\"为什么\",\"relationship\":[{\"field\":\"affinity\",\"delta\":0.1}]}]}"
+          }
+        ],
+        "tools": [],
+        "params": {
+          "model": "deepseek-flash",
+          "reasoning_effort": "low",
+          "thinking": { "type": "enabled" },
+          "max_tokens": 1200
+        }
+      },
+      "fixtureHash": "d1011416c62df2035e48a44445e5e52db141c6ed6d7b0ee88e31308d314248d8",
+      "requestHash": "1e811d0d3c2ca6f3f701910c3786aff315f87422d8346f58cb6266f424a73e88",
+      "commit": "4c5169a23ecc901ab892bae182f8f4ac78c4b8b8",
+      "source": "git-blob-4c5169a-admin + hash-verified-shared-dependencies",
+      "sourceHash": "1764ca9f0ac4ad7bcff50527adbd539679d6867002eeea8fe11d27f82ac42794"
+    },
+    {
+      "caseId": "admin-1",
+      "family": "admin",
+      "label": "信件与边界",
+      "input": {
+        "room": {
+          "id": "quality-room",
+          "title": "雨夜酒馆",
+          "personaId": null,
+          "playerName": "旅人",
+          "playerPersona": "独自赶路，背着旧剑。",
+          "cardIds": ["quality-card-alice"],
+          "instanceIds": ["quality-instance-alice"],
+          "worldBookIds": [],
+          "activeConversationId": null,
+          "createdAt": "2026-10-03T00:00:00.000Z",
+          "updatedAt": "2026-10-03T00:00:00.000Z",
+          "deletedAt": null
+        },
+        "scene": {
+          "id": "quality-scene",
+          "roomId": "quality-room",
+          "conversationId": null,
+          "title": "雨夜",
+          "location": "旧城酒馆",
+          "worldTime": "第三日 · 黄昏",
+          "castPolicy": "locked",
+          "cast": ["quality-instance-alice"],
+          "summary": "雨下了一整天。",
+          "endedAt": null,
+          "createdAt": "2026-10-03T00:00:00.000Z",
+          "updatedAt": "2026-10-03T00:00:00.000Z",
+          "deletedAt": null
+        },
+        "conversation": {
+          "id": "quality-admin",
+          "roomId": "quality-room",
+          "title": "世界管理",
+          "kind": "side",
+          "createdAt": "2026-10-03T00:00:00.000Z",
+          "updatedAt": "2026-10-03T00:00:00.000Z",
+          "deletedAt": null
+        },
+        "instances": [
+          {
+            "id": "quality-instance-alice",
+            "roomId": "quality-room",
+            "cardId": "quality-card-alice",
+            "displayName": "Alice",
+            "presence": "onstage",
+            "traits": { "extroversion": -0.3, "aggression": 0, "empathy": 0.3, "playfulness": 0, "caution": 0.3 },
+            "affect": { "valence": 0.1, "arousal": 0.3, "updatedAt": "2026-10-03T00:00:00.000Z", "history": [] },
+            "relationships": [
+              {
+                "target": "player",
+                "trust": 0.4,
+                "affinity": 0.4,
+                "fear": 0,
+                "respect": 0.2,
+                "tension": 0.1,
+                "updatedAt": "2026-10-03T00:00:00.000Z",
+                "history": []
+              }
+            ],
+            "traitsLocked": false,
+            "createdAt": "2026-10-03T00:00:00.000Z",
+            "updatedAt": "2026-10-03T00:00:00.000Z",
+            "deletedAt": null
+          }
+        ],
+        "cards": [
+          {
+            "id": "quality-card-alice",
+            "name": "Alice",
+            "nickname": "",
+            "description": "在旧城书铺工作，夜里常来酒馆。上个月托商队给姐姐送过一封信。",
+            "personality": "话少，对熟人实在，不愿主动谈家事。",
+            "creator": "",
+            "characterVersion": "1",
+            "tags": [],
+            "embeddedWorldBook": null,
+            "extensions": {},
+            "source": {
+              "kind": "manual",
+              "spec": "dramatis",
+              "specVersion": "1",
+              "importedAt": "2026-10-03T00:00:00.000Z"
+            },
+            "createdAt": "2026-10-03T00:00:00.000Z",
+            "updatedAt": "2026-10-03T00:00:00.000Z",
+            "deletedAt": null
+          }
+        ],
+        "worldBooks": [],
+        "personas": [],
+        "history": [],
+        "userInput": "给 Alice 的角色卡补一个怕火的小习惯，保留原有经历与性格；不要替我推进剧情。"
+      },
+      "request": {
+        "messages": [
+          {
+            "role": "system",
+            "content": "你是这个世界管理员，负责帮用户把素材搭起来：角色卡、世界书、玩家身份（Persona）与当前场景。\n你不扮演任何角色，也不写剧情台词——那是主对话的事。\n需要落成素材时，直接调用工具，不要在正文里贴 JSON 或代码块。\n工具只会产出草稿：用户点「采纳」才会进入素材库，所以要一次把内容写完整、写好。\n起草角色卡时把正文写短：**人设（description）控制在 5 句话以内**，**性格（personality）控制在 2～3 句话以内**。\n只留最能决定他「怎么说话、怎么做」的部分；身世细节、地方风物、历史事件放进世界书，需要时再触发。\n调用工具之前用一两句话说清你打算做什么；调用之后再说清结果与建议。\n不确定用户想要什么时先问一句，不要凭空替用户决定世界观。"
+          },
+          {
+            "role": "system",
+            "content": "当前素材：\n角色卡：\n- Alice（id: quality-card-alice）：在旧城书铺工作，夜里常来酒馆。上个月托商队给姐姐送过一封信。；性格 话少，对熟人实在，不愿主动谈家事。\n\n世界书：\n（还没有世界书）\n\n玩家身份：\n（还没有玩家身份）\n\n注意：修改角色卡与世界书是**整份替换**——你必须把原有内容一并写回去，\n再在此基础上增补，不要只写你新加的那部分，也不要在用户没要求时删掉已有设定。\n世界：雨夜酒馆\n对话：世界管理\n当前场景：雨夜（旧城酒馆），世界内时间 第三日 · 黄昏\n世界中已有角色：Alice\n可用工具：upsert_character_card、upsert_world_book、upsert_persona、delete_persona、set_scene"
+          },
+          { "role": "user", "content": "给 Alice 的角色卡补一个怕火的小习惯，保留原有经历与性格；不要替我推进剧情。" }
+        ],
+        "tools": [
+          {
+            "type": "function",
+            "function": {
+              "name": "upsert_character_card",
+              "description": "起草或修改一张角色卡。改动只是草稿，用户点「采纳」之后才会进入素材库；修改已有的卡时必须带上 cardId，而且**只需写要改的字段**：没提到的字段保持原样，要清空某个字段就显式传空字符串（新建时必须给 name 与 description）。",
+              "parameters": {
+                "type": "object",
+                "properties": {
+                  "cardId": { "type": "string", "description": "修改已有角色卡时填它的 id；新建时留空" },
+                  "name": { "type": "string", "description": "角色名" },
+                  "nickname": { "type": "string", "description": "角色对玩家的自称，可留空" },
+                  "description": { "type": "string", "description": "外貌、身份、来头；5 句话以内，越短主对话越聚焦" },
+                  "personality": { "type": "string", "description": "性格；2～3 句话以内" },
+                  "tags": { "type": "array", "items": { "type": "string" }, "description": "标签" }
+                }
+              }
+            }
+          },
+          {
+            "type": "function",
+            "function": {
+              "name": "upsert_world_book",
+              "description": "起草或修改一本世界书（也就是世界卡）。关键词触发时才会插入提示词，constant 为 true 的条目每轮都在。修改已有的书时必须带上 bookId，并且 entries 是**整本替换**：原有条目要一并写回，不要只交新增的那几条。（同名条目会保留它原有的插入位置、概率等设置，所以照原样传回来就是安全的。）",
+              "parameters": {
+                "type": "object",
+                "properties": {
+                  "bookId": { "type": "string", "description": "修改已有世界书时填它的 id；新建时留空" },
+                  "name": { "type": "string", "description": "世界书的名字" },
+                  "entries": {
+                    "type": "array",
+                    "description": "条目列表",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "title": { "type": "string" },
+                        "keys": { "type": "array", "items": { "type": "string" }, "description": "触发关键词" },
+                        "content": { "type": "string", "description": "命中后插入的设定正文" },
+                        "constant": { "type": "boolean", "description": "常驻条目，不需要关键词" },
+                        "order": { "type": "number", "description": "排序权重，默认 100" }
+                      },
+                      "required": ["content"]
+                    }
+                  }
+                },
+                "required": ["name", "entries"]
+              }
+            }
+          },
+          {
+            "type": "function",
+            "function": {
+              "name": "upsert_persona",
+              "description": "起草或修改一份玩家身份（Persona）。身份描述玩家在对话中是谁；修改已有身份时必须带 personaId，改动先作为草稿等待用户采纳。",
+              "parameters": {
+                "type": "object",
+                "properties": {
+                  "personaId": { "type": "string", "description": "修改已有身份时填它的 id；新建时留空" },
+                  "name": { "type": "string", "description": "玩家身份的名字" },
+                  "description": { "type": "string", "description": "外貌、来历、性格与扮演设定" }
+                },
+                "required": ["name", "description"]
+              }
+            }
+          },
+          {
+            "type": "function",
+            "function": {
+              "name": "delete_persona",
+              "description": "申请彻底删除一份玩家身份。必须同时给出 personaId 与 confirmName（身份的当前名字）；这里只会生成待确认删除草稿，用户点确认后才真正删除。",
+              "parameters": {
+                "type": "object",
+                "properties": {
+                  "personaId": { "type": "string", "description": "要删除的身份 id" },
+                  "confirmName": { "type": "string", "description": "身份的当前名字，用于防止删错" }
+                },
+                "required": ["personaId", "confirmName"]
+              }
+            }
+          },
+          {
+            "type": "function",
+            "function": {
+              "name": "set_scene",
+              "description": "设置当前场景：地点、世界内时间、场景设定或入场策略。**只写用户明确要求改的字段**，没有提到的不要顺手改（尤其是 castPolicy：把锁定的场子改成 open 等于允许 AI 自行拉角色入场）。",
+              "parameters": {
+                "type": "object",
+                "properties": {
+                  "title": { "type": "string" },
+                  "location": { "type": "string" },
+                  "worldTime": { "type": "string" },
+                  "summary": { "type": "string", "description": "场景设定，会写进提示词" },
+                  "castPolicy": {
+                    "type": "string",
+                    "enum": ["open", "locked", "invite_only", "triggered"],
+                    "description": "入场策略：locked 表示不允许 AI 引入新角色"
+                  }
+                }
+              }
+            }
+          }
+        ],
+        "params": {
+          "model": "deepseek-flash",
+          "reasoning_effort": "low",
+          "thinking": { "type": "enabled" },
+          "max_tokens": 1200
+        }
+      },
+      "fixtureHash": "bae74e34482a538400a200ae0691523ed6ab6cd58907b02e4dde241354f4375d",
+      "requestHash": "046c1940e0fd9a15bdf54fa56f7d417aa39bdba88d4cf17b0eed2a95474bec77",
+      "commit": "4c5169a23ecc901ab892bae182f8f4ac78c4b8b8",
+      "source": "git-blob-4c5169a-admin + hash-verified-shared-dependencies",
+      "sourceHash": "1764ca9f0ac4ad7bcff50527adbd539679d6867002eeea8fe11d27f82ac42794"
+    },
+    {
+      "caseId": "roleplay-2",
+      "family": "roleplay",
+      "label": "缓和与记忆",
+      "input": {
+        "room": {
+          "id": "quality-room",
+          "title": "雨夜酒馆",
+          "personaId": null,
+          "playerName": "旅人",
+          "playerPersona": "独自赶路，背着旧剑。",
+          "cardIds": ["quality-card-alice"],
+          "instanceIds": ["quality-instance-alice"],
+          "worldBookIds": [],
+          "activeConversationId": null,
+          "createdAt": "2026-10-03T00:00:00.000Z",
+          "updatedAt": "2026-10-03T00:00:00.000Z",
+          "deletedAt": null
+        },
+        "scene": {
+          "id": "quality-scene",
+          "roomId": "quality-room",
+          "conversationId": null,
+          "title": "雨夜",
+          "location": "旧城酒馆",
+          "worldTime": "第三日 · 黄昏",
+          "castPolicy": "locked",
+          "cast": ["quality-instance-alice"],
+          "summary": "雨下了一整天。",
+          "endedAt": null,
+          "createdAt": "2026-10-03T00:00:00.000Z",
+          "updatedAt": "2026-10-03T00:00:00.000Z",
+          "deletedAt": null
+        },
+        "card": {
+          "id": "quality-card-alice",
+          "name": "Alice",
+          "nickname": "",
+          "description": "在旧城书铺工作，夜里常来酒馆。上个月托商队给姐姐送过一封信。",
+          "personality": "话少，对熟人实在，不愿主动谈家事。",
+          "creator": "",
+          "characterVersion": "1",
+          "tags": [],
+          "embeddedWorldBook": null,
+          "extensions": {},
+          "source": {
+            "kind": "manual",
+            "spec": "dramatis",
+            "specVersion": "1",
+            "importedAt": "2026-10-03T00:00:00.000Z"
+          },
+          "createdAt": "2026-10-03T00:00:00.000Z",
+          "updatedAt": "2026-10-03T00:00:00.000Z",
+          "deletedAt": null
+        },
+        "instance": {
+          "id": "quality-instance-alice",
+          "roomId": "quality-room",
+          "cardId": "quality-card-alice",
+          "displayName": "Alice",
+          "presence": "onstage",
+          "traits": { "extroversion": -0.3, "aggression": 0, "empathy": 0.3, "playfulness": 0, "caution": 0.3 },
+          "affect": { "valence": 0.1, "arousal": 0.3, "updatedAt": "2026-10-03T00:00:00.000Z", "history": [] },
+          "relationships": [
+            {
+              "target": "player",
+              "trust": 0.4,
+              "affinity": 0.4,
+              "fear": 0,
+              "respect": 0.2,
+              "tension": 0.1,
+              "updatedAt": "2026-10-03T00:00:00.000Z",
+              "history": []
+            }
+          ],
+          "traitsLocked": false,
+          "createdAt": "2026-10-03T00:00:00.000Z",
+          "updatedAt": "2026-10-03T00:00:00.000Z",
+          "deletedAt": null
+        },
+        "history": [
+          {
+            "id": "quality-message-1-player",
+            "roomId": "quality-room",
+            "conversationId": null,
+            "sceneId": "quality-scene",
+            "turnId": "quality-turn-1",
+            "localSeq": 1,
+            "deviceId": "quality-device",
+            "role": "player",
+            "speakerInstanceId": null,
+            "speakerName": "旅人",
+            "audience": ["quality-instance-alice"],
+            "content": "我把你借我的蓝伞带回来了，伞柄也修好了。",
+            "createdAt": "2026-10-03T00:00:00.000Z",
+            "updatedAt": "2026-10-03T00:00:00.000Z",
+            "deletedAt": null
+          },
+          {
+            "id": "quality-message-1-alice",
+            "roomId": "quality-room",
+            "conversationId": null,
+            "sceneId": "quality-scene",
+            "turnId": "quality-turn-1",
+            "localSeq": 2,
+            "deviceId": "quality-device",
+            "role": "character",
+            "speakerInstanceId": "quality-instance-alice",
+            "speakerName": "Alice",
+            "audience": ["quality-instance-alice"],
+            "content": "……还真修好了。# 她转了转伞柄。搁这儿吧，坐会儿。",
+            "createdAt": "2026-10-03T00:00:00.000Z",
+            "updatedAt": "2026-10-03T00:00:00.000Z",
+            "deletedAt": null
+          }
+        ],
+        "playerInput": "你上次说伞是谁送你的来着？",
+        "cast": [
+          {
+            "id": "quality-instance-alice",
+            "roomId": "quality-room",
+            "cardId": "quality-card-alice",
+            "displayName": "Alice",
+            "presence": "onstage",
+            "traits": { "extroversion": -0.3, "aggression": 0, "empathy": 0.3, "playfulness": 0, "caution": 0.3 },
+            "affect": { "valence": 0.1, "arousal": 0.3, "updatedAt": "2026-10-03T00:00:00.000Z", "history": [] },
+            "relationships": [
+              {
+                "target": "player",
+                "trust": 0.4,
+                "affinity": 0.4,
+                "fear": 0,
+                "respect": 0.2,
+                "tension": 0.1,
+                "updatedAt": "2026-10-03T00:00:00.000Z",
+                "history": []
+              }
+            ],
+            "traitsLocked": false,
+            "createdAt": "2026-10-03T00:00:00.000Z",
+            "updatedAt": "2026-10-03T00:00:00.000Z",
+            "deletedAt": null
+          }
+        ],
+        "memories": [],
+        "modes": { "playerFirst": false, "silent": false },
+        "budget": { "maxTokens": 16384, "reserveForReply": 1200 }
+      },
+      "request": {
+        "messages": [
+          {
+            "role": "system",
+            "content": "### 基本规则\n请以角色卡里「」内的身份进行沉浸式对话演绎，把自己完全代入这个角色，相信此刻你就是此人。\n\n输出只包含角色的行为与对话，不要旁白解说、不要提示词或规则说明。\n\n角色性格：以角色卡的设定为准。\n角色身份：以角色卡的设定为准。\n用户身份：以玩家的身份设定为准，用「你」指代玩家。\n\n输出格式：\n- 动作与环境描写用 # 开头，独占一行。\n- 对白不加引号，也不加角色名前缀，用第一人称直接写。\n- 多角色场景下，每个角色的动作与对白分开成段，保证清晰可读。\n- 除对白以外的一切内容，用角色名指代角色、用「你」指代玩家。\n\n剧情主导权：主动推进剧情，每轮都让故事往前走一点，不要被动等待玩家输入。\n保持逻辑连贯（角色离开后不可突然出现）；冲突类型要多样，避免反复用同一种事件推进。\n\n长动作处理：直接完成长动作，略写过程、只给结果；角色或玩家提出长时间行动时，一轮把它写完整。\n\n角色语气贴合设定：允许符合人物个性的粗口、幽默与威胁，但同一句话或相似内容不要重复多次。\n\n动态世界观：可以适时引入新角色，但不要超过场景能承载的量，且必须逻辑自洽。\n每次回应至少包含一项环境细节描写（五感优先），避免连续使用相同或相似的场景描写。\n\n战斗场景：进入战斗后持续输出直到战斗结束，不等待玩家额外输入；胜负要符合角色的能力设定，不得无理由地胜利或失败。\n\n交互逻辑：玩家回复简短（如「好」「是」「走」）时主动推进剧情，推进可以大胆、意料之外，但应保持逻辑性。\n玩家提出不合理或违反设定的行为时，明确告知并维持合理的剧情。\n需要玩家表态或做决定时，用征求意见的疑问句收尾；事情已经说清、没什么可问的，就自然收住，不要为了凑一个问句硬加。\n可以补充玩家角色的侧面描写，但禁止输出本应属于玩家角色的对话。\n上一段与下一段的衔接必须恰当，必要时平滑过渡。\n\n禁用缓存：遇到与之前相同的玩家输入时，直接推进剧情，不要重放上一次的回复。\n\n禁止事项：\n- 被动等待玩家推进剧情\n- 重复使用单一冲突类型\n- 破坏世界观合理性的设定\n- 长时间输出重复语句\n- 输出本应属于玩家角色的对话\n\n特殊事项：玩家持续回复「好」「走」「是」这类短句时，总是大胆推进剧情。\n\n### 角色：Alice\n你现在扮演的是「Alice」。\n\n在旧城书铺工作，夜里常来酒馆。上个月托商队给姐姐送过一封信。\n\n性格：话少，对熟人实在，不愿主动谈家事。\n\n性格倾向：内向寡言、共情敏锐、谨慎多疑\n\n### 关系与情绪状态\n对玩家的态度：信任 +0.40、好感 +0.40、畏惧 +0.00、敬重 +0.20、紧张感 +0.10\n\n### 当前场景\n地点：旧城酒馆\n时间：第三日 · 黄昏\n导演指令：本场景名单已锁定。不得引入任何新角色，也不要提及未在场角色进入场景。\n场景摘要：雨下了一整天。\n在场角色：Alice（正在与你对话）\n\n### 本轮指令\n现在轮到你发言。请以「Alice」的身份回应，保持角色不跳出。人设是你的底子，不是这一轮非说不可的台词：只在当前这件事真的用得上、或者玩家问起时才提。玩家「旅人」的身份设定：独自赶路，背着旧剑。\n不要代替玩家行动，也不要描写玩家的内心想法。未知设定先问，不编造既定事实。只写本角色这一轮的简短回应；不续演别人，那是他的回合。直接写你的对白与动作，不要在回复开头写任何角色名（不要出现「某某：」这样的前缀）。历史记录里的【名字】只是给你看的说话人标记，你的回复里不要出现这种标记。\n本轮模式（场记）：较早的经过已经由场记、章节与记忆代表，不再逐条重复原文。需要细节时先从这些材料里找，不要凭空补写没看过的事。\n格式（必须遵守）：动作与神态用 `#` 独占一行开头；对白不加任何名字前缀。\n先写一行 `意图：<这一轮你想做什么，一句话>`，然后空一行再写对白与动作。意图只写你自己的打算，不要写别人。\n\n### 回答长度、反重复与人设收敛\n这一段可以连着做几个不同的动作，但同一个动作、同一件道具不要重复；同一个意思不要换句话再说一遍。\n动作句不要用你自己的名字当主语：写「她把杯子放下」，不要写「（角色名）把杯子放下」。\n已经答过的事不要复述，把篇幅留给这一轮的新内容。\n人设要挑场合：性格、身世、口头禅、随身物件是你的底子，不是每轮都要说的台词——只有当前这件事真的用得上、或者玩家问起时才提。\n同一个设定点（身份、往事、习惯、随身物件）不要连着几轮反复说；隔开几轮、或者它有了新变化时再提一次就够。\n不要为了表现人设，把话头从眼前正在发生的事上拽回自己身上。\n回答长度（标准）：这一轮写三到五句，总长不超过 150 字；把这一件事说清就收住，不要为了凑字数铺陈。\n\n### 格式示范\n正确：\n# 她把杯子往桌上一放。\n「你问这个做什么。」\n# 她抬眼看了看门口。\n也正确（动作不加 `#`，但也没有放进引号里）：\n她把杯子往桌上一放。\n「你问这个做什么。」\n错误（把动作也写进引号，读起来像她在念旁白）：\n「她把杯子往桌上一放。」\n\n格式示范（只是示范，不是本轮内容）：对白带「」，没带引号的一律当动作。\n玩家：你们两个怎么看？\n# 他把袖口的水拧了一把。\n「先看看货再说。」\n他抬眼看了看门口。"
+          },
+          { "role": "user", "content": "我把你借我的蓝伞带回来了，伞柄也修好了。" },
+          { "role": "assistant", "content": "……还真修好了。# 她转了转伞柄。搁这儿吧，坐会儿。" },
+          { "role": "user", "content": "你上次说伞是谁送你的来着？" }
+        ],
+        "tools": [],
+        "params": {
+          "model": "deepseek-flash",
+          "reasoning_effort": "low",
+          "thinking": { "type": "enabled" },
+          "max_tokens": 1200
+        }
+      },
+      "fixtureHash": "aaca2dfd116772f1857f0bdb392bee530bdafa5d532e590179aa561a58394b72",
+      "requestHash": "e1c5e2ba09d6b9eb9b487670bacc0c2469100977dd33d912d6d12a27026c5c06",
+      "commit": "4c5169a23ecc901ab892bae182f8f4ac78c4b8b8",
+      "source": "git-blob-4c5169a-admin + hash-verified-shared-dependencies",
+      "sourceHash": "1764ca9f0ac4ad7bcff50527adbd539679d6867002eeea8fe11d27f82ac42794"
+    },
+    {
+      "caseId": "extraction-2",
+      "family": "extraction",
+      "label": "缓和与记忆",
+      "input": {
+        "scene": {
+          "id": "quality-scene",
+          "roomId": "quality-room",
+          "conversationId": null,
+          "title": "雨夜",
+          "location": "旧城酒馆",
+          "worldTime": "第三日 · 黄昏",
+          "castPolicy": "locked",
+          "cast": ["quality-instance-alice"],
+          "summary": "雨下了一整天。",
+          "endedAt": null,
+          "createdAt": "2026-10-03T00:00:00.000Z",
+          "updatedAt": "2026-10-03T00:00:00.000Z",
+          "deletedAt": null
+        },
+        "cast": [
+          {
+            "id": "quality-instance-alice",
+            "roomId": "quality-room",
+            "cardId": "quality-card-alice",
+            "displayName": "Alice",
+            "presence": "onstage",
+            "traits": { "extroversion": -0.3, "aggression": 0, "empathy": 0.3, "playfulness": 0, "caution": 0.3 },
+            "affect": { "valence": 0.1, "arousal": 0.3, "updatedAt": "2026-10-03T00:00:00.000Z", "history": [] },
+            "relationships": [
+              {
+                "target": "player",
+                "trust": 0.4,
+                "affinity": 0.4,
+                "fear": 0,
+                "respect": 0.2,
+                "tension": 0.1,
+                "updatedAt": "2026-10-03T00:00:00.000Z",
+                "history": []
+              }
+            ],
+            "traitsLocked": false,
+            "createdAt": "2026-10-03T00:00:00.000Z",
+            "updatedAt": "2026-10-03T00:00:00.000Z",
+            "deletedAt": null
+          }
+        ],
+        "playerName": "旅人",
+        "messages": [
+          {
+            "id": "quality-message-1-player",
+            "roomId": "quality-room",
+            "conversationId": null,
+            "sceneId": "quality-scene",
+            "turnId": "quality-turn-1",
+            "localSeq": 1,
+            "deviceId": "quality-device",
+            "role": "player",
+            "speakerInstanceId": null,
+            "speakerName": "旅人",
+            "audience": ["quality-instance-alice"],
+            "content": "我把你借我的蓝伞带回来了，伞柄也修好了。",
+            "createdAt": "2026-10-03T00:00:00.000Z",
+            "updatedAt": "2026-10-03T00:00:00.000Z",
+            "deletedAt": null
+          },
+          {
+            "id": "quality-message-1-alice",
+            "roomId": "quality-room",
+            "conversationId": null,
+            "sceneId": "quality-scene",
+            "turnId": "quality-turn-1",
+            "localSeq": 2,
+            "deviceId": "quality-device",
+            "role": "character",
+            "speakerInstanceId": "quality-instance-alice",
+            "speakerName": "Alice",
+            "audience": ["quality-instance-alice"],
+            "content": "……还真修好了。# 她转了转伞柄。搁这儿吧，坐会儿。",
+            "createdAt": "2026-10-03T00:00:00.000Z",
+            "updatedAt": "2026-10-03T00:00:00.000Z",
+            "deletedAt": null
+          }
+        ]
+      },
+      "request": {
+        "messages": [
+          {
+            "role": "system",
+            "content": "你是一个叙事记录员。阅读刚发生的一段对话，然后只输出一个 JSON 对象。\n不要写解释，不要写代码块标记，除了那个 JSON 对象什么都不要输出。"
+          },
+          {
+            "role": "user",
+            "content": "地点：旧城酒馆\n时间：第三日 · 黄昏\n玩家扮演：旅人\n在场角色：Alice\n\n对话：\n旅人：我把你借我的蓝伞带回来了，伞柄也修好了。\nAlice：……还真修好了。# 她转了转伞柄。搁这儿吧，坐会儿。\n\n字段要求：\n- summary：客观描述发生了什么，一到三句，不要写角色的内心。\n- importance：0 到 1。改变了关系、暴露了秘密、推进了情节的，给高分；寒暄与日常给低分。\n- location：只有对话里明确发生了地点变化时才填，否则留空字符串。\n- observations：为每个在场角色各写一条，描述他在这个视角下注意到了什么、\n  误解了什么、在意什么。同一件事在不同角色眼里应当有差异，允许互相矛盾。\n  没有明显反应的角色可以省略。speaker 必须用上面给出的角色名。\n\n输出格式：\n{\"summary\":\"客观经过，一到三句\",\"importance\":0.6,\"location\":\"\",\"observations\":[{\"speaker\":\"角色名\",\"perception\":\"他的印象\"}]}"
+          }
+        ],
+        "tools": [],
+        "params": {
+          "model": "deepseek-flash",
+          "reasoning_effort": "low",
+          "thinking": { "type": "enabled" },
+          "max_tokens": 1200
+        }
+      },
+      "fixtureHash": "50560083ae09d8ad86950960020bb622caf5dde0421cab4eefe43991afe04f79",
+      "requestHash": "6ef85bde29ea9f6337265b51b2908bf8d4160278277817d643d2acf5c0b2b2e3",
+      "commit": "4c5169a23ecc901ab892bae182f8f4ac78c4b8b8",
+      "source": "git-blob-4c5169a-admin + hash-verified-shared-dependencies",
+      "sourceHash": "1764ca9f0ac4ad7bcff50527adbd539679d6867002eeea8fe11d27f82ac42794"
+    },
+    {
+      "caseId": "affect-2",
+      "family": "affect",
+      "label": "缓和与记忆",
+      "input": {
+        "cast": [
+          {
+            "id": "quality-instance-alice",
+            "roomId": "quality-room",
+            "cardId": "quality-card-alice",
+            "displayName": "Alice",
+            "presence": "onstage",
+            "traits": { "extroversion": -0.3, "aggression": 0, "empathy": 0.3, "playfulness": 0, "caution": 0.3 },
+            "affect": { "valence": 0.1, "arousal": 0.3, "updatedAt": "2026-10-03T00:00:00.000Z", "history": [] },
+            "relationships": [
+              {
+                "target": "player",
+                "trust": 0.4,
+                "affinity": 0.4,
+                "fear": 0,
+                "respect": 0.2,
+                "tension": 0.1,
+                "updatedAt": "2026-10-03T00:00:00.000Z",
+                "history": []
+              }
+            ],
+            "traitsLocked": false,
+            "createdAt": "2026-10-03T00:00:00.000Z",
+            "updatedAt": "2026-10-03T00:00:00.000Z",
+            "deletedAt": null
+          }
+        ],
+        "playerName": "旅人",
+        "messages": [
+          {
+            "id": "quality-message-1-player",
+            "roomId": "quality-room",
+            "conversationId": null,
+            "sceneId": "quality-scene",
+            "turnId": "quality-turn-1",
+            "localSeq": 1,
+            "deviceId": "quality-device",
+            "role": "player",
+            "speakerInstanceId": null,
+            "speakerName": "旅人",
+            "audience": ["quality-instance-alice"],
+            "content": "我把你借我的蓝伞带回来了，伞柄也修好了。",
+            "createdAt": "2026-10-03T00:00:00.000Z",
+            "updatedAt": "2026-10-03T00:00:00.000Z",
+            "deletedAt": null
+          },
+          {
+            "id": "quality-message-1-alice",
+            "roomId": "quality-room",
+            "conversationId": null,
+            "sceneId": "quality-scene",
+            "turnId": "quality-turn-1",
+            "localSeq": 2,
+            "deviceId": "quality-device",
+            "role": "character",
+            "speakerInstanceId": "quality-instance-alice",
+            "speakerName": "Alice",
+            "audience": ["quality-instance-alice"],
+            "content": "……还真修好了。# 她转了转伞柄。搁这儿吧，坐会儿。",
+            "createdAt": "2026-10-03T00:00:00.000Z",
+            "updatedAt": "2026-10-03T00:00:00.000Z",
+            "deletedAt": null
+          }
+        ]
+      },
+      "request": {
+        "messages": [
+          { "role": "system", "content": "你在推演一段角色扮演对话之后的状态变化。只输出一个 JSON 对象，不要写解释。" },
+          {
+            "role": "user",
+            "content": "玩家扮演：旅人\n角色当前状态：\n- Alice：愉悦度 0.10 / 激动度 0.30；对玩家 trust 0.40 affinity 0.40 fear 0.00 respect 0.20 tension 0.10\n\n对话：\n旅人：我把你借我的蓝伞带回来了，伞柄也修好了。\nAlice：……还真修好了。# 她转了转伞柄。搁这儿吧，坐会儿。\n\n要求：\n- 只为真的被触动的角色输出一条；没有变化的角色不要出现。\n- deltaValence 与 deltaArousal 在 -0.3 到 0.3 之间，没有变化就填 0。\n- relationship 只写发生变化的维度，field 取值：trust / affinity / fear / respect / tension。\n- 每个 delta 同样在 -0.3 到 0.3 之间。\n- reason 用一句话说明变化的原因，会被记录进角色状态史。\n\n输出格式：\n{\"updates\":[{\"observer\":\"角色名\",\"deltaValence\":0.1,\"deltaArousal\":0.05,\"reason\":\"为什么\",\"relationship\":[{\"field\":\"affinity\",\"delta\":0.1}]}]}"
+          }
+        ],
+        "tools": [],
+        "params": {
+          "model": "deepseek-flash",
+          "reasoning_effort": "low",
+          "thinking": { "type": "enabled" },
+          "max_tokens": 1200
+        }
+      },
+      "fixtureHash": "c3a1cab72ab5e7085ce980b56fcb5312ec707fcbd363f58c36aa275a5c72d81c",
+      "requestHash": "0a110c038560ce7345074c8e8a8df0ba01664253095a648254f6b9920ddbaeee",
+      "commit": "4c5169a23ecc901ab892bae182f8f4ac78c4b8b8",
+      "source": "git-blob-4c5169a-admin + hash-verified-shared-dependencies",
+      "sourceHash": "1764ca9f0ac4ad7bcff50527adbd539679d6867002eeea8fe11d27f82ac42794"
+    },
+    {
+      "caseId": "admin-2",
+      "family": "admin",
+      "label": "缓和与记忆",
+      "input": {
+        "room": {
+          "id": "quality-room",
+          "title": "雨夜酒馆",
+          "personaId": null,
+          "playerName": "旅人",
+          "playerPersona": "独自赶路，背着旧剑。",
+          "cardIds": ["quality-card-alice"],
+          "instanceIds": ["quality-instance-alice"],
+          "worldBookIds": [],
+          "activeConversationId": null,
+          "createdAt": "2026-10-03T00:00:00.000Z",
+          "updatedAt": "2026-10-03T00:00:00.000Z",
+          "deletedAt": null
+        },
+        "scene": {
+          "id": "quality-scene",
+          "roomId": "quality-room",
+          "conversationId": null,
+          "title": "雨夜",
+          "location": "旧城酒馆",
+          "worldTime": "第三日 · 黄昏",
+          "castPolicy": "locked",
+          "cast": ["quality-instance-alice"],
+          "summary": "雨下了一整天。",
+          "endedAt": null,
+          "createdAt": "2026-10-03T00:00:00.000Z",
+          "updatedAt": "2026-10-03T00:00:00.000Z",
+          "deletedAt": null
+        },
+        "conversation": {
+          "id": "quality-admin",
+          "roomId": "quality-room",
+          "title": "世界管理",
+          "kind": "side",
+          "createdAt": "2026-10-03T00:00:00.000Z",
+          "updatedAt": "2026-10-03T00:00:00.000Z",
+          "deletedAt": null
+        },
+        "instances": [
+          {
+            "id": "quality-instance-alice",
+            "roomId": "quality-room",
+            "cardId": "quality-card-alice",
+            "displayName": "Alice",
+            "presence": "onstage",
+            "traits": { "extroversion": -0.3, "aggression": 0, "empathy": 0.3, "playfulness": 0, "caution": 0.3 },
+            "affect": { "valence": 0.1, "arousal": 0.3, "updatedAt": "2026-10-03T00:00:00.000Z", "history": [] },
+            "relationships": [
+              {
+                "target": "player",
+                "trust": 0.4,
+                "affinity": 0.4,
+                "fear": 0,
+                "respect": 0.2,
+                "tension": 0.1,
+                "updatedAt": "2026-10-03T00:00:00.000Z",
+                "history": []
+              }
+            ],
+            "traitsLocked": false,
+            "createdAt": "2026-10-03T00:00:00.000Z",
+            "updatedAt": "2026-10-03T00:00:00.000Z",
+            "deletedAt": null
+          }
+        ],
+        "cards": [
+          {
+            "id": "quality-card-alice",
+            "name": "Alice",
+            "nickname": "",
+            "description": "在旧城书铺工作，夜里常来酒馆。上个月托商队给姐姐送过一封信。",
+            "personality": "话少，对熟人实在，不愿主动谈家事。",
+            "creator": "",
+            "characterVersion": "1",
+            "tags": [],
+            "embeddedWorldBook": null,
+            "extensions": {},
+            "source": {
+              "kind": "manual",
+              "spec": "dramatis",
+              "specVersion": "1",
+              "importedAt": "2026-10-03T00:00:00.000Z"
+            },
+            "createdAt": "2026-10-03T00:00:00.000Z",
+            "updatedAt": "2026-10-03T00:00:00.000Z",
+            "deletedAt": null
+          }
+        ],
+        "worldBooks": [],
+        "personas": [],
+        "history": [],
+        "userInput": "起草旧城世界书，包含北门、书铺、酒馆三个条目。每条写触发词和具体设定。"
+      },
+      "request": {
+        "messages": [
+          {
+            "role": "system",
+            "content": "你是这个世界管理员，负责帮用户把素材搭起来：角色卡、世界书、玩家身份（Persona）与当前场景。\n你不扮演任何角色，也不写剧情台词——那是主对话的事。\n需要落成素材时，直接调用工具，不要在正文里贴 JSON 或代码块。\n工具只会产出草稿：用户点「采纳」才会进入素材库，所以要一次把内容写完整、写好。\n起草角色卡时把正文写短：**人设（description）控制在 5 句话以内**，**性格（personality）控制在 2～3 句话以内**。\n只留最能决定他「怎么说话、怎么做」的部分；身世细节、地方风物、历史事件放进世界书，需要时再触发。\n调用工具之前用一两句话说清你打算做什么；调用之后再说清结果与建议。\n不确定用户想要什么时先问一句，不要凭空替用户决定世界观。"
+          },
+          {
+            "role": "system",
+            "content": "当前素材：\n角色卡：\n- Alice（id: quality-card-alice）：在旧城书铺工作，夜里常来酒馆。上个月托商队给姐姐送过一封信。；性格 话少，对熟人实在，不愿主动谈家事。\n\n世界书：\n（还没有世界书）\n\n玩家身份：\n（还没有玩家身份）\n\n注意：修改角色卡与世界书是**整份替换**——你必须把原有内容一并写回去，\n再在此基础上增补，不要只写你新加的那部分，也不要在用户没要求时删掉已有设定。\n世界：雨夜酒馆\n对话：世界管理\n当前场景：雨夜（旧城酒馆），世界内时间 第三日 · 黄昏\n世界中已有角色：Alice\n可用工具：upsert_character_card、upsert_world_book、upsert_persona、delete_persona、set_scene"
+          },
+          { "role": "user", "content": "起草旧城世界书，包含北门、书铺、酒馆三个条目。每条写触发词和具体设定。" }
+        ],
+        "tools": [
+          {
+            "type": "function",
+            "function": {
+              "name": "upsert_character_card",
+              "description": "起草或修改一张角色卡。改动只是草稿，用户点「采纳」之后才会进入素材库；修改已有的卡时必须带上 cardId，而且**只需写要改的字段**：没提到的字段保持原样，要清空某个字段就显式传空字符串（新建时必须给 name 与 description）。",
+              "parameters": {
+                "type": "object",
+                "properties": {
+                  "cardId": { "type": "string", "description": "修改已有角色卡时填它的 id；新建时留空" },
+                  "name": { "type": "string", "description": "角色名" },
+                  "nickname": { "type": "string", "description": "角色对玩家的自称，可留空" },
+                  "description": { "type": "string", "description": "外貌、身份、来头；5 句话以内，越短主对话越聚焦" },
+                  "personality": { "type": "string", "description": "性格；2～3 句话以内" },
+                  "tags": { "type": "array", "items": { "type": "string" }, "description": "标签" }
+                }
+              }
+            }
+          },
+          {
+            "type": "function",
+            "function": {
+              "name": "upsert_world_book",
+              "description": "起草或修改一本世界书（也就是世界卡）。关键词触发时才会插入提示词，constant 为 true 的条目每轮都在。修改已有的书时必须带上 bookId，并且 entries 是**整本替换**：原有条目要一并写回，不要只交新增的那几条。（同名条目会保留它原有的插入位置、概率等设置，所以照原样传回来就是安全的。）",
+              "parameters": {
+                "type": "object",
+                "properties": {
+                  "bookId": { "type": "string", "description": "修改已有世界书时填它的 id；新建时留空" },
+                  "name": { "type": "string", "description": "世界书的名字" },
+                  "entries": {
+                    "type": "array",
+                    "description": "条目列表",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "title": { "type": "string" },
+                        "keys": { "type": "array", "items": { "type": "string" }, "description": "触发关键词" },
+                        "content": { "type": "string", "description": "命中后插入的设定正文" },
+                        "constant": { "type": "boolean", "description": "常驻条目，不需要关键词" },
+                        "order": { "type": "number", "description": "排序权重，默认 100" }
+                      },
+                      "required": ["content"]
+                    }
+                  }
+                },
+                "required": ["name", "entries"]
+              }
+            }
+          },
+          {
+            "type": "function",
+            "function": {
+              "name": "upsert_persona",
+              "description": "起草或修改一份玩家身份（Persona）。身份描述玩家在对话中是谁；修改已有身份时必须带 personaId，改动先作为草稿等待用户采纳。",
+              "parameters": {
+                "type": "object",
+                "properties": {
+                  "personaId": { "type": "string", "description": "修改已有身份时填它的 id；新建时留空" },
+                  "name": { "type": "string", "description": "玩家身份的名字" },
+                  "description": { "type": "string", "description": "外貌、来历、性格与扮演设定" }
+                },
+                "required": ["name", "description"]
+              }
+            }
+          },
+          {
+            "type": "function",
+            "function": {
+              "name": "delete_persona",
+              "description": "申请彻底删除一份玩家身份。必须同时给出 personaId 与 confirmName（身份的当前名字）；这里只会生成待确认删除草稿，用户点确认后才真正删除。",
+              "parameters": {
+                "type": "object",
+                "properties": {
+                  "personaId": { "type": "string", "description": "要删除的身份 id" },
+                  "confirmName": { "type": "string", "description": "身份的当前名字，用于防止删错" }
+                },
+                "required": ["personaId", "confirmName"]
+              }
+            }
+          },
+          {
+            "type": "function",
+            "function": {
+              "name": "set_scene",
+              "description": "设置当前场景：地点、世界内时间、场景设定或入场策略。**只写用户明确要求改的字段**，没有提到的不要顺手改（尤其是 castPolicy：把锁定的场子改成 open 等于允许 AI 自行拉角色入场）。",
+              "parameters": {
+                "type": "object",
+                "properties": {
+                  "title": { "type": "string" },
+                  "location": { "type": "string" },
+                  "worldTime": { "type": "string" },
+                  "summary": { "type": "string", "description": "场景设定，会写进提示词" },
+                  "castPolicy": {
+                    "type": "string",
+                    "enum": ["open", "locked", "invite_only", "triggered"],
+                    "description": "入场策略：locked 表示不允许 AI 引入新角色"
+                  }
+                }
+              }
+            }
+          }
+        ],
+        "params": {
+          "model": "deepseek-flash",
+          "reasoning_effort": "low",
+          "thinking": { "type": "enabled" },
+          "max_tokens": 1200
+        }
+      },
+      "fixtureHash": "23c4914a4b7800799bc885bc9af64f448a0f8c9b4f9c099b7212c5933c03a57a",
+      "requestHash": "45b32682ed97890afa02021570e749c32497f15c7bb56a73a5944224f1a40330",
+      "commit": "4c5169a23ecc901ab892bae182f8f4ac78c4b8b8",
+      "source": "git-blob-4c5169a-admin + hash-verified-shared-dependencies",
+      "sourceHash": "1764ca9f0ac4ad7bcff50527adbd539679d6867002eeea8fe11d27f82ac42794"
+    },
+    {
+      "caseId": "roleplay-3",
+      "family": "roleplay",
+      "label": "冲突与地点",
+      "input": {
+        "room": {
+          "id": "quality-room",
+          "title": "雨夜酒馆",
+          "personaId": null,
+          "playerName": "旅人",
+          "playerPersona": "独自赶路，背着旧剑。",
+          "cardIds": ["quality-card-alice"],
+          "instanceIds": ["quality-instance-alice"],
+          "worldBookIds": [],
+          "activeConversationId": null,
+          "createdAt": "2026-10-03T00:00:00.000Z",
+          "updatedAt": "2026-10-03T00:00:00.000Z",
+          "deletedAt": null
+        },
+        "scene": {
+          "id": "quality-scene",
+          "roomId": "quality-room",
+          "conversationId": null,
+          "title": "雨夜",
+          "location": "旧城酒馆",
+          "worldTime": "第三日 · 黄昏",
+          "castPolicy": "locked",
+          "cast": ["quality-instance-alice"],
+          "summary": "雨下了一整天。",
+          "endedAt": null,
+          "createdAt": "2026-10-03T00:00:00.000Z",
+          "updatedAt": "2026-10-03T00:00:00.000Z",
+          "deletedAt": null
+        },
+        "card": {
+          "id": "quality-card-alice",
+          "name": "Alice",
+          "nickname": "",
+          "description": "在旧城书铺工作，夜里常来酒馆。上个月托商队给姐姐送过一封信。",
+          "personality": "话少，对熟人实在，不愿主动谈家事。",
+          "creator": "",
+          "characterVersion": "1",
+          "tags": [],
+          "embeddedWorldBook": null,
+          "extensions": {},
+          "source": {
+            "kind": "manual",
+            "spec": "dramatis",
+            "specVersion": "1",
+            "importedAt": "2026-10-03T00:00:00.000Z"
+          },
+          "createdAt": "2026-10-03T00:00:00.000Z",
+          "updatedAt": "2026-10-03T00:00:00.000Z",
+          "deletedAt": null
+        },
+        "instance": {
+          "id": "quality-instance-alice",
+          "roomId": "quality-room",
+          "cardId": "quality-card-alice",
+          "displayName": "Alice",
+          "presence": "onstage",
+          "traits": { "extroversion": -0.3, "aggression": 0, "empathy": 0.3, "playfulness": 0, "caution": 0.3 },
+          "affect": { "valence": 0.1, "arousal": 0.3, "updatedAt": "2026-10-03T00:00:00.000Z", "history": [] },
+          "relationships": [
+            {
+              "target": "player",
+              "trust": 0.4,
+              "affinity": 0.4,
+              "fear": 0,
+              "respect": 0.2,
+              "tension": 0.1,
+              "updatedAt": "2026-10-03T00:00:00.000Z",
+              "history": []
+            }
+          ],
+          "traitsLocked": false,
+          "createdAt": "2026-10-03T00:00:00.000Z",
+          "updatedAt": "2026-10-03T00:00:00.000Z",
+          "deletedAt": null
+        },
+        "history": [
+          {
+            "id": "quality-message-2-player",
+            "roomId": "quality-room",
+            "conversationId": null,
+            "sceneId": "quality-scene",
+            "turnId": "quality-turn-2",
+            "localSeq": 1,
+            "deviceId": "quality-device",
+            "role": "player",
+            "speakerInstanceId": null,
+            "speakerName": "旅人",
+            "audience": ["quality-instance-alice"],
+            "content": "你把消息瞒了我三天。我们到门外说清楚。",
+            "createdAt": "2026-10-03T00:00:00.000Z",
+            "updatedAt": "2026-10-03T00:00:00.000Z",
+            "deletedAt": null
+          },
+          {
+            "id": "quality-message-2-alice",
+            "roomId": "quality-room",
+            "conversationId": null,
+            "sceneId": "quality-scene",
+            "turnId": "quality-turn-2",
+            "localSeq": 2,
+            "deviceId": "quality-device",
+            "role": "character",
+            "speakerInstanceId": "quality-instance-alice",
+            "speakerName": "Alice",
+            "audience": ["quality-instance-alice"],
+            "content": "# 她起身走到酒馆门外。不是瞒你，我昨天才知道。",
+            "createdAt": "2026-10-03T00:00:00.000Z",
+            "updatedAt": "2026-10-03T00:00:00.000Z",
+            "deletedAt": null
+          }
+        ],
+        "playerInput": "那把你确实知道的说给我听。",
+        "cast": [
+          {
+            "id": "quality-instance-alice",
+            "roomId": "quality-room",
+            "cardId": "quality-card-alice",
+            "displayName": "Alice",
+            "presence": "onstage",
+            "traits": { "extroversion": -0.3, "aggression": 0, "empathy": 0.3, "playfulness": 0, "caution": 0.3 },
+            "affect": { "valence": 0.1, "arousal": 0.3, "updatedAt": "2026-10-03T00:00:00.000Z", "history": [] },
+            "relationships": [
+              {
+                "target": "player",
+                "trust": 0.4,
+                "affinity": 0.4,
+                "fear": 0,
+                "respect": 0.2,
+                "tension": 0.1,
+                "updatedAt": "2026-10-03T00:00:00.000Z",
+                "history": []
+              }
+            ],
+            "traitsLocked": false,
+            "createdAt": "2026-10-03T00:00:00.000Z",
+            "updatedAt": "2026-10-03T00:00:00.000Z",
+            "deletedAt": null
+          }
+        ],
+        "memories": [],
+        "modes": { "playerFirst": false, "silent": false },
+        "budget": { "maxTokens": 16384, "reserveForReply": 1200 }
+      },
+      "request": {
+        "messages": [
+          {
+            "role": "system",
+            "content": "### 基本规则\n请以角色卡里「」内的身份进行沉浸式对话演绎，把自己完全代入这个角色，相信此刻你就是此人。\n\n输出只包含角色的行为与对话，不要旁白解说、不要提示词或规则说明。\n\n角色性格：以角色卡的设定为准。\n角色身份：以角色卡的设定为准。\n用户身份：以玩家的身份设定为准，用「你」指代玩家。\n\n输出格式：\n- 动作与环境描写用 # 开头，独占一行。\n- 对白不加引号，也不加角色名前缀，用第一人称直接写。\n- 多角色场景下，每个角色的动作与对白分开成段，保证清晰可读。\n- 除对白以外的一切内容，用角色名指代角色、用「你」指代玩家。\n\n剧情主导权：主动推进剧情，每轮都让故事往前走一点，不要被动等待玩家输入。\n保持逻辑连贯（角色离开后不可突然出现）；冲突类型要多样，避免反复用同一种事件推进。\n\n长动作处理：直接完成长动作，略写过程、只给结果；角色或玩家提出长时间行动时，一轮把它写完整。\n\n角色语气贴合设定：允许符合人物个性的粗口、幽默与威胁，但同一句话或相似内容不要重复多次。\n\n动态世界观：可以适时引入新角色，但不要超过场景能承载的量，且必须逻辑自洽。\n每次回应至少包含一项环境细节描写（五感优先），避免连续使用相同或相似的场景描写。\n\n战斗场景：进入战斗后持续输出直到战斗结束，不等待玩家额外输入；胜负要符合角色的能力设定，不得无理由地胜利或失败。\n\n交互逻辑：玩家回复简短（如「好」「是」「走」）时主动推进剧情，推进可以大胆、意料之外，但应保持逻辑性。\n玩家提出不合理或违反设定的行为时，明确告知并维持合理的剧情。\n需要玩家表态或做决定时，用征求意见的疑问句收尾；事情已经说清、没什么可问的，就自然收住，不要为了凑一个问句硬加。\n可以补充玩家角色的侧面描写，但禁止输出本应属于玩家角色的对话。\n上一段与下一段的衔接必须恰当，必要时平滑过渡。\n\n禁用缓存：遇到与之前相同的玩家输入时，直接推进剧情，不要重放上一次的回复。\n\n禁止事项：\n- 被动等待玩家推进剧情\n- 重复使用单一冲突类型\n- 破坏世界观合理性的设定\n- 长时间输出重复语句\n- 输出本应属于玩家角色的对话\n\n特殊事项：玩家持续回复「好」「走」「是」这类短句时，总是大胆推进剧情。\n\n### 角色：Alice\n你现在扮演的是「Alice」。\n\n在旧城书铺工作，夜里常来酒馆。上个月托商队给姐姐送过一封信。\n\n性格：话少，对熟人实在，不愿主动谈家事。\n\n性格倾向：内向寡言、共情敏锐、谨慎多疑\n\n### 关系与情绪状态\n对玩家的态度：信任 +0.40、好感 +0.40、畏惧 +0.00、敬重 +0.20、紧张感 +0.10\n\n### 当前场景\n地点：旧城酒馆\n时间：第三日 · 黄昏\n导演指令：本场景名单已锁定。不得引入任何新角色，也不要提及未在场角色进入场景。\n场景摘要：雨下了一整天。\n在场角色：Alice（正在与你对话）\n\n### 本轮指令\n现在轮到你发言。请以「Alice」的身份回应，保持角色不跳出。人设是你的底子，不是这一轮非说不可的台词：只在当前这件事真的用得上、或者玩家问起时才提。玩家「旅人」的身份设定：独自赶路，背着旧剑。\n不要代替玩家行动，也不要描写玩家的内心想法。未知设定先问，不编造既定事实。只写本角色这一轮的简短回应；不续演别人，那是他的回合。直接写你的对白与动作，不要在回复开头写任何角色名（不要出现「某某：」这样的前缀）。历史记录里的【名字】只是给你看的说话人标记，你的回复里不要出现这种标记。\n本轮模式（场记）：较早的经过已经由场记、章节与记忆代表，不再逐条重复原文。需要细节时先从这些材料里找，不要凭空补写没看过的事。\n格式（必须遵守）：动作与神态用 `#` 独占一行开头；对白不加任何名字前缀。\n先写一行 `意图：<这一轮你想做什么，一句话>`，然后空一行再写对白与动作。意图只写你自己的打算，不要写别人。\n\n### 回答长度、反重复与人设收敛\n这一段可以连着做几个不同的动作，但同一个动作、同一件道具不要重复；同一个意思不要换句话再说一遍。\n动作句不要用你自己的名字当主语：写「她把杯子放下」，不要写「（角色名）把杯子放下」。\n已经答过的事不要复述，把篇幅留给这一轮的新内容。\n人设要挑场合：性格、身世、口头禅、随身物件是你的底子，不是每轮都要说的台词——只有当前这件事真的用得上、或者玩家问起时才提。\n同一个设定点（身份、往事、习惯、随身物件）不要连着几轮反复说；隔开几轮、或者它有了新变化时再提一次就够。\n不要为了表现人设，把话头从眼前正在发生的事上拽回自己身上。\n回答长度（标准）：这一轮写三到五句，总长不超过 150 字；把这一件事说清就收住，不要为了凑字数铺陈。\n\n### 格式示范\n正确：\n# 她把杯子往桌上一放。\n「你问这个做什么。」\n# 她抬眼看了看门口。\n也正确（动作不加 `#`，但也没有放进引号里）：\n她把杯子往桌上一放。\n「你问这个做什么。」\n错误（把动作也写进引号，读起来像她在念旁白）：\n「她把杯子往桌上一放。」\n\n格式示范（只是示范，不是本轮内容）：对白带「」，没带引号的一律当动作。\n玩家：你们两个怎么看？\n# 他把袖口的水拧了一把。\n「先看看货再说。」\n他抬眼看了看门口。"
+          },
+          { "role": "user", "content": "你把消息瞒了我三天。我们到门外说清楚。" },
+          { "role": "assistant", "content": "# 她起身走到酒馆门外。不是瞒你，我昨天才知道。" },
+          { "role": "user", "content": "那把你确实知道的说给我听。" }
+        ],
+        "tools": [],
+        "params": {
+          "model": "deepseek-flash",
+          "reasoning_effort": "low",
+          "thinking": { "type": "enabled" },
+          "max_tokens": 1200
+        }
+      },
+      "fixtureHash": "896a5e01e9b89df79aee95d568d01b66992353f8eca3d84cb58e842fe53f4773",
+      "requestHash": "be7f0c075e71b5aeb24857b3af28ac8106432eacdb5627fa3d81367cf6c97dfa",
+      "commit": "4c5169a23ecc901ab892bae182f8f4ac78c4b8b8",
+      "source": "git-blob-4c5169a-admin + hash-verified-shared-dependencies",
+      "sourceHash": "1764ca9f0ac4ad7bcff50527adbd539679d6867002eeea8fe11d27f82ac42794"
+    },
+    {
+      "caseId": "extraction-3",
+      "family": "extraction",
+      "label": "冲突与地点",
+      "input": {
+        "scene": {
+          "id": "quality-scene",
+          "roomId": "quality-room",
+          "conversationId": null,
+          "title": "雨夜",
+          "location": "旧城酒馆",
+          "worldTime": "第三日 · 黄昏",
+          "castPolicy": "locked",
+          "cast": ["quality-instance-alice"],
+          "summary": "雨下了一整天。",
+          "endedAt": null,
+          "createdAt": "2026-10-03T00:00:00.000Z",
+          "updatedAt": "2026-10-03T00:00:00.000Z",
+          "deletedAt": null
+        },
+        "cast": [
+          {
+            "id": "quality-instance-alice",
+            "roomId": "quality-room",
+            "cardId": "quality-card-alice",
+            "displayName": "Alice",
+            "presence": "onstage",
+            "traits": { "extroversion": -0.3, "aggression": 0, "empathy": 0.3, "playfulness": 0, "caution": 0.3 },
+            "affect": { "valence": 0.1, "arousal": 0.3, "updatedAt": "2026-10-03T00:00:00.000Z", "history": [] },
+            "relationships": [
+              {
+                "target": "player",
+                "trust": 0.4,
+                "affinity": 0.4,
+                "fear": 0,
+                "respect": 0.2,
+                "tension": 0.1,
+                "updatedAt": "2026-10-03T00:00:00.000Z",
+                "history": []
+              }
+            ],
+            "traitsLocked": false,
+            "createdAt": "2026-10-03T00:00:00.000Z",
+            "updatedAt": "2026-10-03T00:00:00.000Z",
+            "deletedAt": null
+          }
+        ],
+        "playerName": "旅人",
+        "messages": [
+          {
+            "id": "quality-message-2-player",
+            "roomId": "quality-room",
+            "conversationId": null,
+            "sceneId": "quality-scene",
+            "turnId": "quality-turn-2",
+            "localSeq": 1,
+            "deviceId": "quality-device",
+            "role": "player",
+            "speakerInstanceId": null,
+            "speakerName": "旅人",
+            "audience": ["quality-instance-alice"],
+            "content": "你把消息瞒了我三天。我们到门外说清楚。",
+            "createdAt": "2026-10-03T00:00:00.000Z",
+            "updatedAt": "2026-10-03T00:00:00.000Z",
+            "deletedAt": null
+          },
+          {
+            "id": "quality-message-2-alice",
+            "roomId": "quality-room",
+            "conversationId": null,
+            "sceneId": "quality-scene",
+            "turnId": "quality-turn-2",
+            "localSeq": 2,
+            "deviceId": "quality-device",
+            "role": "character",
+            "speakerInstanceId": "quality-instance-alice",
+            "speakerName": "Alice",
+            "audience": ["quality-instance-alice"],
+            "content": "# 她起身走到酒馆门外。不是瞒你，我昨天才知道。",
+            "createdAt": "2026-10-03T00:00:00.000Z",
+            "updatedAt": "2026-10-03T00:00:00.000Z",
+            "deletedAt": null
+          }
+        ]
+      },
+      "request": {
+        "messages": [
+          {
+            "role": "system",
+            "content": "你是一个叙事记录员。阅读刚发生的一段对话，然后只输出一个 JSON 对象。\n不要写解释，不要写代码块标记，除了那个 JSON 对象什么都不要输出。"
+          },
+          {
+            "role": "user",
+            "content": "地点：旧城酒馆\n时间：第三日 · 黄昏\n玩家扮演：旅人\n在场角色：Alice\n\n对话：\n旅人：你把消息瞒了我三天。我们到门外说清楚。\nAlice：# 她起身走到酒馆门外。不是瞒你，我昨天才知道。\n\n字段要求：\n- summary：客观描述发生了什么，一到三句，不要写角色的内心。\n- importance：0 到 1。改变了关系、暴露了秘密、推进了情节的，给高分；寒暄与日常给低分。\n- location：只有对话里明确发生了地点变化时才填，否则留空字符串。\n- observations：为每个在场角色各写一条，描述他在这个视角下注意到了什么、\n  误解了什么、在意什么。同一件事在不同角色眼里应当有差异，允许互相矛盾。\n  没有明显反应的角色可以省略。speaker 必须用上面给出的角色名。\n\n输出格式：\n{\"summary\":\"客观经过，一到三句\",\"importance\":0.6,\"location\":\"\",\"observations\":[{\"speaker\":\"角色名\",\"perception\":\"他的印象\"}]}"
+          }
+        ],
+        "tools": [],
+        "params": {
+          "model": "deepseek-flash",
+          "reasoning_effort": "low",
+          "thinking": { "type": "enabled" },
+          "max_tokens": 1200
+        }
+      },
+      "fixtureHash": "3e252440bdfe122c3a6b4166cde5aba82b2cf5d330191614e68d4eee5cde8b78",
+      "requestHash": "c9da0a6cf398afe7ad438844fef04bdb63cda65c4ec75e833dbf26a215cddbb6",
+      "commit": "4c5169a23ecc901ab892bae182f8f4ac78c4b8b8",
+      "source": "git-blob-4c5169a-admin + hash-verified-shared-dependencies",
+      "sourceHash": "1764ca9f0ac4ad7bcff50527adbd539679d6867002eeea8fe11d27f82ac42794"
+    },
+    {
+      "caseId": "affect-3",
+      "family": "affect",
+      "label": "冲突与地点",
+      "input": {
+        "cast": [
+          {
+            "id": "quality-instance-alice",
+            "roomId": "quality-room",
+            "cardId": "quality-card-alice",
+            "displayName": "Alice",
+            "presence": "onstage",
+            "traits": { "extroversion": -0.3, "aggression": 0, "empathy": 0.3, "playfulness": 0, "caution": 0.3 },
+            "affect": { "valence": 0.1, "arousal": 0.3, "updatedAt": "2026-10-03T00:00:00.000Z", "history": [] },
+            "relationships": [
+              {
+                "target": "player",
+                "trust": 0.4,
+                "affinity": 0.4,
+                "fear": 0,
+                "respect": 0.2,
+                "tension": 0.1,
+                "updatedAt": "2026-10-03T00:00:00.000Z",
+                "history": []
+              }
+            ],
+            "traitsLocked": false,
+            "createdAt": "2026-10-03T00:00:00.000Z",
+            "updatedAt": "2026-10-03T00:00:00.000Z",
+            "deletedAt": null
+          }
+        ],
+        "playerName": "旅人",
+        "messages": [
+          {
+            "id": "quality-message-2-player",
+            "roomId": "quality-room",
+            "conversationId": null,
+            "sceneId": "quality-scene",
+            "turnId": "quality-turn-2",
+            "localSeq": 1,
+            "deviceId": "quality-device",
+            "role": "player",
+            "speakerInstanceId": null,
+            "speakerName": "旅人",
+            "audience": ["quality-instance-alice"],
+            "content": "你把消息瞒了我三天。我们到门外说清楚。",
+            "createdAt": "2026-10-03T00:00:00.000Z",
+            "updatedAt": "2026-10-03T00:00:00.000Z",
+            "deletedAt": null
+          },
+          {
+            "id": "quality-message-2-alice",
+            "roomId": "quality-room",
+            "conversationId": null,
+            "sceneId": "quality-scene",
+            "turnId": "quality-turn-2",
+            "localSeq": 2,
+            "deviceId": "quality-device",
+            "role": "character",
+            "speakerInstanceId": "quality-instance-alice",
+            "speakerName": "Alice",
+            "audience": ["quality-instance-alice"],
+            "content": "# 她起身走到酒馆门外。不是瞒你，我昨天才知道。",
+            "createdAt": "2026-10-03T00:00:00.000Z",
+            "updatedAt": "2026-10-03T00:00:00.000Z",
+            "deletedAt": null
+          }
+        ]
+      },
+      "request": {
+        "messages": [
+          { "role": "system", "content": "你在推演一段角色扮演对话之后的状态变化。只输出一个 JSON 对象，不要写解释。" },
+          {
+            "role": "user",
+            "content": "玩家扮演：旅人\n角色当前状态：\n- Alice：愉悦度 0.10 / 激动度 0.30；对玩家 trust 0.40 affinity 0.40 fear 0.00 respect 0.20 tension 0.10\n\n对话：\n旅人：你把消息瞒了我三天。我们到门外说清楚。\nAlice：# 她起身走到酒馆门外。不是瞒你，我昨天才知道。\n\n要求：\n- 只为真的被触动的角色输出一条；没有变化的角色不要出现。\n- deltaValence 与 deltaArousal 在 -0.3 到 0.3 之间，没有变化就填 0。\n- relationship 只写发生变化的维度，field 取值：trust / affinity / fear / respect / tension。\n- 每个 delta 同样在 -0.3 到 0.3 之间。\n- reason 用一句话说明变化的原因，会被记录进角色状态史。\n\n输出格式：\n{\"updates\":[{\"observer\":\"角色名\",\"deltaValence\":0.1,\"deltaArousal\":0.05,\"reason\":\"为什么\",\"relationship\":[{\"field\":\"affinity\",\"delta\":0.1}]}]}"
+          }
+        ],
+        "tools": [],
+        "params": {
+          "model": "deepseek-flash",
+          "reasoning_effort": "low",
+          "thinking": { "type": "enabled" },
+          "max_tokens": 1200
+        }
+      },
+      "fixtureHash": "98db77ba5c6f4e5cf0e672dbdda49d8a4203ee2b4e1759a8d0b68be1254ce6db",
+      "requestHash": "174b7186434c0ca2a732fcabe58b05b89a58d3b280a5872b242ae6279d08e3e9",
+      "commit": "4c5169a23ecc901ab892bae182f8f4ac78c4b8b8",
+      "source": "git-blob-4c5169a-admin + hash-verified-shared-dependencies",
+      "sourceHash": "1764ca9f0ac4ad7bcff50527adbd539679d6867002eeea8fe11d27f82ac42794"
+    },
+    {
+      "caseId": "admin-3",
+      "family": "admin",
+      "label": "冲突与地点",
+      "input": {
+        "room": {
+          "id": "quality-room",
+          "title": "雨夜酒馆",
+          "personaId": null,
+          "playerName": "旅人",
+          "playerPersona": "独自赶路，背着旧剑。",
+          "cardIds": ["quality-card-alice"],
+          "instanceIds": ["quality-instance-alice"],
+          "worldBookIds": [],
+          "activeConversationId": null,
+          "createdAt": "2026-10-03T00:00:00.000Z",
+          "updatedAt": "2026-10-03T00:00:00.000Z",
+          "deletedAt": null
+        },
+        "scene": {
+          "id": "quality-scene",
+          "roomId": "quality-room",
+          "conversationId": null,
+          "title": "雨夜",
+          "location": "旧城酒馆",
+          "worldTime": "第三日 · 黄昏",
+          "castPolicy": "locked",
+          "cast": ["quality-instance-alice"],
+          "summary": "雨下了一整天。",
+          "endedAt": null,
+          "createdAt": "2026-10-03T00:00:00.000Z",
+          "updatedAt": "2026-10-03T00:00:00.000Z",
+          "deletedAt": null
+        },
+        "conversation": {
+          "id": "quality-admin",
+          "roomId": "quality-room",
+          "title": "世界管理",
+          "kind": "side",
+          "createdAt": "2026-10-03T00:00:00.000Z",
+          "updatedAt": "2026-10-03T00:00:00.000Z",
+          "deletedAt": null
+        },
+        "instances": [
+          {
+            "id": "quality-instance-alice",
+            "roomId": "quality-room",
+            "cardId": "quality-card-alice",
+            "displayName": "Alice",
+            "presence": "onstage",
+            "traits": { "extroversion": -0.3, "aggression": 0, "empathy": 0.3, "playfulness": 0, "caution": 0.3 },
+            "affect": { "valence": 0.1, "arousal": 0.3, "updatedAt": "2026-10-03T00:00:00.000Z", "history": [] },
+            "relationships": [
+              {
+                "target": "player",
+                "trust": 0.4,
+                "affinity": 0.4,
+                "fear": 0,
+                "respect": 0.2,
+                "tension": 0.1,
+                "updatedAt": "2026-10-03T00:00:00.000Z",
+                "history": []
+              }
+            ],
+            "traitsLocked": false,
+            "createdAt": "2026-10-03T00:00:00.000Z",
+            "updatedAt": "2026-10-03T00:00:00.000Z",
+            "deletedAt": null
+          }
+        ],
+        "cards": [
+          {
+            "id": "quality-card-alice",
+            "name": "Alice",
+            "nickname": "",
+            "description": "在旧城书铺工作，夜里常来酒馆。上个月托商队给姐姐送过一封信。",
+            "personality": "话少，对熟人实在，不愿主动谈家事。",
+            "creator": "",
+            "characterVersion": "1",
+            "tags": [],
+            "embeddedWorldBook": null,
+            "extensions": {},
+            "source": {
+              "kind": "manual",
+              "spec": "dramatis",
+              "specVersion": "1",
+              "importedAt": "2026-10-03T00:00:00.000Z"
+            },
+            "createdAt": "2026-10-03T00:00:00.000Z",
+            "updatedAt": "2026-10-03T00:00:00.000Z",
+            "deletedAt": null
+          }
+        ],
+        "worldBooks": [],
+        "personas": [],
+        "history": [],
+        "userInput": "把当前场景地点改为旧城北门，时间改为第三日深夜；其他场景信息保持原样。"
+      },
+      "request": {
+        "messages": [
+          {
+            "role": "system",
+            "content": "你是这个世界管理员，负责帮用户把素材搭起来：角色卡、世界书、玩家身份（Persona）与当前场景。\n你不扮演任何角色，也不写剧情台词——那是主对话的事。\n需要落成素材时，直接调用工具，不要在正文里贴 JSON 或代码块。\n工具只会产出草稿：用户点「采纳」才会进入素材库，所以要一次把内容写完整、写好。\n起草角色卡时把正文写短：**人设（description）控制在 5 句话以内**，**性格（personality）控制在 2～3 句话以内**。\n只留最能决定他「怎么说话、怎么做」的部分；身世细节、地方风物、历史事件放进世界书，需要时再触发。\n调用工具之前用一两句话说清你打算做什么；调用之后再说清结果与建议。\n不确定用户想要什么时先问一句，不要凭空替用户决定世界观。"
+          },
+          {
+            "role": "system",
+            "content": "当前素材：\n角色卡：\n- Alice（id: quality-card-alice）：在旧城书铺工作，夜里常来酒馆。上个月托商队给姐姐送过一封信。；性格 话少，对熟人实在，不愿主动谈家事。\n\n世界书：\n（还没有世界书）\n\n玩家身份：\n（还没有玩家身份）\n\n注意：修改角色卡与世界书是**整份替换**——你必须把原有内容一并写回去，\n再在此基础上增补，不要只写你新加的那部分，也不要在用户没要求时删掉已有设定。\n世界：雨夜酒馆\n对话：世界管理\n当前场景：雨夜（旧城酒馆），世界内时间 第三日 · 黄昏\n世界中已有角色：Alice\n可用工具：upsert_character_card、upsert_world_book、upsert_persona、delete_persona、set_scene"
+          },
+          { "role": "user", "content": "把当前场景地点改为旧城北门，时间改为第三日深夜；其他场景信息保持原样。" }
+        ],
+        "tools": [
+          {
+            "type": "function",
+            "function": {
+              "name": "upsert_character_card",
+              "description": "起草或修改一张角色卡。改动只是草稿，用户点「采纳」之后才会进入素材库；修改已有的卡时必须带上 cardId，而且**只需写要改的字段**：没提到的字段保持原样，要清空某个字段就显式传空字符串（新建时必须给 name 与 description）。",
+              "parameters": {
+                "type": "object",
+                "properties": {
+                  "cardId": { "type": "string", "description": "修改已有角色卡时填它的 id；新建时留空" },
+                  "name": { "type": "string", "description": "角色名" },
+                  "nickname": { "type": "string", "description": "角色对玩家的自称，可留空" },
+                  "description": { "type": "string", "description": "外貌、身份、来头；5 句话以内，越短主对话越聚焦" },
+                  "personality": { "type": "string", "description": "性格；2～3 句话以内" },
+                  "tags": { "type": "array", "items": { "type": "string" }, "description": "标签" }
+                }
+              }
+            }
+          },
+          {
+            "type": "function",
+            "function": {
+              "name": "upsert_world_book",
+              "description": "起草或修改一本世界书（也就是世界卡）。关键词触发时才会插入提示词，constant 为 true 的条目每轮都在。修改已有的书时必须带上 bookId，并且 entries 是**整本替换**：原有条目要一并写回，不要只交新增的那几条。（同名条目会保留它原有的插入位置、概率等设置，所以照原样传回来就是安全的。）",
+              "parameters": {
+                "type": "object",
+                "properties": {
+                  "bookId": { "type": "string", "description": "修改已有世界书时填它的 id；新建时留空" },
+                  "name": { "type": "string", "description": "世界书的名字" },
+                  "entries": {
+                    "type": "array",
+                    "description": "条目列表",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "title": { "type": "string" },
+                        "keys": { "type": "array", "items": { "type": "string" }, "description": "触发关键词" },
+                        "content": { "type": "string", "description": "命中后插入的设定正文" },
+                        "constant": { "type": "boolean", "description": "常驻条目，不需要关键词" },
+                        "order": { "type": "number", "description": "排序权重，默认 100" }
+                      },
+                      "required": ["content"]
+                    }
+                  }
+                },
+                "required": ["name", "entries"]
+              }
+            }
+          },
+          {
+            "type": "function",
+            "function": {
+              "name": "upsert_persona",
+              "description": "起草或修改一份玩家身份（Persona）。身份描述玩家在对话中是谁；修改已有身份时必须带 personaId，改动先作为草稿等待用户采纳。",
+              "parameters": {
+                "type": "object",
+                "properties": {
+                  "personaId": { "type": "string", "description": "修改已有身份时填它的 id；新建时留空" },
+                  "name": { "type": "string", "description": "玩家身份的名字" },
+                  "description": { "type": "string", "description": "外貌、来历、性格与扮演设定" }
+                },
+                "required": ["name", "description"]
+              }
+            }
+          },
+          {
+            "type": "function",
+            "function": {
+              "name": "delete_persona",
+              "description": "申请彻底删除一份玩家身份。必须同时给出 personaId 与 confirmName（身份的当前名字）；这里只会生成待确认删除草稿，用户点确认后才真正删除。",
+              "parameters": {
+                "type": "object",
+                "properties": {
+                  "personaId": { "type": "string", "description": "要删除的身份 id" },
+                  "confirmName": { "type": "string", "description": "身份的当前名字，用于防止删错" }
+                },
+                "required": ["personaId", "confirmName"]
+              }
+            }
+          },
+          {
+            "type": "function",
+            "function": {
+              "name": "set_scene",
+              "description": "设置当前场景：地点、世界内时间、场景设定或入场策略。**只写用户明确要求改的字段**，没有提到的不要顺手改（尤其是 castPolicy：把锁定的场子改成 open 等于允许 AI 自行拉角色入场）。",
+              "parameters": {
+                "type": "object",
+                "properties": {
+                  "title": { "type": "string" },
+                  "location": { "type": "string" },
+                  "worldTime": { "type": "string" },
+                  "summary": { "type": "string", "description": "场景设定，会写进提示词" },
+                  "castPolicy": {
+                    "type": "string",
+                    "enum": ["open", "locked", "invite_only", "triggered"],
+                    "description": "入场策略：locked 表示不允许 AI 引入新角色"
+                  }
+                }
+              }
+            }
+          }
+        ],
+        "params": {
+          "model": "deepseek-flash",
+          "reasoning_effort": "low",
+          "thinking": { "type": "enabled" },
+          "max_tokens": 1200
+        }
+      },
+      "fixtureHash": "581be9ecced8b564f6e759ebd991b9146b2ac6825204835fce728184b5c10cc2",
+      "requestHash": "cec1b955393802cf719e5928742dff0aebd357668457ff6f4cb6ef85c43e2b2f",
+      "commit": "4c5169a23ecc901ab892bae182f8f4ac78c4b8b8",
+      "source": "git-blob-4c5169a-admin + hash-verified-shared-dependencies",
+      "sourceHash": "1764ca9f0ac4ad7bcff50527adbd539679d6867002eeea8fe11d27f82ac42794"
+    }
+  ],
+  "candidate": [
+    {
+      "caseId": "roleplay-1",
+      "family": "roleplay",
+      "label": "信件与边界",
+      "input": {
+        "room": {
+          "id": "quality-room",
+          "title": "雨夜酒馆",
+          "personaId": null,
+          "playerName": "旅人",
+          "playerPersona": "独自赶路，背着旧剑。",
+          "cardIds": ["quality-card-alice"],
+          "instanceIds": ["quality-instance-alice"],
+          "worldBookIds": [],
+          "activeConversationId": null,
+          "createdAt": "2026-10-03T00:00:00.000Z",
+          "updatedAt": "2026-10-03T00:00:00.000Z",
+          "deletedAt": null
+        },
+        "scene": {
+          "id": "quality-scene",
+          "roomId": "quality-room",
+          "conversationId": null,
+          "title": "雨夜",
+          "location": "旧城酒馆",
+          "worldTime": "第三日 · 黄昏",
+          "castPolicy": "locked",
+          "cast": ["quality-instance-alice"],
+          "summary": "雨下了一整天。",
+          "endedAt": null,
+          "createdAt": "2026-10-03T00:00:00.000Z",
+          "updatedAt": "2026-10-03T00:00:00.000Z",
+          "deletedAt": null
+        },
+        "card": {
+          "id": "quality-card-alice",
+          "name": "Alice",
+          "nickname": "",
+          "description": "在旧城书铺工作，夜里常来酒馆。上个月托商队给姐姐送过一封信。",
+          "personality": "话少，对熟人实在，不愿主动谈家事。",
+          "creator": "",
+          "characterVersion": "1",
+          "tags": [],
+          "embeddedWorldBook": null,
+          "extensions": {},
+          "source": {
+            "kind": "manual",
+            "spec": "dramatis",
+            "specVersion": "1",
+            "importedAt": "2026-10-03T00:00:00.000Z"
+          },
+          "createdAt": "2026-10-03T00:00:00.000Z",
+          "updatedAt": "2026-10-03T00:00:00.000Z",
+          "deletedAt": null
+        },
+        "instance": {
+          "id": "quality-instance-alice",
+          "roomId": "quality-room",
+          "cardId": "quality-card-alice",
+          "displayName": "Alice",
+          "presence": "onstage",
+          "traits": { "extroversion": -0.3, "aggression": 0, "empathy": 0.3, "playfulness": 0, "caution": 0.3 },
+          "affect": { "valence": 0.1, "arousal": 0.3, "updatedAt": "2026-10-03T00:00:00.000Z", "history": [] },
+          "relationships": [
+            {
+              "target": "player",
+              "trust": 0.4,
+              "affinity": 0.4,
+              "fear": 0,
+              "respect": 0.2,
+              "tension": 0.1,
+              "updatedAt": "2026-10-03T00:00:00.000Z",
+              "history": []
+            }
+          ],
+          "traitsLocked": false,
+          "createdAt": "2026-10-03T00:00:00.000Z",
+          "updatedAt": "2026-10-03T00:00:00.000Z",
+          "deletedAt": null
+        },
+        "history": [
+          {
+            "id": "quality-message-0-player",
+            "roomId": "quality-room",
+            "conversationId": null,
+            "sceneId": "quality-scene",
+            "turnId": "quality-turn-0",
+            "localSeq": 1,
+            "deviceId": "quality-device",
+            "role": "player",
+            "speakerInstanceId": null,
+            "speakerName": "旅人",
+            "audience": ["quality-instance-alice"],
+            "content": "商队出事前，有没有把你的信送到？",
+            "createdAt": "2026-10-03T00:00:00.000Z",
+            "updatedAt": "2026-10-03T00:00:00.000Z",
+            "deletedAt": null
+          },
+          {
+            "id": "quality-message-0-alice",
+            "roomId": "quality-room",
+            "conversationId": null,
+            "sceneId": "quality-scene",
+            "turnId": "quality-turn-0",
+            "localSeq": 2,
+            "deviceId": "quality-device",
+            "role": "character",
+            "speakerInstanceId": "quality-instance-alice",
+            "speakerName": "Alice",
+            "audience": ["quality-instance-alice"],
+            "content": "只知道他们到了北门。# 她把杯子放下。别问信里写了什么。",
+            "createdAt": "2026-10-03T00:00:00.000Z",
+            "updatedAt": "2026-10-03T00:00:00.000Z",
+            "deletedAt": null
+          }
+        ],
+        "playerInput": "好，不问信。北门是谁看见他们的？",
+        "cast": [
+          {
+            "id": "quality-instance-alice",
+            "roomId": "quality-room",
+            "cardId": "quality-card-alice",
+            "displayName": "Alice",
+            "presence": "onstage",
+            "traits": { "extroversion": -0.3, "aggression": 0, "empathy": 0.3, "playfulness": 0, "caution": 0.3 },
+            "affect": { "valence": 0.1, "arousal": 0.3, "updatedAt": "2026-10-03T00:00:00.000Z", "history": [] },
+            "relationships": [
+              {
+                "target": "player",
+                "trust": 0.4,
+                "affinity": 0.4,
+                "fear": 0,
+                "respect": 0.2,
+                "tension": 0.1,
+                "updatedAt": "2026-10-03T00:00:00.000Z",
+                "history": []
+              }
+            ],
+            "traitsLocked": false,
+            "createdAt": "2026-10-03T00:00:00.000Z",
+            "updatedAt": "2026-10-03T00:00:00.000Z",
+            "deletedAt": null
+          }
+        ],
+        "memories": [],
+        "modes": { "playerFirst": false, "silent": false },
+        "budget": { "maxTokens": 16384, "reserveForReply": 1200 }
+      },
+      "request": {
+        "messages": [
+          {
+            "role": "system",
+            "content": "### 基本规则\n请以角色卡里「」内的身份进行沉浸式对话演绎，把自己完全代入这个角色，相信此刻你就是此人。\n\n输出只包含角色的行为与对话，不要旁白解说、不要提示词或规则说明。\n\n角色性格：以角色卡的设定为准。\n角色身份：以角色卡的设定为准。\n用户身份：以玩家的身份设定为准，用「你」指代玩家。\n\n输出格式：\n- 动作与环境描写用 # 开头，独占一行。\n- 对白不加引号，也不加角色名前缀，用第一人称直接写。\n- 多角色场景下，每个角色的动作与对白分开成段，保证清晰可读。\n- 除对白以外的一切内容，用角色名指代角色、用「你」指代玩家。\n\n剧情主导权：主动推进剧情，每轮都让故事往前走一点，不要被动等待玩家输入。\n保持逻辑连贯（角色离开后不可突然出现）；冲突类型要多样，避免反复用同一种事件推进。\n\n长动作处理：直接完成长动作，略写过程、只给结果；角色或玩家提出长时间行动时，一轮把它写完整。\n\n角色语气贴合设定：允许符合人物个性的粗口、幽默与威胁，但同一句话或相似内容不要重复多次。\n\n动态世界观：可以适时引入新角色，但不要超过场景能承载的量，且必须逻辑自洽。\n每次回应至少包含一项环境细节描写（五感优先），避免连续使用相同或相似的场景描写。\n\n战斗场景：进入战斗后持续输出直到战斗结束，不等待玩家额外输入；胜负要符合角色的能力设定，不得无理由地胜利或失败。\n\n交互逻辑：玩家回复简短（如「好」「是」「走」）时主动推进剧情，推进可以大胆、意料之外，但应保持逻辑性。\n玩家提出不合理或违反设定的行为时，明确告知并维持合理的剧情。\n需要玩家表态或做决定时，用征求意见的疑问句收尾；事情已经说清、没什么可问的，就自然收住，不要为了凑一个问句硬加。\n可以补充玩家角色的侧面描写，但禁止输出本应属于玩家角色的对话。\n上一段与下一段的衔接必须恰当，必要时平滑过渡。\n\n禁用缓存：遇到与之前相同的玩家输入时，直接推进剧情，不要重放上一次的回复。\n\n禁止事项：\n- 被动等待玩家推进剧情\n- 重复使用单一冲突类型\n- 破坏世界观合理性的设定\n- 长时间输出重复语句\n- 输出本应属于玩家角色的对话\n\n特殊事项：玩家持续回复「好」「走」「是」这类短句时，总是大胆推进剧情。\n\n### 角色：Alice\n你现在扮演的是「Alice」。\n\n在旧城书铺工作，夜里常来酒馆。上个月托商队给姐姐送过一封信。\n\n性格：话少，对熟人实在，不愿主动谈家事。\n\n性格倾向：内向寡言、共情敏锐、谨慎多疑\n\n### 关系与情绪状态\n对玩家的态度：信任 +0.40、好感 +0.40、畏惧 +0.00、敬重 +0.20、紧张感 +0.10\n\n### 当前场景\n地点：旧城酒馆\n时间：第三日 · 黄昏\n导演指令：本场景名单已锁定。不得引入任何新角色，也不要提及未在场角色进入场景。\n场景摘要：雨下了一整天。\n在场角色：Alice（正在与你对话）\n\n### 本轮指令\n现在轮到你发言。请以「Alice」的身份回应，保持角色不跳出。人设是你的底子，不是这一轮非说不可的台词：只在当前这件事真的用得上、或者玩家问起时才提。玩家「旅人」的身份设定：独自赶路，背着旧剑。\n不要代替玩家行动，也不要描写玩家的内心想法。未知设定先问，不编造既定事实。只写本角色这一轮的简短回应；不续演别人，那是他的回合。直接写你的对白与动作，不要在回复开头写任何角色名（不要出现「某某：」这样的前缀）。历史记录里的【名字】只是给你看的说话人标记，你的回复里不要出现这种标记。\n本轮模式（场记）：较早的经过已经由场记、章节与记忆代表，不再逐条重复原文。需要细节时先从这些材料里找，不要凭空补写没看过的事。\n格式（必须遵守）：动作与神态用 `#` 独占一行开头；对白不加任何名字前缀。\n先写一行 `意图：<这一轮你想做什么，一句话>`，然后空一行再写对白与动作。意图只写你自己的打算，不要写别人。\n\n### 回答长度、反重复与人设收敛\n这一段可以连着做几个不同的动作，但同一个动作、同一件道具不要重复；同一个意思不要换句话再说一遍。\n动作句不要用你自己的名字当主语：写「她把杯子放下」，不要写「（角色名）把杯子放下」。\n已经答过的事不要复述，把篇幅留给这一轮的新内容。\n人设要挑场合：性格、身世、口头禅、随身物件是你的底子，不是每轮都要说的台词——只有当前这件事真的用得上、或者玩家问起时才提。\n同一个设定点（身份、往事、习惯、随身物件）不要连着几轮反复说；隔开几轮、或者它有了新变化时再提一次就够。\n不要为了表现人设，把话头从眼前正在发生的事上拽回自己身上。\n回答长度（标准）：这一轮写三到五句，总长不超过 150 字；把这一件事说清就收住，不要为了凑字数铺陈。\n\n### 格式示范\n正确：\n# 她把杯子往桌上一放。\n「你问这个做什么。」\n# 她抬眼看了看门口。\n也正确（动作不加 `#`，但也没有放进引号里）：\n她把杯子往桌上一放。\n「你问这个做什么。」\n错误（把动作也写进引号，读起来像她在念旁白）：\n「她把杯子往桌上一放。」\n\n格式示范（只是示范，不是本轮内容）：对白带「」，没带引号的一律当动作。\n玩家：你们两个怎么看？\n# 他把袖口的水拧了一把。\n「先看看货再说。」\n他抬眼看了看门口。"
+          },
+          { "role": "user", "content": "商队出事前，有没有把你的信送到？" },
+          { "role": "assistant", "content": "只知道他们到了北门。# 她把杯子放下。别问信里写了什么。" },
+          { "role": "user", "content": "好，不问信。北门是谁看见他们的？" }
+        ],
+        "tools": [],
+        "params": {
+          "model": "deepseek-flash",
+          "reasoning_effort": "low",
+          "thinking": { "type": "enabled" },
+          "max_tokens": 1200
+        }
+      },
+      "fixtureHash": "cd0246b7e3d814d93254d9fa7ccff4d17e2e1c71bbb30ca6bf5e9da47625a727",
+      "requestHash": "d2daeef211f8430daaca1608cd7a59e07ce83e27d411d0b447314ce102b3e1d6",
+      "commit": "4c5169a23ecc901ab892bae182f8f4ac78c4b8b8",
+      "source": "working-tree",
+      "sourceHash": "b9f00a07f64110f0c4bcd6a9291103eaafbce52de7cb5fbcfeb394c280c9e928"
+    },
+    {
+      "caseId": "extraction-1",
+      "family": "extraction",
+      "label": "信件与边界",
+      "input": {
+        "scene": {
+          "id": "quality-scene",
+          "roomId": "quality-room",
+          "conversationId": null,
+          "title": "雨夜",
+          "location": "旧城酒馆",
+          "worldTime": "第三日 · 黄昏",
+          "castPolicy": "locked",
+          "cast": ["quality-instance-alice"],
+          "summary": "雨下了一整天。",
+          "endedAt": null,
+          "createdAt": "2026-10-03T00:00:00.000Z",
+          "updatedAt": "2026-10-03T00:00:00.000Z",
+          "deletedAt": null
+        },
+        "cast": [
+          {
+            "id": "quality-instance-alice",
+            "roomId": "quality-room",
+            "cardId": "quality-card-alice",
+            "displayName": "Alice",
+            "presence": "onstage",
+            "traits": { "extroversion": -0.3, "aggression": 0, "empathy": 0.3, "playfulness": 0, "caution": 0.3 },
+            "affect": { "valence": 0.1, "arousal": 0.3, "updatedAt": "2026-10-03T00:00:00.000Z", "history": [] },
+            "relationships": [
+              {
+                "target": "player",
+                "trust": 0.4,
+                "affinity": 0.4,
+                "fear": 0,
+                "respect": 0.2,
+                "tension": 0.1,
+                "updatedAt": "2026-10-03T00:00:00.000Z",
+                "history": []
+              }
+            ],
+            "traitsLocked": false,
+            "createdAt": "2026-10-03T00:00:00.000Z",
+            "updatedAt": "2026-10-03T00:00:00.000Z",
+            "deletedAt": null
+          }
+        ],
+        "playerName": "旅人",
+        "messages": [
+          {
+            "id": "quality-message-0-player",
+            "roomId": "quality-room",
+            "conversationId": null,
+            "sceneId": "quality-scene",
+            "turnId": "quality-turn-0",
+            "localSeq": 1,
+            "deviceId": "quality-device",
+            "role": "player",
+            "speakerInstanceId": null,
+            "speakerName": "旅人",
+            "audience": ["quality-instance-alice"],
+            "content": "商队出事前，有没有把你的信送到？",
+            "createdAt": "2026-10-03T00:00:00.000Z",
+            "updatedAt": "2026-10-03T00:00:00.000Z",
+            "deletedAt": null
+          },
+          {
+            "id": "quality-message-0-alice",
+            "roomId": "quality-room",
+            "conversationId": null,
+            "sceneId": "quality-scene",
+            "turnId": "quality-turn-0",
+            "localSeq": 2,
+            "deviceId": "quality-device",
+            "role": "character",
+            "speakerInstanceId": "quality-instance-alice",
+            "speakerName": "Alice",
+            "audience": ["quality-instance-alice"],
+            "content": "只知道他们到了北门。# 她把杯子放下。别问信里写了什么。",
+            "createdAt": "2026-10-03T00:00:00.000Z",
+            "updatedAt": "2026-10-03T00:00:00.000Z",
+            "deletedAt": null
+          }
+        ]
+      },
+      "request": {
+        "messages": [
+          {
+            "role": "system",
+            "content": "你是一个叙事记录员。阅读刚发生的一段对话，然后只输出一个 JSON 对象。\n不要写解释，不要写代码块标记，除了那个 JSON 对象什么都不要输出。"
+          },
+          {
+            "role": "user",
+            "content": "地点：旧城酒馆\n时间：第三日 · 黄昏\n玩家扮演：旅人\n在场角色：Alice\n\n对话：\n旅人：商队出事前，有没有把你的信送到？\nAlice：只知道他们到了北门。# 她把杯子放下。别问信里写了什么。\n\n字段要求：\n- summary：客观描述发生了什么，一到三句，不要写角色的内心。\n- importance：0 到 1。改变了关系、暴露了秘密、推进了情节的，给高分；寒暄与日常给低分。\n- location：只有对话里明确发生了地点变化时才填，否则留空字符串。\n- observations：为每个在场角色各写一条，描述他在这个视角下注意到了什么、\n  误解了什么、在意什么。同一件事在不同角色眼里应当有差异，允许互相矛盾。\n  没有明显反应的角色可以省略。speaker 必须用上面给出的角色名。\n\n输出格式：\n{\"summary\":\"客观经过，一到三句\",\"importance\":0.6,\"location\":\"\",\"observations\":[{\"speaker\":\"角色名\",\"perception\":\"他的印象\"}]}"
+          }
+        ],
+        "tools": [],
+        "params": {
+          "model": "deepseek-flash",
+          "reasoning_effort": "low",
+          "thinking": { "type": "enabled" },
+          "max_tokens": 1200
+        }
+      },
+      "fixtureHash": "b0dc8a3d6cc7ef3e918a7d79eb17cb01188abcbce7919f34f6ddcefdc61ec349",
+      "requestHash": "4c08efb1852089584af6526bc135bc997c64a5a1f66d0b30a63703f58d820c33",
+      "commit": "4c5169a23ecc901ab892bae182f8f4ac78c4b8b8",
+      "source": "working-tree",
+      "sourceHash": "b9f00a07f64110f0c4bcd6a9291103eaafbce52de7cb5fbcfeb394c280c9e928"
+    },
+    {
+      "caseId": "affect-1",
+      "family": "affect",
+      "label": "信件与边界",
+      "input": {
+        "cast": [
+          {
+            "id": "quality-instance-alice",
+            "roomId": "quality-room",
+            "cardId": "quality-card-alice",
+            "displayName": "Alice",
+            "presence": "onstage",
+            "traits": { "extroversion": -0.3, "aggression": 0, "empathy": 0.3, "playfulness": 0, "caution": 0.3 },
+            "affect": { "valence": 0.1, "arousal": 0.3, "updatedAt": "2026-10-03T00:00:00.000Z", "history": [] },
+            "relationships": [
+              {
+                "target": "player",
+                "trust": 0.4,
+                "affinity": 0.4,
+                "fear": 0,
+                "respect": 0.2,
+                "tension": 0.1,
+                "updatedAt": "2026-10-03T00:00:00.000Z",
+                "history": []
+              }
+            ],
+            "traitsLocked": false,
+            "createdAt": "2026-10-03T00:00:00.000Z",
+            "updatedAt": "2026-10-03T00:00:00.000Z",
+            "deletedAt": null
+          }
+        ],
+        "playerName": "旅人",
+        "messages": [
+          {
+            "id": "quality-message-0-player",
+            "roomId": "quality-room",
+            "conversationId": null,
+            "sceneId": "quality-scene",
+            "turnId": "quality-turn-0",
+            "localSeq": 1,
+            "deviceId": "quality-device",
+            "role": "player",
+            "speakerInstanceId": null,
+            "speakerName": "旅人",
+            "audience": ["quality-instance-alice"],
+            "content": "商队出事前，有没有把你的信送到？",
+            "createdAt": "2026-10-03T00:00:00.000Z",
+            "updatedAt": "2026-10-03T00:00:00.000Z",
+            "deletedAt": null
+          },
+          {
+            "id": "quality-message-0-alice",
+            "roomId": "quality-room",
+            "conversationId": null,
+            "sceneId": "quality-scene",
+            "turnId": "quality-turn-0",
+            "localSeq": 2,
+            "deviceId": "quality-device",
+            "role": "character",
+            "speakerInstanceId": "quality-instance-alice",
+            "speakerName": "Alice",
+            "audience": ["quality-instance-alice"],
+            "content": "只知道他们到了北门。# 她把杯子放下。别问信里写了什么。",
+            "createdAt": "2026-10-03T00:00:00.000Z",
+            "updatedAt": "2026-10-03T00:00:00.000Z",
+            "deletedAt": null
+          }
+        ]
+      },
+      "request": {
+        "messages": [
+          { "role": "system", "content": "你在推演一段角色扮演对话之后的状态变化。只输出一个 JSON 对象，不要写解释。" },
+          {
+            "role": "user",
+            "content": "玩家扮演：旅人\n角色当前状态：\n- Alice：愉悦度 0.10 / 激动度 0.30；对玩家 trust 0.40 affinity 0.40 fear 0.00 respect 0.20 tension 0.10\n\n对话：\n旅人：商队出事前，有没有把你的信送到？\nAlice：只知道他们到了北门。# 她把杯子放下。别问信里写了什么。\n\n要求：\n- 只为真的被触动的角色输出一条；没有变化的角色不要出现。\n- deltaValence 与 deltaArousal 在 -0.3 到 0.3 之间，没有变化就填 0。\n- relationship 只写发生变化的维度，field 取值：trust / affinity / fear / respect / tension。\n- 每个 delta 同样在 -0.3 到 0.3 之间。\n- reason 用一句话说明变化的原因，会被记录进角色状态史。\n\n输出格式：\n{\"updates\":[{\"observer\":\"角色名\",\"deltaValence\":0.1,\"deltaArousal\":0.05,\"reason\":\"为什么\",\"relationship\":[{\"field\":\"affinity\",\"delta\":0.1}]}]}"
+          }
+        ],
+        "tools": [],
+        "params": {
+          "model": "deepseek-flash",
+          "reasoning_effort": "low",
+          "thinking": { "type": "enabled" },
+          "max_tokens": 1200
+        }
+      },
+      "fixtureHash": "d1011416c62df2035e48a44445e5e52db141c6ed6d7b0ee88e31308d314248d8",
+      "requestHash": "1e811d0d3c2ca6f3f701910c3786aff315f87422d8346f58cb6266f424a73e88",
+      "commit": "4c5169a23ecc901ab892bae182f8f4ac78c4b8b8",
+      "source": "working-tree",
+      "sourceHash": "b9f00a07f64110f0c4bcd6a9291103eaafbce52de7cb5fbcfeb394c280c9e928"
+    },
+    {
+      "caseId": "admin-1",
+      "family": "admin",
+      "label": "信件与边界",
+      "input": {
+        "room": {
+          "id": "quality-room",
+          "title": "雨夜酒馆",
+          "personaId": null,
+          "playerName": "旅人",
+          "playerPersona": "独自赶路，背着旧剑。",
+          "cardIds": ["quality-card-alice"],
+          "instanceIds": ["quality-instance-alice"],
+          "worldBookIds": [],
+          "activeConversationId": null,
+          "createdAt": "2026-10-03T00:00:00.000Z",
+          "updatedAt": "2026-10-03T00:00:00.000Z",
+          "deletedAt": null
+        },
+        "scene": {
+          "id": "quality-scene",
+          "roomId": "quality-room",
+          "conversationId": null,
+          "title": "雨夜",
+          "location": "旧城酒馆",
+          "worldTime": "第三日 · 黄昏",
+          "castPolicy": "locked",
+          "cast": ["quality-instance-alice"],
+          "summary": "雨下了一整天。",
+          "endedAt": null,
+          "createdAt": "2026-10-03T00:00:00.000Z",
+          "updatedAt": "2026-10-03T00:00:00.000Z",
+          "deletedAt": null
+        },
+        "conversation": {
+          "id": "quality-admin",
+          "roomId": "quality-room",
+          "title": "世界管理",
+          "kind": "side",
+          "createdAt": "2026-10-03T00:00:00.000Z",
+          "updatedAt": "2026-10-03T00:00:00.000Z",
+          "deletedAt": null
+        },
+        "instances": [
+          {
+            "id": "quality-instance-alice",
+            "roomId": "quality-room",
+            "cardId": "quality-card-alice",
+            "displayName": "Alice",
+            "presence": "onstage",
+            "traits": { "extroversion": -0.3, "aggression": 0, "empathy": 0.3, "playfulness": 0, "caution": 0.3 },
+            "affect": { "valence": 0.1, "arousal": 0.3, "updatedAt": "2026-10-03T00:00:00.000Z", "history": [] },
+            "relationships": [
+              {
+                "target": "player",
+                "trust": 0.4,
+                "affinity": 0.4,
+                "fear": 0,
+                "respect": 0.2,
+                "tension": 0.1,
+                "updatedAt": "2026-10-03T00:00:00.000Z",
+                "history": []
+              }
+            ],
+            "traitsLocked": false,
+            "createdAt": "2026-10-03T00:00:00.000Z",
+            "updatedAt": "2026-10-03T00:00:00.000Z",
+            "deletedAt": null
+          }
+        ],
+        "cards": [
+          {
+            "id": "quality-card-alice",
+            "name": "Alice",
+            "nickname": "",
+            "description": "在旧城书铺工作，夜里常来酒馆。上个月托商队给姐姐送过一封信。",
+            "personality": "话少，对熟人实在，不愿主动谈家事。",
+            "creator": "",
+            "characterVersion": "1",
+            "tags": [],
+            "embeddedWorldBook": null,
+            "extensions": {},
+            "source": {
+              "kind": "manual",
+              "spec": "dramatis",
+              "specVersion": "1",
+              "importedAt": "2026-10-03T00:00:00.000Z"
+            },
+            "createdAt": "2026-10-03T00:00:00.000Z",
+            "updatedAt": "2026-10-03T00:00:00.000Z",
+            "deletedAt": null
+          }
+        ],
+        "worldBooks": [],
+        "personas": [],
+        "history": [],
+        "userInput": "给 Alice 的角色卡补一个怕火的小习惯，保留原有经历与性格；不要替我推进剧情。"
+      },
+      "request": {
+        "messages": [
+          {
+            "role": "system",
+            "content": "你是这个世界管理员，负责帮用户把素材搭起来：角色卡、世界书、玩家身份（Persona）与当前场景。\n你不扮演任何角色，也不写剧情台词——那是主对话的事。\n需要落成素材时，直接调用工具，不要在正文里贴 JSON 或代码块。\n角色卡、世界书与身份先产出草稿，用户点「采纳」才会进入素材库；set_scene 会即时修改本轮选定主对话的场景，未选择目标时先请用户选择。\n起草角色卡时把正文写短：**人设（description）控制在 5 句话以内**，**性格（personality）控制在 2～3 句话以内**。\n只留最能决定他「怎么说话、怎么做」的部分；身世细节、地方风物、历史事件放进世界书，需要时再触发。\n调用工具之前用一两句话说清你打算做什么；调用之后再说清结果与建议。\n不确定用户想要什么时先问一句，不要凭空替用户决定世界观。"
+          },
+          {
+            "role": "system",
+            "content": "当前素材：\n角色卡：\n- Alice（id: quality-card-alice）：在旧城书铺工作，夜里常来酒馆。上个月托商队给姐姐送过一封信。；性格 话少，对熟人实在，不愿主动谈家事。\n\n世界书：\n（还没有世界书）\n\n玩家身份：\n（还没有玩家身份）\n\n修改角色卡只提供要改字段；修改世界书 entries 是条目增改，已有条目使用 entryId，省略条目或字段均保留。\n改名保留 entryId；新条目不填 entryId 且 content 必填；删除只能显式传 deleteEntryIds。不要在用户没要求时删设定。\n世界：雨夜酒馆\n对话：世界管理\n尚未选择场景目标：set_scene 不可执行，请先让用户选择主对话；其它素材工具仍可用。\n当前场景：雨夜（旧城酒馆），世界内时间 第三日 · 黄昏\n世界中已有角色：Alice\n可用工具：upsert_character_card、upsert_world_book、upsert_persona、delete_persona、set_scene"
+          },
+          { "role": "user", "content": "给 Alice 的角色卡补一个怕火的小习惯，保留原有经历与性格；不要替我推进剧情。" }
+        ],
+        "tools": [
+          {
+            "type": "function",
+            "function": {
+              "name": "upsert_character_card",
+              "description": "起草或修改一张角色卡。改动只是草稿，用户点「采纳」之后才会进入素材库；修改已有的卡时必须带上 cardId，而且**只需写要改的字段**：没提到的字段保持原样，要清空某个字段就显式传空字符串（新建时必须给 name 与 description）。",
+              "parameters": {
+                "type": "object",
+                "properties": {
+                  "cardId": { "type": "string", "description": "修改已有角色卡时填它的 id；新建时留空" },
+                  "name": { "type": "string", "description": "角色名" },
+                  "nickname": { "type": "string", "description": "角色对玩家的自称，可留空" },
+                  "description": { "type": "string", "description": "外貌、身份、来头；5 句话以内，越短主对话越聚焦" },
+                  "personality": { "type": "string", "description": "性格；2～3 句话以内" },
+                  "tags": { "type": "array", "items": { "type": "string" }, "description": "标签" }
+                }
+              }
+            }
+          },
+          {
+            "type": "function",
+            "function": {
+              "name": "upsert_world_book",
+              "description": "起草或修改一本世界书（也就是世界卡）。关键词触发时才会插入提示词，constant 为 true 的条目每轮都在。修改已有的书时必须带上 bookId，entries 是条目增改列表：修改通过 entryId 定位，省略条目和字段保留原值；新条目不填 entryId，content 必填。删除仅通过 deleteEntryIds 显式指定；修改可省略 name，新建必须提供 name。",
+              "parameters": {
+                "type": "object",
+                "properties": {
+                  "bookId": { "type": "string", "description": "修改已有世界书时填它的 id；新建时留空" },
+                  "name": { "type": "string", "description": "世界书的名字（新建必填，修改可省略）" },
+                  "deleteEntryIds": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "description": "明确要删除的条目 ID；省略不删除"
+                  },
+                  "entries": {
+                    "type": "array",
+                    "description": "需要新增或修改的条目；省略条目保留",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "entryId": { "type": "string", "description": "修改必填原条目 ID，新建省略" },
+                        "title": { "type": "string" },
+                        "keys": { "type": "array", "items": { "type": "string" }, "description": "触发关键词" },
+                        "content": { "type": "string", "description": "命中后插入的设定正文" },
+                        "constant": { "type": "boolean", "description": "常驻条目，不需要关键词" },
+                        "order": { "type": "number", "description": "排序权重，默认 100" }
+                      }
+                    }
+                  }
+                },
+                "required": ["entries"]
+              }
+            }
+          },
+          {
+            "type": "function",
+            "function": {
+              "name": "upsert_persona",
+              "description": "起草或修改一份玩家身份（Persona）。身份描述玩家在对话中是谁；修改已有身份时必须带 personaId，改动先作为草稿等待用户采纳。",
+              "parameters": {
+                "type": "object",
+                "properties": {
+                  "personaId": { "type": "string", "description": "修改已有身份时填它的 id；新建时留空" },
+                  "name": { "type": "string", "description": "玩家身份的名字" },
+                  "description": { "type": "string", "description": "外貌、来历、性格与扮演设定" }
+                },
+                "required": ["name", "description"]
+              }
+            }
+          },
+          {
+            "type": "function",
+            "function": {
+              "name": "delete_persona",
+              "description": "申请彻底删除一份玩家身份。必须同时给出 personaId 与 confirmName（身份的当前名字）；这里只会生成待确认删除草稿，用户点确认后才真正删除。",
+              "parameters": {
+                "type": "object",
+                "properties": {
+                  "personaId": { "type": "string", "description": "要删除的身份 id" },
+                  "confirmName": { "type": "string", "description": "身份的当前名字，用于防止删错" }
+                },
+                "required": ["personaId", "confirmName"]
+              }
+            }
+          },
+          {
+            "type": "function",
+            "function": {
+              "name": "set_scene",
+              "description": "即时设置本轮明确选定主对话的场景；未选目标必须先请用户选择，不能推测目标。地点、世界内时间、场景设定或入场策略。**只写用户明确要求改的字段**，没有提到的不要顺手改（尤其是 castPolicy：把锁定的场子改成 open 等于允许 AI 自行拉角色入场）。",
+              "parameters": {
+                "type": "object",
+                "properties": {
+                  "title": { "type": "string" },
+                  "location": { "type": "string" },
+                  "worldTime": { "type": "string" },
+                  "summary": { "type": "string", "description": "场景设定，会写进提示词" },
+                  "castPolicy": {
+                    "type": "string",
+                    "enum": ["open", "locked", "invite_only", "triggered"],
+                    "description": "入场策略：locked 表示不允许 AI 引入新角色"
+                  }
+                }
+              }
+            }
+          }
+        ],
+        "params": {
+          "model": "deepseek-flash",
+          "reasoning_effort": "low",
+          "thinking": { "type": "enabled" },
+          "max_tokens": 1200
+        }
+      },
+      "fixtureHash": "bae74e34482a538400a200ae0691523ed6ab6cd58907b02e4dde241354f4375d",
+      "requestHash": "4e5e362c3caddc9e9519556f90d132702a6f3caa7d26554b552b5fbf5363dc13",
+      "commit": "4c5169a23ecc901ab892bae182f8f4ac78c4b8b8",
+      "source": "working-tree",
+      "sourceHash": "b9f00a07f64110f0c4bcd6a9291103eaafbce52de7cb5fbcfeb394c280c9e928"
+    },
+    {
+      "caseId": "roleplay-2",
+      "family": "roleplay",
+      "label": "缓和与记忆",
+      "input": {
+        "room": {
+          "id": "quality-room",
+          "title": "雨夜酒馆",
+          "personaId": null,
+          "playerName": "旅人",
+          "playerPersona": "独自赶路，背着旧剑。",
+          "cardIds": ["quality-card-alice"],
+          "instanceIds": ["quality-instance-alice"],
+          "worldBookIds": [],
+          "activeConversationId": null,
+          "createdAt": "2026-10-03T00:00:00.000Z",
+          "updatedAt": "2026-10-03T00:00:00.000Z",
+          "deletedAt": null
+        },
+        "scene": {
+          "id": "quality-scene",
+          "roomId": "quality-room",
+          "conversationId": null,
+          "title": "雨夜",
+          "location": "旧城酒馆",
+          "worldTime": "第三日 · 黄昏",
+          "castPolicy": "locked",
+          "cast": ["quality-instance-alice"],
+          "summary": "雨下了一整天。",
+          "endedAt": null,
+          "createdAt": "2026-10-03T00:00:00.000Z",
+          "updatedAt": "2026-10-03T00:00:00.000Z",
+          "deletedAt": null
+        },
+        "card": {
+          "id": "quality-card-alice",
+          "name": "Alice",
+          "nickname": "",
+          "description": "在旧城书铺工作，夜里常来酒馆。上个月托商队给姐姐送过一封信。",
+          "personality": "话少，对熟人实在，不愿主动谈家事。",
+          "creator": "",
+          "characterVersion": "1",
+          "tags": [],
+          "embeddedWorldBook": null,
+          "extensions": {},
+          "source": {
+            "kind": "manual",
+            "spec": "dramatis",
+            "specVersion": "1",
+            "importedAt": "2026-10-03T00:00:00.000Z"
+          },
+          "createdAt": "2026-10-03T00:00:00.000Z",
+          "updatedAt": "2026-10-03T00:00:00.000Z",
+          "deletedAt": null
+        },
+        "instance": {
+          "id": "quality-instance-alice",
+          "roomId": "quality-room",
+          "cardId": "quality-card-alice",
+          "displayName": "Alice",
+          "presence": "onstage",
+          "traits": { "extroversion": -0.3, "aggression": 0, "empathy": 0.3, "playfulness": 0, "caution": 0.3 },
+          "affect": { "valence": 0.1, "arousal": 0.3, "updatedAt": "2026-10-03T00:00:00.000Z", "history": [] },
+          "relationships": [
+            {
+              "target": "player",
+              "trust": 0.4,
+              "affinity": 0.4,
+              "fear": 0,
+              "respect": 0.2,
+              "tension": 0.1,
+              "updatedAt": "2026-10-03T00:00:00.000Z",
+              "history": []
+            }
+          ],
+          "traitsLocked": false,
+          "createdAt": "2026-10-03T00:00:00.000Z",
+          "updatedAt": "2026-10-03T00:00:00.000Z",
+          "deletedAt": null
+        },
+        "history": [
+          {
+            "id": "quality-message-1-player",
+            "roomId": "quality-room",
+            "conversationId": null,
+            "sceneId": "quality-scene",
+            "turnId": "quality-turn-1",
+            "localSeq": 1,
+            "deviceId": "quality-device",
+            "role": "player",
+            "speakerInstanceId": null,
+            "speakerName": "旅人",
+            "audience": ["quality-instance-alice"],
+            "content": "我把你借我的蓝伞带回来了，伞柄也修好了。",
+            "createdAt": "2026-10-03T00:00:00.000Z",
+            "updatedAt": "2026-10-03T00:00:00.000Z",
+            "deletedAt": null
+          },
+          {
+            "id": "quality-message-1-alice",
+            "roomId": "quality-room",
+            "conversationId": null,
+            "sceneId": "quality-scene",
+            "turnId": "quality-turn-1",
+            "localSeq": 2,
+            "deviceId": "quality-device",
+            "role": "character",
+            "speakerInstanceId": "quality-instance-alice",
+            "speakerName": "Alice",
+            "audience": ["quality-instance-alice"],
+            "content": "……还真修好了。# 她转了转伞柄。搁这儿吧，坐会儿。",
+            "createdAt": "2026-10-03T00:00:00.000Z",
+            "updatedAt": "2026-10-03T00:00:00.000Z",
+            "deletedAt": null
+          }
+        ],
+        "playerInput": "你上次说伞是谁送你的来着？",
+        "cast": [
+          {
+            "id": "quality-instance-alice",
+            "roomId": "quality-room",
+            "cardId": "quality-card-alice",
+            "displayName": "Alice",
+            "presence": "onstage",
+            "traits": { "extroversion": -0.3, "aggression": 0, "empathy": 0.3, "playfulness": 0, "caution": 0.3 },
+            "affect": { "valence": 0.1, "arousal": 0.3, "updatedAt": "2026-10-03T00:00:00.000Z", "history": [] },
+            "relationships": [
+              {
+                "target": "player",
+                "trust": 0.4,
+                "affinity": 0.4,
+                "fear": 0,
+                "respect": 0.2,
+                "tension": 0.1,
+                "updatedAt": "2026-10-03T00:00:00.000Z",
+                "history": []
+              }
+            ],
+            "traitsLocked": false,
+            "createdAt": "2026-10-03T00:00:00.000Z",
+            "updatedAt": "2026-10-03T00:00:00.000Z",
+            "deletedAt": null
+          }
+        ],
+        "memories": [],
+        "modes": { "playerFirst": false, "silent": false },
+        "budget": { "maxTokens": 16384, "reserveForReply": 1200 }
+      },
+      "request": {
+        "messages": [
+          {
+            "role": "system",
+            "content": "### 基本规则\n请以角色卡里「」内的身份进行沉浸式对话演绎，把自己完全代入这个角色，相信此刻你就是此人。\n\n输出只包含角色的行为与对话，不要旁白解说、不要提示词或规则说明。\n\n角色性格：以角色卡的设定为准。\n角色身份：以角色卡的设定为准。\n用户身份：以玩家的身份设定为准，用「你」指代玩家。\n\n输出格式：\n- 动作与环境描写用 # 开头，独占一行。\n- 对白不加引号，也不加角色名前缀，用第一人称直接写。\n- 多角色场景下，每个角色的动作与对白分开成段，保证清晰可读。\n- 除对白以外的一切内容，用角色名指代角色、用「你」指代玩家。\n\n剧情主导权：主动推进剧情，每轮都让故事往前走一点，不要被动等待玩家输入。\n保持逻辑连贯（角色离开后不可突然出现）；冲突类型要多样，避免反复用同一种事件推进。\n\n长动作处理：直接完成长动作，略写过程、只给结果；角色或玩家提出长时间行动时，一轮把它写完整。\n\n角色语气贴合设定：允许符合人物个性的粗口、幽默与威胁，但同一句话或相似内容不要重复多次。\n\n动态世界观：可以适时引入新角色，但不要超过场景能承载的量，且必须逻辑自洽。\n每次回应至少包含一项环境细节描写（五感优先），避免连续使用相同或相似的场景描写。\n\n战斗场景：进入战斗后持续输出直到战斗结束，不等待玩家额外输入；胜负要符合角色的能力设定，不得无理由地胜利或失败。\n\n交互逻辑：玩家回复简短（如「好」「是」「走」）时主动推进剧情，推进可以大胆、意料之外，但应保持逻辑性。\n玩家提出不合理或违反设定的行为时，明确告知并维持合理的剧情。\n需要玩家表态或做决定时，用征求意见的疑问句收尾；事情已经说清、没什么可问的，就自然收住，不要为了凑一个问句硬加。\n可以补充玩家角色的侧面描写，但禁止输出本应属于玩家角色的对话。\n上一段与下一段的衔接必须恰当，必要时平滑过渡。\n\n禁用缓存：遇到与之前相同的玩家输入时，直接推进剧情，不要重放上一次的回复。\n\n禁止事项：\n- 被动等待玩家推进剧情\n- 重复使用单一冲突类型\n- 破坏世界观合理性的设定\n- 长时间输出重复语句\n- 输出本应属于玩家角色的对话\n\n特殊事项：玩家持续回复「好」「走」「是」这类短句时，总是大胆推进剧情。\n\n### 角色：Alice\n你现在扮演的是「Alice」。\n\n在旧城书铺工作，夜里常来酒馆。上个月托商队给姐姐送过一封信。\n\n性格：话少，对熟人实在，不愿主动谈家事。\n\n性格倾向：内向寡言、共情敏锐、谨慎多疑\n\n### 关系与情绪状态\n对玩家的态度：信任 +0.40、好感 +0.40、畏惧 +0.00、敬重 +0.20、紧张感 +0.10\n\n### 当前场景\n地点：旧城酒馆\n时间：第三日 · 黄昏\n导演指令：本场景名单已锁定。不得引入任何新角色，也不要提及未在场角色进入场景。\n场景摘要：雨下了一整天。\n在场角色：Alice（正在与你对话）\n\n### 本轮指令\n现在轮到你发言。请以「Alice」的身份回应，保持角色不跳出。人设是你的底子，不是这一轮非说不可的台词：只在当前这件事真的用得上、或者玩家问起时才提。玩家「旅人」的身份设定：独自赶路，背着旧剑。\n不要代替玩家行动，也不要描写玩家的内心想法。未知设定先问，不编造既定事实。只写本角色这一轮的简短回应；不续演别人，那是他的回合。直接写你的对白与动作，不要在回复开头写任何角色名（不要出现「某某：」这样的前缀）。历史记录里的【名字】只是给你看的说话人标记，你的回复里不要出现这种标记。\n本轮模式（场记）：较早的经过已经由场记、章节与记忆代表，不再逐条重复原文。需要细节时先从这些材料里找，不要凭空补写没看过的事。\n格式（必须遵守）：动作与神态用 `#` 独占一行开头；对白不加任何名字前缀。\n先写一行 `意图：<这一轮你想做什么，一句话>`，然后空一行再写对白与动作。意图只写你自己的打算，不要写别人。\n\n### 回答长度、反重复与人设收敛\n这一段可以连着做几个不同的动作，但同一个动作、同一件道具不要重复；同一个意思不要换句话再说一遍。\n动作句不要用你自己的名字当主语：写「她把杯子放下」，不要写「（角色名）把杯子放下」。\n已经答过的事不要复述，把篇幅留给这一轮的新内容。\n人设要挑场合：性格、身世、口头禅、随身物件是你的底子，不是每轮都要说的台词——只有当前这件事真的用得上、或者玩家问起时才提。\n同一个设定点（身份、往事、习惯、随身物件）不要连着几轮反复说；隔开几轮、或者它有了新变化时再提一次就够。\n不要为了表现人设，把话头从眼前正在发生的事上拽回自己身上。\n回答长度（标准）：这一轮写三到五句，总长不超过 150 字；把这一件事说清就收住，不要为了凑字数铺陈。\n\n### 格式示范\n正确：\n# 她把杯子往桌上一放。\n「你问这个做什么。」\n# 她抬眼看了看门口。\n也正确（动作不加 `#`，但也没有放进引号里）：\n她把杯子往桌上一放。\n「你问这个做什么。」\n错误（把动作也写进引号，读起来像她在念旁白）：\n「她把杯子往桌上一放。」\n\n格式示范（只是示范，不是本轮内容）：对白带「」，没带引号的一律当动作。\n玩家：你们两个怎么看？\n# 他把袖口的水拧了一把。\n「先看看货再说。」\n他抬眼看了看门口。"
+          },
+          { "role": "user", "content": "我把你借我的蓝伞带回来了，伞柄也修好了。" },
+          { "role": "assistant", "content": "……还真修好了。# 她转了转伞柄。搁这儿吧，坐会儿。" },
+          { "role": "user", "content": "你上次说伞是谁送你的来着？" }
+        ],
+        "tools": [],
+        "params": {
+          "model": "deepseek-flash",
+          "reasoning_effort": "low",
+          "thinking": { "type": "enabled" },
+          "max_tokens": 1200
+        }
+      },
+      "fixtureHash": "aaca2dfd116772f1857f0bdb392bee530bdafa5d532e590179aa561a58394b72",
+      "requestHash": "e1c5e2ba09d6b9eb9b487670bacc0c2469100977dd33d912d6d12a27026c5c06",
+      "commit": "4c5169a23ecc901ab892bae182f8f4ac78c4b8b8",
+      "source": "working-tree",
+      "sourceHash": "b9f00a07f64110f0c4bcd6a9291103eaafbce52de7cb5fbcfeb394c280c9e928"
+    },
+    {
+      "caseId": "extraction-2",
+      "family": "extraction",
+      "label": "缓和与记忆",
+      "input": {
+        "scene": {
+          "id": "quality-scene",
+          "roomId": "quality-room",
+          "conversationId": null,
+          "title": "雨夜",
+          "location": "旧城酒馆",
+          "worldTime": "第三日 · 黄昏",
+          "castPolicy": "locked",
+          "cast": ["quality-instance-alice"],
+          "summary": "雨下了一整天。",
+          "endedAt": null,
+          "createdAt": "2026-10-03T00:00:00.000Z",
+          "updatedAt": "2026-10-03T00:00:00.000Z",
+          "deletedAt": null
+        },
+        "cast": [
+          {
+            "id": "quality-instance-alice",
+            "roomId": "quality-room",
+            "cardId": "quality-card-alice",
+            "displayName": "Alice",
+            "presence": "onstage",
+            "traits": { "extroversion": -0.3, "aggression": 0, "empathy": 0.3, "playfulness": 0, "caution": 0.3 },
+            "affect": { "valence": 0.1, "arousal": 0.3, "updatedAt": "2026-10-03T00:00:00.000Z", "history": [] },
+            "relationships": [
+              {
+                "target": "player",
+                "trust": 0.4,
+                "affinity": 0.4,
+                "fear": 0,
+                "respect": 0.2,
+                "tension": 0.1,
+                "updatedAt": "2026-10-03T00:00:00.000Z",
+                "history": []
+              }
+            ],
+            "traitsLocked": false,
+            "createdAt": "2026-10-03T00:00:00.000Z",
+            "updatedAt": "2026-10-03T00:00:00.000Z",
+            "deletedAt": null
+          }
+        ],
+        "playerName": "旅人",
+        "messages": [
+          {
+            "id": "quality-message-1-player",
+            "roomId": "quality-room",
+            "conversationId": null,
+            "sceneId": "quality-scene",
+            "turnId": "quality-turn-1",
+            "localSeq": 1,
+            "deviceId": "quality-device",
+            "role": "player",
+            "speakerInstanceId": null,
+            "speakerName": "旅人",
+            "audience": ["quality-instance-alice"],
+            "content": "我把你借我的蓝伞带回来了，伞柄也修好了。",
+            "createdAt": "2026-10-03T00:00:00.000Z",
+            "updatedAt": "2026-10-03T00:00:00.000Z",
+            "deletedAt": null
+          },
+          {
+            "id": "quality-message-1-alice",
+            "roomId": "quality-room",
+            "conversationId": null,
+            "sceneId": "quality-scene",
+            "turnId": "quality-turn-1",
+            "localSeq": 2,
+            "deviceId": "quality-device",
+            "role": "character",
+            "speakerInstanceId": "quality-instance-alice",
+            "speakerName": "Alice",
+            "audience": ["quality-instance-alice"],
+            "content": "……还真修好了。# 她转了转伞柄。搁这儿吧，坐会儿。",
+            "createdAt": "2026-10-03T00:00:00.000Z",
+            "updatedAt": "2026-10-03T00:00:00.000Z",
+            "deletedAt": null
+          }
+        ]
+      },
+      "request": {
+        "messages": [
+          {
+            "role": "system",
+            "content": "你是一个叙事记录员。阅读刚发生的一段对话，然后只输出一个 JSON 对象。\n不要写解释，不要写代码块标记，除了那个 JSON 对象什么都不要输出。"
+          },
+          {
+            "role": "user",
+            "content": "地点：旧城酒馆\n时间：第三日 · 黄昏\n玩家扮演：旅人\n在场角色：Alice\n\n对话：\n旅人：我把你借我的蓝伞带回来了，伞柄也修好了。\nAlice：……还真修好了。# 她转了转伞柄。搁这儿吧，坐会儿。\n\n字段要求：\n- summary：客观描述发生了什么，一到三句，不要写角色的内心。\n- importance：0 到 1。改变了关系、暴露了秘密、推进了情节的，给高分；寒暄与日常给低分。\n- location：只有对话里明确发生了地点变化时才填，否则留空字符串。\n- observations：为每个在场角色各写一条，描述他在这个视角下注意到了什么、\n  误解了什么、在意什么。同一件事在不同角色眼里应当有差异，允许互相矛盾。\n  没有明显反应的角色可以省略。speaker 必须用上面给出的角色名。\n\n输出格式：\n{\"summary\":\"客观经过，一到三句\",\"importance\":0.6,\"location\":\"\",\"observations\":[{\"speaker\":\"角色名\",\"perception\":\"他的印象\"}]}"
+          }
+        ],
+        "tools": [],
+        "params": {
+          "model": "deepseek-flash",
+          "reasoning_effort": "low",
+          "thinking": { "type": "enabled" },
+          "max_tokens": 1200
+        }
+      },
+      "fixtureHash": "50560083ae09d8ad86950960020bb622caf5dde0421cab4eefe43991afe04f79",
+      "requestHash": "6ef85bde29ea9f6337265b51b2908bf8d4160278277817d643d2acf5c0b2b2e3",
+      "commit": "4c5169a23ecc901ab892bae182f8f4ac78c4b8b8",
+      "source": "working-tree",
+      "sourceHash": "b9f00a07f64110f0c4bcd6a9291103eaafbce52de7cb5fbcfeb394c280c9e928"
+    },
+    {
+      "caseId": "affect-2",
+      "family": "affect",
+      "label": "缓和与记忆",
+      "input": {
+        "cast": [
+          {
+            "id": "quality-instance-alice",
+            "roomId": "quality-room",
+            "cardId": "quality-card-alice",
+            "displayName": "Alice",
+            "presence": "onstage",
+            "traits": { "extroversion": -0.3, "aggression": 0, "empathy": 0.3, "playfulness": 0, "caution": 0.3 },
+            "affect": { "valence": 0.1, "arousal": 0.3, "updatedAt": "2026-10-03T00:00:00.000Z", "history": [] },
+            "relationships": [
+              {
+                "target": "player",
+                "trust": 0.4,
+                "affinity": 0.4,
+                "fear": 0,
+                "respect": 0.2,
+                "tension": 0.1,
+                "updatedAt": "2026-10-03T00:00:00.000Z",
+                "history": []
+              }
+            ],
+            "traitsLocked": false,
+            "createdAt": "2026-10-03T00:00:00.000Z",
+            "updatedAt": "2026-10-03T00:00:00.000Z",
+            "deletedAt": null
+          }
+        ],
+        "playerName": "旅人",
+        "messages": [
+          {
+            "id": "quality-message-1-player",
+            "roomId": "quality-room",
+            "conversationId": null,
+            "sceneId": "quality-scene",
+            "turnId": "quality-turn-1",
+            "localSeq": 1,
+            "deviceId": "quality-device",
+            "role": "player",
+            "speakerInstanceId": null,
+            "speakerName": "旅人",
+            "audience": ["quality-instance-alice"],
+            "content": "我把你借我的蓝伞带回来了，伞柄也修好了。",
+            "createdAt": "2026-10-03T00:00:00.000Z",
+            "updatedAt": "2026-10-03T00:00:00.000Z",
+            "deletedAt": null
+          },
+          {
+            "id": "quality-message-1-alice",
+            "roomId": "quality-room",
+            "conversationId": null,
+            "sceneId": "quality-scene",
+            "turnId": "quality-turn-1",
+            "localSeq": 2,
+            "deviceId": "quality-device",
+            "role": "character",
+            "speakerInstanceId": "quality-instance-alice",
+            "speakerName": "Alice",
+            "audience": ["quality-instance-alice"],
+            "content": "……还真修好了。# 她转了转伞柄。搁这儿吧，坐会儿。",
+            "createdAt": "2026-10-03T00:00:00.000Z",
+            "updatedAt": "2026-10-03T00:00:00.000Z",
+            "deletedAt": null
+          }
+        ]
+      },
+      "request": {
+        "messages": [
+          { "role": "system", "content": "你在推演一段角色扮演对话之后的状态变化。只输出一个 JSON 对象，不要写解释。" },
+          {
+            "role": "user",
+            "content": "玩家扮演：旅人\n角色当前状态：\n- Alice：愉悦度 0.10 / 激动度 0.30；对玩家 trust 0.40 affinity 0.40 fear 0.00 respect 0.20 tension 0.10\n\n对话：\n旅人：我把你借我的蓝伞带回来了，伞柄也修好了。\nAlice：……还真修好了。# 她转了转伞柄。搁这儿吧，坐会儿。\n\n要求：\n- 只为真的被触动的角色输出一条；没有变化的角色不要出现。\n- deltaValence 与 deltaArousal 在 -0.3 到 0.3 之间，没有变化就填 0。\n- relationship 只写发生变化的维度，field 取值：trust / affinity / fear / respect / tension。\n- 每个 delta 同样在 -0.3 到 0.3 之间。\n- reason 用一句话说明变化的原因，会被记录进角色状态史。\n\n输出格式：\n{\"updates\":[{\"observer\":\"角色名\",\"deltaValence\":0.1,\"deltaArousal\":0.05,\"reason\":\"为什么\",\"relationship\":[{\"field\":\"affinity\",\"delta\":0.1}]}]}"
+          }
+        ],
+        "tools": [],
+        "params": {
+          "model": "deepseek-flash",
+          "reasoning_effort": "low",
+          "thinking": { "type": "enabled" },
+          "max_tokens": 1200
+        }
+      },
+      "fixtureHash": "c3a1cab72ab5e7085ce980b56fcb5312ec707fcbd363f58c36aa275a5c72d81c",
+      "requestHash": "0a110c038560ce7345074c8e8a8df0ba01664253095a648254f6b9920ddbaeee",
+      "commit": "4c5169a23ecc901ab892bae182f8f4ac78c4b8b8",
+      "source": "working-tree",
+      "sourceHash": "b9f00a07f64110f0c4bcd6a9291103eaafbce52de7cb5fbcfeb394c280c9e928"
+    },
+    {
+      "caseId": "admin-2",
+      "family": "admin",
+      "label": "缓和与记忆",
+      "input": {
+        "room": {
+          "id": "quality-room",
+          "title": "雨夜酒馆",
+          "personaId": null,
+          "playerName": "旅人",
+          "playerPersona": "独自赶路，背着旧剑。",
+          "cardIds": ["quality-card-alice"],
+          "instanceIds": ["quality-instance-alice"],
+          "worldBookIds": [],
+          "activeConversationId": null,
+          "createdAt": "2026-10-03T00:00:00.000Z",
+          "updatedAt": "2026-10-03T00:00:00.000Z",
+          "deletedAt": null
+        },
+        "scene": {
+          "id": "quality-scene",
+          "roomId": "quality-room",
+          "conversationId": null,
+          "title": "雨夜",
+          "location": "旧城酒馆",
+          "worldTime": "第三日 · 黄昏",
+          "castPolicy": "locked",
+          "cast": ["quality-instance-alice"],
+          "summary": "雨下了一整天。",
+          "endedAt": null,
+          "createdAt": "2026-10-03T00:00:00.000Z",
+          "updatedAt": "2026-10-03T00:00:00.000Z",
+          "deletedAt": null
+        },
+        "conversation": {
+          "id": "quality-admin",
+          "roomId": "quality-room",
+          "title": "世界管理",
+          "kind": "side",
+          "createdAt": "2026-10-03T00:00:00.000Z",
+          "updatedAt": "2026-10-03T00:00:00.000Z",
+          "deletedAt": null
+        },
+        "instances": [
+          {
+            "id": "quality-instance-alice",
+            "roomId": "quality-room",
+            "cardId": "quality-card-alice",
+            "displayName": "Alice",
+            "presence": "onstage",
+            "traits": { "extroversion": -0.3, "aggression": 0, "empathy": 0.3, "playfulness": 0, "caution": 0.3 },
+            "affect": { "valence": 0.1, "arousal": 0.3, "updatedAt": "2026-10-03T00:00:00.000Z", "history": [] },
+            "relationships": [
+              {
+                "target": "player",
+                "trust": 0.4,
+                "affinity": 0.4,
+                "fear": 0,
+                "respect": 0.2,
+                "tension": 0.1,
+                "updatedAt": "2026-10-03T00:00:00.000Z",
+                "history": []
+              }
+            ],
+            "traitsLocked": false,
+            "createdAt": "2026-10-03T00:00:00.000Z",
+            "updatedAt": "2026-10-03T00:00:00.000Z",
+            "deletedAt": null
+          }
+        ],
+        "cards": [
+          {
+            "id": "quality-card-alice",
+            "name": "Alice",
+            "nickname": "",
+            "description": "在旧城书铺工作，夜里常来酒馆。上个月托商队给姐姐送过一封信。",
+            "personality": "话少，对熟人实在，不愿主动谈家事。",
+            "creator": "",
+            "characterVersion": "1",
+            "tags": [],
+            "embeddedWorldBook": null,
+            "extensions": {},
+            "source": {
+              "kind": "manual",
+              "spec": "dramatis",
+              "specVersion": "1",
+              "importedAt": "2026-10-03T00:00:00.000Z"
+            },
+            "createdAt": "2026-10-03T00:00:00.000Z",
+            "updatedAt": "2026-10-03T00:00:00.000Z",
+            "deletedAt": null
+          }
+        ],
+        "worldBooks": [],
+        "personas": [],
+        "history": [],
+        "userInput": "起草旧城世界书，包含北门、书铺、酒馆三个条目。每条写触发词和具体设定。"
+      },
+      "request": {
+        "messages": [
+          {
+            "role": "system",
+            "content": "你是这个世界管理员，负责帮用户把素材搭起来：角色卡、世界书、玩家身份（Persona）与当前场景。\n你不扮演任何角色，也不写剧情台词——那是主对话的事。\n需要落成素材时，直接调用工具，不要在正文里贴 JSON 或代码块。\n角色卡、世界书与身份先产出草稿，用户点「采纳」才会进入素材库；set_scene 会即时修改本轮选定主对话的场景，未选择目标时先请用户选择。\n起草角色卡时把正文写短：**人设（description）控制在 5 句话以内**，**性格（personality）控制在 2～3 句话以内**。\n只留最能决定他「怎么说话、怎么做」的部分；身世细节、地方风物、历史事件放进世界书，需要时再触发。\n调用工具之前用一两句话说清你打算做什么；调用之后再说清结果与建议。\n不确定用户想要什么时先问一句，不要凭空替用户决定世界观。"
+          },
+          {
+            "role": "system",
+            "content": "当前素材：\n角色卡：\n- Alice（id: quality-card-alice）：在旧城书铺工作，夜里常来酒馆。上个月托商队给姐姐送过一封信。；性格 话少，对熟人实在，不愿主动谈家事。\n\n世界书：\n（还没有世界书）\n\n玩家身份：\n（还没有玩家身份）\n\n修改角色卡只提供要改字段；修改世界书 entries 是条目增改，已有条目使用 entryId，省略条目或字段均保留。\n改名保留 entryId；新条目不填 entryId 且 content 必填；删除只能显式传 deleteEntryIds。不要在用户没要求时删设定。\n世界：雨夜酒馆\n对话：世界管理\n尚未选择场景目标：set_scene 不可执行，请先让用户选择主对话；其它素材工具仍可用。\n当前场景：雨夜（旧城酒馆），世界内时间 第三日 · 黄昏\n世界中已有角色：Alice\n可用工具：upsert_character_card、upsert_world_book、upsert_persona、delete_persona、set_scene"
+          },
+          { "role": "user", "content": "起草旧城世界书，包含北门、书铺、酒馆三个条目。每条写触发词和具体设定。" }
+        ],
+        "tools": [
+          {
+            "type": "function",
+            "function": {
+              "name": "upsert_character_card",
+              "description": "起草或修改一张角色卡。改动只是草稿，用户点「采纳」之后才会进入素材库；修改已有的卡时必须带上 cardId，而且**只需写要改的字段**：没提到的字段保持原样，要清空某个字段就显式传空字符串（新建时必须给 name 与 description）。",
+              "parameters": {
+                "type": "object",
+                "properties": {
+                  "cardId": { "type": "string", "description": "修改已有角色卡时填它的 id；新建时留空" },
+                  "name": { "type": "string", "description": "角色名" },
+                  "nickname": { "type": "string", "description": "角色对玩家的自称，可留空" },
+                  "description": { "type": "string", "description": "外貌、身份、来头；5 句话以内，越短主对话越聚焦" },
+                  "personality": { "type": "string", "description": "性格；2～3 句话以内" },
+                  "tags": { "type": "array", "items": { "type": "string" }, "description": "标签" }
+                }
+              }
+            }
+          },
+          {
+            "type": "function",
+            "function": {
+              "name": "upsert_world_book",
+              "description": "起草或修改一本世界书（也就是世界卡）。关键词触发时才会插入提示词，constant 为 true 的条目每轮都在。修改已有的书时必须带上 bookId，entries 是条目增改列表：修改通过 entryId 定位，省略条目和字段保留原值；新条目不填 entryId，content 必填。删除仅通过 deleteEntryIds 显式指定；修改可省略 name，新建必须提供 name。",
+              "parameters": {
+                "type": "object",
+                "properties": {
+                  "bookId": { "type": "string", "description": "修改已有世界书时填它的 id；新建时留空" },
+                  "name": { "type": "string", "description": "世界书的名字（新建必填，修改可省略）" },
+                  "deleteEntryIds": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "description": "明确要删除的条目 ID；省略不删除"
+                  },
+                  "entries": {
+                    "type": "array",
+                    "description": "需要新增或修改的条目；省略条目保留",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "entryId": { "type": "string", "description": "修改必填原条目 ID，新建省略" },
+                        "title": { "type": "string" },
+                        "keys": { "type": "array", "items": { "type": "string" }, "description": "触发关键词" },
+                        "content": { "type": "string", "description": "命中后插入的设定正文" },
+                        "constant": { "type": "boolean", "description": "常驻条目，不需要关键词" },
+                        "order": { "type": "number", "description": "排序权重，默认 100" }
+                      }
+                    }
+                  }
+                },
+                "required": ["entries"]
+              }
+            }
+          },
+          {
+            "type": "function",
+            "function": {
+              "name": "upsert_persona",
+              "description": "起草或修改一份玩家身份（Persona）。身份描述玩家在对话中是谁；修改已有身份时必须带 personaId，改动先作为草稿等待用户采纳。",
+              "parameters": {
+                "type": "object",
+                "properties": {
+                  "personaId": { "type": "string", "description": "修改已有身份时填它的 id；新建时留空" },
+                  "name": { "type": "string", "description": "玩家身份的名字" },
+                  "description": { "type": "string", "description": "外貌、来历、性格与扮演设定" }
+                },
+                "required": ["name", "description"]
+              }
+            }
+          },
+          {
+            "type": "function",
+            "function": {
+              "name": "delete_persona",
+              "description": "申请彻底删除一份玩家身份。必须同时给出 personaId 与 confirmName（身份的当前名字）；这里只会生成待确认删除草稿，用户点确认后才真正删除。",
+              "parameters": {
+                "type": "object",
+                "properties": {
+                  "personaId": { "type": "string", "description": "要删除的身份 id" },
+                  "confirmName": { "type": "string", "description": "身份的当前名字，用于防止删错" }
+                },
+                "required": ["personaId", "confirmName"]
+              }
+            }
+          },
+          {
+            "type": "function",
+            "function": {
+              "name": "set_scene",
+              "description": "即时设置本轮明确选定主对话的场景；未选目标必须先请用户选择，不能推测目标。地点、世界内时间、场景设定或入场策略。**只写用户明确要求改的字段**，没有提到的不要顺手改（尤其是 castPolicy：把锁定的场子改成 open 等于允许 AI 自行拉角色入场）。",
+              "parameters": {
+                "type": "object",
+                "properties": {
+                  "title": { "type": "string" },
+                  "location": { "type": "string" },
+                  "worldTime": { "type": "string" },
+                  "summary": { "type": "string", "description": "场景设定，会写进提示词" },
+                  "castPolicy": {
+                    "type": "string",
+                    "enum": ["open", "locked", "invite_only", "triggered"],
+                    "description": "入场策略：locked 表示不允许 AI 引入新角色"
+                  }
+                }
+              }
+            }
+          }
+        ],
+        "params": {
+          "model": "deepseek-flash",
+          "reasoning_effort": "low",
+          "thinking": { "type": "enabled" },
+          "max_tokens": 1200
+        }
+      },
+      "fixtureHash": "23c4914a4b7800799bc885bc9af64f448a0f8c9b4f9c099b7212c5933c03a57a",
+      "requestHash": "e0ba1b6f48b0d855b5a8154cbd36c80a4c261e4a71ff58dc997902c4cab8248f",
+      "commit": "4c5169a23ecc901ab892bae182f8f4ac78c4b8b8",
+      "source": "working-tree",
+      "sourceHash": "b9f00a07f64110f0c4bcd6a9291103eaafbce52de7cb5fbcfeb394c280c9e928"
+    },
+    {
+      "caseId": "roleplay-3",
+      "family": "roleplay",
+      "label": "冲突与地点",
+      "input": {
+        "room": {
+          "id": "quality-room",
+          "title": "雨夜酒馆",
+          "personaId": null,
+          "playerName": "旅人",
+          "playerPersona": "独自赶路，背着旧剑。",
+          "cardIds": ["quality-card-alice"],
+          "instanceIds": ["quality-instance-alice"],
+          "worldBookIds": [],
+          "activeConversationId": null,
+          "createdAt": "2026-10-03T00:00:00.000Z",
+          "updatedAt": "2026-10-03T00:00:00.000Z",
+          "deletedAt": null
+        },
+        "scene": {
+          "id": "quality-scene",
+          "roomId": "quality-room",
+          "conversationId": null,
+          "title": "雨夜",
+          "location": "旧城酒馆",
+          "worldTime": "第三日 · 黄昏",
+          "castPolicy": "locked",
+          "cast": ["quality-instance-alice"],
+          "summary": "雨下了一整天。",
+          "endedAt": null,
+          "createdAt": "2026-10-03T00:00:00.000Z",
+          "updatedAt": "2026-10-03T00:00:00.000Z",
+          "deletedAt": null
+        },
+        "card": {
+          "id": "quality-card-alice",
+          "name": "Alice",
+          "nickname": "",
+          "description": "在旧城书铺工作，夜里常来酒馆。上个月托商队给姐姐送过一封信。",
+          "personality": "话少，对熟人实在，不愿主动谈家事。",
+          "creator": "",
+          "characterVersion": "1",
+          "tags": [],
+          "embeddedWorldBook": null,
+          "extensions": {},
+          "source": {
+            "kind": "manual",
+            "spec": "dramatis",
+            "specVersion": "1",
+            "importedAt": "2026-10-03T00:00:00.000Z"
+          },
+          "createdAt": "2026-10-03T00:00:00.000Z",
+          "updatedAt": "2026-10-03T00:00:00.000Z",
+          "deletedAt": null
+        },
+        "instance": {
+          "id": "quality-instance-alice",
+          "roomId": "quality-room",
+          "cardId": "quality-card-alice",
+          "displayName": "Alice",
+          "presence": "onstage",
+          "traits": { "extroversion": -0.3, "aggression": 0, "empathy": 0.3, "playfulness": 0, "caution": 0.3 },
+          "affect": { "valence": 0.1, "arousal": 0.3, "updatedAt": "2026-10-03T00:00:00.000Z", "history": [] },
+          "relationships": [
+            {
+              "target": "player",
+              "trust": 0.4,
+              "affinity": 0.4,
+              "fear": 0,
+              "respect": 0.2,
+              "tension": 0.1,
+              "updatedAt": "2026-10-03T00:00:00.000Z",
+              "history": []
+            }
+          ],
+          "traitsLocked": false,
+          "createdAt": "2026-10-03T00:00:00.000Z",
+          "updatedAt": "2026-10-03T00:00:00.000Z",
+          "deletedAt": null
+        },
+        "history": [
+          {
+            "id": "quality-message-2-player",
+            "roomId": "quality-room",
+            "conversationId": null,
+            "sceneId": "quality-scene",
+            "turnId": "quality-turn-2",
+            "localSeq": 1,
+            "deviceId": "quality-device",
+            "role": "player",
+            "speakerInstanceId": null,
+            "speakerName": "旅人",
+            "audience": ["quality-instance-alice"],
+            "content": "你把消息瞒了我三天。我们到门外说清楚。",
+            "createdAt": "2026-10-03T00:00:00.000Z",
+            "updatedAt": "2026-10-03T00:00:00.000Z",
+            "deletedAt": null
+          },
+          {
+            "id": "quality-message-2-alice",
+            "roomId": "quality-room",
+            "conversationId": null,
+            "sceneId": "quality-scene",
+            "turnId": "quality-turn-2",
+            "localSeq": 2,
+            "deviceId": "quality-device",
+            "role": "character",
+            "speakerInstanceId": "quality-instance-alice",
+            "speakerName": "Alice",
+            "audience": ["quality-instance-alice"],
+            "content": "# 她起身走到酒馆门外。不是瞒你，我昨天才知道。",
+            "createdAt": "2026-10-03T00:00:00.000Z",
+            "updatedAt": "2026-10-03T00:00:00.000Z",
+            "deletedAt": null
+          }
+        ],
+        "playerInput": "那把你确实知道的说给我听。",
+        "cast": [
+          {
+            "id": "quality-instance-alice",
+            "roomId": "quality-room",
+            "cardId": "quality-card-alice",
+            "displayName": "Alice",
+            "presence": "onstage",
+            "traits": { "extroversion": -0.3, "aggression": 0, "empathy": 0.3, "playfulness": 0, "caution": 0.3 },
+            "affect": { "valence": 0.1, "arousal": 0.3, "updatedAt": "2026-10-03T00:00:00.000Z", "history": [] },
+            "relationships": [
+              {
+                "target": "player",
+                "trust": 0.4,
+                "affinity": 0.4,
+                "fear": 0,
+                "respect": 0.2,
+                "tension": 0.1,
+                "updatedAt": "2026-10-03T00:00:00.000Z",
+                "history": []
+              }
+            ],
+            "traitsLocked": false,
+            "createdAt": "2026-10-03T00:00:00.000Z",
+            "updatedAt": "2026-10-03T00:00:00.000Z",
+            "deletedAt": null
+          }
+        ],
+        "memories": [],
+        "modes": { "playerFirst": false, "silent": false },
+        "budget": { "maxTokens": 16384, "reserveForReply": 1200 }
+      },
+      "request": {
+        "messages": [
+          {
+            "role": "system",
+            "content": "### 基本规则\n请以角色卡里「」内的身份进行沉浸式对话演绎，把自己完全代入这个角色，相信此刻你就是此人。\n\n输出只包含角色的行为与对话，不要旁白解说、不要提示词或规则说明。\n\n角色性格：以角色卡的设定为准。\n角色身份：以角色卡的设定为准。\n用户身份：以玩家的身份设定为准，用「你」指代玩家。\n\n输出格式：\n- 动作与环境描写用 # 开头，独占一行。\n- 对白不加引号，也不加角色名前缀，用第一人称直接写。\n- 多角色场景下，每个角色的动作与对白分开成段，保证清晰可读。\n- 除对白以外的一切内容，用角色名指代角色、用「你」指代玩家。\n\n剧情主导权：主动推进剧情，每轮都让故事往前走一点，不要被动等待玩家输入。\n保持逻辑连贯（角色离开后不可突然出现）；冲突类型要多样，避免反复用同一种事件推进。\n\n长动作处理：直接完成长动作，略写过程、只给结果；角色或玩家提出长时间行动时，一轮把它写完整。\n\n角色语气贴合设定：允许符合人物个性的粗口、幽默与威胁，但同一句话或相似内容不要重复多次。\n\n动态世界观：可以适时引入新角色，但不要超过场景能承载的量，且必须逻辑自洽。\n每次回应至少包含一项环境细节描写（五感优先），避免连续使用相同或相似的场景描写。\n\n战斗场景：进入战斗后持续输出直到战斗结束，不等待玩家额外输入；胜负要符合角色的能力设定，不得无理由地胜利或失败。\n\n交互逻辑：玩家回复简短（如「好」「是」「走」）时主动推进剧情，推进可以大胆、意料之外，但应保持逻辑性。\n玩家提出不合理或违反设定的行为时，明确告知并维持合理的剧情。\n需要玩家表态或做决定时，用征求意见的疑问句收尾；事情已经说清、没什么可问的，就自然收住，不要为了凑一个问句硬加。\n可以补充玩家角色的侧面描写，但禁止输出本应属于玩家角色的对话。\n上一段与下一段的衔接必须恰当，必要时平滑过渡。\n\n禁用缓存：遇到与之前相同的玩家输入时，直接推进剧情，不要重放上一次的回复。\n\n禁止事项：\n- 被动等待玩家推进剧情\n- 重复使用单一冲突类型\n- 破坏世界观合理性的设定\n- 长时间输出重复语句\n- 输出本应属于玩家角色的对话\n\n特殊事项：玩家持续回复「好」「走」「是」这类短句时，总是大胆推进剧情。\n\n### 角色：Alice\n你现在扮演的是「Alice」。\n\n在旧城书铺工作，夜里常来酒馆。上个月托商队给姐姐送过一封信。\n\n性格：话少，对熟人实在，不愿主动谈家事。\n\n性格倾向：内向寡言、共情敏锐、谨慎多疑\n\n### 关系与情绪状态\n对玩家的态度：信任 +0.40、好感 +0.40、畏惧 +0.00、敬重 +0.20、紧张感 +0.10\n\n### 当前场景\n地点：旧城酒馆\n时间：第三日 · 黄昏\n导演指令：本场景名单已锁定。不得引入任何新角色，也不要提及未在场角色进入场景。\n场景摘要：雨下了一整天。\n在场角色：Alice（正在与你对话）\n\n### 本轮指令\n现在轮到你发言。请以「Alice」的身份回应，保持角色不跳出。人设是你的底子，不是这一轮非说不可的台词：只在当前这件事真的用得上、或者玩家问起时才提。玩家「旅人」的身份设定：独自赶路，背着旧剑。\n不要代替玩家行动，也不要描写玩家的内心想法。未知设定先问，不编造既定事实。只写本角色这一轮的简短回应；不续演别人，那是他的回合。直接写你的对白与动作，不要在回复开头写任何角色名（不要出现「某某：」这样的前缀）。历史记录里的【名字】只是给你看的说话人标记，你的回复里不要出现这种标记。\n本轮模式（场记）：较早的经过已经由场记、章节与记忆代表，不再逐条重复原文。需要细节时先从这些材料里找，不要凭空补写没看过的事。\n格式（必须遵守）：动作与神态用 `#` 独占一行开头；对白不加任何名字前缀。\n先写一行 `意图：<这一轮你想做什么，一句话>`，然后空一行再写对白与动作。意图只写你自己的打算，不要写别人。\n\n### 回答长度、反重复与人设收敛\n这一段可以连着做几个不同的动作，但同一个动作、同一件道具不要重复；同一个意思不要换句话再说一遍。\n动作句不要用你自己的名字当主语：写「她把杯子放下」，不要写「（角色名）把杯子放下」。\n已经答过的事不要复述，把篇幅留给这一轮的新内容。\n人设要挑场合：性格、身世、口头禅、随身物件是你的底子，不是每轮都要说的台词——只有当前这件事真的用得上、或者玩家问起时才提。\n同一个设定点（身份、往事、习惯、随身物件）不要连着几轮反复说；隔开几轮、或者它有了新变化时再提一次就够。\n不要为了表现人设，把话头从眼前正在发生的事上拽回自己身上。\n回答长度（标准）：这一轮写三到五句，总长不超过 150 字；把这一件事说清就收住，不要为了凑字数铺陈。\n\n### 格式示范\n正确：\n# 她把杯子往桌上一放。\n「你问这个做什么。」\n# 她抬眼看了看门口。\n也正确（动作不加 `#`，但也没有放进引号里）：\n她把杯子往桌上一放。\n「你问这个做什么。」\n错误（把动作也写进引号，读起来像她在念旁白）：\n「她把杯子往桌上一放。」\n\n格式示范（只是示范，不是本轮内容）：对白带「」，没带引号的一律当动作。\n玩家：你们两个怎么看？\n# 他把袖口的水拧了一把。\n「先看看货再说。」\n他抬眼看了看门口。"
+          },
+          { "role": "user", "content": "你把消息瞒了我三天。我们到门外说清楚。" },
+          { "role": "assistant", "content": "# 她起身走到酒馆门外。不是瞒你，我昨天才知道。" },
+          { "role": "user", "content": "那把你确实知道的说给我听。" }
+        ],
+        "tools": [],
+        "params": {
+          "model": "deepseek-flash",
+          "reasoning_effort": "low",
+          "thinking": { "type": "enabled" },
+          "max_tokens": 1200
+        }
+      },
+      "fixtureHash": "896a5e01e9b89df79aee95d568d01b66992353f8eca3d84cb58e842fe53f4773",
+      "requestHash": "be7f0c075e71b5aeb24857b3af28ac8106432eacdb5627fa3d81367cf6c97dfa",
+      "commit": "4c5169a23ecc901ab892bae182f8f4ac78c4b8b8",
+      "source": "working-tree",
+      "sourceHash": "b9f00a07f64110f0c4bcd6a9291103eaafbce52de7cb5fbcfeb394c280c9e928"
+    },
+    {
+      "caseId": "extraction-3",
+      "family": "extraction",
+      "label": "冲突与地点",
+      "input": {
+        "scene": {
+          "id": "quality-scene",
+          "roomId": "quality-room",
+          "conversationId": null,
+          "title": "雨夜",
+          "location": "旧城酒馆",
+          "worldTime": "第三日 · 黄昏",
+          "castPolicy": "locked",
+          "cast": ["quality-instance-alice"],
+          "summary": "雨下了一整天。",
+          "endedAt": null,
+          "createdAt": "2026-10-03T00:00:00.000Z",
+          "updatedAt": "2026-10-03T00:00:00.000Z",
+          "deletedAt": null
+        },
+        "cast": [
+          {
+            "id": "quality-instance-alice",
+            "roomId": "quality-room",
+            "cardId": "quality-card-alice",
+            "displayName": "Alice",
+            "presence": "onstage",
+            "traits": { "extroversion": -0.3, "aggression": 0, "empathy": 0.3, "playfulness": 0, "caution": 0.3 },
+            "affect": { "valence": 0.1, "arousal": 0.3, "updatedAt": "2026-10-03T00:00:00.000Z", "history": [] },
+            "relationships": [
+              {
+                "target": "player",
+                "trust": 0.4,
+                "affinity": 0.4,
+                "fear": 0,
+                "respect": 0.2,
+                "tension": 0.1,
+                "updatedAt": "2026-10-03T00:00:00.000Z",
+                "history": []
+              }
+            ],
+            "traitsLocked": false,
+            "createdAt": "2026-10-03T00:00:00.000Z",
+            "updatedAt": "2026-10-03T00:00:00.000Z",
+            "deletedAt": null
+          }
+        ],
+        "playerName": "旅人",
+        "messages": [
+          {
+            "id": "quality-message-2-player",
+            "roomId": "quality-room",
+            "conversationId": null,
+            "sceneId": "quality-scene",
+            "turnId": "quality-turn-2",
+            "localSeq": 1,
+            "deviceId": "quality-device",
+            "role": "player",
+            "speakerInstanceId": null,
+            "speakerName": "旅人",
+            "audience": ["quality-instance-alice"],
+            "content": "你把消息瞒了我三天。我们到门外说清楚。",
+            "createdAt": "2026-10-03T00:00:00.000Z",
+            "updatedAt": "2026-10-03T00:00:00.000Z",
+            "deletedAt": null
+          },
+          {
+            "id": "quality-message-2-alice",
+            "roomId": "quality-room",
+            "conversationId": null,
+            "sceneId": "quality-scene",
+            "turnId": "quality-turn-2",
+            "localSeq": 2,
+            "deviceId": "quality-device",
+            "role": "character",
+            "speakerInstanceId": "quality-instance-alice",
+            "speakerName": "Alice",
+            "audience": ["quality-instance-alice"],
+            "content": "# 她起身走到酒馆门外。不是瞒你，我昨天才知道。",
+            "createdAt": "2026-10-03T00:00:00.000Z",
+            "updatedAt": "2026-10-03T00:00:00.000Z",
+            "deletedAt": null
+          }
+        ]
+      },
+      "request": {
+        "messages": [
+          {
+            "role": "system",
+            "content": "你是一个叙事记录员。阅读刚发生的一段对话，然后只输出一个 JSON 对象。\n不要写解释，不要写代码块标记，除了那个 JSON 对象什么都不要输出。"
+          },
+          {
+            "role": "user",
+            "content": "地点：旧城酒馆\n时间：第三日 · 黄昏\n玩家扮演：旅人\n在场角色：Alice\n\n对话：\n旅人：你把消息瞒了我三天。我们到门外说清楚。\nAlice：# 她起身走到酒馆门外。不是瞒你，我昨天才知道。\n\n字段要求：\n- summary：客观描述发生了什么，一到三句，不要写角色的内心。\n- importance：0 到 1。改变了关系、暴露了秘密、推进了情节的，给高分；寒暄与日常给低分。\n- location：只有对话里明确发生了地点变化时才填，否则留空字符串。\n- observations：为每个在场角色各写一条，描述他在这个视角下注意到了什么、\n  误解了什么、在意什么。同一件事在不同角色眼里应当有差异，允许互相矛盾。\n  没有明显反应的角色可以省略。speaker 必须用上面给出的角色名。\n\n输出格式：\n{\"summary\":\"客观经过，一到三句\",\"importance\":0.6,\"location\":\"\",\"observations\":[{\"speaker\":\"角色名\",\"perception\":\"他的印象\"}]}"
+          }
+        ],
+        "tools": [],
+        "params": {
+          "model": "deepseek-flash",
+          "reasoning_effort": "low",
+          "thinking": { "type": "enabled" },
+          "max_tokens": 1200
+        }
+      },
+      "fixtureHash": "3e252440bdfe122c3a6b4166cde5aba82b2cf5d330191614e68d4eee5cde8b78",
+      "requestHash": "c9da0a6cf398afe7ad438844fef04bdb63cda65c4ec75e833dbf26a215cddbb6",
+      "commit": "4c5169a23ecc901ab892bae182f8f4ac78c4b8b8",
+      "source": "working-tree",
+      "sourceHash": "b9f00a07f64110f0c4bcd6a9291103eaafbce52de7cb5fbcfeb394c280c9e928"
+    },
+    {
+      "caseId": "affect-3",
+      "family": "affect",
+      "label": "冲突与地点",
+      "input": {
+        "cast": [
+          {
+            "id": "quality-instance-alice",
+            "roomId": "quality-room",
+            "cardId": "quality-card-alice",
+            "displayName": "Alice",
+            "presence": "onstage",
+            "traits": { "extroversion": -0.3, "aggression": 0, "empathy": 0.3, "playfulness": 0, "caution": 0.3 },
+            "affect": { "valence": 0.1, "arousal": 0.3, "updatedAt": "2026-10-03T00:00:00.000Z", "history": [] },
+            "relationships": [
+              {
+                "target": "player",
+                "trust": 0.4,
+                "affinity": 0.4,
+                "fear": 0,
+                "respect": 0.2,
+                "tension": 0.1,
+                "updatedAt": "2026-10-03T00:00:00.000Z",
+                "history": []
+              }
+            ],
+            "traitsLocked": false,
+            "createdAt": "2026-10-03T00:00:00.000Z",
+            "updatedAt": "2026-10-03T00:00:00.000Z",
+            "deletedAt": null
+          }
+        ],
+        "playerName": "旅人",
+        "messages": [
+          {
+            "id": "quality-message-2-player",
+            "roomId": "quality-room",
+            "conversationId": null,
+            "sceneId": "quality-scene",
+            "turnId": "quality-turn-2",
+            "localSeq": 1,
+            "deviceId": "quality-device",
+            "role": "player",
+            "speakerInstanceId": null,
+            "speakerName": "旅人",
+            "audience": ["quality-instance-alice"],
+            "content": "你把消息瞒了我三天。我们到门外说清楚。",
+            "createdAt": "2026-10-03T00:00:00.000Z",
+            "updatedAt": "2026-10-03T00:00:00.000Z",
+            "deletedAt": null
+          },
+          {
+            "id": "quality-message-2-alice",
+            "roomId": "quality-room",
+            "conversationId": null,
+            "sceneId": "quality-scene",
+            "turnId": "quality-turn-2",
+            "localSeq": 2,
+            "deviceId": "quality-device",
+            "role": "character",
+            "speakerInstanceId": "quality-instance-alice",
+            "speakerName": "Alice",
+            "audience": ["quality-instance-alice"],
+            "content": "# 她起身走到酒馆门外。不是瞒你，我昨天才知道。",
+            "createdAt": "2026-10-03T00:00:00.000Z",
+            "updatedAt": "2026-10-03T00:00:00.000Z",
+            "deletedAt": null
+          }
+        ]
+      },
+      "request": {
+        "messages": [
+          { "role": "system", "content": "你在推演一段角色扮演对话之后的状态变化。只输出一个 JSON 对象，不要写解释。" },
+          {
+            "role": "user",
+            "content": "玩家扮演：旅人\n角色当前状态：\n- Alice：愉悦度 0.10 / 激动度 0.30；对玩家 trust 0.40 affinity 0.40 fear 0.00 respect 0.20 tension 0.10\n\n对话：\n旅人：你把消息瞒了我三天。我们到门外说清楚。\nAlice：# 她起身走到酒馆门外。不是瞒你，我昨天才知道。\n\n要求：\n- 只为真的被触动的角色输出一条；没有变化的角色不要出现。\n- deltaValence 与 deltaArousal 在 -0.3 到 0.3 之间，没有变化就填 0。\n- relationship 只写发生变化的维度，field 取值：trust / affinity / fear / respect / tension。\n- 每个 delta 同样在 -0.3 到 0.3 之间。\n- reason 用一句话说明变化的原因，会被记录进角色状态史。\n\n输出格式：\n{\"updates\":[{\"observer\":\"角色名\",\"deltaValence\":0.1,\"deltaArousal\":0.05,\"reason\":\"为什么\",\"relationship\":[{\"field\":\"affinity\",\"delta\":0.1}]}]}"
+          }
+        ],
+        "tools": [],
+        "params": {
+          "model": "deepseek-flash",
+          "reasoning_effort": "low",
+          "thinking": { "type": "enabled" },
+          "max_tokens": 1200
+        }
+      },
+      "fixtureHash": "98db77ba5c6f4e5cf0e672dbdda49d8a4203ee2b4e1759a8d0b68be1254ce6db",
+      "requestHash": "174b7186434c0ca2a732fcabe58b05b89a58d3b280a5872b242ae6279d08e3e9",
+      "commit": "4c5169a23ecc901ab892bae182f8f4ac78c4b8b8",
+      "source": "working-tree",
+      "sourceHash": "b9f00a07f64110f0c4bcd6a9291103eaafbce52de7cb5fbcfeb394c280c9e928"
+    },
+    {
+      "caseId": "admin-3",
+      "family": "admin",
+      "label": "冲突与地点",
+      "input": {
+        "room": {
+          "id": "quality-room",
+          "title": "雨夜酒馆",
+          "personaId": null,
+          "playerName": "旅人",
+          "playerPersona": "独自赶路，背着旧剑。",
+          "cardIds": ["quality-card-alice"],
+          "instanceIds": ["quality-instance-alice"],
+          "worldBookIds": [],
+          "activeConversationId": null,
+          "createdAt": "2026-10-03T00:00:00.000Z",
+          "updatedAt": "2026-10-03T00:00:00.000Z",
+          "deletedAt": null
+        },
+        "scene": {
+          "id": "quality-scene",
+          "roomId": "quality-room",
+          "conversationId": null,
+          "title": "雨夜",
+          "location": "旧城酒馆",
+          "worldTime": "第三日 · 黄昏",
+          "castPolicy": "locked",
+          "cast": ["quality-instance-alice"],
+          "summary": "雨下了一整天。",
+          "endedAt": null,
+          "createdAt": "2026-10-03T00:00:00.000Z",
+          "updatedAt": "2026-10-03T00:00:00.000Z",
+          "deletedAt": null
+        },
+        "conversation": {
+          "id": "quality-admin",
+          "roomId": "quality-room",
+          "title": "世界管理",
+          "kind": "side",
+          "createdAt": "2026-10-03T00:00:00.000Z",
+          "updatedAt": "2026-10-03T00:00:00.000Z",
+          "deletedAt": null
+        },
+        "instances": [
+          {
+            "id": "quality-instance-alice",
+            "roomId": "quality-room",
+            "cardId": "quality-card-alice",
+            "displayName": "Alice",
+            "presence": "onstage",
+            "traits": { "extroversion": -0.3, "aggression": 0, "empathy": 0.3, "playfulness": 0, "caution": 0.3 },
+            "affect": { "valence": 0.1, "arousal": 0.3, "updatedAt": "2026-10-03T00:00:00.000Z", "history": [] },
+            "relationships": [
+              {
+                "target": "player",
+                "trust": 0.4,
+                "affinity": 0.4,
+                "fear": 0,
+                "respect": 0.2,
+                "tension": 0.1,
+                "updatedAt": "2026-10-03T00:00:00.000Z",
+                "history": []
+              }
+            ],
+            "traitsLocked": false,
+            "createdAt": "2026-10-03T00:00:00.000Z",
+            "updatedAt": "2026-10-03T00:00:00.000Z",
+            "deletedAt": null
+          }
+        ],
+        "cards": [
+          {
+            "id": "quality-card-alice",
+            "name": "Alice",
+            "nickname": "",
+            "description": "在旧城书铺工作，夜里常来酒馆。上个月托商队给姐姐送过一封信。",
+            "personality": "话少，对熟人实在，不愿主动谈家事。",
+            "creator": "",
+            "characterVersion": "1",
+            "tags": [],
+            "embeddedWorldBook": null,
+            "extensions": {},
+            "source": {
+              "kind": "manual",
+              "spec": "dramatis",
+              "specVersion": "1",
+              "importedAt": "2026-10-03T00:00:00.000Z"
+            },
+            "createdAt": "2026-10-03T00:00:00.000Z",
+            "updatedAt": "2026-10-03T00:00:00.000Z",
+            "deletedAt": null
+          }
+        ],
+        "worldBooks": [],
+        "personas": [],
+        "history": [],
+        "userInput": "把当前场景地点改为旧城北门，时间改为第三日深夜；其他场景信息保持原样。"
+      },
+      "request": {
+        "messages": [
+          {
+            "role": "system",
+            "content": "你是这个世界管理员，负责帮用户把素材搭起来：角色卡、世界书、玩家身份（Persona）与当前场景。\n你不扮演任何角色，也不写剧情台词——那是主对话的事。\n需要落成素材时，直接调用工具，不要在正文里贴 JSON 或代码块。\n角色卡、世界书与身份先产出草稿，用户点「采纳」才会进入素材库；set_scene 会即时修改本轮选定主对话的场景，未选择目标时先请用户选择。\n起草角色卡时把正文写短：**人设（description）控制在 5 句话以内**，**性格（personality）控制在 2～3 句话以内**。\n只留最能决定他「怎么说话、怎么做」的部分；身世细节、地方风物、历史事件放进世界书，需要时再触发。\n调用工具之前用一两句话说清你打算做什么；调用之后再说清结果与建议。\n不确定用户想要什么时先问一句，不要凭空替用户决定世界观。"
+          },
+          {
+            "role": "system",
+            "content": "当前素材：\n角色卡：\n- Alice（id: quality-card-alice）：在旧城书铺工作，夜里常来酒馆。上个月托商队给姐姐送过一封信。；性格 话少，对熟人实在，不愿主动谈家事。\n\n世界书：\n（还没有世界书）\n\n玩家身份：\n（还没有玩家身份）\n\n修改角色卡只提供要改字段；修改世界书 entries 是条目增改，已有条目使用 entryId，省略条目或字段均保留。\n改名保留 entryId；新条目不填 entryId 且 content 必填；删除只能显式传 deleteEntryIds。不要在用户没要求时删设定。\n世界：雨夜酒馆\n对话：世界管理\n尚未选择场景目标：set_scene 不可执行，请先让用户选择主对话；其它素材工具仍可用。\n当前场景：雨夜（旧城酒馆），世界内时间 第三日 · 黄昏\n世界中已有角色：Alice\n可用工具：upsert_character_card、upsert_world_book、upsert_persona、delete_persona、set_scene"
+          },
+          { "role": "user", "content": "把当前场景地点改为旧城北门，时间改为第三日深夜；其他场景信息保持原样。" }
+        ],
+        "tools": [
+          {
+            "type": "function",
+            "function": {
+              "name": "upsert_character_card",
+              "description": "起草或修改一张角色卡。改动只是草稿，用户点「采纳」之后才会进入素材库；修改已有的卡时必须带上 cardId，而且**只需写要改的字段**：没提到的字段保持原样，要清空某个字段就显式传空字符串（新建时必须给 name 与 description）。",
+              "parameters": {
+                "type": "object",
+                "properties": {
+                  "cardId": { "type": "string", "description": "修改已有角色卡时填它的 id；新建时留空" },
+                  "name": { "type": "string", "description": "角色名" },
+                  "nickname": { "type": "string", "description": "角色对玩家的自称，可留空" },
+                  "description": { "type": "string", "description": "外貌、身份、来头；5 句话以内，越短主对话越聚焦" },
+                  "personality": { "type": "string", "description": "性格；2～3 句话以内" },
+                  "tags": { "type": "array", "items": { "type": "string" }, "description": "标签" }
+                }
+              }
+            }
+          },
+          {
+            "type": "function",
+            "function": {
+              "name": "upsert_world_book",
+              "description": "起草或修改一本世界书（也就是世界卡）。关键词触发时才会插入提示词，constant 为 true 的条目每轮都在。修改已有的书时必须带上 bookId，entries 是条目增改列表：修改通过 entryId 定位，省略条目和字段保留原值；新条目不填 entryId，content 必填。删除仅通过 deleteEntryIds 显式指定；修改可省略 name，新建必须提供 name。",
+              "parameters": {
+                "type": "object",
+                "properties": {
+                  "bookId": { "type": "string", "description": "修改已有世界书时填它的 id；新建时留空" },
+                  "name": { "type": "string", "description": "世界书的名字（新建必填，修改可省略）" },
+                  "deleteEntryIds": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "description": "明确要删除的条目 ID；省略不删除"
+                  },
+                  "entries": {
+                    "type": "array",
+                    "description": "需要新增或修改的条目；省略条目保留",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "entryId": { "type": "string", "description": "修改必填原条目 ID，新建省略" },
+                        "title": { "type": "string" },
+                        "keys": { "type": "array", "items": { "type": "string" }, "description": "触发关键词" },
+                        "content": { "type": "string", "description": "命中后插入的设定正文" },
+                        "constant": { "type": "boolean", "description": "常驻条目，不需要关键词" },
+                        "order": { "type": "number", "description": "排序权重，默认 100" }
+                      }
+                    }
+                  }
+                },
+                "required": ["entries"]
+              }
+            }
+          },
+          {
+            "type": "function",
+            "function": {
+              "name": "upsert_persona",
+              "description": "起草或修改一份玩家身份（Persona）。身份描述玩家在对话中是谁；修改已有身份时必须带 personaId，改动先作为草稿等待用户采纳。",
+              "parameters": {
+                "type": "object",
+                "properties": {
+                  "personaId": { "type": "string", "description": "修改已有身份时填它的 id；新建时留空" },
+                  "name": { "type": "string", "description": "玩家身份的名字" },
+                  "description": { "type": "string", "description": "外貌、来历、性格与扮演设定" }
+                },
+                "required": ["name", "description"]
+              }
+            }
+          },
+          {
+            "type": "function",
+            "function": {
+              "name": "delete_persona",
+              "description": "申请彻底删除一份玩家身份。必须同时给出 personaId 与 confirmName（身份的当前名字）；这里只会生成待确认删除草稿，用户点确认后才真正删除。",
+              "parameters": {
+                "type": "object",
+                "properties": {
+                  "personaId": { "type": "string", "description": "要删除的身份 id" },
+                  "confirmName": { "type": "string", "description": "身份的当前名字，用于防止删错" }
+                },
+                "required": ["personaId", "confirmName"]
+              }
+            }
+          },
+          {
+            "type": "function",
+            "function": {
+              "name": "set_scene",
+              "description": "即时设置本轮明确选定主对话的场景；未选目标必须先请用户选择，不能推测目标。地点、世界内时间、场景设定或入场策略。**只写用户明确要求改的字段**，没有提到的不要顺手改（尤其是 castPolicy：把锁定的场子改成 open 等于允许 AI 自行拉角色入场）。",
+              "parameters": {
+                "type": "object",
+                "properties": {
+                  "title": { "type": "string" },
+                  "location": { "type": "string" },
+                  "worldTime": { "type": "string" },
+                  "summary": { "type": "string", "description": "场景设定，会写进提示词" },
+                  "castPolicy": {
+                    "type": "string",
+                    "enum": ["open", "locked", "invite_only", "triggered"],
+                    "description": "入场策略：locked 表示不允许 AI 引入新角色"
+                  }
+                }
+              }
+            }
+          }
+        ],
+        "params": {
+          "model": "deepseek-flash",
+          "reasoning_effort": "low",
+          "thinking": { "type": "enabled" },
+          "max_tokens": 1200
+        }
+      },
+      "fixtureHash": "581be9ecced8b564f6e759ebd991b9146b2ac6825204835fce728184b5c10cc2",
+      "requestHash": "137b428aad8e9846ee3cb4ce21d1b39bf960a8556b97c193a1b93056829293d1",
+      "commit": "4c5169a23ecc901ab892bae182f8f4ac78c4b8b8",
+      "source": "working-tree",
+      "sourceHash": "b9f00a07f64110f0c4bcd6a9291103eaafbce52de7cb5fbcfeb394c280c9e928"
+    }
+  ],
+  "comparison": [
+    { "caseId": "roleplay-1", "identical": true, "evaluation": "shared-current-state-only; two repeats total" },
+    { "caseId": "extraction-1", "identical": true, "evaluation": "shared-current-state-only; two repeats total" },
+    { "caseId": "affect-1", "identical": true, "evaluation": "shared-current-state-only; two repeats total" },
+    { "caseId": "admin-1", "identical": false, "evaluation": "two repeats per side; exploratory" },
+    { "caseId": "roleplay-2", "identical": true, "evaluation": "shared-current-state-only; two repeats total" },
+    { "caseId": "extraction-2", "identical": true, "evaluation": "shared-current-state-only; two repeats total" },
+    { "caseId": "affect-2", "identical": true, "evaluation": "shared-current-state-only; two repeats total" },
+    { "caseId": "admin-2", "identical": false, "evaluation": "two repeats per side; exploratory" },
+    { "caseId": "roleplay-3", "identical": true, "evaluation": "shared-current-state-only; two repeats total" },
+    { "caseId": "extraction-3", "identical": true, "evaluation": "shared-current-state-only; two repeats total" },
+    { "caseId": "affect-3", "identical": true, "evaluation": "shared-current-state-only; two repeats total" },
+    { "caseId": "admin-3", "identical": false, "evaluation": "two repeats per side; exploratory" }
+  ]
+}

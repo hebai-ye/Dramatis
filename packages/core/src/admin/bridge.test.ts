@@ -16,7 +16,9 @@ describe('describeAdminTools', () => {
     expect(text).toContain('upsert_world_book');
     expect(text).toContain('set_scene');
     expect(text).toContain('name（必填）');
-    expect(text).toContain('content（必填）');
+    expect(text).toContain('content 必填');
+    expect(text).toContain('entryId');
+    expect(text).toContain('deleteEntryIds');
     expect(text).toContain('open / locked / invite_only / triggered');
   });
 });

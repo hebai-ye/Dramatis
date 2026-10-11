@@ -11,7 +11,7 @@ const SYSTEM_PROMPT = [
   '你是这个世界管理员，负责帮用户把素材搭起来：角色卡、世界书、玩家身份（Persona）与当前场景。',
   '你不扮演任何角色，也不写剧情台词——那是主对话的事。',
   '需要落成素材时，直接调用工具，不要在正文里贴 JSON 或代码块。',
-  '工具只会产出草稿：用户点「采纳」才会进入素材库，所以要一次把内容写完整、写好。',
+  '角色卡、世界书与身份先产出草稿，用户点「采纳」才会进入素材库；set_scene 会即时修改本轮选定主对话的场景，未选择目标时先请用户选择。',
   /*
    * 顺序 103：角色卡正文的长度口径。
    *
@@ -30,6 +30,8 @@ export interface AdminPromptInput {
   room: Room;
   conversation: Conversation;
   scene: Scene | null;
+  targetConversationId?: string;
+  targetName?: string;
   instances: readonly CharacterInstance[];
   cards: readonly Card[];
   worldBooks: readonly WorldBook[];
@@ -54,7 +56,7 @@ function preview(value: string): string {
 /**
  * 把素材库摊开给管理员看。
  *
- * 这里必须给出**原有内容**，不能只给「有几条」：修改是整本替换（工具语义如此），
+ * 这里必须给出**原有内容**，不能只给「有几条」：修改按稳定条目 ID 合并，
  * 模型看不到旧条目就会把原设定弄丢——这正是真实模型验证里第一次跑出来的问题。
  */
 function describeLibrary(
@@ -90,7 +92,7 @@ function describeLibrary(
                     .slice(0, MAX_LISTED)
                     .map((entry) => {
                       const keys = entry.constant ? '常驻' : entry.keys.join('/');
-                      return `    · ${entry.title.trim() === '' ? '未命名条目' : entry.title.trim()}（${keys}）：${preview(entry.content)}`;
+                      return `    · ${entry.title.trim() === '' ? '未命名条目' : entry.title.trim()}（entryId: ${entry.id}；${keys}）：${preview(entry.content)}`;
                     })
                     .join('\n');
             return `- ${book.name}（id: ${book.id}）：${String(book.entries.length)} 条\n${entries}`;
@@ -119,6 +121,9 @@ export function buildAdminMessages(input: AdminPromptInput): ChatMessage[] {
   const context = [
     `世界：${input.room.title}`,
     `对话：${input.conversation.title}`,
+    input.targetConversationId
+      ? `场景目标：${input.targetName ?? input.targetConversationId}（id: ${input.targetConversationId}）`
+      : '尚未选择场景目标：set_scene 不可执行，请先让用户选择主对话；其它素材工具仍可用。',
     input.scene === null
       ? '当前没有场景'
       : `当前场景：${input.scene.title}${input.scene.location === '' ? '' : `（${input.scene.location}）`}${
@@ -137,8 +142,8 @@ export function buildAdminMessages(input: AdminPromptInput): ChatMessage[] {
       content: [
         `当前素材：\n${describeLibrary(input.cards, input.worldBooks, input.personas)}`,
         '',
-        '注意：修改角色卡与世界书是**整份替换**——你必须把原有内容一并写回去，',
-        '再在此基础上增补，不要只写你新加的那部分，也不要在用户没要求时删掉已有设定。',
+        '修改角色卡只提供要改字段；修改世界书 entries 是条目增改，已有条目使用 entryId，省略条目或字段均保留。',
+        '改名保留 entryId；新条目不填 entryId 且 content 必填；删除只能显式传 deleteEntryIds。不要在用户没要求时删设定。',
         context,
       ].join('\n'),
     },

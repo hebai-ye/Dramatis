@@ -3925,3 +3925,24 @@ details summary {
     }
   }
 }
+
+.dialog.modal {
+  max-width: 560px;
+  background: var(--panel);
+}
+
+.world-book-diff pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font: inherit;
+}
+.world-book-diff details {
+  margin-block: 8px;
+}
+.world-book-entry-preview span {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.admin-scene-target {
+  padding: 8px 16px;
+}

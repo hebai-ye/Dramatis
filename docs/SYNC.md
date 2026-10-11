@@ -21,7 +21,7 @@
 | --- | --- | --- |
 | 1 | **本地库是唯一真相源**，断网、服务端下线都不影响使用 | DESIGN §8.1 |
 | 2 | **后端不接触明文对话与 API Key**，端到端加密不是可选项 | DESIGN §8.3 / ROADMAP P2-7 |
-| 3 | 后端**不代理模型请求**，流量由客户端直连服务商 | DESIGN §8.3 |
+| 3 | **BYOK 调用**由客户端直连服务商；托管网关是另一路径，不读取用户 Key | DESIGN §8.3 / [ADMIN-CONSOLE.md](./ADMIN-CONSOLE.md) |
 | 4 | 实体带 `uuid` + `updatedAt` + `deletedAt`，服务端分配单调递增 `rev` | DESIGN §8.2 |
 | 5 | 消息顺序不能只靠时间戳：`(deviceId, localSeq)` | ROADMAP P2-6 |
 | 6 | 同一账号下要能区分设备，用于同步诊断与冲突定位 | ROADMAP P2-5 |
@@ -140,7 +140,7 @@ KEK 由用户密码派生，服务端手里没有密码。
 | 服务端存的凭证 | `SHA-256(凭证)`，不存明文；凭证本身是 HMAC 输出（256 bit 随机），拖库也无法反推 |
 | 服务端存的记录 | `spaceHandle, collection, id, rev, ciphertext, iv, updatedAt(明文，用于 LWW 诊断), size` |
 | 服务端存的空间 | `spaceHandle`、**两份凭证哈希**（密码的、恢复码的）、**两份主密钥封装**（同上） |
-| 不存的 | 对话内容、角色设定、记忆、API Key、邮箱、手机号、IP 之外的任何身份信息 |
+| 不存的 | 对话内容、角色设定、记忆、API Key **明文**、邮箱、手机号、IP 之外的任何身份信息；账户凭据密文见 §4.11 |
 | 传输 | 一律 HTTPS；`Authorization: Bearer <凭证>` |
 
 **为什么 `updatedAt` 可以明文**：LWW 需要它，而「这条记录在第几毫秒被改过」泄露的信息
@@ -160,8 +160,9 @@ KEK 由用户密码派生，服务端手里没有密码。
 - 断点续传：移动网络断在中途，下次接着推没推完的那几条
 - 冲突：冲突范围收敛到单个实体（一条记忆、一个角色状态），不会因为「快照对快照」而全丢
 
-**同步白名单**（第一批）：`rooms`、`conversations`、`scenes`、`instances`、`cards`、
-`worldBooks`、`messages`、`memories`、`chapterSummaries`、`personas`。
+**同步集合（当前）**：`rooms`、`conversations`、`scenes`、`instances`、`cards`、
+`worldBooks`、`messages`、`memories`、`chapterSummaries`、`personas`、
+`providerProfiles`、`providerCredentials`（后两项详见 §4.11）。
 
 **不同步**：
 
@@ -170,7 +171,7 @@ KEK 由用户密码派生，服务端手里没有密码。
 | `usageRecords` | 账单是**本地事实**：两台设备各调各的模型、各花各的钱，合并会重复计数 |
 | `backgroundTasks` | 队列是设备本地的执行状态，同步它只会让两台设备抢同一件事 |
 | `meta` 里的 `schema.version` / `session.lastRoomId` | 前者是本机库的状态，后者的「最后打开」本来就该按设备算 |
-| API Key | 约束 2：永不离开设备（DESIGN §8.3） |
+| API Key 明文 | 不上传明文；账户模式的加密凭据属于同步集合，见 §4.11 |
 
 ### 4.2 冲突与顺序
 
@@ -451,16 +452,16 @@ KEK 由用户密码派生，拿到也解不开；哈希是 SHA-256 的输出，�
 
 ### 4.11 模型配置与 API Key 随账户同步（账户重构 A6/A7）
 
-同步白名单增加 `providerProfiles` 与 `providerCredentials`：
+账户同步就绪时，同步集合包含 `providerProfiles` 与 `providerCredentials`：
 
 - `providerProfiles` 保存模型名、地址、价格、窗口与后台模型角色；
 - `ProviderCredential.encryptedSecret` 先用账户同步主密钥加密；
 - 同步循环再用同一账户的记录级密钥整条加密一次；
-- 服务端只看到 `collection/id/updatedAt` 与双层密文，看不到 Key；
+- 服务端只看到记录坐标、时间等协议元数据与双层密文，看不到用户 Key 明文；
 - 新设备解出账户主密钥后，把凭据解回本机 KeyStore；
 - “仅本次会话 / 保存在浏览器 / 口令加密”只控制本机缓存，不改变账户是否持有 Key 密文。
 
-这与早期“API Key 永远不离开本机”的说明不同：**明文仍不离开本机，密文会随账户同步**。
+这与早期“API Key 永远不离开本机”的说明不同：**明文不会经同步上传，密文会随账户同步**。BYOK 的模型请求仍由客户端发给模型服务商；托管模型网关是独立调用链，见 [ADMIN-CONSOLE.md](./ADMIN-CONSOLE.md)。
 
 本机同步密码也按账户隔离：缓存键是 `sync:password:<storageId>`，旧版全局
 `sync:password` 在首次启动时迁移。否则先连 A、再连 B 会覆盖 A 的本机同步密码，

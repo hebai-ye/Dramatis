@@ -3,6 +3,7 @@ import {
   type AdminDraft,
   buildAdminBridgeMessages,
   buildAdminMessages,
+  type ConversationId,
   createOpenAICompatibleProvider,
   createPlayerMessage,
   createTurnId,
@@ -15,6 +16,7 @@ import {
   nowIso,
   parseAdminBridgeOutput,
   parseAdminToolCall,
+  type RoomId,
   renderPromptForWeb,
   runAdminTurn,
 } from '@dramatis/core';
@@ -28,7 +30,7 @@ import { handoffStreamState, resetStreamState, setStreamState } from './stream-s
 export interface AdminChatApi {
   busy: boolean;
   error: string | null;
-  send: (text: string) => Promise<void>;
+  send: (text: string, targetConversationId?: ConversationId) => Promise<void>;
   stop: () => void;
   /**
    * 没有 API Key 时的网页版桥接（副对话）。
@@ -40,6 +42,16 @@ export interface AdminChatApi {
   bridge: { prompt: string } | null;
   commitBridge: (raw: string) => Promise<void>;
   cancelBridge: () => void;
+}
+
+interface AdminRequestScope {
+  roomId: RoomId;
+  conversationId: ConversationId;
+  targetConversationId: ConversationId | null;
+  targetName: string | null;
+}
+interface AdminBridge extends AdminRequestScope {
+  prompt: string;
 }
 
 function draftToArtifact(draft: AdminDraft): AdminArtifact {
@@ -66,6 +78,7 @@ function draftToArtifact(draft: AdminDraft): AdminArtifact {
         summary: draft.summary,
         status: 'pending',
         payload: draft.book,
+        previousPayload: draft.previous,
         baseUpdatedAt: draft.baseUpdatedAt,
       };
     case 'persona-upsert':
@@ -119,13 +132,15 @@ export function useAdminChat(options: {
   // 流式正文不住在这里（顺序 59）：它写进 `lib/stream-store.ts` 的 `admin` 通道，
   // 由 `SideChat` 自己订阅。住在这里等于每个 token 都把整个 App 重画一遍。
   const [error, setError] = useState<string | null>(null);
-  const [bridge, setBridge] = useState<{ prompt: string } | null>(() => loadBridge<{ prompt: string }>('admin'));
+  const [bridge, setBridge] = useState<AdminBridge | null>(() => loadBridge<AdminBridge>('admin'));
 
   // 副对话的桥接进度同样落进 sessionStorage（顺序 25）
   useEffect(() => {
     saveBridge('admin', bridge);
   }, [bridge]);
   const abortRef = useRef<AbortController | null>(null);
+  const sessionRef = useRef(session);
+  sessionRef.current = session;
 
   /**
    * 把解析出来的工具调用真正执行掉。
@@ -134,18 +149,16 @@ export function useAdminChat(options: {
    * 角色卡与世界书只落草稿」这些语义只写了一份。
    */
   const executeDraft = useCallback(
-    async (draft: AdminDraft, artifacts: AdminArtifact[]): Promise<string> => {
+    async (draft: AdminDraft, artifacts: AdminArtifact[], scope: AdminRequestScope): Promise<string> => {
+      if (sessionRef.current.world?.id !== scope.roomId) return '原世界已切换，本次工具未执行。';
       if (draft.kind === 'scene') {
-        const applied = await session.setWorldScene(draft.patch);
-        /*
-         * 场景没落下去时**别把卡片标成「已生效」**（这是原来就有的小毛病：先 push 再判断）。
-         * 这个世界还没有主对话时 setWorldScene 会返回 null，那时标成「待你决定」更诚实。
-         */
-        const artifact = draftToArtifact(draft);
-        artifacts.push(applied === null ? { ...artifact, status: 'pending' } : artifact);
-        return applied === null
-          ? '这个世界还没有主对话，场景没能设置；请先让用户开一条主对话。'
-          : `已把当前场景设为：${draft.summary}（生效于主对话）`;
+        if (!scope.targetConversationId) return '场景未设置：请先选择一条主对话作为目标。';
+        const applied = await session.setWorldScene(draft.patch, scope.targetConversationId, scope.roomId);
+        if (applied === null)
+          return `场景未设置：目标「${scope.targetName ?? scope.targetConversationId}」已失效或世界已切换，请重新选择。`;
+        const summary = `目标「${scope.targetName ?? scope.targetConversationId}」：${draft.summary}`;
+        artifacts.push({ ...draftToArtifact(draft), summary, targetId: applied.id });
+        return `已即时设置${summary}`;
       }
 
       artifacts.push(draftToArtifact(draft));
@@ -155,10 +168,10 @@ export function useAdminChat(options: {
   );
 
   const send = useCallback(
-    async (text: string) => {
+    async (text: string, targetConversationId?: ConversationId) => {
       const world = session.world;
       const conversation = session.conversation;
-      if (!db || !world || !conversation || conversation.kind !== 'side' || busy) return;
+      if (!db || !world || !conversation || conversation.kind !== 'side' || busy || bridge !== null) return;
 
       const profile = providers.active;
       if (!profile) {
@@ -178,18 +191,63 @@ export function useAdminChat(options: {
       resetStreamState('admin');
       setBridge(null);
 
+      const mains = session.conversations.filter(
+        (item) =>
+          item.roomId === world.id && item.kind === 'main' && item.archivedAt === null && item.deletedAt === null,
+      );
+      const requestedTarget = targetConversationId ?? (mains.length === 1 ? mains[0]?.id : undefined);
+      let target = null;
+      let targetScene = null;
+      try {
+        target = requestedTarget ? await db.repository.getConversation(requestedTarget) : null;
+        if (
+          target &&
+          (target.roomId !== world.id ||
+            target.kind !== 'main' ||
+            target.archivedAt !== null ||
+            target.deletedAt !== null)
+        )
+          target = null;
+        targetScene = target?.activeSceneId ? await db.repository.getScene(target.activeSceneId) : null;
+        if (targetScene && (targetScene.roomId !== world.id || targetScene.conversationId !== target?.id))
+          targetScene = null;
+      } catch (error) {
+        if (sessionRef.current.world?.id === world.id) setError(error instanceof Error ? error.message : String(error));
+        setBusy(false);
+        return;
+      }
+      if (sessionRef.current.world?.id !== world.id) {
+        setBusy(false);
+        return;
+      }
+      const scope: AdminRequestScope = {
+        roomId: world.id,
+        conversationId: conversation.id,
+        targetConversationId: target?.id ?? null,
+        targetName: target?.title ?? null,
+      };
       const history = session.messages;
-      await session.appendMessages([
-        createPlayerMessage({
-          roomId: world.id,
-          conversationId: conversation.id,
-          sceneId: null,
-          turnId: createTurnId(),
-          speakerName: world.playerName,
-          content: text,
-          audience: [],
-        }),
-      ]);
+      try {
+        await session.appendMessages([
+          createPlayerMessage({
+            roomId: world.id,
+            conversationId: conversation.id,
+            sceneId: null,
+            turnId: createTurnId(),
+            speakerName: world.playerName,
+            content: text,
+            audience: [],
+          }),
+        ]);
+      } catch (error) {
+        if (sessionRef.current.world?.id === world.id) setError(error instanceof Error ? error.message : String(error));
+        setBusy(false);
+        return;
+      }
+      if (sessionRef.current.world?.id !== world.id) {
+        setBusy(false);
+        return;
+      }
 
       const pendingDrafts = history
         .flatMap((message) => message.artifacts ?? [])
@@ -198,11 +256,15 @@ export function useAdminChat(options: {
 
       if (manual) {
         setBridge({
+          ...scope,
           prompt: renderPromptForWeb(
             buildAdminBridgeMessages({
               room: world,
               conversation,
-              scene: null,
+              scene: targetScene,
+              ...(scope.targetConversationId
+                ? { targetConversationId: scope.targetConversationId, targetName: scope.targetName ?? undefined }
+                : {}),
               instances: session.instances,
               cards: session.library.cards,
               worldBooks: session.library.worldBooks,
@@ -263,7 +325,10 @@ export function useAdminChat(options: {
           buildAdminMessages({
             room: world,
             conversation,
-            scene: null,
+            scene: targetScene,
+            ...(scope.targetConversationId
+              ? { targetConversationId: scope.targetConversationId, targetName: scope.targetName ?? undefined }
+              : {}),
             instances: session.instances,
             cards: session.library.cards,
             worldBooks: session.library.worldBooks,
@@ -283,7 +348,7 @@ export function useAdminChat(options: {
               worldBooks: session.library.worldBooks,
               knownPersonas: session.personas,
             },
-            execute: (draft) => executeDraft(draft, artifacts),
+            execute: (draft) => executeDraft(draft, artifacts, scope),
             /*
              * 顺序 104：正文逐块交给副对话，不再等整轮收完（用户原话：副对话看不到它在写）。
              * 累计放在这里：core 给的是增量，`answer` 要跨轮拼起来才是这一回合的全文。
@@ -291,7 +356,8 @@ export function useAdminChat(options: {
              */
             onDelta: (delta) => {
               answer += delta;
-              setStreamState('admin', { text: answer, phase: 'writing', progress: '' });
+              if (sessionRef.current.world?.id === world.id)
+                setStreamState('admin', { text: answer, phase: 'writing', progress: '' });
             },
           },
         )) {
@@ -309,7 +375,8 @@ export function useAdminChat(options: {
                * 要注意这个事件是「模型已经点名、本地已经执行完」之后才来的，不是「正在想」——
                * 所以界面上的措辞是「工具调用：…」而不是「正在调用…」。
                */
-              setStreamState('admin', { progress: describeToolExecution(event.execution) });
+              if (sessionRef.current.world?.id === world.id)
+                setStreamState('admin', { progress: describeToolExecution(event.execution) });
               break;
             case 'done':
               answer = event.text === '' ? answer : event.text;
@@ -335,8 +402,10 @@ export function useAdminChat(options: {
          * 清空是同步的，而消息要等 IndexedDB 写完再提交一次才出现，中间那几帧就是
          * 「文字先消失、过一会儿整条出现」；交接给 SideChat，等它看见这条消息再收。
          */
-        handoffStreamState('admin', message.id);
-        handedOff = true;
+        if (sessionRef.current.world?.id === world.id && sessionRef.current.conversation?.id === conversation.id) {
+          handoffStreamState('admin', message.id);
+          handedOff = true;
+        }
 
         // 记账。世界管理员不属于任何角色，所以不填 speaker（T7）
         await db.ledger.record({
@@ -373,7 +442,7 @@ export function useAdminChat(options: {
         abortRef.current = null;
       }
     },
-    [busy, db, executeDraft, onChanged, providers, session],
+    [bridge, busy, db, executeDraft, onChanged, providers, session],
   );
 
   /**
@@ -386,6 +455,10 @@ export function useAdminChat(options: {
       const world = session.world;
       const conversation = session.conversation;
       if (!db || !world || !conversation || conversation.kind !== 'side' || bridge === null || busy) return;
+      if (bridge.roomId !== world.id || bridge.conversationId !== conversation.id) {
+        setError('请回到原世界与原副对话再回填；旧桥接缺少绑定信息时请放弃后重新生成。');
+        return;
+      }
 
       setBusy(true);
       setError(null);
@@ -412,7 +485,8 @@ export function useAdminChat(options: {
           if (result.unknownArgs !== undefined) unknown.push(...result.unknownArgs);
           // 顺序 104：网页版这条路上没有流式，但「刚才执行了哪件素材」同样要看得见
           setStreamState('admin', { progress: result.draft.summary });
-          await executeDraft(result.draft, artifacts);
+          const resultText = await executeDraft(result.draft, artifacts, bridge);
+          if (result.draft.kind === 'scene' && !resultText.startsWith('已即时')) failed.push(resultText);
         }
 
         const notes: string[] = [];

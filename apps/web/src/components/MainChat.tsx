@@ -2,6 +2,7 @@ import {
   type CastName,
   type CharacterInstance,
   type Conversation,
+  type ConversationId,
   type ConversationModes,
   DEFAULT_HISTORY_NEAR_WINDOW,
   historyPolicyOf,
@@ -64,6 +65,7 @@ interface Props {
    * 它只负责滚动与高亮，不改数据。
    */
   focus?: FocusRequest | null;
+  onFocusConsumed?: (request: FocusRequest) => void;
   /**
    * 手机顶栏点角色条时递进来的「把这段文字插到光标处」（用户 2026-09-24 要求）。
    *
@@ -112,6 +114,7 @@ interface Props {
 export interface FocusRequest {
   id: MessageId;
   seq: number;
+  conversationId: ConversationId;
 }
 
 const MODE_OPTIONS: Array<{
@@ -248,6 +251,7 @@ function MainChatImpl({
   ready,
   archived,
   focus = null,
+  onFocusConsumed,
   insertRequest = null,
   showIntent = false,
   bridge = null,
@@ -465,17 +469,20 @@ function MainChatImpl({
    * 「有新消息」的小按钮，点了再下去。流式长出来的那部分由 StreamingBubble 自己按同样的规矩跟。
    */
   const nearBottomRef = useRef(true);
+  const [awayFromBottom, setAwayFromBottom] = useState(false);
   const [hasNewBelow, setHasNewBelow] = useState(false);
   const onBodyScroll = useCallback(() => {
     const node = bodyRef.current;
     if (node === null || !visibleRef.current) return;
     const near = isNearBottom(node);
     nearBottomRef.current = near;
+    setAwayFromBottom(!near);
     if (near) setHasNewBelow(false);
   }, [visibleRef]);
   const jumpToBottom = useCallback(() => {
     if (!visibleRef.current) return;
     nearBottomRef.current = true;
+    setAwayFromBottom(false);
     setHasNewBelow(false);
     const node = bodyRef.current;
     node?.scrollTo({ top: node.scrollHeight, behavior: 'smooth' });
@@ -485,28 +492,39 @@ function MainChatImpl({
   const lastMessageKey = lastMessage === undefined ? '' : `${lastMessage.id}:${String(lastMessage.content.length)}`;
   const lastIsPlayer = lastMessage?.role === 'player';
   const conversationKeyRef = useRef<string | null>(null);
-  useEffect(() => {
-    if (lastMessageKey === '') return;
-    // 正在跳原句时别把用户又拽到底部——下面那条 effect 会自己滚到位
-    if (focus !== null) return;
-    // 刚切进一条对话：总是从底部开始看
+  const lastMessageKeyRef = useRef<string | null>(null);
+  // Decide follow mode before post-commit scroll events can measure the newly enlarged history.
+  useLayoutEffect(() => {
     const switched = conversationKeyRef.current !== conversation.id;
+    const changed = lastMessageKeyRef.current !== lastMessageKey;
     conversationKeyRef.current = conversation.id;
+    lastMessageKeyRef.current = lastMessageKey;
     const node = bodyRef.current;
     if (node === null) return;
     if (!visibleRef.current) {
-      if (scrollVisibility.followHiddenRef.current === true) node.scrollTop = node.scrollHeight;
-      else setHasNewBelow(true);
+      if (lastMessageKey !== '' && changed) {
+        if (scrollVisibility.followHiddenRef.current === true) node.scrollTop = node.scrollHeight;
+        else setHasNewBelow(true);
+      }
       return;
     }
-    if (switched || lastIsPlayer || nearBottomRef.current) {
+    if (switched) {
       nearBottomRef.current = true;
+      setAwayFromBottom(false);
+      setHasNewBelow(false);
+    }
+    if (lastMessageKey === '' || (!switched && !changed)) return;
+    // 定位请求还没消费时，让定位效应掌管滚动。
+    if (focus?.conversationId === conversation.id && consumedFocus.current !== focus.seq) return;
+    if (switched || (!awayFromBottom && (lastIsPlayer || nearBottomRef.current))) {
+      nearBottomRef.current = true;
+      setAwayFromBottom(false);
       setHasNewBelow(false);
       node.scrollTo({ top: node.scrollHeight, behavior: switched ? 'auto' : 'smooth' });
       return;
     }
     setHasNewBelow(true);
-  }, [lastMessageKey, lastIsPlayer, focus, conversation.id, visibleRef, scrollVisibility]);
+  }, [lastMessageKey, lastIsPlayer, focus, conversation.id, awayFromBottom, visibleRef, scrollVisibility]);
 
   /**
    * 跳到原句（T11）。
@@ -514,21 +532,29 @@ function MainChatImpl({
    * 高亮的时长是刻意的：闪一下就走，用户看得到「就是这一条」，
    * 又不会让整屏一直有人在发光。
    */
+  // biome-ignore lint/correctness/useExhaustiveDependencies: messages 变化表示延迟加载的目标节点可能刚挂载，需要重试 DOM 定位。
   useEffect(() => {
-    if (!visible || focus === null || consumedFocus.current === focus.seq) return;
+    if (!visible || focus === null || focus.conversationId !== conversation.id || consumedFocus.current === focus.seq) {
+      return;
+    }
     const body = bodyRef.current;
     const node = Array.from(body?.querySelectorAll<HTMLElement>('[data-message-id]') ?? []).find(
       (message) => message.dataset.messageId === focus.id,
     );
     if (body === null || node === undefined) return;
+
     consumedFocus.current = focus.seq;
+    nearBottomRef.current = false;
+    setAwayFromBottom(true);
+    setHasNewBelow(false);
     const rect = node.getBoundingClientRect();
     const top = body.scrollTop + rect.top - body.getBoundingClientRect().top - (body.clientHeight - rect.height) / 2;
-    body.scrollTo({ top: Math.max(0, top), behavior: 'smooth' });
+    body.scrollTo({ top: Math.max(0, top), behavior: 'auto' });
     setHighlightId(focus.id);
+    onFocusConsumed?.(focus);
     if (highlightTimer.current !== null) window.clearTimeout(highlightTimer.current);
     highlightTimer.current = window.setTimeout(() => setHighlightId(null), 2600);
-  }, [focus, visible]);
+  }, [focus, messages, conversation.id, onFocusConsumed, visible]);
 
   /*
    * 只有最后一条角色回复可以重抽：更早的回复换掉之后，后面那些回复是照着旧版本说的，
@@ -544,7 +570,7 @@ function MainChatImpl({
   }, [messages]);
 
   const submit = (): void => {
-    if (!ready || busy || archived) return;
+    if (!ready || busy || archived || bridge !== null) return;
     const text = input.trim();
     if (text === '') return;
     onSend(text);
@@ -699,16 +725,18 @@ function MainChatImpl({
           busy={busy}
           onStop={onStop}
           lastMessageId={messages[messages.length - 1]?.id ?? null}
-          suspendAutoScroll={focus !== null}
+          suspendAutoScroll={
+            awayFromBottom || (focus?.conversationId === conversation.id && consumedFocus.current !== focus.seq)
+          }
           bottomRef={bottomRef}
           scrollVisibility={scrollVisibility}
           cast={castNames}
           avatars={avatars}
         />
 
-        {hasNewBelow ? (
+        {awayFromBottom ? (
           <button type="button" className="jump-to-latest" onClick={jumpToBottom}>
-            ↓ 有新消息
+            {hasNewBelow ? '↓ 有新消息' : '↓ 回到底部'}
           </button>
         ) : null}
 

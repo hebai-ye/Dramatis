@@ -28,6 +28,10 @@ interface Props {
   onClose: () => void;
   returnFocus: HTMLElement | null;
   children: ReactNode;
+  head?: ReactNode;
+  footer?: ReactNode;
+  closeLabel?: string;
+  modal?: boolean;
 }
 
 const FOCUSABLE =
@@ -48,7 +52,17 @@ function visibleInViewport(element: HTMLElement): boolean {
 }
 
 /** 两个大弹窗共用外壳；业务内容加载和确认都保留在同一焦点范围内。 */
-export function DialogShell({ label, className = '', onClose, returnFocus, children }: Props) {
+export function DialogShell({
+  label,
+  className = '',
+  onClose,
+  returnFocus,
+  children,
+  head,
+  footer,
+  closeLabel = '关闭',
+  modal = false,
+}: Props) {
   const [state, setState] = useState<DialogState>({ guard: null, pending: null, notice: null });
   const controllerRef = useRef<ReturnType<typeof createDialogController> | null>(null);
   if (controllerRef.current === null) controllerRef.current = createDialogController(setState);
@@ -126,6 +140,16 @@ export function DialogShell({ label, className = '', onClose, returnFocus, child
     }
   }, [state.pending]);
 
+  // Removing or disabling the focused control can leave focus on body without a focusin event.
+  // Recheck after every committed render so Esc/Tab remain within this mounted dialog.
+  useLayoutEffect(() => {
+    const section = sectionRef.current;
+    const active = document.activeElement;
+    if (section === null || state.pending !== null) return;
+    if (!section.contains(active) || (active instanceof HTMLElement && active.matches(':disabled')))
+      closeRef.current?.focus();
+  });
+
   const requestClose = (): void => {
     if (controller.state().pending !== null) controller.cancel();
     else controller.request(onClose);
@@ -172,14 +196,16 @@ export function DialogShell({ label, className = '', onClose, returnFocus, child
           className={`dialog ${className}`}
           role="dialog"
           aria-modal="true"
-          aria-labelledby={titleId}
+          aria-labelledby={head === undefined ? titleId : undefined}
+          aria-label={head === undefined ? undefined : label}
           tabIndex={-1}
           onKeyDown={handleKeyDown}
         >
-          <header className="dialog-head">
-            <h2 id={titleId}>{label}</h2>
+          <header className={modal ? 'modal-head' : 'dialog-head'}>
+            {head ?? <h2 id={titleId}>{label}</h2>}
+            {modal ? <div className="topbar-spacer" /> : null}
             <button ref={closeRef} type="button" className="ghost" onClick={requestClose}>
-              关闭
+              {closeLabel}
             </button>
           </header>
           {state.notice === null ? null : (
@@ -213,9 +239,14 @@ export function DialogShell({ label, className = '', onClose, returnFocus, child
               </div>
             </section>
           )}
-          <div className="dialog-content" inert={state.pending !== null}>
+          <div className={modal ? 'modal-body' : 'dialog-content'} inert={state.pending !== null}>
             {children}
           </div>
+          {footer === undefined ? null : (
+            <footer className="modal-foot" inert={state.pending !== null}>
+              {footer}
+            </footer>
+          )}
         </section>
       </div>
     </DialogContext.Provider>

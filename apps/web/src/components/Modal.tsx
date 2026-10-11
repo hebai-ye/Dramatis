@@ -1,4 +1,5 @@
-import type { ReactNode } from 'react';
+import { type ReactNode, useState } from 'react';
+import { DialogShell } from './DialogShell';
 
 /**
  * 模态框的外壳（顺序 65 收敛重复）。
@@ -24,22 +25,21 @@ export interface ModalProps {
 }
 
 export function Modal({ label, onClose, head, closeLabel = '关闭', children, footer }: ModalProps) {
+  const [returnFocus] = useState(() =>
+    typeof document !== 'undefined' && document.activeElement instanceof HTMLElement ? document.activeElement : null,
+  );
   return (
-    <div className="modal-backdrop">
-      <button type="button" className="modal-scrim" aria-label={`关闭${label}`} onClick={onClose} />
-      <section className="modal" role="dialog" aria-label={label}>
-        <header className="modal-head">
-          {head}
-          <div className="topbar-spacer" />
-          <button type="button" className="ghost" onClick={onClose}>
-            {closeLabel}
-          </button>
-        </header>
-
-        <div className="modal-body">{children}</div>
-
-        {footer === undefined ? null : <footer className="modal-foot">{footer}</footer>}
-      </section>
-    </div>
+    <DialogShell
+      label={label}
+      onClose={onClose}
+      head={head}
+      closeLabel={closeLabel}
+      footer={footer}
+      returnFocus={returnFocus}
+      modal
+      className="modal"
+    >
+      {children}
+    </DialogShell>
   );
 }

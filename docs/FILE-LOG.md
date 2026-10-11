@@ -1740,3 +1740,39 @@ Windows 本机临时库／真实浏览器完成同意登记、不登记注册、
    git log --name-only --pretty=format:'%h %ad %s' --date=short -5
    git status --short
    ```
+
+## 2026-10-03～04 本组工作区增量（未提交，阶段记录）
+
+下面是本轮实际新增/修改的文件组与证据；日期为本批执行日期，不补造首次提交时间。最终文件清单将在本组门禁收口后续记。私有LOCAL-NOTES、logs与ignored构建产物不纳公开交付。
+
+| 日期 | 文件组 | 本轮用途与证据 |
+| --- | --- | --- |
+| 2026-10-11 | App、styles、components/{SideChat,SceneDialog,DialogShell,WebBridgePanel,WorldBookDiff}；Modal-callbacks.test、tests/ui/{main,optimization}与browser/ui-optimization；本组UI报告、预分析接续及TASKS/STATUS/EVAL本组增量 | 四项批准UI实施完成，异步失败/重复点击/旧目标保护/焦点修复/复制与助手迟到/diff可读化；root首轮Web341、后续相关7、最终Edge23及主题补例1通过，类型/lint/构建/六张截图核对完成。Sol/Luna只实现与静态复审；未改底层存储/SW或新依赖，原外部验收与CAS仍待；无本批真实模型/服务器/提交/部署，见[报告](./superpowers/plans/2026-10-11-ui-optimization-report.md) |
+| 2026-10-11 | 本组d01-runner-exit报告、indexeddb报告、closeout、task-status-ui-preanalysis及TASKS/STATUS/EVAL/VALIDATION；ignored隔离探针和进程/事件记录 | root补齐真实Ctrl+C清理与受控Vite首次SIGTERM传输故障后的3002 ms升级证据；两次自有进程/6273无残留，父Node130/外层tool1分别留证。同日接续只读重核runner/原始事件及原进程身份，修正EVAL历史矩阵的日期边界，未重复浏览器门禁。仅关闭自身退出证据窄缺口，worker通知/CAS与全部分支不计完成；子任务仅静态，产品/依赖不改，账本SHA保持，无新模型/服务器/提交/部署 |
+| 2026-10-10 | 本组task-status-ui-preanalysis、STATUS本组新段及FILE-LOG本行 | 核对26项按交付/验收分开统计：5组外部真实验收、7组部分一交接及D01退出分支1个本组验证缺口，组间有重叠，未整体关闭；只读UI预分析整理操作反馈、保存语义、场景/复制文案和diff可读性候选，未改产品或运行新门禁/浏览器/模型/服务器 |
+| 2026-10-09 | 本组C06 account-client-plan/report、recovery-report、closeout及TASKS/STATUS/EVAL/VALIDATION；ignored客户端/旁路/核对脚本与日志 | root真实恢复副本合成账户六阶段双端写入/解密/增量/重载PASS；失败副本独立留证、优雅停机/后检查/再核对通过，源原副本不变、六生产服务Running。旧账户历史/RPO/完整应用RTO与保留规则未关闭；子任务只静态，未重跑稳定门禁/模型/提交/部署 |
+| 2026-10-09 | 本组B06 standing-worker报告、SW浏览器报告、closeout及TASKS/STATUS/EVAL/VALIDATION；ignored独立spec/config/log | 同一native worker跨30秒实际Edge补例1/1通过，437 ms节流/31,020 ms刷新、离线C+lazy A；现有测试和产品SW不改，Android系统回收仍待真机。ESM启动和新屏障错误留证；子任务只静态，既有门禁不重跑 |
+| 2026-10-09 | deploy/{README,nginx-security-headers.conf,Caddyfile.example,install-server.sh}；本组closeout/运行时/验证/交付记录及TASKS/STATUS/EVAL本组段 | CSP真BYOK/enforced门槛、备份30份提示和26项收口；systemd差异交部分一，正式头/命令不变。用户停止初始化排障，CLI插件重新获取成功但UI/控制未证；6285离线、无待Key窗口，真实仍1次/¥0.01213，无新增运行门禁/模型调用 |
+| 2026-10-09 | 本组C06 recovery-readiness/recovery-report、closeout、VALIDATION及TASKS/STATUS/EVAL本组段；ignored本地运维脚本/LOCAL-NOTES | 用户授权现有连接；真实Windows历史快照两副本/只读SQLite及现役Sync工作副本迁移/health/优雅停机/后检查通过，源原副本不变、六生产服务Running。记录传输未知态处置及版本清单；保留策略/账户解密未关闭。子任务只静态，root集中运维验收，无新增模型调用/稳定产品门禁/提交/部署 |
+| 2026-10-09 | 本组运行时恢复/bug记录、VALIDATION、live-validation-browser-report；本地 ignored scripts | 用户离线官方setup合法success=true、server exit0，但重开实际default/Cua仍失败、node_repl ACL os32；官方PR51822机制吻合，正式应用修复归属待核。精确ChatGPT/Codex StoreID已核，download-only无安装。6285本次退出后离线，ledgerSHA仍270e...、1次/¥0.01213，无新增调用 |
+| 2026-10-09 | 本组运行时恢复/bug记录、VALIDATION、live-validation-browser-report；本地 ignored logs/offline repair脚本 | 官方 elevated setup已完成但失败、Store无更新按钮；三项精确工具回收未解决，停止追杀。离线脚本等待正常退出、不kill，临时关闭子进程code_mode_host；公开只读预检双 census均0，未做离线setup或新增模型调用，账本仍1次/¥0.01213 |
+| 2026-10-09 | 本组运行时恢复记录、VALIDATION、live-validation-browser-report | 完整退出重开仍失败；已核验死 owner 后保留旧锁/账本副本，以4096普通启动恢复 locked host，Node 字节比较未变。公开 schema 与 readiness 已核验，尚无官方 setup/浏览器修复成功结论 |
+| 2026-10-09 | docs/VALIDATION、FILE-LOG；本组 live-validation-browser-report、codex-browser-runtime-recovery | 用户选择内置浏览器；完整退出重开后仍初始化失败，记录安全诊断/公开修复入口与接续条件。原账本完整 hash 链只读核对仍 1 次 / ¥0.01213，未新增模型调用；host 当前离线、残留锁未处置，不声称恢复成功 |
+| 2026-10-03 | README；docs/DESIGN、SYNC、SYNC-DEPLOY、MEMORY、ROADMAP、STATUS、EVAL、TASKS；deploy/README、nginx-80-redirect.conf.example；tools/local-bridge/README | C02→C04→C01→C03→D09→D10；[文档报告](./superpowers/plans/2026-10-03-docs-report.md) |
+| 2026-10-03 | docs/AUDIT-READING-2026-10-03.md | 主题＋逐文件局部阅读证据，不伪造旧§49或全仓覆盖 |
+| 2026-10-03 | apps/web/src/App.tsx、lib/admin.ts、components/Composer、MainChat、SideChat及4个新增测试 | A11/B04/B05；[界面报告](./superpowers/plans/2026-10-03-ui-navigation-report.md) |
+| 2026-10-03～04 | tools/local-bridge/{server,policy,session,site-adapter,transport,ask-flow,process-socket,ws-worker,bridge.test}.mjs及child fixture | B01/B02；[桥接报告](./superpowers/plans/2026-10-03-bridge-report.md) |
+| 2026-10-03～04 | apps/web/tests 独立package/workspace/lock、indexeddb.test、browser/idb-harness与indexeddb.browser、Playwright config/runner | D01；[IndexedDB报告](./superpowers/plans/2026-10-03-indexeddb-report.md)，根锁未改 |
+| 2026-10-03～04 | docs/superpowers/plans/2026-10-03-*-brief、*-report、review、execution；本节新增TASKS/STATUS/EVAL记录 | 本组方案、实施、审阅与接续记录；产品实现待收口项按台账保持待办 |
+| 2026-10-05 | tools/desktop/{launch,build-inputs,build-inputs.test}.mjs | B03 9/9及fix1两遍复审通过；[桌面报告](./superpowers/plans/2026-10-03-desktop-report.md) |
+| 2026-10-05 | apps/web/tests/ui/**、browser/ui-*.browser.ts、ui-playwright.config.ts、ui-run-browser.mjs | A11/B04/B05阶段真实浏览器fixture；fix1加强定位/滚动断言后8/8、两遍复审通过，B07后最终联测待补；[阶段报告](./superpowers/plans/2026-10-03-ui-browser-report.md) |
+| 2026-10-07～08 | packages/core/src/admin/**；apps/web/src/lib/{admin,session}.ts、components/{WorldBookDiff,Modal,DialogShell,SceneDialog}及管理员/弹窗测试 | A09/A10/D03代码范围完成，fix1静态复审通过；最新改动未运行，集中总测待办；[管理员报告](./superpowers/plans/2026-10-03-admin-dialog-report.md) |
+| 2026-10-07～08 | apps/web/tests/quality/{protocol,protocol-response,runner,protocol.test,provider.test}.ts；tools/desktop/validation-baseline.test.mjs | 隔离Low工具协议原始身份核验，fix1静态复审通过；补充用例待集中运行，真实调用0；[隔离报告](./superpowers/plans/2026-10-03-quality-csp-report.md) |
+| 2026-10-08 | apps/web/src/lib/session.ts、components/{SessionHarness.test,ImportRecoveryNotice,ImportRecoveryNotice.test,DatabaseRecovery.test}.tsx、App.tsx | B07 UI epoch/revision、lastRoom队列、完整读取选择策略；27固定时序与Web328通过，A13 web告警接线；[session报告](./superpowers/plans/2026-10-03-session-report.md)，核心安全/CAS仍待归属方 |
+| 2026-10-08 | apps/web/public/sw.js；tools/desktop/sw-lifecycle.test.mjs；apps/web/src/pwa/sw-policy.test.ts最后两例/必要mock；tests/sw/**及sw-* | B06分代外壳、原生锁、运行缓存隔离/降级；限定测试边界获用户批准，VM44/策略11/真实Edge6通过 |
+| 2026-10-08 | apps/web/src/components/MainChat.tsx；tests/browser/ui-chat.browser.ts；两UI报告 | 固定提前scroll red145px、layout跟随修补、完整真实Edge12/12；不推定历史flaky根因 |
+| 2026-10-08 | packages/core/src/eval/prompt-samples.test.ts | 用户额外限定批准的单文件历史夹具对齐：复用原书种子/解析上下文/保留条目断言；不改历史回答或生产校验 |
+| 2026-10-08 | tools/desktop/validation-*；tests/quality/**、csp/**及csp-*；docs/quality-fixtures/**、VALIDATION | 预算持久日志、Low共同shim、递归candidate依赖、冻结/盲评/隔离App入口；增强fake smoke通过，真实调用0，正式CSP未切换 |
+| 2026-10-08 | docs/TASKS、STATUS、EVAL、FILE-LOG、AUDIT-READING；本组execution/session/UI/SW/browser报告 | 最终集中证据与待验边界续记；子任务不运行门禁，根锁不改，工作区无提交/部署 |
+| 2026-10-08 | tests/csp/fake.ts、browser/csp-app.browser.ts；CSP/quality报告、VALIDATION及截断提案 | 最终真App fake7通过/1已知skip；真实首样本截断1/48、¥0.01213保守扣记，停止锁保持。指定下载/账本仅ignored留证，未读Key/推理链 |
+| 2026-10-08 | tools/desktop/validation-{common,journal,host,budget.test,durability.test,profile,profile.test,profile-test-helpers,recovery,recovery.test,live-plan,live-plan.test,live-browser}.mjs；tests/quality/{execution-profile,execution-profile.test,runner,types,page,index,provider.test,context.test}；本组提案/增量报告与台账 | 用户批准4096保账；validation40/quality50、类型/lint/隔离构建与四种fake边界/独立复审通过。原账本仅追加首条恢复审计，1次/¥0.01213保持，新host locked/新窗口待Key，无后续模型调用；根锁/冻结baseline不改 |

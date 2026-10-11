@@ -50,7 +50,7 @@ function describeFields(schema: SchemaLike, indent: string): string[] {
     const line = `${indent}- ${name}${required.has(name) ? '（必填）' : ''}${type === 'any' ? '' : ` <${type}>`}${options}${note}`;
 
     /*
-     * 嵌套对象/数组要展开一层：世界书的 entries 是「整本替换」的，
+     * 嵌套对象/数组要展开一层：世界书的 entries 是条目增改列表，
      * 不把条目里有哪些字段写清楚，模型就会漏掉 content 或 keys。
      */
     const nested = type === 'array' ? (field.items as SchemaLike | undefined) : type === 'object' ? field : undefined;

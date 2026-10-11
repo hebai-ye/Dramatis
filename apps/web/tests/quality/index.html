@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>D02 / C05 隔离验证</title></head>
+<body><main>
+<h1>D02 / C05 隔离验证</h1>
+<p id="ready">准备中</p>
+<p>DeepSeek V4.1 Flash · <strong>deepseek-flash / Low</strong>。Low 是隔离 fetch 注入，产品尚无 Low 选项。</p>
+<p id="executionProfile">等待核对服务器执行 profile；上限由服务器提供。</p>
+<p>真实总上限 <strong>48 请求 / ¥5</strong>，质量最多 44 请求，为 C05 留 4 次。逐次发送，无重试。失败、中止或缺 usage 消耗预留并停止。12 个小样本、两次重复仅探索证据。</p>
+<fieldset><legend>仅内存凭据与调用开关</legend>
+<label>Key <input id="key" type="password" autocomplete="off" spellcheck="false" placeholder="只由用户输入"></label><button type="button" id="clear">清除 Key</button>
+<label>官方固定 endpoint <input id="upstream" value="https://api.deepseek.com/v1/chat/completions" readonly></label>
+<label>Fake 场景 <select id="fakeScenario"><option>stream</option><option>json</option><option>slow</option><option>error</option><option>missing</option><option>length</option></select></label>
+<button type="button" id="fake">启用 fake（零模型调用）</button><button type="button" id="arm">显式开始真实验证</button><button type="button" id="lock">锁定调用</button>
+</fieldset>
+<pre id="budget"></pre>
+<fieldset><legend>一次质量样本</legend><label>盲评样本 <select id="sample"></select></label><button type="button" id="run">发送这一条</button><button type="button" id="stop">停止</button><h2>共同背景与任务</h2><p>双方使用同一份原卡、世界书、历史与用户任务。这里不显示侧别或系统提示词；请据此判断性格、记忆和任务正确性。</p><pre id="background"></pre><h2>待评分回复</h2><pre id="result"></pre></fieldset>
+<fieldset><legend>人工评分（与原始证据分开）</legend>
+<p>五项 0=不合格、1=能看、2=好；非角色不适用项选 N/A，不计满分。按 docs/QUALITY.md 判分。</p>
+<div id="rubric"></div><label>任务正确性（抽取/情绪/管理员）<select id="taskScore"><option>N/A</option><option>0</option><option>1</option><option>2</option></select></label>
+<label>判分人 <input id="assessor"></label><label>逐项理由 / 原文证据 <textarea id="scoreEvidence" rows="4"></textarea></label><button type="button" id="saveScore">记录评分</button></fieldset>
+<p><button type="button" id="downloadRaw">下载原始 JSONL</button><button type="button" id="downloadScores">下载人工评分 JSONL</button><button type="button" id="downloadMap">评分后下载侧别映射</button><button type="button" id="downloadLedger">下载总账</button></p>
+<p>App 入口：<a href="/" target="_blank" rel="noopener">隔离 production dist</a>。全新浏览器上下文与新测试账户，用户显式配置 BYOK Base URL：<code id="byok"></code>。App 请求计入 C05，同一总账。当前代理验证不代表直连任意 HTTPS 的 CSP 路径已通过；真 App、真 BYOK、离线、导入与 worker 均需按清单验收。</p>
+</main><script type="module" src="./page.ts"></script></body></html>

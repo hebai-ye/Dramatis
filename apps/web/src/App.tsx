@@ -19,16 +19,18 @@ import {
   needsWebBridge,
   type RoomId,
   renderPromptForWeb,
+  type Scene,
   type SignatureOwner,
   selectSceneMembers,
 } from '@dramatis/core';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { CardDesigner } from './components/CardDesigner';
 import { CastDetail } from './components/CastDetail';
 import { CastRail } from './components/CastRail';
 import { CastStrip } from './components/CastStrip';
 import { ChatControls } from './components/ChatControls';
 import { DialogShell } from './components/DialogShell';
+import { ImportRecoveryNotice } from './components/ImportRecoveryNotice';
 import { LazyPanel } from './components/LazyPanel';
 import { LeftRail, type RailPane } from './components/LeftRail';
 import { type FocusRequest, MainChat } from './components/MainChat';
@@ -36,7 +38,7 @@ import { MainHeader } from './components/MainHeader';
 import { NewConversationDialog } from './components/NewConversationDialog';
 import { PersonaLibrary } from './components/PersonaLibrary';
 import { RuntimePanel } from './components/RuntimePanel';
-import { SceneDialog } from './components/SceneDialog';
+import { SceneDialog, type SceneSwitchResult } from './components/SceneDialog';
 import type { SettingsCategory } from './components/SettingsDialog';
 import { SideChat } from './components/SideChat';
 import { TopBar } from './components/TopBar';
@@ -173,6 +175,10 @@ export function App() {
   }, [narrow]);
   const [pane, setPane] = useState<RailPane>('list');
   const [panelOpen, setPanelOpen] = useState(false);
+  // 桌面允许双开；缩到手机宽度时左栏优先，避免两侧位移同时作用。
+  useLayoutEffect(() => {
+    if (narrow && !collapsed && panelOpen) setPanelOpen(false);
+  }, [narrow, collapsed, panelOpen]);
   /** 账户与设置独立打开，入口函数确保不叠窗。 */
   const [settingsCategory, setSettingsCategory] = useState<SettingsCategory | null>(null);
   const [accountOpen, setAccountOpen] = useState(false);
@@ -223,6 +229,31 @@ export function App() {
   /** 「跳到原句」的最近一次请求（T11）：带序号，重复点击同一条也能再闪一次。 */
   const [focus, setFocus] = useState<FocusRequest | null>(null);
   const focusSeqRef = useRef(0);
+  const locateNavigationRef = useRef<Promise<void>>(Promise.resolve());
+  const locateTargetsRef = useRef<Set<ConversationId>>(new Set());
+  const previousConversationIdRef = useRef(conversation?.id);
+  useEffect(() => {
+    if (previousConversationIdRef.current === conversation?.id) return;
+    previousConversationIdRef.current = conversation?.id;
+    if (
+      focus !== null &&
+      focus.conversationId !== conversation?.id &&
+      (conversation?.id === undefined || !locateTargetsRef.current.has(conversation.id))
+    ) {
+      focusSeqRef.current += 1;
+      locateTargetsRef.current.clear();
+      setFocus(null);
+    }
+  }, [conversation?.id, focus]);
+  const cancelPendingFocus = useCallback((): void => {
+    focusSeqRef.current += 1;
+    locateTargetsRef.current.clear();
+    setFocus(null);
+  }, []);
+  const handleFocusConsumed = useCallback((request: FocusRequest): void => {
+    if (focusSeqRef.current === request.seq) locateTargetsRef.current.clear();
+    setFocus((current) => (current?.seq === request.seq ? null : current));
+  }, []);
   /*
    * 网页版桥接的状态（顺序 66 搬到 hooks/useWebBridge）：没有 API Key 时的第一条路。
    * 进度落 sessionStorage，刷新之后还在原来的那一步。名字照旧，调用点不用改。
@@ -234,6 +265,8 @@ export function App() {
   const [lastPrompt, setLastPrompt] = useState<AssembledPrompt | null>(null);
 
   const scene = session.scene;
+  const sceneUiScopeRef = useRef({ worldId: world?.id, conversationId: conversation?.id, sceneId: scene?.id });
+  sceneUiScopeRef.current = { worldId: world?.id, conversationId: conversation?.id, sceneId: scene?.id };
   const messages = session.messages;
   const instances = session.instances;
   const personas = session.personas;
@@ -400,32 +433,64 @@ export function App() {
 
   /** 切换场景：开一场新的，并留下一条旁白式动作（谁跟谁去了哪里）。 */
   const handleStartNewScene = useCallback(
-    async (input: { title: string; location: string; worldTime: string; cast?: readonly InstanceId[] }) => {
-      if (!world || !conversation) return;
+    async (input: {
+      title: string;
+      location: string;
+      worldTime: string;
+      cast?: readonly InstanceId[];
+    }): Promise<SceneSwitchResult> => {
+      if (!world || !conversation) return { status: 'unavailable', message: '当前对话尚未就绪，请稍后再试。' };
+      const scope = sceneUiScopeRef.current;
+      if (scope.worldId !== world.id || scope.conversationId !== conversation.id || scope.sceneId !== scene?.id)
+        return { status: 'unavailable', message: '当前场景已变化，请关闭后重新打开场景面板。' };
 
       const created = await session.startNewScene(input);
-      if (!created) return;
+      if (!created) return { status: 'unavailable', message: '未能开启新场景，请检查当前对话后再试。' };
 
-      const members = selectSceneMembers(instances, created);
-      const content = buildSceneTransitionNarration({ next: created, members });
+      try {
+        const members = selectSceneMembers(instances, created);
+        const content = buildSceneTransitionNarration({ next: created, members });
 
-      await session.appendMessages([
-        createNarrationMessage({
-          roomId: world.id,
-          conversationId: conversation.id,
-          sceneId: created.id,
-          turnId: createTurnId(),
-          content,
-        }),
-      ]);
+        await session.appendMessages([
+          createNarrationMessage({
+            roomId: world.id,
+            conversationId: conversation.id,
+            sceneId: created.id,
+            turnId: createTurnId(),
+            content,
+          }),
+        ]);
 
-      // 上一场戏在换场那一刻就该收尾：把它剩下的几轮压成场记，够多就接着滚一章
-      if (scene !== null && scene.id !== created.id) {
-        // 换场时也看一眼上一场：结尾那几轮不该丢在场记之外
-        await enqueueSceneSummary(scene, 'close');
+        if (scene !== null && scene.id !== created.id) await enqueueSceneSummary(scene, 'close');
+        return { status: 'complete' };
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error);
+        const message = `场景已切换，但换场记录或上一场收尾未完成：${detail}`;
+        setWarnings((previous) => [
+          ...previous.filter((notice) => notice.code !== 'scene.transition'),
+          { code: 'scene.transition', message },
+        ]);
+        return { status: 'partial', message: `换场记录或上一场收尾未完成：${detail}` };
       }
     },
-    [conversation, enqueueSceneSummary, instances, scene, session, world],
+    [conversation, enqueueSceneSummary, instances, scene, session, world, setWarnings],
+  );
+  const handleSceneSave = useCallback(
+    async (patch: Partial<Scene>): Promise<void> => {
+      const scope = sceneUiScopeRef.current;
+      if (
+        !world ||
+        !conversation ||
+        !scene ||
+        scope.worldId !== world.id ||
+        scope.conversationId !== conversation.id ||
+        scope.sceneId !== scene.id
+      )
+        throw new Error('当前场景已变化，请关闭后重新打开场景面板。');
+      const saved = await session.setWorldScene(patch, conversation.id, world.id);
+      if (saved === null) throw new Error('未能保存当前场景，请检查对话是否仍可编辑。');
+    },
+    [world, conversation, scene, session],
   );
 
   const handleNewConversation = useCallback(
@@ -486,21 +551,23 @@ export function App() {
 
   /** 「创建」走副对话；还没有世界就先建一个空世界，否则管理员无处落脚。 */
   const handleCreateWithAi = useCallback(async () => {
+    cancelPendingFocus();
     if (session.world === null) {
       await session.createWorld({ title: '新世界', persona: activePersona, cards: [] });
     }
     await session.openSideConversation();
     setPane('list');
-  }, [activePersona, session]);
+  }, [activePersona, cancelPendingFocus, session]);
 
   const handleToggleKind = useCallback(async () => {
+    cancelPendingFocus();
     if (conversation?.kind === 'side') {
       const main = session.conversations.find((item) => item.kind === 'main');
       if (main) await session.openConversation(main.id);
       return;
     }
     await session.openSideConversation();
-  }, [conversation, session]);
+  }, [cancelPendingFocus, conversation, session]);
 
   /**
    * 手机上左右两张卡片互斥（用户 2026-09-24 要求的「推开」效果里，同时推开两侧没有意义，
@@ -513,7 +580,7 @@ export function App() {
     }
     const opening = collapsed;
     setCollapsed(!opening);
-    if (!opening) setPanelOpen(false);
+    if (opening) setPanelOpen(false);
   }, [collapsed, narrow]);
 
   const handleTogglePanel = useCallback((): void => {
@@ -571,16 +638,18 @@ export function App() {
       }
 
       focusSeqRef.current += 1;
-      const request: FocusRequest = { id: hit.messageId, seq: focusSeqRef.current };
-
-      if (hit.conversationId !== conversation?.id) {
-        // 先切对话，再亮原句：立刻亮会落在一个还没渲染出来的节点上
-        void session.openConversation(hit.conversationId).then(() => setFocus(request));
-        return;
-      }
+      const request: FocusRequest = { id: hit.messageId, seq: focusSeqRef.current, conversationId: hit.conversationId };
+      locateTargetsRef.current.add(hit.conversationId);
       setFocus(request);
+      // 同时点多条记忆时按请求顺序切换；后发的目标最终获胜，过期请求不再启动。
+      locateNavigationRef.current = locateNavigationRef.current
+        .catch(() => {})
+        .then(async () => {
+          if (focusSeqRef.current !== request.seq) return;
+          await session.openConversation(hit.conversationId);
+        });
     },
-    [conversation, session, setWarnings],
+    [session, setWarnings],
   );
 
   /**
@@ -903,25 +972,28 @@ export function App() {
   const handleAddInstance = useCallback((card: Card) => void session.addInstance(card), [session]);
   const handleOpenWorld = useCallback(
     (id: RoomId) => {
+      cancelPendingFocus();
       void session.openWorld(id);
       closeRailOnNarrow();
     },
-    [closeRailOnNarrow, session],
+    [cancelPendingFocus, closeRailOnNarrow, session],
   );
   const handleNewConversationInWorld = useCallback(
     async (id: RoomId) => {
+      cancelPendingFocus();
       if (world?.id !== id) await session.openWorld(id);
       setNewConversationMode({ kind: 'in-world', worldId: id });
       closeRailOnNarrow();
     },
-    [closeRailOnNarrow, session, world?.id],
+    [cancelPendingFocus, closeRailOnNarrow, session, world?.id],
   );
   const handleOpenConversation = useCallback(
     (id: ConversationId) => {
+      cancelPendingFocus();
       void session.openConversation(id);
       closeRailOnNarrow();
     },
-    [closeRailOnNarrow, session],
+    [cancelPendingFocus, closeRailOnNarrow, session],
   );
   const handleArchiveConversation = useCallback(
     (target: Conversation) => {
@@ -945,19 +1017,44 @@ export function App() {
    * 副对话（世界管理员）那一批回调同理（顺序 59）：`SideChat` 也 memo 了，
    * 传内联箭头函数等于每次 App 渲染都让它白重画一遍。
    */
-  const handleAdminSend = useCallback((text: string) => void admin.send(text), [admin]);
+  const handleAdminSend = useCallback(
+    (text: string, targetConversationId?: ConversationId) => void admin.send(text, targetConversationId),
+    [admin],
+  );
   const handleAdminBridgeCommit = useCallback((text: string) => void admin.commitBridge(text), [admin]);
+  const artifactOperationsRef = useRef(new Map<string, Promise<void>>());
+  const runArtifactAction = useCallback(
+    (id: MessageId, artifact: AdminArtifact, action: () => Promise<void>): Promise<void> => {
+      const key = JSON.stringify([world?.id, id, artifact.id]);
+      const existing = artifactOperationsRef.current.get(key);
+      if (existing) return existing;
+      const operation = action().finally(() => {
+        artifactOperationsRef.current.delete(key);
+      });
+      artifactOperationsRef.current.set(key, operation);
+      return operation;
+    },
+    [world?.id],
+  );
   const handleAdoptArtifact = useCallback(
-    (id: MessageId, artifact: AdminArtifact) => void session.adoptArtifact(id, artifact.id),
-    [session],
+    (id: MessageId, artifact: AdminArtifact) =>
+      runArtifactAction(id, artifact, () => session.adoptArtifact(id, artifact.id)),
+    [session, runArtifactAction],
   );
   const handleDiscardArtifact = useCallback(
-    (id: MessageId, artifact: AdminArtifact) => void session.discardArtifact(id, artifact.id),
-    [session],
+    (id: MessageId, artifact: AdminArtifact) =>
+      runArtifactAction(id, artifact, () => session.discardArtifact(id, artifact.id)),
+    [session, runArtifactAction],
   );
   const handleRevokeArtifact = useCallback(
-    (id: MessageId, artifact: AdminArtifact) => void session.revokeArtifact(id, artifact.id),
-    [session],
+    (id: MessageId, artifact: AdminArtifact) =>
+      runArtifactAction(id, artifact, () => session.revokeArtifact(id, artifact.id)),
+    [session, runArtifactAction],
+  );
+  const handleReverseArtifact = useCallback(
+    (id: MessageId, artifact: AdminArtifact) =>
+      runArtifactAction(id, artifact, () => session.reverseArtifact(id, artifact.id)),
+    [session, runArtifactAction],
   );
   /** 素材库 id 清单：每次渲染新造一个数组会让 `SideChat` 的 memo 失效。 */
   const adminExistingIds = useMemo(
@@ -1021,6 +1118,11 @@ export function App() {
             onTogglePanel={handleTogglePanel}
           />
         }
+      />
+
+      <ImportRecoveryNotice
+        recoveredImports={boot?.recoveredImports ?? 0}
+        warnings={boot?.importRecoveryWarnings ?? []}
       />
 
       <div className={collapsed ? 'app-body collapsed' : 'app-body'}>
@@ -1193,6 +1295,9 @@ export function App() {
                   onAdopt={handleAdoptArtifact}
                   onDiscard={handleDiscardArtifact}
                   onRevoke={handleRevokeArtifact}
+                  onReverse={handleReverseArtifact}
+                  conversations={session.conversations}
+                  worldBooks={session.library.worldBooks}
                   existingIds={adminExistingIds}
                 />
               ) : (
@@ -1206,6 +1311,7 @@ export function App() {
                   ready={ready}
                   archived={archived}
                   focus={focus}
+                  onFocusConsumed={handleFocusConsumed}
                   showIntent={appearance.value.showIntent}
                   bridge={bridge}
                   manualMode={bridge !== null || needsWebBridge(providers.apiKey)}
@@ -1349,8 +1455,8 @@ export function App() {
           instances={instances}
           disabled={disabled}
           onClose={() => setSceneOpen(false)}
-          onSave={(patch) => void session.updateScene(patch)}
-          onStartNewScene={(input) => void handleStartNewScene(input)}
+          onSave={handleSceneSave}
+          onStartNewScene={handleStartNewScene}
         />
       ) : null}
 

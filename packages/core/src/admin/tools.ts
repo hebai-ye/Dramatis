@@ -1,3 +1,11 @@
+export {
+  diffWorldBook,
+  isCompleteWorldBook,
+  isModifiedWorldBookArtifact,
+  reverseWorldBookDraft,
+  worldBookArtifactConflict,
+} from './world-book.js';
+
 import {
   type Card,
   createBlankCard,
@@ -17,6 +25,7 @@ import type { Persona } from '../model/persona.js';
 import type { CastPolicy, Scene } from '../model/room.js';
 import type { ChatToolCall, ToolDefinition } from '../prompt/types.js';
 import { asRecord, text } from '../util/json.js';
+import { isCompleteWorldBook } from './world-book.js';
 
 /**
  * 副对话的工具集（LAYOUT 待确认第 4 条：先只做素材那几件）。
@@ -111,30 +120,31 @@ export const ADMIN_TOOLS: readonly ToolDefinition[] = [
       description:
         '起草或修改一本世界书（也就是世界卡）。关键词触发时才会插入提示词，' +
         'constant 为 true 的条目每轮都在。修改已有的书时必须带上 bookId，' +
-        '并且 entries 是**整本替换**：原有条目要一并写回，不要只交新增的那几条。' +
-        '（同名条目会保留它原有的插入位置、概率等设置，所以照原样传回来就是安全的。）',
+        'entries 是条目增改列表：修改通过 entryId 定位，省略条目和字段保留原值；新条目不填 entryId，content 必填。' +
+        '删除仅通过 deleteEntryIds 显式指定；修改可省略 name，新建必须提供 name。',
       parameters: {
         type: 'object',
         properties: {
           bookId: { type: 'string', description: '修改已有世界书时填它的 id；新建时留空' },
-          name: { type: 'string', description: '世界书的名字' },
+          name: { type: 'string', description: '世界书的名字（新建必填，修改可省略）' },
+          deleteEntryIds: { type: 'array', items: { type: 'string' }, description: '明确要删除的条目 ID；省略不删除' },
           entries: {
             type: 'array',
-            description: '条目列表',
+            description: '需要新增或修改的条目；省略条目保留',
             items: {
               type: 'object',
               properties: {
+                entryId: { type: 'string', description: '修改必填原条目 ID，新建省略' },
                 title: { type: 'string' },
                 keys: { type: 'array', items: { type: 'string' }, description: '触发关键词' },
                 content: { type: 'string', description: '命中后插入的设定正文' },
                 constant: { type: 'boolean', description: '常驻条目，不需要关键词' },
                 order: { type: 'number', description: '排序权重，默认 100' },
               },
-              required: ['content'],
             },
           },
         },
-        required: ['name', 'entries'],
+        required: ['entries'],
       },
     },
   },
@@ -178,7 +188,7 @@ export const ADMIN_TOOLS: readonly ToolDefinition[] = [
     function: {
       name: 'set_scene',
       description:
-        '设置当前场景：地点、世界内时间、场景设定或入场策略。**只写用户明确要求改的字段**，' +
+        '即时设置本轮明确选定主对话的场景；未选目标必须先请用户选择，不能推测目标。地点、世界内时间、场景设定或入场策略。**只写用户明确要求改的字段**，' +
         '没有提到的不要顺手改（尤其是 castPolicy：把锁定的场子改成 open 等于允许 AI 自行拉角色入场）。',
       parameters: {
         type: 'object',
@@ -217,6 +227,7 @@ export interface WorldBookDraft {
   kind: 'world-book';
   bookId: WorldBookId | null;
   book: WorldBook;
+  previous: WorldBook | null;
   /** 同 `CharacterCardDraft.baseUpdatedAt`。 */
   baseUpdatedAt: string | null;
   summary: string;
@@ -385,82 +396,89 @@ function parseCardDraft(args: Record<string, unknown>, context: AdminToolContext
 }
 
 function parseWorldBookDraft(args: Record<string, unknown>, context: AdminToolContext): AdminToolParseResult {
-  const name = text(args.name);
-  if (name === '') return { ok: false, error: 'name 不能为空' };
-
+  if (mentioned(args, 'bookId') && typeof args.bookId !== 'string')
+    return { ok: false, error: 'bookId 必须是字符串；修改时请提供已有世界书 ID' };
   const rawId = text(args.bookId);
-  const known = context.knownBookIds;
-  const base = rawId === '' ? null : (context.worldBooks?.find((book) => book.id === rawId) ?? null);
-  if (rawId !== '' && base === null && known !== undefined && !known.includes(rawId)) {
-    return { ok: false, error: `素材库里没有 id 为 ${rawId} 的世界书；要新建就留空 bookId` };
+  const base =
+    rawId === '' ? null : (context.worldBooks?.find((book) => book.id === rawId && book.deletedAt === null) ?? null);
+  if (rawId !== '' && (base === null || !isCompleteWorldBook(base))) {
+    return { ok: false, error: `世界书 ${rawId} 不存在或缺少完整原书，请重新起草` };
   }
-
+  const name = mentioned(args, 'name') ? text(args.name) : (base?.name ?? '');
+  if (name === '') return { ok: false, error: 'name 不能为空' };
   if (!Array.isArray(args.entries)) return { ok: false, error: 'entries 必须是数组' };
-
-  /*
-   * 同名条目复用旧记录（顺序 86，审计 B6）。
-   *
-   * 模型只能给 title/keys/content/constant/order 这五个字段，而一条条目还有插入位置、
-   * 概率、分组、递归设置等十来项——那些是用户在界面上调过的。以前每次「改几个字」都会
-   * 重新生成一批条目，这些设置连同条目 id 一起消失；而条目 id 还写进提示词块 id
-   * （`worldbook:<书>:<条目>`），换一批等于把调试时的对照关系打散。
-   * 同名就当作同一条：只覆盖模型明确给出的那五个字段。
-   */
-  const reusable = new Map<string, WorldBookEntry[]>();
-  for (const entry of base?.entries ?? []) {
-    const bucket = reusable.get(entry.title);
-    if (bucket === undefined) reusable.set(entry.title, [entry]);
-    else bucket.push(entry);
+  const deletions = args.deleteEntryIds ?? [];
+  if (!Array.isArray(deletions) || deletions.some((id) => typeof id !== 'string' || id === '')) {
+    return { ok: false, error: 'deleteEntryIds 必须是条目 ID 数组' };
   }
-
-  const entries: WorldBookEntry[] = [];
+  const originals = new Map((base?.entries ?? []).map((entry) => [entry.id, entry]));
+  const deleted = new Set<string>();
+  for (const id of deletions) {
+    if (deleted.has(id) || !originals.has(id)) return { ok: false, error: `重复或未知的删除条目 ${id}` };
+    deleted.add(id);
+  }
+  const updates = new Map<string, WorldBookEntry>();
+  const additions: WorldBookEntry[] = [];
   for (const [index, item] of args.entries.entries()) {
     const record = asRecord(item);
-    if (!record) return { ok: false, error: `entries[${String(index)}] 必须是对象` };
-
-    const content = longText(record.content);
-    if (content === '') return { ok: false, error: `entries[${String(index)}].content 不能为空` };
-
-    const keys = Array.isArray(record.keys) ? record.keys.map((key) => text(key)).filter((key) => key !== '') : [];
-    const constant = record.constant === true;
-    if (!constant && keys.length === 0) {
-      return {
-        ok: false,
-        error: `entries[${String(index)}] 既不是常驻条目又没有 keys：那它永远不会被插入`,
-      };
+    if (!record) return { ok: false, error: `entries[${index}] 必须是对象` };
+    if (mentioned(record, 'entryId') && typeof record.entryId !== 'string')
+      return { ok: false, error: 'entryId 必须是字符串' };
+    const id = text(record.entryId);
+    if (id !== '' && (!originals.has(id) || updates.has(id) || deleted.has(id))) {
+      return { ok: false, error: `重复、未知或同时删除的条目 ${id}` };
     }
-
-    const order = typeof record.order === 'number' && Number.isFinite(record.order) ? record.order : 100;
-    const title = text(record.title) === '' ? (keys[0] ?? name) : text(record.title);
-    // 同一个标题在旧书里出现两次时，按顺序一对一认领，不会两条都套到同一条上
-    const previous = reusable.get(title)?.shift() ?? null;
-    entries.push(
-      previous === null
-        ? createWorldBookEntry({ title, keys, content, constant, order })
-        : { ...previous, title, keys, content, constant, order },
-    );
+    const old = originals.get(id);
+    if (old === undefined && longText(record.content) === '')
+      return { ok: false, error: `entries[${index}].content 不能为空` };
+    if (
+      mentioned(record, 'keys') &&
+      (!Array.isArray(record.keys) || record.keys.some((key) => typeof key !== 'string'))
+    )
+      return { ok: false, error: 'keys 必须是字符串数组' };
+    if (mentioned(record, 'constant') && typeof record.constant !== 'boolean')
+      return { ok: false, error: 'constant 必须是布尔值' };
+    if (mentioned(record, 'order') && (typeof record.order !== 'number' || !Number.isFinite(record.order)))
+      return { ok: false, error: 'order 必须是有限数值' };
+    const entry = { ...(old ?? createWorldBookEntry()) };
+    if (mentioned(record, 'content')) entry.content = longText(record.content);
+    if (Array.isArray(record.keys)) entry.keys = record.keys.map((key) => text(key)).filter(Boolean);
+    if (typeof record.constant === 'boolean') entry.constant = record.constant;
+    if (typeof record.order === 'number') entry.order = record.order;
+    if (mentioned(record, 'title')) entry.title = text(record.title);
+    else if (!old) entry.title = entry.keys[0] ?? name;
+    if (!entry.constant && entry.keys.length === 0)
+      return { ok: false, error: `entries[${index}] 必须为常驻或提供 keys，否则永远不会被插入` };
+    if (old) updates.set(id, entry);
+    else additions.push(entry);
   }
-
+  const entries = [
+    ...(base?.entries ?? []).filter((entry) => !deleted.has(entry.id)).map((entry) => updates.get(entry.id) ?? entry),
+    ...additions,
+  ];
+  if (entries.some((entry) => !entry.constant && entry.keys.length === 0))
+    return { ok: false, error: '合并后的每条设定必须为常驻或提供 keys' };
   const now = nowIso();
-  const book: WorldBook = {
-    id: base?.id ?? (rawId === '' ? asWorldBookId(newId()) : asWorldBookId(rawId)),
-    name,
-    entries,
-    // `extensions`（未识别字段）与 `createdAt` 是这本文档的历史，草稿不该把它们抹掉
-    extensions: base?.extensions ?? {},
-    createdAt: base?.createdAt ?? now,
-    updatedAt: base?.updatedAt ?? now,
-    deletedAt: null,
-  };
-
+  const book: WorldBook = base
+    ? { ...base, name, entries }
+    : {
+        id: asWorldBookId(newId()),
+        name,
+        entries,
+        extensions: {},
+        createdAt: now,
+        updatedAt: now,
+        deletedAt: null,
+      };
   return {
     ok: true,
     draft: {
       kind: 'world-book',
-      bookId: rawId === '' ? null : asWorldBookId(rawId),
+      bookId: base?.id ?? null,
       book,
+      previous: base,
       baseUpdatedAt: base?.updatedAt ?? null,
-      summary: `${rawId === '' ? '新建' : '修改'}世界书「${name}」（${String(entries.length)} 条）`,
+      summary: `${base ? '修改' : '新建'}世界书「${name}」（${entries.length} 条）`,
     },
   };
 }
@@ -569,14 +587,14 @@ function parseSceneDraft(args: Record<string, unknown>): AdminToolParseResult {
  */
 const KNOWN_ARGS: Record<AdminToolName, readonly string[]> = {
   upsert_character_card: ['name', 'cardId', 'description', 'nickname', 'personality', 'tags'],
-  upsert_world_book: ['name', 'bookId', 'entries'],
+  upsert_world_book: ['name', 'bookId', 'entries', 'deleteEntryIds'],
   upsert_persona: ['name', 'description', 'personaId'],
   delete_persona: ['personaId', 'confirmName'],
   set_scene: ['title', 'location', 'worldTime', 'summary', 'castPolicy'],
 };
 
 /** 世界书条目里认得的那几个键（条目里多写的也要说一声）。 */
-const KNOWN_ENTRY_ARGS: readonly string[] = ['title', 'keys', 'content', 'constant', 'order'];
+const KNOWN_ENTRY_ARGS: readonly string[] = ['entryId', 'title', 'keys', 'content', 'constant', 'order'];
 
 function unknownArgsOf(args: Record<string, unknown>, known: readonly string[]): string[] {
   return Object.keys(args)

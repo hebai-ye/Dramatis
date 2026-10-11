@@ -111,66 +111,122 @@ describe('sw.js 缓存策略（审计 A2）', () => {
     }
   });
 
-  it('安装和激活两次刷新仍保留上一版已缓存模块', async () => {
-    const items = new Map<string, Response>([
-      ['/assets/shell-assets.json', Response.json({ files: ['/assets/old-123.js'] })],
-      ['/assets/old-123.js', new Response('old module')],
-    ]);
-    const cache = {
-      match: async (path: string) => items.get(path)?.clone(),
-      put: async (path: string, response: Response) => {
-        items.set(path, response.clone());
+  // These lifecycle cases need distinct caches and a shared lock, rather than
+  // aliasing every cache name to one mutable Map. Cache.put commits one entry;
+  // writes to another cache are deliberately visible before pointer publication.
+  function refreshFixture() {
+    class BasicResponse extends Response {
+      override get type(): ResponseType {
+        return 'basic';
+      }
+      override clone(): Response {
+        const copy = super.clone();
+        Object.setPrototypeOf(copy, BasicResponse.prototype);
+        return copy;
+      }
+    }
+    const reply = (body: string, type: string) => new BasicResponse(body, { headers: { 'content-type': type } });
+    const json = (body: unknown) => reply(JSON.stringify(body), 'application/json');
+    const stores = new Map<string, Map<string, Response>>();
+    const deleted: string[] = [];
+    const generationPrefix = 'dramatis-shell-generation-v1-';
+    const fixture = { version: 'A', failPut: '', deleted };
+    const key = (input: string | { url: string }) =>
+      new URL(typeof input === 'string' ? input : input.url, origin).href;
+    const caches = {
+      open: async (name: string) => {
+        if (!stores.has(name)) stores.set(name, new Map());
+        const items = stores.get(name);
+        if (!items) throw new Error('测试缓存未创建');
+        return {
+          match: async (input: string | { url: string }) => items.get(key(input))?.clone(),
+          put: async (input: string | { url: string }, response: Response) => {
+            if (name.startsWith(generationPrefix) && new URL(key(input)).pathname === fixture.failPut)
+              throw new Error('新模块缓存失败');
+            items.set(key(input), response.clone());
+          },
+          keys: async () => [...items.keys()].map((url) => ({ url })),
+        };
       },
-      keys: async () => [...items.keys()].map((path) => ({ url: origin + path })),
-      delete: async (request: { url: string }) => items.delete(new URL(request.url).pathname),
-      addAll: async (paths: string[]) => {
-        for (const path of paths)
-          items.set(
-            path,
-            path === '/assets/shell-assets.json'
-              ? Response.json({ files: ['/assets/account-456.js', '/assets/new-456.js'] })
-              : new Response('new'),
-          );
+      keys: async () => [...stores.keys()],
+      delete: async (name: string) => {
+        deleted.push(name);
+        return stores.delete(name);
       },
     };
+    let serial = 0;
+    let tail = Promise.resolve();
     const sw = loadSw({
-      caches: { open: async () => cache, keys: async () => [] },
-      fetch: async (path: string) =>
-        path === '/index.html'
-          ? new Response('<script src="/assets/new-456.js"></script>')
-          : Response.json(
-              path === '/assets/shell-assets.json'
-                ? { files: ['/assets/account-456.js', '/assets/new-456.js'] }
-                : { icons: [] },
-            ),
+      caches,
+      navigator: {
+        locks: {
+          request: (_name: string, _options: unknown, callback: () => Promise<string[]>) => {
+            const pending = tail.then(callback);
+            tail = pending.then(
+              () => undefined,
+              () => undefined,
+            );
+            return pending;
+          },
+        },
+      },
+      crypto: { randomUUID: () => String(++serial) },
+      fetch: async (path: string) => {
+        const name = fixture.version;
+        if (path === '/index.html')
+          return reply(
+            `<title>${name}</title><script src="/assets/main-${name}.js"></script><link href="/assets/main-${name}.css" rel="stylesheet">`,
+            'text/html',
+          );
+        if (path === '/assets/shell-assets.json')
+          return json({ files: [`/assets/main-${name}.js`, `/assets/main-${name}.css`, `/assets/lazy-${name}.js`] });
+        if (path === '/manifest.webmanifest') return json({ icons: [] });
+        if (path.endsWith('.css')) return reply(`/* css ${name} */`, 'text/css');
+        return reply(path.includes('lazy-') ? `lazy ${name}` : `main ${name}`, 'text/javascript');
+      },
     });
-    await sw.refreshShell();
-    await sw.refreshShell();
-    expect(items.has('/assets/new-456.js')).toBe(true);
-    expect(await items.get('/assets/old-123.js')?.text()).toBe('old module');
+    const read = async (name: string, path: string) => (await (await caches.open(name)).match(path))?.text();
+    const pointer = async () => {
+      const cached = await (await caches.open('dramatis-shell-control-v1')).match('/__dramatis/active-shell');
+      if (!cached) return undefined;
+      return (await cached.json()) as { active: string; previous: string | null };
+    };
+    return { deleted, state: fixture, sw, caches, read, pointer };
+  }
+
+  it('安装和激活两次刷新仍保留上一版已缓存模块', async () => {
+    const fixture = refreshFixture();
+    // Publish A first, including its lazy module that B's HTML never imports.
+    await fixture.sw.refreshShell();
+    const first = await fixture.pointer();
+    if (!first) throw new Error('A 外壳未发布');
+    fixture.state.version = 'B';
+    await fixture.sw.refreshShell();
+    await fixture.sw.refreshShell();
+    const current = await fixture.pointer();
+    if (!current) throw new Error('B 外壳未发布');
+    expect(current.active).not.toBe(first.active);
+    expect(await fixture.read(current.active, '/assets/main-B.js')).toBe('main B');
+    expect(await fixture.read(current.active, '/assets/lazy-A.js')).toBe('lazy A');
+    expect(await fixture.read(current.active, '/assets/lazy-B.js')).toBe('lazy B');
+    expect(await fixture.read(current.active, '/index.html')).toContain('<title>B</title>');
+    expect((await fixture.caches.keys()).filter((name) => name.startsWith('dramatis-shell-generation-v1-'))).toEqual(
+      expect.arrayContaining([current.active, current.previous]),
+    );
   });
 
   it('新模块缓存失败时不清掉已经可用的旧外壳', async () => {
-    let deleted = false;
-    const cache = {
-      match: async () => undefined,
-      keys: async () => [{ url: `${origin}/assets/old-123.js` }],
-      put: async () => {},
-      delete: async () => {
-        deleted = true;
-      },
-      addAll: async () => {
-        throw new Error('新模块下载失败');
-      },
-    };
-    const sw = loadSw({
-      caches: { open: async () => cache, keys: async () => [] },
-      fetch: async (path: string) =>
-        path === '/index.html'
-          ? new Response('')
-          : Response.json(path === '/assets/shell-assets.json' ? { files: ['/assets/new-456.js'] } : { icons: [] }),
-    });
-    await expect(sw.refreshShell()).rejects.toThrow('新模块下载失败');
-    expect(deleted).toBe(false);
+    const fixture = refreshFixture();
+    await fixture.sw.refreshShell();
+    const before = await fixture.pointer();
+    if (!before) throw new Error('A 外壳未发布');
+    const beforeHTML = await fixture.read(before.active, '/index.html');
+    fixture.state.version = 'B';
+    fixture.state.failPut = '/assets/lazy-B.js';
+    await expect(fixture.sw.refreshShell()).rejects.toThrow('新模块缓存失败');
+    expect(await fixture.pointer()).toEqual(before);
+    expect(await fixture.read(before.active, '/index.html')).toBe(beforeHTML);
+    expect(await fixture.read(before.active, '/assets/lazy-A.js')).toBe('lazy A');
+    expect(fixture.deleted).toEqual([]);
   });
 });

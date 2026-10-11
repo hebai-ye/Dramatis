@@ -1,16 +1,23 @@
 # Dramatis · 登场
 
-> 多角色扮演酒馆 —— 导演你的角色阵容，让每个角色记住属于自己的故事。
+> 多角色 AI 角色扮演酒馆：导演你的角色阵容，让故事从各自的视角展开。
 
-**TL;DR (English)** — Dramatis is an open-source multi-character AI roleplay tavern for Web, Android and desktop. Direct the cast, lock the scene, and let every character keep their own memory and personality. SillyTavern-compatible character cards and world books. Local-first with optional cloud sync. Bring your own API key.
+Dramatis（中文名 **登场**）面向喜欢角色卡、世界设定与多角色互动的玩家，适合自用和小圈子分享。你可以把多个角色放进同一场景，控制谁在场、谁开口，并查看与调整每个角色的记忆。
 
-`sillytavern-compatible` · `ai-roleplay` · `character-card` · `worldbook` · `local-first` · `byok` · `pwa` · `tauri` · `capacitor`
+- **导演同场对话**：安排角色入场、静默或离场，锁定场景阵容，查看发言调度的得分与理由。
+- **管理角色视角记忆**：按角色查看、编辑、置顶记忆，跳回原句；当前召回采用关键词与规则评分。
+- **导入创作素材**：支持 SillyTavern 的 PNG / JSON 角色卡与 JSON 世界书，继续使用已有的角色和世界设定。
+- **本地优先，模型自选**：对话与世界数据保存在浏览器本地，支持自带 API Key 的 OpenAI 兼容接口，并可选择端到端加密同步。
 
----
+**English** — An open-source, local-first AI roleplay frontend with multi-character scenes, perspective-based memory, and SillyTavern character card and world book imports. Bring your own API key; optional end-to-end encrypted sync.
+
+[快速开始](#快速开始) · [桌面入口](#桌面入口推荐用来试用) · [当前进展](docs/STATUS.md) · [路线图](docs/ROADMAP.md) · [反馈与讨论](https://github.com/hebai-ye/Dramatis/issues)
 
 ## 项目状态
 
-**P0 全部完成，P1 全部收口，P2 做到「账号与同步上线 + 桌面 + 安卓壳」** —— 兼容层、本地持久化、多角色同场、意图先行调度、视角化记忆与记忆面板、端到端加密的多设备同步都可以运行，并有覆盖各包的单元测试（数量以 `pnpm test` 输出为准）。进度见 [docs/ROADMAP.md](docs/ROADMAP.md)，界面规格见 [docs/LAYOUT.md](docs/LAYOUT.md)。
+当前提供 Web / PWA 和 Windows 桌面启动器，已实现多角色对话、视角化记忆、素材导入、本地持久化与可选加密同步。桌面通过浏览器应用窗口运行；Android Capacitor 壳已具备构建路径，仍待真机验证，详见 [桌面现状](docs/DESKTOP.md) 与 [Android 验证边界](docs/ANDROID.md)。当前仓库尚无 GitHub Release。
+
+向量召回与持续自主的幕后生活模拟尚未实现。当前实现、历史验证记录和待验事项见 [docs/STATUS.md](docs/STATUS.md)；长期计划见 [docs/ROADMAP.md](docs/ROADMAP.md)。
 
 已经能用的：
 
@@ -35,11 +42,11 @@
 - **归档与回顾**：归档的对话从主列表移走（情绪 / 关系 / 记忆回滚），但可以回顾，也能**导出正文**带走
 - **情绪与关系**：后台推演每个角色的情绪与对玩家的态度，变化都带理由且可在阵容面板查看
 - **抗漂移**：单轮变化有上限、情绪会自然褪色、重抽能精确撤销，长跑不会越滚越偏
-- 流式输出，兼容一切 OpenAI 协议的接口，自带 Key
+- 支持 OpenAI 兼容接口与流式输出，自带 API Key
 - **多设备同步**：自己的服务器或任何实现了同一协议的端点，端到端加密（用户内容是密文，服务端可见协议元数据），
   每轮对话结束自动推一次
 - 入场策略（锁定 / 仅限召唤 / 条件触发 / 自由入场）会作为导演指令写进 prompt
-- 预算守卫：超长时按固定顺序降级，并保证一定产出可用的 prompt
+- 预算守卫：按固定顺序裁剪超长上下文，尽量在模型上下文预算内装配 prompt
 - 界面里的 Prompt 检查器会显示每次装配的区块与降级情况
 
 还没有的：向量召回（有明确触发条件，见 EVAL 第五节）、安卓真机验证（壳与 APK 已就位，见 [docs/ANDROID.md](docs/ANDROID.md)）。
@@ -93,9 +100,9 @@ pnpm test
 
 Dramatis（中文名 **登场**）是一个开源的多角色扮演酒馆前端。名字取自 *dramatis personae*（剧中人物表），也对应它最核心的动作：**让角色登场**。
 
-它做的不是"和多个 AI 角色分别聊天"，而是让你像导演一样掌控一个持续运转的场景——谁在场、谁沉默、谁在幕后，以及每个人各自记得什么。
+它围绕同一个场景中的多角色互动展开：由你安排谁在场、谁沉默、谁离场，以及查看和调整每个人各自记得什么。
 
-**与 SillyTavern 的关系**：兼容它的生态（角色卡、世界书、预设、聊天记录都可以直接导入），但不是它的分支，也不是来取代它的。Dramatis 做的是它结构上做不到的那部分。
+**与 SillyTavern 的关系**：Dramatis 是独立项目，当前兼容范围包括角色卡与世界书导入；预设、聊天记录等格式的支持应按各项实现与验证状态判断。
 
 ## 核心设计
 
@@ -139,7 +146,7 @@ Dramatis（中文名 **登场**）是一个开源的多角色扮演酒馆前端�
 
 ### 不会卡死：硬预算守卫
 
-拼装 prompt 前做 token 预算核算，超出就按优先级降级：丢最旧的原文 → 丢低分召回 → 压缩关系描述。**永远不因为超长而报错**，宁可信息少也要出得来话。
+拼装 prompt 前做 token 预算核算，超出就按优先级降级：丢最旧的原文 → 丢低分召回 → 压缩关系描述。预算守卫会裁剪超长上下文；实际生成仍受模型接口、上下文上限与请求状态影响。
 
 ### 人格动态：慢变量 + 快变量
 

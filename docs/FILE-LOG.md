@@ -2002,3 +2002,5 @@ Windows 本机临时库／真实浏览器完成同意登记、不登记注册、
 | 2026-10-08 | tools/desktop/validation-{common,journal,host,budget.test,durability.test,profile,profile.test,profile-test-helpers,recovery,recovery.test,live-plan,live-plan.test,live-browser}.mjs；tests/quality/{execution-profile,execution-profile.test,runner,types,page,index,provider.test,context.test}；本组提案/增量报告与台账 | 用户批准4096保账；validation40/quality50、类型/lint/隔离构建与四种fake边界/独立复审通过。原账本仅追加首条恢复审计，1次/¥0.01213保持，新host locked/新窗口待Key，无后续模型调用；根锁/冻结baseline不改 |
 
 | 2026-10-11 | 顺序121：App/styles/MainChat/SideChat/session与自有夹具、session-library限定授权对齐、本组发布报告/台账 | 合并主线112–120，集中回归通过；仅前端静态发布准备，详情见[发布报告](./superpowers/plans/2026-10-11-ui-release-report.md) |
+
+| 2026-10-11 | 顺序121自有发布报告及TASKS/STATUS/EVAL/FILE-LOG续记 | 前端静态部署与公网/可见浏览器验证完成，旧目录及哈希资源保留；后台及正式BYOK不计上线 |

@@ -67,7 +67,6 @@ export function TopBar({
       {narrow ? null : (
         <span className="brand-inline">
           <strong>Dramatis</strong>
-          <span className="hint">世界视图预留</span>
         </span>
       )}
 

@@ -13,6 +13,7 @@ import {
   SYNC_KEY_ITERATIONS,
   verifyCredential,
 } from '@dramatis/core';
+import { createProbeReporter } from './probe-reporter';
 
 /**
  * 同步加密探针（P2-6 第二步，开发用页面，不进应用构建）。
@@ -30,13 +31,8 @@ import {
  * 要求与 PBKDF2 的真实耗时），所以这一步用真浏览器复核一次。
  */
 
-const lines: string[] = [];
-const out = document.querySelector('#out');
-
-function say(text: string): void {
-  lines.push(text);
-  if (out) out.textContent = lines.join('\n');
-}
+const report = createProbeReporter('假数据 · 仅本机 WebCrypto 自测，不读写用户库');
+const say = report.log;
 
 async function timeIt<T>(label: string, run: () => Promise<T>): Promise<T> {
   const started = performance.now();
@@ -48,10 +44,10 @@ async function timeIt<T>(label: string, run: () => Promise<T>): Promise<T> {
 async function check(label: string, run: () => Promise<boolean> | boolean): Promise<void> {
   try {
     const ok = await run();
-    say(`${ok ? '✅' : '❌'} ${label}`);
+    report.check(label, ok);
   } catch (error) {
     const message = error instanceof CryptoError ? error.message : String(error);
-    say(`❌ ${label} —— ${message}`);
+    report.check(label, false, message);
   }
 }
 
@@ -190,6 +186,4 @@ async function main(): Promise<void> {
   say('全部检查结束。');
 }
 
-void main().catch((error: unknown) => {
-  say(`探针跑挂了：${error instanceof Error ? error.message : String(error)}`);
-});
+void main().then(() => report.finish(), report.fail);

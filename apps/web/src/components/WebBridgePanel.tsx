@@ -6,7 +6,7 @@ import {
   type SceneId,
   WEB_BRIDGE_TARGET,
 } from '@dramatis/core';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { askLocalBridge, type LocalBridgeStatus, probeLocalBridge } from '../lib/local-bridge';
 
 /**
@@ -22,6 +22,7 @@ import { askLocalBridge, type LocalBridgeStatus, probeLocalBridge } from '../lib
  */
 
 export interface PendingBridgeTurn {
+  accountKey?: string;
   roomId: RoomId;
   conversationId: ConversationId;
   sceneId: SceneId;
@@ -49,6 +50,8 @@ export interface WebBridgeState {
   speakerName?: string;
   /** 要贴进网页版的那段文本。 */
   prompt: string;
+  sourceLabel?: string;
+  sourceKey?: string;
   /** 首位贴回前还不是已提交回合；刷新后凭它核对场景并接着逐人贴回。 */
   pendingTurn?: PendingBridgeTurn;
 }
@@ -102,12 +105,22 @@ export function WebBridgePanel({ bridge, busy, disabled, onReply, onAnalysis, on
    * 用「渲染时对账」而不是 effect：effect 要等一次提交才生效，中间那一帧
    * 粘贴框里还留着上一步的内容，手快的人会点错。
    */
-  const bridgeStep = `${bridge.stage}:${bridge.pendingTurn?.nextIndex ?? 0}`;
+  const bridgeStep = JSON.stringify([
+    bridge.stage,
+    bridge.turnId,
+    bridge.sourceKey,
+    bridge.speakerInstanceId,
+    bridge.pendingTurn?.nextIndex ?? 0,
+  ]);
+  const stepRef = useRef(bridgeStep);
+  stepRef.current = bridgeStep;
   const [stage, setStage] = useState(bridgeStep);
   if (stage !== bridgeStep) {
     setStage(bridgeStep);
     setPaste('');
     setCopied(false);
+    setHelperError(null);
+    setHelperBusy(false);
   }
 
   /**
@@ -120,11 +133,14 @@ export function WebBridgePanel({ bridge, busy, disabled, onReply, onAnalysis, on
    * 被拒就静默放弃（照旧手动粘贴）；③ 只在窗口重新获得焦点时读一次，不轮询。
    */
   useEffect(() => {
+    let cancelled = false;
     const pullClipboard = (): void => {
+      const step = stepRef.current;
       if (document.visibilityState !== 'visible') return;
       void navigator.clipboard
         ?.readText()
         .then((text) => {
+          if (cancelled || stepRef.current !== step) return;
           const trimmed = text.trim();
           if (trimmed === '') return;
           setPaste((latest) => (latest.trim() === '' ? trimmed : latest));
@@ -136,6 +152,7 @@ export function WebBridgePanel({ bridge, busy, disabled, onReply, onAnalysis, on
     window.addEventListener('focus', pullClipboard);
     document.addEventListener('visibilitychange', pullClipboard);
     return () => {
+      cancelled = true;
       window.removeEventListener('focus', pullClipboard);
       document.removeEventListener('visibilitychange', pullClipboard);
     };
@@ -164,17 +181,19 @@ export function WebBridgePanel({ bridge, busy, disabled, onReply, onAnalysis, on
     if (helperBusy || busy || disabled) return;
     setHelperError(null);
     setHelperBusy(true);
+    const step = bridgeStep;
     try {
       const text = await askLocalBridge(bridge.prompt);
+      if (stepRef.current !== step) return;
       setPaste(text);
       if (text.trim() === '') throw new Error('助手回来了，但没读到回复内容（页面结构可能变了）。');
       if (isReply) onReply(text);
       else if (isAdmin) onAdmin?.(text);
       else onAnalysis(text);
     } catch (error) {
-      setHelperError(error instanceof Error ? error.message : String(error));
+      if (stepRef.current === step) setHelperError(error instanceof Error ? error.message : String(error));
     } finally {
-      setHelperBusy(false);
+      if (stepRef.current === step) setHelperBusy(false);
     }
   };
 
@@ -197,6 +216,7 @@ export function WebBridgePanel({ bridge, busy, disabled, onReply, onAnalysis, on
         </span>
       </header>
 
+      {bridge.sourceLabel === undefined ? null : <p className="hint">起草来源：{bridge.sourceLabel}</p>}
       <div className="bridge-steps">
         {/*
           本地助手（顺序 38）：只有本机真的跑着那个进程、并且已经连上模型网页时才出现。
@@ -237,7 +257,7 @@ export function WebBridgePanel({ bridge, busy, disabled, onReply, onAnalysis, on
       {/* 助手那条路的解释与报错都摆在这儿：它做的事越自动，越要说清它是什么 */}
       {helper?.attached === true ? (
         <p className="hint">
-          本地助手在跑：它会驱动你**已经登录**的那个 {WEB_BRIDGE_TARGET.name} 标签页。
+          本地助手在跑：它会驱动你已经登录的那个 {WEB_BRIDGE_TARGET.name} 标签页。
           它不是官方接口——自动化操作网页可能违反对方的服务条款，用不用你自己判断；
           助手只在本机跑，提示词不经过第三方。想关掉就直接结束那个进程。
         </p>

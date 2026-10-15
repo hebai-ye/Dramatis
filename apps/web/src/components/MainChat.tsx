@@ -28,6 +28,7 @@ import {
 } from 'react';
 import { createPortal } from 'react-dom';
 import { BusyContext } from '../lib/busy-context';
+import { type ChatSend, useChatDraft } from '../lib/chat-draft';
 import { useChatViewportVisibility } from '../lib/chat-visibility';
 import { countRender } from '../lib/render-count';
 import { isNearBottom } from '../lib/scroll';
@@ -64,6 +65,7 @@ interface Props {
    * 它只负责滚动与高亮，不改数据。
    */
   focus?: FocusRequest | null;
+  onFocusConsumed?: (seq: number, found: boolean) => void;
   /**
    * 手机顶栏点角色条时递进来的「把这段文字插到光标处」（用户 2026-09-24 要求）。
    *
@@ -77,13 +79,15 @@ interface Props {
   bridge?: WebBridgeState | null;
   /** 没配 API Key：这一轮的提示词要用户自己贴到网页版。 */
   manualMode?: boolean;
+  onConfigureDeepSeekKey?: () => void;
   onBridgeReply?: (text: string) => void;
   onBridgeAnalysis?: (text: string) => void;
   onBridgeSkip?: () => void;
-  onSend: (text: string) => void;
+  onSend: ChatSend;
+  draftScope?: string;
   onStop: () => void;
   onRegenerate: (id: MessageId) => void;
-  onEdit: (id: MessageId, content: string) => void;
+  onEdit: (id: MessageId, content: string) => void | Promise<void>;
   onDelete: (id: MessageId) => void;
   /** 改对话模式：传要改的那几个字段（对话级，落 `ConversationModes`）。 */
   onChangeModes: (patch: Partial<ConversationModes>) => void;
@@ -214,6 +218,12 @@ function formatUsage(usage: Message['usage']): string {
  */
 const LONG_PRESS_MS = 450;
 
+/** Read the current preference for every jump, including changes while the chat stays open. */
+export function scrollChatTo(target: Pick<HTMLElement, 'scrollTo'>, top: number, instant = false): void {
+  const reducedMotion = typeof window !== 'undefined' && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  target.scrollTo({ top, behavior: instant || reducedMotion ? 'auto' : 'smooth' });
+}
+
 /**
  * 输入区「＋」里的便捷指令（用户 2026-09-21 要求）。
  *
@@ -248,6 +258,7 @@ function MainChatImpl({
   ready,
   archived,
   focus = null,
+  onFocusConsumed,
   insertRequest = null,
   showIntent = false,
   bridge = null,
@@ -256,6 +267,7 @@ function MainChatImpl({
   onBridgeAnalysis,
   onBridgeSkip,
   onSend,
+  draftScope,
   onStop,
   onRegenerate,
   onEdit,
@@ -266,6 +278,7 @@ function MainChatImpl({
   onDropInstance,
   onReassign,
   signatures,
+  onConfigureDeepSeekKey,
 }: Props) {
   countRender('MainChat');
   const coarsePointer = useCoarsePointer();
@@ -282,7 +295,12 @@ function MainChatImpl({
     () => cast.map((member) => ({ id: member.id, displayName: member.displayName })),
     [castKey],
   );
-  const [input, setInput] = useState('');
+  const {
+    input,
+    setInput,
+    submit: submitDraft,
+    notice: sendNotice,
+  } = useChatDraft(draftScope ?? conversation.id, onSend);
   const bodyRef = useRef<HTMLDivElement | null>(null);
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
@@ -465,33 +483,43 @@ function MainChatImpl({
    * 「有新消息」的小按钮，点了再下去。流式长出来的那部分由 StreamingBubble 自己按同样的规矩跟。
    */
   const nearBottomRef = useRef(true);
+  const [readingHistory, setReadingHistory] = useState(false);
   const [hasNewBelow, setHasNewBelow] = useState(false);
   const onBodyScroll = useCallback(() => {
     const node = bodyRef.current;
     if (node === null || !visibleRef.current) return;
     const near = isNearBottom(node);
     nearBottomRef.current = near;
-    if (near) setHasNewBelow(false);
-  }, [visibleRef]);
+    // A located message within the ordinary follow threshold still counts as reading.
+    // Manual scrolling all the way to the bottom explicitly resumes following.
+    if (node.scrollHeight - node.clientHeight - node.scrollTop <= 2) {
+      setReadingHistory(false);
+      setHasNewBelow(false);
+    } else if (near && !readingHistory) setHasNewBelow(false);
+  }, [visibleRef, readingHistory]);
   const jumpToBottom = useCallback(() => {
     if (!visibleRef.current) return;
     nearBottomRef.current = true;
+    setReadingHistory(false);
     setHasNewBelow(false);
     const node = bodyRef.current;
-    node?.scrollTo({ top: node.scrollHeight, behavior: 'smooth' });
+    if (node !== null) scrollChatTo(node, node.scrollHeight);
   }, [visibleRef]);
 
   const lastMessage = messages[messages.length - 1];
   const lastMessageKey = lastMessage === undefined ? '' : `${lastMessage.id}:${String(lastMessage.content.length)}`;
   const lastIsPlayer = lastMessage?.role === 'player';
   const conversationKeyRef = useRef<string | null>(null);
+  const handledMessageKeyRef = useRef('');
   useEffect(() => {
     if (lastMessageKey === '') return;
     // 正在跳原句时别把用户又拽到底部——下面那条 effect 会自己滚到位
-    if (focus !== null) return;
+    if (focus !== null && consumedFocus.current !== focus.seq) return;
     // 刚切进一条对话：总是从底部开始看
     const switched = conversationKeyRef.current !== conversation.id;
     conversationKeyRef.current = conversation.id;
+    if (!switched && handledMessageKeyRef.current === lastMessageKey) return;
+    handledMessageKeyRef.current = lastMessageKey;
     const node = bodyRef.current;
     if (node === null) return;
     if (!visibleRef.current) {
@@ -499,14 +527,15 @@ function MainChatImpl({
       else setHasNewBelow(true);
       return;
     }
-    if (switched || lastIsPlayer || nearBottomRef.current) {
+    if (switched || lastIsPlayer || (!readingHistory && nearBottomRef.current)) {
       nearBottomRef.current = true;
+      setReadingHistory(false);
       setHasNewBelow(false);
-      node.scrollTo({ top: node.scrollHeight, behavior: switched ? 'auto' : 'smooth' });
+      scrollChatTo(node, node.scrollHeight, switched);
       return;
     }
     setHasNewBelow(true);
-  }, [lastMessageKey, lastIsPlayer, focus, conversation.id, visibleRef, scrollVisibility]);
+  }, [lastMessageKey, lastIsPlayer, focus, conversation.id, visibleRef, scrollVisibility, readingHistory]);
 
   /**
    * 跳到原句（T11）。
@@ -520,15 +549,22 @@ function MainChatImpl({
     const node = Array.from(body?.querySelectorAll<HTMLElement>('[data-message-id]') ?? []).find(
       (message) => message.dataset.messageId === focus.id,
     );
-    if (body === null || node === undefined) return;
+    if (body === null) return;
     consumedFocus.current = focus.seq;
+    conversationKeyRef.current = conversation.id;
+    handledMessageKeyRef.current = lastMessageKey;
+    onFocusConsumed?.(focus.seq, node !== undefined);
+    if (node === undefined) return;
+    nearBottomRef.current = false;
+    setReadingHistory(true);
+    setHasNewBelow(true);
     const rect = node.getBoundingClientRect();
     const top = body.scrollTop + rect.top - body.getBoundingClientRect().top - (body.clientHeight - rect.height) / 2;
-    body.scrollTo({ top: Math.max(0, top), behavior: 'smooth' });
+    scrollChatTo(body, Math.max(0, top));
     setHighlightId(focus.id);
     if (highlightTimer.current !== null) window.clearTimeout(highlightTimer.current);
     highlightTimer.current = window.setTimeout(() => setHighlightId(null), 2600);
-  }, [focus, visible]);
+  }, [focus, visible, conversation.id, lastMessageKey, onFocusConsumed]);
 
   /*
    * 只有最后一条角色回复可以重抽：更早的回复换掉之后，后面那些回复是照着旧版本说的，
@@ -544,11 +580,8 @@ function MainChatImpl({
   }, [messages]);
 
   const submit = (): void => {
-    if (!ready || busy || archived) return;
-    const text = input.trim();
-    if (text === '') return;
-    onSend(text);
-    setInput('');
+    if (!ready || busy || archived || bridge !== null) return;
+    void submitDraft();
   };
 
   /**
@@ -595,12 +628,51 @@ function MainChatImpl({
     });
   }, [insertRequest, visible, visibleRef]);
 
-  const startEdit = useCallback((id: MessageId): void => setEditingId(id), []);
-  const cancelEdit = useCallback((): void => setEditingId(null), []);
+  const editScope = JSON.stringify([draftScope, conversation.roomId, conversation.id]);
+  const editOwner = useRef({ scope: editScope, id: null as MessageId | null, revision: 0, active: true });
+  if (editOwner.current.scope !== editScope) {
+    editOwner.current.active = false;
+    editOwner.current = { scope: editScope, id: null, revision: 0, active: true };
+    setEditingId(null);
+  }
+  const currentEditOwner = editOwner.current;
+  useEffect(() => {
+    currentEditOwner.active = true;
+    return () => {
+      currentEditOwner.active = false;
+    };
+  }, [currentEditOwner]);
+  const startEdit = useCallback((id: MessageId): void => {
+    editOwner.current.id = id;
+    editOwner.current.revision += 1;
+    setEditingId(id);
+  }, []);
+  const cancelEdit = useCallback((): void => {
+    editOwner.current.id = null;
+    editOwner.current.revision += 1;
+    setEditingId(null);
+  }, []);
   const saveEdit = useCallback(
-    (id: MessageId, content: string): void => {
-      onEdit(id, content);
-      setEditingId(null);
+    async (id: MessageId, content: string, latestContent?: () => string | null): Promise<void> => {
+      const owner = editOwner.current;
+      const revision = owner.revision;
+      const current = () =>
+        owner.active && editOwner.current === owner && owner.id === id && owner.revision === revision;
+      if (!current()) return;
+      let next = content;
+      while (current()) {
+        await onEdit(id, next);
+        if (!current()) return;
+        const latest = latestContent?.() ?? (latestContent ? null : next);
+        // A composition begun during this write remains an unsaved local draft.
+        if (latest === null) return;
+        if (latest === next) {
+          owner.id = null;
+          setEditingId(null);
+          return;
+        }
+        next = latest;
+      }
     },
     [onEdit],
   );
@@ -699,7 +771,7 @@ function MainChatImpl({
           busy={busy}
           onStop={onStop}
           lastMessageId={messages[messages.length - 1]?.id ?? null}
-          suspendAutoScroll={focus !== null}
+          suspendAutoScroll={readingHistory || (focus !== null && consumedFocus.current !== focus.seq)}
           bottomRef={bottomRef}
           scrollVisibility={scrollVisibility}
           cast={castNames}
@@ -708,7 +780,7 @@ function MainChatImpl({
 
         {hasNewBelow ? (
           <button type="button" className="jump-to-latest" onClick={jumpToBottom}>
-            ↓ 有新消息
+            ↓ 回到最新消息
           </button>
         ) : null}
 
@@ -741,7 +813,7 @@ function MainChatImpl({
                 disabled={busy || archived}
                 onClick={() => {
                   closeMenu();
-                  setEditingId(menuMessage.id);
+                  startEdit(menuMessage.id);
                 }}
               >
                 编辑
@@ -799,10 +871,17 @@ function MainChatImpl({
         />
       )}
 
-      {manualMode && bridge === null && messages.length === 0 ? (
+      {manualMode && bridge === null ? (
         <p className="hint bridge-hint">
-          还没填 API Key——不要紧，先这么玩：把话发出去，应用会给你一段<strong>提示词</strong>， 贴进 DeepSeek
-          网页版，再把它的回复粘回来就行。想省掉这一步，去「设置 → 模型接入」填一个 Key。
+          尚未配置 Key
+          {onConfigureDeepSeekKey === undefined ? null : (
+            <>
+              {' · '}
+              <button type="button" className="ghost" onClick={onConfigureDeepSeekKey}>
+                配置 DeepSeek Key
+              </button>
+            </>
+          )}
         </p>
       ) : null}
 
@@ -813,6 +892,11 @@ function MainChatImpl({
         焦点态由盒子统一表示（`.composer-box:focus-within`），所以不用再画
         「大输入框 + 外面一排带边框的小按钮」那种两层结构。
       */}
+      {sendNotice === null ? null : (
+        <p className="notice error composer-notice" role="alert">
+          {sendNotice}
+        </p>
+      )}
       <Composer
         value={input}
         onChange={setInput}

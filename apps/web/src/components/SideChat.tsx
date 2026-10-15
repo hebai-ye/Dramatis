@@ -1,5 +1,6 @@
 import type { AdminArtifact, Conversation, Message, MessageId } from '@dramatis/core';
-import { memo, useCallback, useEffect, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useRef } from 'react';
+import { type ChatSend, useChatDraft } from '../lib/chat-draft';
 import { useChatViewportVisibility } from '../lib/chat-visibility';
 import { countRender } from '../lib/render-count';
 import { isNearBottom } from '../lib/scroll';
@@ -14,7 +15,8 @@ interface Props {
   busy: boolean;
   ready: boolean;
   archived: boolean;
-  onSend: (text: string) => void;
+  onSend: ChatSend;
+  draftScope?: string;
   onStop: () => void;
   onAdopt: (messageId: MessageId, artifact: AdminArtifact) => void;
   onDiscard: (messageId: MessageId, artifact: AdminArtifact) => void;
@@ -22,7 +24,17 @@ interface Props {
   /** 素材库里现在有哪些 id（判「整本替换」用：草稿的 payload.id 已经在那儿了）。 */
   existingIds?: readonly string[];
   /** 没有 API Key 时，起草这一步走网页版桥接。 */
-  bridge?: { prompt: string } | null;
+  bridge?: {
+    prompt: string;
+    binding?: {
+      accountKey: string;
+      roomId: string;
+      conversationId: string;
+      revision: string;
+      worldTitle: string;
+      conversationTitle: string;
+    };
+  } | null;
   /** 没配 API Key：发送按钮改成「生成提示词」，别让人以为点了会直接有回复。 */
   manualMode?: boolean;
   onBridgeCommit?: (text: string) => void;
@@ -166,6 +178,7 @@ function SideChatImpl({
   ready,
   archived,
   onSend,
+  draftScope,
   onStop,
   onAdopt,
   onDiscard,
@@ -190,7 +203,12 @@ function SideChatImpl({
   const stream = useStreamState('admin');
   const streamText = stream.text;
   const streamProgress = stream.progress;
-  const [input, setInput] = useState('');
+  const {
+    input,
+    setInput,
+    submit: submitDraft,
+    notice: sendNotice,
+  } = useChatDraft(draftScope ?? conversation.id, onSend);
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
   const bodyRef = useRef<HTMLDivElement | null>(null);
@@ -251,11 +269,8 @@ function SideChatImpl({
   }, [input]);
 
   const submit = (): void => {
-    if (!ready || busy || archived) return;
-    const text = input.trim();
-    if (text === '') return;
-    onSend(text);
-    setInput('');
+    if (!ready || busy || archived || bridge !== null) return;
+    void submitDraft();
   };
 
   return (
@@ -324,7 +339,21 @@ function SideChatImpl({
 
       {bridge === null || onBridgeCommit === undefined ? null : (
         <WebBridgePanel
-          bridge={{ stage: 'admin', prompt: bridge.prompt }}
+          bridge={{
+            stage: 'admin',
+            prompt: bridge.prompt,
+            sourceLabel: bridge.binding
+              ? [bridge.binding.worldTitle, bridge.binding.conversationTitle].join(' / ')
+              : '旧进度缺少来源，请放弃后重新准备',
+            sourceKey: bridge.binding
+              ? JSON.stringify([
+                  bridge.binding.accountKey,
+                  bridge.binding.roomId,
+                  bridge.binding.conversationId,
+                  bridge.binding.revision,
+                ])
+              : bridge.prompt,
+          }}
           busy={busy}
           disabled={archived}
           onReply={() => {}}
@@ -335,6 +364,11 @@ function SideChatImpl({
       )}
 
       {/* 与主对话同一个输入区形态（用户 2026-09-21 要求照 Codex 的样子） */}
+      {sendNotice === null ? null : (
+        <p className="notice error composer-notice" role="alert">
+          {sendNotice}
+        </p>
+      )}
       <Composer
         value={input}
         onChange={setInput}

@@ -9,6 +9,18 @@ import { parseSnapshot, SNAPSHOT_REMIND_MS } from '../lib/snapshot';
 import { describeReport, type SyncApi } from '../lib/sync';
 import { useDialogActions } from './DialogShell';
 
+interface DeviceScope {
+  endpoint: string | null;
+  spaceHandle: string | null;
+}
+
+interface DeviceRead {
+  scope: DeviceScope;
+  status: 'loading' | 'ready' | 'error';
+  result: { devices: SyncDeviceSummary[]; localDeviceId: string } | null;
+  error: string | null;
+}
+
 interface Props {
   api: SyncApi;
   disabled: boolean;
@@ -55,7 +67,24 @@ export function SyncPanel({ api, disabled }: Props) {
   const [secret, setSecret] = useState('');
   const [keyMode, setKeyMode] = useState<KeyStorageMode>(api.config?.keyMode ?? 'session');
   /** 顺序 14：点一下才去问服务端要设备列表（不想每次打开设置都打一次请求）。 */
-  const [devices, setDevices] = useState<{ devices: SyncDeviceSummary[]; localDeviceId: string } | null>(null);
+  const deviceScope = useRef<DeviceScope>({
+    endpoint: api.config?.endpoint ?? null,
+    spaceHandle: api.config?.spaceHandle ?? null,
+  });
+  // Scope identity changes during render: old data is hidden before effects run.
+  // A -> B -> A also creates a new identity, so an earlier A request stays stale.
+  if (
+    deviceScope.current.endpoint !== (api.config?.endpoint ?? null) ||
+    deviceScope.current.spaceHandle !== (api.config?.spaceHandle ?? null)
+  ) {
+    deviceScope.current = {
+      endpoint: api.config?.endpoint ?? null,
+      spaceHandle: api.config?.spaceHandle ?? null,
+    };
+  }
+  const [deviceRead, setDeviceRead] = useState<DeviceRead | null>(null);
+  const currentDeviceRead = deviceRead?.scope === deviceScope.current ? deviceRead : null;
+  const devices = currentDeviceRead?.result ?? null;
   const [newPassword, setNewPassword] = useState('');
   /** 顺序 17：服务端快照的状态（文件选择走隐藏的 input，与「导入素材」同一套做法）。 */
   const snapshotBusy = operation === '正在导出服务端快照' || operation === '正在恢复服务端快照';
@@ -95,10 +124,29 @@ export function SyncPanel({ api, disabled }: Props) {
     api.config?.lastSnapshotAt === undefined ||
     Date.now() - new Date(api.config.lastSnapshotAt).getTime() > SNAPSHOT_REMIND_MS;
 
-  const loadDevices = (): Promise<void> =>
-    run(async () => {
-      setDevices(await api.listDevices());
+  const loadDevices = (): Promise<void> => {
+    const scope = deviceScope.current;
+    return run(async () => {
+      setDeviceRead((previous) => ({
+        scope,
+        status: 'loading',
+        result: previous?.scope === scope ? previous.result : null,
+        error: null,
+      }));
+      try {
+        const result = await api.listDevices();
+        if (deviceScope.current === scope) setDeviceRead({ scope, status: 'ready', result, error: null });
+      } catch (error) {
+        if (deviceScope.current !== scope) return;
+        setDeviceRead((previous) => ({
+          scope,
+          status: 'error',
+          result: previous?.scope === scope ? previous.result : null,
+          error: error instanceof Error ? error.message : String(error),
+        }));
+      }
     }, '正在读取设备列表');
+  };
   const [notice, setNotice] = useState<{ ok: boolean; message: string } | null>(null);
   const [copyNotice, setCopyNotice] = useState<{ ok: boolean; message: string } | null>(null);
 
@@ -143,7 +191,7 @@ export function SyncPanel({ api, disabled }: Props) {
       {connected ? null : (
         <>
           <p className="hint">
-            这个账户还没有同步空间。**推荐**直接去「账户」里注册一个新账户（那里会一起设好密码），
+            这个账户还没有同步空间。<strong>推荐</strong>直接去「账户」里注册一个新账户（那里会一起设好密码），
             下面的字段留给老账户或想连别的服务器的情况。
           </p>
           <div className="field">
@@ -251,6 +299,18 @@ export function SyncPanel({ api, disabled }: Props) {
       {api.error === null ? null : (
         <div className="notice error" role="alert">
           {api.error}
+          {api.errorStatus === 404 ? (
+            <>
+              <p>
+                <strong>服务端上的这个空间不在了</strong>
+              </p>
+              <p className="hint">
+                本机数据仍保留。请展开下方「高级」，选择「断开同步」，再在本页用原服务端地址、原账户 ID 和密码点「开通 /
+                加入并同步」，把本机数据重新同步到服务端。服务端原来的数据无法由此找回。
+                若重新开通产生新恢复码，请先安全保存并确认，再离开此页。
+              </p>
+            </>
+          ) : null}
         </div>
       )}
       {api.spaceFull ? (
@@ -258,7 +318,7 @@ export function SyncPanel({ api, disabled }: Props) {
           服务器空间已满，新数据暂未上传。本机数据仍保留；请先在设置中的数据页导出备份，再处理服务器容量。
         </div>
       ) : null}
-      {notice === null ? null : (
+      {notice === null || (!notice.ok && notice.message === api.error) ? null : (
         <div className={notice.ok ? 'notice' : 'notice error'} role={notice.ok ? 'status' : 'alert'}>
           {notice.message}
         </div>
@@ -387,26 +447,6 @@ export function SyncPanel({ api, disabled }: Props) {
         ) : null}
 
         {/*
-        顺序 11：服务端上的空间没了（被清过库、或者换了服务器），客户端只会报一句
-        「服务端上没有这个空间了」——用户不知道下一步该干嘛。这里把路指出来：
-        填回同一套 id + 密码再连一次，就会用同样的空间名重新开通，并把本机数据推上去。
-      */}
-        {/* 判据是状态码 404，不是中文文案（顺序 61）：服务端换一句话这里不会失效 */}
-        {api.error !== null && api.errorStatus === 404 ? (
-          <div className="notice warn">
-            <strong>服务端上的这个空间不在了</strong>
-            <p>{api.error}</p>
-            <p className="hint">
-              本机数据<strong>没有丢</strong>。到「账户」里点这个账户的「输入密码」（或用「添加账户 → 注册」
-              填同一个账户 ID 与密码）——会用同一个空间名重新开通，然后把本机这份数据推上去
-              （服务端上原本那份已经没了，找不回来）。
-            </p>
-          </div>
-        ) : api.error !== null ? (
-          <div className="notice error">{api.error}</div>
-        ) : null}
-
-        {/*
         顺序 17 演练发现的洞：撞满之后接下来几次同步往往是「成功的」（没新东西要推），
         于是错误提示被清掉、画面看起来一切正常，而数据其实推不上去了。
         所以这一条**不跟着 error 走**：它只在真的推进去东西之后才消失。
@@ -429,7 +469,7 @@ export function SyncPanel({ api, disabled }: Props) {
             <p className="hint">
               把服务端那份<strong>原文</strong>（密文 + 坐标）存成一个文件拿在手里。它解不开内容
               ——要读还得有同步密码或恢复码——但服务端被清空、换机器时，它能原样灌回去。
-              本机数据没了可以让服务端补，服务端没了可以让本机补，只有**两边同时出事**才用得上它。
+              本机数据没了可以让服务端补，服务端没了可以让本机补，只有<strong>两边同时出事</strong>才用得上它。
             </p>
             <p className={snapshotStale ? 'hint warn' : 'hint'}>
               上次存快照：{snapshotAge}
@@ -506,6 +546,10 @@ export function SyncPanel({ api, disabled }: Props) {
               disabled={disabled || busy}
               onClick={() =>
                 requestAction(() => {
+                  // Preserve the currently connected scope for reconnecting on this page.
+                  setEndpoint(api.config?.endpoint ?? '');
+                  setUserId(api.config?.userId ?? '');
+                  setKeyMode(api.config?.keyMode ?? 'session');
                   void run(api.disconnect, '正在断开同步');
                 })
               }
@@ -520,7 +564,7 @@ export function SyncPanel({ api, disabled }: Props) {
           <div className="panel-inner">
             <h3>设备</h3>
             <p className="hint">
-              这个空间最近有哪些设备在写。想断掉一台（比如旧手机丢了），做法是**换同步密码**：
+              这个空间最近有哪些设备在写。想断掉一台（比如旧手机丢了），做法是<strong>换同步密码</strong>：
               换完之后只知道旧密码的设备再也同步不了，你手上的其它设备用新密码重连即可。 恢复码不受影响。
             </p>
             <div className="save-bar">
@@ -528,6 +572,16 @@ export function SyncPanel({ api, disabled }: Props) {
                 {devices === null ? '看有哪些设备' : '刷新设备列表'}
               </button>
             </div>
+            <p className="hint" role={currentDeviceRead?.status === 'error' ? 'alert' : 'status'}>
+              {currentDeviceRead === null
+                ? '尚未读取当前空间的设备列表。'
+                : currentDeviceRead.status === 'loading'
+                  ? '正在读取当前空间的设备列表…'
+                  : currentDeviceRead.status === 'error'
+                    ? (devices === null ? '设备列表读取失败：' : '读取失败，保留上次读取的设备列表：') +
+                      currentDeviceRead.error
+                    : '设备列表已读取。'}
+            </p>
             {devices === null ? null : devices.devices.length === 0 ? (
               <p className="hint">服务端还没记下任何设备（可能是这台服务端还没更新到带设备列表的版本）。</p>
             ) : (

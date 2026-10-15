@@ -1,9 +1,10 @@
 import type { Card, CharacterInstance, InstanceId, MemoryEvent, Presence, RelationshipField } from '@dramatis/core';
+import { useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { PRESENCE_OPTIONS, signed } from '../lib/labels';
 import { avatarOf, portraitOf } from '../lib/portraits';
 import { useDraftField } from '../lib/useDraftField';
 import { Avatar } from './MessageBody';
-import { Modal } from './Modal';
+import { Modal, useModalSaves } from './Modal';
 
 interface Props {
   instance: CharacterInstance;
@@ -11,13 +12,13 @@ interface Props {
   memories: MemoryEvent[];
   disabled: boolean;
   onClose: () => void;
-  onRename: (id: InstanceId, name: string) => void;
-  onSetPresence: (id: InstanceId, presence: Presence) => void;
+  onRename: (id: InstanceId, name: string) => void | Promise<void>;
+  onSetPresence: (id: InstanceId, presence: Presence) => void | Promise<void>;
   /** 手动调整对玩家的某个关系维度（顺序 89：好感滑杆）。 */
-  onSetRelationship: (id: InstanceId, field: RelationshipField, value: number) => void;
-  onRemove: (id: InstanceId) => void;
+  onSetRelationship: (id: InstanceId, field: RelationshipField, value: number) => void | Promise<void>;
+  onRemove: (id: InstanceId) => void | Promise<void>;
   /** 按一条状态历史撤销影响（顺序 27d）。 */
-  onRevertChange: (id: InstanceId, changeId: string) => void;
+  onRevertChange: (id: InstanceId, changeId: string) => Promise<void>;
 }
 
 /**
@@ -38,6 +39,67 @@ export function CastDetail({
   onRemove,
   onRevertChange,
 }: Props) {
+  const scope = JSON.stringify([instance.roomId, instance.id]);
+  const saves = useModalSaves(scope);
+  const closingRef = useRef(false);
+  const discardCloseRef = useRef(false);
+  const [renderOwner, setRenderOwner] = useState(() => ({ scope }));
+  let owner = renderOwner;
+  if (owner.scope !== scope) {
+    owner = { scope };
+    setRenderOwner(owner);
+  }
+  const activeScope = useRef<typeof owner | null>(null);
+  const requestRef = useRef<{ owner: typeof owner; changeId: string } | null>(null);
+  const [feedback, setFeedback] = useState<{
+    owner: typeof owner;
+    pendingId: string | null;
+    error: string | null;
+  } | null>(null);
+  useLayoutEffect(() => {
+    activeScope.current = owner;
+    return () => {
+      activeScope.current = null;
+      if (requestRef.current?.owner === owner) requestRef.current = null;
+    };
+  }, [owner]);
+  const visibleFeedback = feedback?.owner === owner ? feedback : null;
+  const pendingId = visibleFeedback?.pendingId ?? null;
+  const editingDisabled = disabled || saves.busy || pendingId !== null;
+  const guard = useMemo(
+    () =>
+      saves.busy || pendingId !== null
+        ? {
+            kind: 'busy' as const,
+            message: pendingId !== null ? '正在撤销影响，请等待保存和核验完成。' : '正在保存角色更改，请等待完成。',
+          }
+        : saves.error !== null
+          ? {
+              kind: 'dirty' as const,
+              message: '部分角色更改未保存。可以继续编辑并重试，或放弃这份未保存的草稿后关闭。',
+              discard: () => {
+                discardCloseRef.current = true;
+              },
+            }
+          : null,
+    [saves.busy, saves.error, pendingId],
+  );
+  async function revert(changeId: string): Promise<void> {
+    if (disabled || saves.isBusy() || activeScope.current !== owner || requestRef.current?.owner === owner) return;
+    const request = { owner, changeId };
+    requestRef.current = request;
+    setFeedback({ owner, pendingId: changeId, error: null });
+    try {
+      await onRevertChange(instance.id, changeId);
+      if (activeScope.current === owner && requestRef.current === request)
+        setFeedback({ owner, pendingId: null, error: null });
+    } catch (error) {
+      if (activeScope.current === owner && requestRef.current === request)
+        setFeedback({ owner, pendingId: null, error: error instanceof Error ? error.message : String(error) });
+    } finally {
+      if (requestRef.current === request) requestRef.current = null;
+    }
+  }
   const own = memories.filter((memory) => memory.observerId === instance.id);
   const towardPlayer = instance.relationships.find((edge) => edge.target === 'player');
   const relationshipLabels = {
@@ -73,7 +135,7 @@ export function CastDetail({
     value: instance.displayName,
     commit: (next) => {
       if (next.trim() === '') return;
-      onRename(instance.id, next);
+      void saves.save('name', () => onRename(instance.id, next));
     },
   });
 
@@ -93,21 +155,41 @@ export function CastDetail({
     commit: (next) => {
       const parsed = Number(next);
       if (!Number.isFinite(parsed)) return;
-      onSetRelationship(instance.id, 'affinity', parsed / 100);
+      void saves.save('affinity', () => onSetRelationship(instance.id, 'affinity', parsed / 100));
     },
   });
+  const close = async (): Promise<void> => {
+    if (closingRef.current || requestRef.current?.owner === owner) return;
+    if (discardCloseRef.current) {
+      onClose();
+      return;
+    }
+    closingRef.current = true;
+    try {
+      if (!(await nameField.flush()) || !(await affinityField.flush())) return;
+      if ((await saves.flush()) && activeScope.current === owner) onClose();
+    } finally {
+      closingRef.current = false;
+    }
+  };
 
   return (
     <Modal
       label="角色详情"
-      onClose={onClose}
+      onClose={close}
+      guard={guard}
       head={
         <>
           <Avatar name={instance.displayName} size={40} avatar={avatarOf(card)} />
-          <input className="conversation-name" disabled={disabled} aria-label="显示名" {...nameField.bind} />
+          <input className="conversation-name" disabled={editingDisabled} aria-label="显示名" {...nameField.bind} />
         </>
       }
     >
+      {saves.error === null ? null : (
+        <p className="notice error" role="alert">
+          角色更改保存未完成：{saves.error}。草稿已保留，关闭时会重试保存。
+        </p>
+      )}
       {portraitOf(card) ? (
         <img className="cast-portrait" src={portraitOf(card) ?? ''} alt={`${instance.displayName}的立绘`} />
       ) : null}
@@ -115,8 +197,11 @@ export function CastDetail({
         <h2>在场状态</h2>
         <select
           value={instance.presence}
-          disabled={disabled}
-          onChange={(event) => onSetPresence(instance.id, event.target.value as Presence)}
+          disabled={editingDisabled}
+          onChange={(event) => {
+            const presence = event.target.value as Presence;
+            void saves.save('presence', () => onSetPresence(instance.id, presence));
+          }}
         >
           {PRESENCE_OPTIONS.map((option) => (
             <option key={option.value} value={option.value}>
@@ -129,6 +214,16 @@ export function CastDetail({
 
       <section className="panel">
         <h2>此刻的状态</h2>
+        {pendingId === null ? null : (
+          <p className="hint" role="status">
+            正在撤销这条影响，等待保存并核验结果。
+          </p>
+        )}
+        {visibleFeedback?.error ? (
+          <p className="notice error" role="alert">
+            撤销结果未确认：{visibleFeedback.error}
+          </p>
+        ) : null}
         <p className="hint">
           情绪：{signed(instance.affect.valence)} / 激动 {instance.affect.arousal.toFixed(2)}
         </p>
@@ -145,7 +240,7 @@ export function CastDetail({
                 min={0}
                 max={100}
                 step={1}
-                disabled={disabled}
+                disabled={editingDisabled}
                 aria-label="对玩家的好感"
                 {...affinityField.bind}
               />
@@ -174,11 +269,11 @@ export function CastDetail({
                     <button
                       type="button"
                       className="ghost"
-                      disabled={disabled}
+                      disabled={editingDisabled}
                       title="追加一条反向记录，不改原记录"
-                      onClick={() => onRevertChange(instance.id, change.id)}
+                      onClick={() => void revert(change.id)}
                     >
-                      撤销这条影响
+                      {pendingId === change.id ? '正在撤销…' : '撤销这条影响'}
                     </button>
                   )}
                 </li>
@@ -220,10 +315,12 @@ export function CastDetail({
       <button
         type="button"
         className="ghost danger"
-        disabled={disabled}
+        disabled={editingDisabled}
         title="把这个角色移出这个世界（角色卡会保留）"
         onClick={() => {
-          if (window.confirm(`把「${instance.displayName}」移出这个世界？`)) onRemove(instance.id);
+          if (window.confirm(`把「${instance.displayName}」移出这个世界？`)) {
+            void saves.save('remove', () => onRemove(instance.id), false);
+          }
         }}
       >
         移出这个世界

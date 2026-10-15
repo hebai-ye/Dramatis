@@ -125,6 +125,8 @@ function fixtureApi(): ProvidersApi {
   });
   return {
     profiles: [first, second],
+    setupOwner: { profileId: first.id, keyMode: 'session', context: {}, token: {} },
+    saveDeepSeekKey: async () => ({ profileId: first.id, keyRef: first.keyRef, baseUrl: first.baseUrl }),
     activeId: first.id,
     active: first,
     apiKey: '',
@@ -153,7 +155,14 @@ function fixtureSettings(category: 'model' | 'archive' = 'model') {
     category,
     onCategoryChange: (_category: string) => {},
     providers: fixtureApi(),
-    appearance: { value: DEFAULT_APPEARANCE, patch: () => {}, setBackgroundFromFile: async () => {} },
+    appearance: {
+      value: DEFAULT_APPEARANCE,
+      persistenceError: null,
+      hasSavedChanges: false,
+      retryPersist: () => {},
+      patch: () => {},
+      setBackgroundFromFile: async () => {},
+    },
     archivedConversations: [{ ...conversation, archivedAt: '2026-01-01T00:00:00.000Z' }],
     activeConversationId: null,
     disabled: false,
@@ -183,6 +192,116 @@ beforeEach(() => {
 });
 
 describe('settings panel behavior', () => {
+  it.each([
+    ['', '', null],
+    ['0', '', { inputPerMillion: 0, outputPerMillion: 0, currency: '¥' }],
+    ['', '3.5', { inputPerMillion: 0, outputPerMillion: 3.5, currency: '¥' }],
+  ])('keeps blank and zero price policy on save (%s, %s)', async (input, output, expected) => {
+    const api = fixtureApi();
+    let saved: unknown;
+    api.commitConfig = async (config) => {
+      saved = config.profile.price;
+    };
+    let tree = render(() => ProviderPanel({ api, disabled: false }));
+    for (const [label, value] of [
+      ['名称', 'Renamed'],
+      ['输入价 / 百万 token', input],
+      ['输出价 / 百万 token', output],
+    ]) {
+      const field = nodes(tree).find(
+        (node) => node.type === 'label' && textOf(node.props.children as ReactNode).startsWith(label ?? ''),
+      );
+      changeValue(
+        nodes(field).find((node) => node.type === 'input'),
+        value ?? '',
+      );
+    }
+    tree = render(() => ProviderPanel({ api, disabled: false }));
+    await click(button(tree, '保存'));
+    expect(saved).toEqual(expected);
+    expect(controller.state().guard).toBe(null);
+  });
+
+  it('shows the session-only appearance failure and invokes retry', () => {
+    let retries = 0;
+    const api = {
+      value: DEFAULT_APPEARANCE,
+      persistenceError: 'quota fixture',
+      hasSavedChanges: false,
+      retryPersist: () => {
+        retries += 1;
+      },
+      patch: () => {},
+      setBackgroundFromFile: async () => {},
+    };
+    const tree = render(() => AppearancePanel({ api, disabled: false }));
+    expect(
+      nodes(tree).some(
+        (node) => node.props.role === 'alert' && textOf(node.props.children as ReactNode).includes('仅本次会话'),
+      ),
+    ).toBe(true);
+    click(button(tree, '重试保存外观'));
+    expect(retries).toBe(1);
+  });
+
+  it.each([
+    ['输入价 / 百万 token', '-1'],
+    ['输出价 / 百万 token', 'Infinity'],
+    ['输入价 / 百万 token', 'not-a-price'],
+    ['温度', '2.1'],
+    ['温度', ''],
+    ['上下文窗口', '0'],
+    ['上下文窗口', '1.5'],
+    ['预留回复', '0'],
+    ['预留回复', '9999999'],
+  ])('rejects invalid %s without changing the draft or key (%s)', async (label, invalid) => {
+    const api = fixtureApi();
+    let saves = 0;
+    api.commitConfig = async () => {
+      saves += 1;
+    };
+    let tree = render(() => ProviderPanel({ api, disabled: false }));
+    const field = (name: string) =>
+      nodes(tree).find((node) => node.type === 'label' && textOf(node.props.children as ReactNode).startsWith(name));
+    changeValue(
+      nodes(field('API Key')).find((node) => node.type === 'input'),
+      'sk-unsaved-fixture',
+    );
+    changeValue(
+      nodes(field(label)).find((node) => node.type === 'input'),
+      invalid,
+    );
+    tree = render(() => ProviderPanel({ api, disabled: false }));
+    await click(button(tree, '保存'));
+    tree = render(() => ProviderPanel({ api, disabled: false }));
+    expect(saves).toBe(0);
+    expect(
+      nodes(tree).some(
+        (node) => node.props.role === 'alert' && textOf(node.props.children as ReactNode).includes(label),
+      ),
+    ).toBe(true);
+    expect(nodes(field(label)).find((node) => node.type === 'input')?.props.value).toBe(invalid);
+    expect(nodes(tree).some((node) => node.type === 'input' && node.props.value === 'sk-unsaved-fixture')).toBe(true);
+    expect(controller.state().guard?.kind).toBe('dirty');
+  });
+
+  it.each([
+    ['https://api.openai.com/v1', 'https://platform.openai.com/api-keys'],
+    ['https://api.deepseek.com', 'https://platform.deepseek.com/api_keys'],
+    ['http://localhost:11434/v1', null],
+    ['https://api.deepseek.com.evil.invalid/v1', null],
+  ])('uses endpoint-specific empty-key guidance for %s', (baseUrl, expectedLink) => {
+    const api = fixtureApi();
+    if (!api.active) throw new Error('Missing fixture');
+    api.active = { ...api.active, baseUrl };
+    const tree = render(() => ProviderPanel({ api, disabled: false }));
+    const guide = nodes(tree).find((node) => node.props.className === 'key-guide');
+    const links = nodes(guide)
+      .filter((node) => node.type === 'a')
+      .map((node) => node.props.href);
+    expect(links).toEqual(expectedLink === null ? [] : [expectedLink]);
+    if (baseUrl.includes('localhost')) expect(textOf(guide)).toContain('可以留空');
+  });
   it('keeps the encrypted key and save controls blocked until unlocking', async () => {
     const api = fixtureApi();
     api.keyMode = 'encrypted';
@@ -377,6 +496,9 @@ describe('settings panel behavior', () => {
     let rejectLoad: (error: Error) => void = () => {};
     const api = {
       value: DEFAULT_APPEARANCE,
+      persistenceError: null,
+      hasSavedChanges: false,
+      retryPersist: () => {},
       patch: () => {},
       setBackgroundFromFile: () =>
         new Promise<void>((_resolve, reject) => {
@@ -579,6 +701,9 @@ describe('settings panel behavior', () => {
       AppearancePanel({
         api: {
           value: { ...DEFAULT_APPEARANCE, theme: 'light' },
+          persistenceError: null,
+          hasSavedChanges: false,
+          retryPersist: () => {},
           patch: () => {},
           setBackgroundFromFile: async () => {},
         },

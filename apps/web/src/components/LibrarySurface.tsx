@@ -1,6 +1,8 @@
 import type { Card, CardId, Persona, WorldBook, WorldBookId } from '@dramatis/core';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useContainerCompact } from '../hooks/useContainerCompact';
 import type { LibraryImportResult } from '../hooks/useImport';
+import type { Notice } from '../hooks/useNotices';
 import { createLazyModule } from '../lib/lazy-module';
 import {
   countAttachedIds,
@@ -11,7 +13,6 @@ import {
 } from '../lib/library-query';
 import { serializeLibraryItem } from '../lib/library-transfer';
 import { LIBRARY_VIEWS, type LibraryView, useLibraryView } from '../lib/library-view';
-import { NARROW_SCREEN_QUERY } from '../lib/viewport';
 import cardsModule from './CardDesigner?lazy-module-url';
 import { LazyPanel } from './LazyPanel';
 import personasModule from './PersonaLibrary?lazy-module-url';
@@ -76,9 +77,10 @@ function LibraryBrowser({ view, active, ...props }: LibrarySurfaceProps & { view
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [mobileDetail, setMobileDetail] = useState(false);
   const [fileBusy, setFileBusy] = useState(false);
-  const [fileNotice, setFileNotice] = useState<string | null>(null);
+  const [fileNotice, setFileNotice] = useState<{ error: boolean; message: string; warnings: Notice[] } | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const browserRef = useRef<HTMLElement>(null);
+  const compact = useContainerCompact(browserRef);
   const listTitleRef = useRef<HTMLHeadingElement>(null);
   const backRef = useRef<HTMLButtonElement>(null);
   const previousDetail = useRef(mobileDetail);
@@ -101,17 +103,11 @@ function LibraryBrowser({ view, active, ...props }: LibrarySurfaceProps & { view
     const changed = previousDetail.current !== mobileDetail;
     previousDetail.current = mobileDetail;
     const browser = browserRef.current;
-    if (
-      !changed ||
-      !active ||
-      !window.matchMedia(NARROW_SCREEN_QUERY).matches ||
-      browser === null ||
-      browser.closest('[inert], .app.rail-open') !== null
-    )
+    if (!changed || !active || !compact || browser === null || browser.closest('[inert], .app.rail-open') !== null)
       return;
     if (mobileDetail) backRef.current?.focus();
     else (browser.querySelector<HTMLElement>('.library-item.active') ?? listTitleRef.current)?.focus();
-  }, [active, mobileDetail]);
+  }, [active, mobileDetail, compact]);
   useEffect(() => {
     const before = previousItems.current;
     previousItems.current = all;
@@ -139,7 +135,18 @@ function LibraryBrowser({ view, active, ...props }: LibrarySurfaceProps & { view
           setSelectedId(result.id);
           setMobileDetail(true);
         }
-        setFileNotice(`已导入${LIBRARY_VIEWS.find((item) => item.id === result.kind)?.label}，仅保存在素材库。`);
+        setFileNotice({
+          error: false,
+          message: `已导入 1 份${LIBRARY_VIEWS.find((item) => item.id === result.kind)?.label}，仅保存在素材库。`,
+          warnings: result.warnings,
+        });
+      } catch (error) {
+        setFileNotice({
+          error: true,
+          message: `导入失败：${error instanceof Error ? error.message : String(error)}`,
+          warnings: [],
+        });
+        throw error;
       } finally {
         setFileBusy(false);
       }
@@ -159,7 +166,7 @@ function LibraryBrowser({ view, active, ...props }: LibrarySurfaceProps & { view
   return (
     <section
       ref={browserRef}
-      className={`library-browser${mobileDetail ? ' showing-detail' : ''}`}
+      className={`library-browser${compact ? ' compact-layout' : ''}${mobileDetail ? ' showing-detail' : ''}`}
       hidden={!active}
       aria-label={`${LIBRARY_VIEWS.find((item) => item.id === view)?.label}内容`}
     >
@@ -204,9 +211,30 @@ function LibraryBrowser({ view, active, ...props }: LibrarySurfaceProps & { view
         />
       </div>
       {fileNotice ? (
-        <p role="status" className="notice">
-          {fileNotice}
-        </p>
+        <div
+          role={fileNotice.error ? 'alert' : 'status'}
+          className={fileNotice.error ? 'notice error library-import-result' : 'notice library-import-result'}
+        >
+          <p>{fileNotice.message}</p>
+          {fileNotice.warnings.length === 0 ? null : (
+            <details>
+              <summary>兼容警告 {fileNotice.warnings.length} 条</summary>
+              <ul>
+                {fileNotice.warnings.map((warning, index) => (
+                  // biome-ignore lint/suspicious/noArrayIndexKey: 单次导入的只读警告快照不会重排，解析器可返回重复代码和文案。
+                  <li key={`${warning.code}-${index}`}>
+                    {warning.message}
+                    {warning.action ? (
+                      <button type="button" className="ghost" onClick={warning.action.run}>
+                        {warning.action.label}
+                      </button>
+                    ) : null}
+                  </li>
+                ))}
+              </ul>
+            </details>
+          )}
+        </div>
       ) : null}
       {view === 'worldbooks' ? (
         <div className="library-world-summary">
@@ -245,7 +273,7 @@ function LibraryBrowser({ view, active, ...props }: LibrarySurfaceProps & { view
           {all.length === 0 ? (
             <div className="library-empty">
               <strong>素材库为空</strong>
-              <p className="hint">可以导入素材，或在右侧新建。</p>
+              <p className="hint">可以导入素材，或前往编辑区新建。</p>
             </div>
           ) : results.length === 0 ? (
             <div className="library-empty">

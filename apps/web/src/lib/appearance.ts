@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 /**
  * 外观偏好（主题 / 对话区背景 / 意图是否默认展开）。
@@ -61,6 +61,10 @@ function read(): Appearance {
 
 export interface AppearanceApi {
   value: Appearance;
+  /** A failed write leaves the preview active for this session only. */
+  persistenceError: string | null;
+  hasSavedChanges: boolean;
+  retryPersist: () => void;
   patch: (values: Partial<Appearance>) => void;
   /** 读一张图当作背景；太大或不是图片时抛错（界面负责说人话）。 */
   setBackgroundFromFile: (file: File) => Promise<void>;
@@ -68,6 +72,9 @@ export interface AppearanceApi {
 
 export function useAppearance(): AppearanceApi {
   const [value, setValue] = useState<Appearance>(() => read());
+  const [persistenceError, setPersistenceError] = useState<string | null>(null);
+  const [hasSavedChanges, setHasSavedChanges] = useState(false);
+  const valueRef = useRef(value);
 
   // 主题放在 <html> 上：这样连 body 的背景色也跟着换，不会只换一半
   useEffect(() => {
@@ -75,19 +82,23 @@ export function useAppearance(): AppearanceApi {
   }, [value.theme]);
 
   const persist = useCallback((next: Appearance) => {
+    valueRef.current = next;
     setValue(next);
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
-    } catch {
-      // 存不下（配额满 / 隐私模式）：这次会话内照常生效，不打断用户
+      setPersistenceError(null);
+      setHasSavedChanges(true);
+    } catch (error) {
+      setHasSavedChanges(false);
+      setPersistenceError(error instanceof Error ? error.message : String(error));
     }
   }, []);
 
   const patch = useCallback(
     (values: Partial<Appearance>) => {
-      persist({ ...value, ...values });
+      persist({ ...valueRef.current, ...values });
     },
-    [persist, value],
+    [persist],
   );
 
   const setBackgroundFromFile = useCallback(
@@ -104,10 +115,12 @@ export function useAppearance(): AppearanceApi {
       for (let index = 0; index < bytes.length; index += 0x8000) {
         binary += String.fromCharCode(...bytes.subarray(index, index + 0x8000));
       }
-      persist({ ...value, background: `data:${file.type};base64,${btoa(binary)}` });
+      persist({ ...valueRef.current, background: `data:${file.type};base64,${btoa(binary)}` });
     },
-    [persist, value],
+    [persist],
   );
 
-  return { value, patch, setBackgroundFromFile };
+  const retryPersist = useCallback(() => persist(valueRef.current), [persist]);
+
+  return { value, persistenceError, hasSavedChanges, retryPersist, patch, setBackgroundFromFile };
 }

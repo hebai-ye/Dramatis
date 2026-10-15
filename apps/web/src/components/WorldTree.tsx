@@ -53,6 +53,7 @@ function WorldTreeImpl({
   /** 正在改名的那条对话：一次只允许一条，避免一屏好几个输入框。 */
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [draft, setDraft] = useState('');
+  const [query, setQuery] = useState('');
   const renameRef = useRef<HTMLInputElement | null>(null);
 
   /*
@@ -72,143 +73,174 @@ function WorldTreeImpl({
     setRenamingId(null);
     if (next !== '' && next !== conversation.title) onRenameConversation(conversation, next);
   };
+  const term = query.trim().toLocaleLowerCase();
+  const matchingConversations = conversations.filter((conversation) =>
+    conversation.title.toLocaleLowerCase().includes(term),
+  );
+  const visibleWorlds = worlds.filter(
+    (world) =>
+      term === '' ||
+      world.title.toLocaleLowerCase().includes(term) ||
+      (world.id === activeWorldId && matchingConversations.length > 0),
+  );
 
   if (worlds.length === 0) {
     return (
       <div className="rail-empty">
         <p className="hint">还没有世界。</p>
-        <p className="hint">导入一张角色卡，或者点上面的「新对话」开始。</p>
+        <p className="hint">点「新对话」创建世界，或点「导入素材」添加角色卡与世界书。</p>
       </div>
     );
   }
 
   return (
-    <ul className="world-list">
-      {worlds.map((world) => {
-        const isActive = world.id === activeWorldId;
-        const mainCount = isActive
-          ? conversations.filter((item) => item.kind === 'main').length
-          : world.conversationCount;
+    <>
+      <label className="world-search">
+        搜索世界与当前世界的对话
+        <input type="search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="输入名称" />
+      </label>
+      {term === '' ? null : <p className="hint">只按本机名称筛选；其他世界的对话需打开该世界后查看。</p>}
+      {visibleWorlds.length === 0 ? (
+        <p className="hint" role="status">
+          没有匹配的名称。清空搜索，或导入素材后新建对话。
+        </p>
+      ) : null}
+      <ul className="world-list" aria-label="世界与对话">
+        {visibleWorlds.map((world) => {
+          const isActive = world.id === activeWorldId;
+          const mainCount = isActive
+            ? conversations.filter((item) => item.kind === 'main').length
+            : world.conversationCount;
 
-        return (
-          <li key={world.id} className={isActive ? 'world active' : 'world'}>
-            <div className="world-row">
+          return (
+            <li key={world.id} className={isActive ? 'world active' : 'world'}>
+              <div className="world-row">
+                <button
+                  type="button"
+                  className="world-open"
+                  disabled={disabled}
+                  title={`${world.title} · ${String(world.messageCount)} 条消息 · ${String(world.instanceCount)} 名角色`}
+                  aria-current={isActive ? 'true' : undefined}
+                  aria-label={`${world.title}，${String(mainCount)} 条对话，${String(world.instanceCount)} 名角色${isActive ? '，当前世界' : ''}`}
+                  onClick={() => onOpenWorld(world.id)}
+                >
+                  <span className="world-title">{world.title}</span>
+                  <span className="hint">
+                    {String(mainCount)} 条对话 · {String(world.instanceCount)} 名角色
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  className="ghost danger"
+                  disabled={disabled}
+                  aria-label={`删除世界「${world.title}」`}
+                  title="删除这个世界（素材库里的角色卡与世界书会保留）"
+                  onClick={() => {
+                    if (window.confirm(`确定删除「${world.title}」？全部对话、角色状态与记忆都会被清空。`)) {
+                      onDeleteWorld(world.id);
+                    }
+                  }}
+                >
+                  <IconClose />
+                </button>
+              </div>
+
               <button
                 type="button"
-                className="world-open"
+                className="ghost world-new-conversation"
                 disabled={disabled}
-                title={`${String(world.messageCount)} 条消息 · ${String(world.instanceCount)} 名角色`}
-                onClick={() => onOpenWorld(world.id)}
+                onClick={() => onNewConversation(world.id)}
               >
-                <span className="world-title">{world.title}</span>
-                <span className="hint">
-                  {String(mainCount)} 条对话 · {String(world.instanceCount)} 名角色
-                </span>
+                <IconPlus />
+                <span>在这个世界新开一轮对话</span>
               </button>
-              <button
-                type="button"
-                className="ghost danger"
-                disabled={disabled}
-                aria-label={`删除世界「${world.title}」`}
-                title="删除这个世界（素材库里的角色卡与世界书会保留）"
-                onClick={() => {
-                  if (window.confirm(`确定删除「${world.title}」？全部对话、角色状态与记忆都会被清空。`)) {
-                    onDeleteWorld(world.id);
-                  }
-                }}
-              >
-                <IconClose />
-              </button>
-            </div>
 
-            <button
-              type="button"
-              className="ghost world-new-conversation"
-              disabled={disabled}
-              onClick={() => onNewConversation(world.id)}
-            >
-              <IconPlus />
-              <span>在这个世界新开一轮对话</span>
-            </button>
-
-            {isActive ? (
-              <ul className="conversation-list">
-                {conversations.length === 0 ? <li className="hint">这个世界还没有对话</li> : null}
-                {conversations.map((conversation) => (
-                  <li key={conversation.id} className={conversation.id === activeConversationId ? 'active' : ''}>
-                    {renamingId === conversation.id ? (
-                      /* 改名就地做：输入框顶掉标题，Enter 保存、Esc 取消、失焦也算保存 */
-                      <input
-                        ref={renameRef}
-                        className="conversation-rename"
-                        value={draft}
-                        aria-label="对话名"
-                        onChange={(event) => setDraft(event.target.value)}
-                        onKeyDown={(event) => {
-                          if (event.key === 'Enter') commitRename(conversation);
-                          if (event.key === 'Escape') setRenamingId(null);
-                        }}
-                        onBlur={() => commitRename(conversation)}
-                      />
-                    ) : (
+              {isActive ? (
+                <ul className="conversation-list">
+                  {conversations.length === 0 ? (
+                    <li className="hint">这个世界还没有对话。点上方「在这个世界新开一轮对话」开始。</li>
+                  ) : null}
+                  {(term === '' || world.title.toLocaleLowerCase().includes(term)
+                    ? conversations
+                    : matchingConversations
+                  ).map((conversation) => (
+                    <li key={conversation.id} className={conversation.id === activeConversationId ? 'active' : ''}>
+                      {renamingId === conversation.id ? (
+                        /* 改名就地做：输入框顶掉标题，Enter 保存、Esc 取消、失焦也算保存 */
+                        <input
+                          ref={renameRef}
+                          className="conversation-rename"
+                          value={draft}
+                          aria-label="对话名"
+                          onChange={(event) => setDraft(event.target.value)}
+                          onKeyDown={(event) => {
+                            if (event.key === 'Enter') commitRename(conversation);
+                            if (event.key === 'Escape') setRenamingId(null);
+                          }}
+                          onBlur={() => commitRename(conversation)}
+                        />
+                      ) : (
+                        <button
+                          type="button"
+                          className="conversation-open"
+                          disabled={disabled}
+                          title={conversation.title}
+                          aria-current={conversation.id === activeConversationId ? 'page' : undefined}
+                          onClick={() => onOpenConversation(conversation.id)}
+                        >
+                          <span className="conversation-title">
+                            {conversation.kind === 'side' ? <IconSettings /> : null}
+                            <span>{conversation.title}</span>
+                          </span>
+                          <span className="tag">{conversation.kind === 'side' ? '副对话' : '主对话'}</span>
+                        </button>
+                      )}
                       <button
                         type="button"
-                        className="conversation-open"
+                        className="ghost"
                         disabled={disabled}
-                        onClick={() => onOpenConversation(conversation.id)}
+                        title="改这条对话的名字"
+                        aria-label="改名"
+                        onClick={() => {
+                          setDraft(conversation.title);
+                          setRenamingId(conversation.id);
+                        }}
                       >
-                        <span className="conversation-title">
-                          {conversation.kind === 'side' ? <IconSettings /> : null}
-                          <span>{conversation.title}</span>
-                        </span>
-                        <span className="tag">{conversation.kind === 'side' ? '副对话' : '主对话'}</span>
+                        <IconEdit />
                       </button>
-                    )}
-                    <button
-                      type="button"
-                      className="ghost"
-                      disabled={disabled}
-                      title="改这条对话的名字"
-                      aria-label="改名"
-                      onClick={() => {
-                        setDraft(conversation.title);
-                        setRenamingId(conversation.id);
-                      }}
-                    >
-                      <IconEdit />
-                    </button>
-                    <button
-                      type="button"
-                      className="ghost"
-                      disabled={disabled}
-                      title="归档：把情绪、关系、记忆回滚到这条对话开始之前，对话本身保留"
-                      onClick={() => onArchiveConversation(conversation)}
-                    >
-                      <IconArchive />
-                      <span>归档</span>
-                    </button>
-                    <button
-                      type="button"
-                      className="ghost danger"
-                      disabled={disabled}
-                      aria-label={`删除对话「${conversation.title}」`}
-                      title="彻底删除这条对话（不可恢复）"
-                      onClick={() => {
-                        if (window.confirm(`彻底删除「${conversation.title}」？消息与记忆都会一起消失。`)) {
-                          onDeleteConversation(conversation);
-                        }
-                      }}
-                    >
-                      <IconClose />
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            ) : null}
-          </li>
-        );
-      })}
-    </ul>
+                      <button
+                        type="button"
+                        className="ghost"
+                        disabled={disabled}
+                        title="归档：把情绪、关系、记忆回滚到这条对话开始之前，对话本身保留"
+                        onClick={() => onArchiveConversation(conversation)}
+                      >
+                        <IconArchive />
+                        <span>归档</span>
+                      </button>
+                      <button
+                        type="button"
+                        className="ghost danger"
+                        disabled={disabled}
+                        aria-label={`删除对话「${conversation.title}」`}
+                        title="彻底删除这条对话（不可恢复）"
+                        onClick={() => {
+                          if (window.confirm(`彻底删除「${conversation.title}」？消息与记忆都会一起消失。`)) {
+                            onDeleteConversation(conversation);
+                          }
+                        }}
+                      >
+                        <IconClose />
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
+            </li>
+          );
+        })}
+      </ul>
+    </>
   );
 }
 

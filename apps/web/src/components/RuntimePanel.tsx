@@ -17,9 +17,12 @@ import type {
   WorldBook,
   WorldBookId,
 } from '@dramatis/core';
-import { memo, useEffect, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useRef, useState } from 'react';
+import { type BudgetDraftStore, createBudgetDraftStore } from '../hooks/useBudgetDraftMemory';
 import { createLazyModule } from '../lib/lazy-module';
 import { countRender } from '../lib/render-count';
+import type { DraftFlush } from '../lib/useDraftField';
+import { useSerialSave } from '../lib/useSerialSave';
 import { CastPanel } from './CastPanel';
 import { IconChart, IconDocument, IconMemory, IconScene } from './Icons';
 import { LazyPanel } from './LazyPanel';
@@ -36,6 +39,7 @@ interface Props {
   open: boolean;
   focusOnOpen: boolean;
   onClose: () => void;
+  onRegisterFlush?: (flush: DraftFlush | null) => void;
   scene: Scene | null;
   instances: CharacterInstance[];
   memories: MemoryEvent[];
@@ -53,6 +57,8 @@ interface Props {
   /** 当前世界的角色卡，记忆面板用它显示附件。 */
   worldCards: Card[];
   prompt: AssembledPrompt | null;
+  promptSourceLabel?: string;
+  promptPreparedAt?: string;
   pending: number;
   /** 生成之外的调用次数（意图判断 + 后台分析），来自落盘的账单。 */
   extraCalls: number;
@@ -60,25 +66,29 @@ interface Props {
   worldId?: string | null;
   /** 账单：整个世界与当前对话各一份。 */
   usage: { world: UsageSummary | null; conversation: UsageSummary | null; latestTurn: UsageSummary | null };
+  usageError?: string | null;
+  onRetryUsage?: () => void | Promise<void>;
   /** 本局的调用预算与熔断状态（P1-9）。 */
   budget: BudgetState;
   /** 已经保存的上限（草稿初值）。 */
   budgetLimits: BudgetLimits | null;
   onSaveBudget: (limits: BudgetLimits | null) => void | Promise<void>;
+  budgetDrafts?: BudgetDraftStore;
   /** 当前对话名，给用量面板做标题。 */
   conversationTitle: string;
   workerError: string | null;
   failedTasks?: number;
   onRetryFailed?: () => void;
   disabled: boolean;
-  onSceneChange: (patch: Partial<Scene>) => void;
-  onStartNewScene: (title: string) => void;
-  onSetPresence: (id: InstanceId, presence: Presence) => void;
-  onSelectPersona: (persona: Persona) => void;
-  onRenameInstance: (id: InstanceId, name: string) => void;
-  onRemoveInstance: (id: InstanceId) => void;
-  onAddInstance: (card: Card) => void;
-  onDetachWorldBook: (id: WorldBookId) => void;
+  onSceneChange: (patch: Partial<Scene>) => void | Promise<void>;
+  onStartNewScene: (title: string) => void | Promise<void>;
+  onSetPresence: (id: InstanceId, presence: Presence) => void | Promise<void>;
+  onSelectPersona: (persona: Persona) => void | Promise<void>;
+  onRenameInstance: (id: InstanceId, name: string) => void | Promise<void>;
+  onRemoveInstance: (id: InstanceId) => void | Promise<void>;
+  onOpenDetail?: (id: InstanceId) => void;
+  onAddInstance: (card: Card) => void | Promise<void>;
+  onDetachWorldBook: (id: WorldBookId) => void | Promise<void>;
   onUpdateMemory: (id: EventId, patch: Partial<MemoryEvent>) => void;
   onDeleteMemory: (id: EventId) => void;
   /** 跳回这条记忆产生的原句所在的对话（T11）。 */
@@ -104,6 +114,77 @@ function RuntimePanelImpl(props: Props) {
   countRender('RuntimePanel');
   const [tab, setTab] = useState<Tab>('scene');
   const firstTabRef = useRef<HTMLButtonElement>(null);
+  const budgetDraftsRef = useRef(createBudgetDraftStore());
+  const saveScope = JSON.stringify([props.worldId, props.activeConversationId, props.scene?.id]);
+  const saveOwner = useRef({
+    scope: saveScope,
+    scene: null as DraftFlush | null,
+    cast: null as DraftFlush | null,
+    leaving: null as Promise<boolean> | null,
+    active: true,
+  });
+  if (saveOwner.current.scope !== saveScope) {
+    saveOwner.current.active = false;
+    saveOwner.current = { scope: saveScope, scene: null, cast: null, leaving: null, active: true };
+  }
+  const owner = saveOwner.current;
+  const serialWrites = useSerialSave(saveScope);
+  const [leaveFeedback, setLeaveFeedback] = useState<{
+    owner: typeof owner;
+    busy: boolean;
+    error: string | null;
+  } | null>(null);
+  const beforeLeave = useCallback((): Promise<boolean> => {
+    if (owner.leaving) return owner.leaving;
+    setLeaveFeedback({ owner, busy: true, error: null });
+    const task = Promise.resolve().then(async () => {
+      try {
+        const results = await Promise.all([owner.scene?.() ?? true, owner.cast?.() ?? true]);
+        const writesFinished = await serialWrites.flush();
+        const ok = owner.active && saveOwner.current === owner && results.every(Boolean) && writesFinished;
+        if (owner.active && saveOwner.current === owner)
+          setLeaveFeedback({ owner, busy: false, error: ok ? null : '保存未完成，请完成输入或重试保存后再离开。' });
+        return ok;
+      } catch (reason) {
+        if (owner.active && saveOwner.current === owner)
+          setLeaveFeedback({
+            owner,
+            busy: false,
+            error: `保存未完成：${reason instanceof Error ? reason.message : String(reason)}。草稿已保留。`,
+          });
+        return false;
+      } finally {
+        if (owner.leaving === task) owner.leaving = null;
+      }
+    });
+    owner.leaving = task;
+    return task;
+  }, [owner, serialWrites.flush]);
+  const registerSceneFlush = useCallback(
+    (flush: DraftFlush | null) => {
+      owner.scene = flush;
+    },
+    [owner],
+  );
+  const registerCastFlush = useCallback(
+    (flush: DraftFlush | null) => {
+      owner.cast = flush;
+    },
+    [owner],
+  );
+  useEffect(() => {
+    owner.active = true;
+    props.onRegisterFlush?.(beforeLeave);
+    return () => {
+      owner.active = false;
+      props.onRegisterFlush?.(null);
+    };
+  }, [owner, props.onRegisterFlush, beforeLeave]);
+  const leaving = leaveFeedback?.owner === owner && leaveFeedback.busy;
+  const leaveError = leaveFeedback?.owner === owner ? leaveFeedback.error : null;
+  const close = async () => {
+    if (await beforeLeave()) props.onClose();
+  };
 
   useEffect(() => {
     if (!props.open || !props.focusOnOpen) return;
@@ -124,7 +205,7 @@ function RuntimePanelImpl(props: Props) {
       onKeyDown={(event) => {
         if (event.key === 'Escape' && props.open && props.focusOnOpen) {
           event.stopPropagation();
-          props.onClose();
+          void close();
         }
       }}
     >
@@ -138,7 +219,11 @@ function RuntimePanelImpl(props: Props) {
               type="button"
               className={item.id === tab ? 'tab active' : 'tab'}
               aria-pressed={item.id === tab}
-              onClick={() => setTab(item.id)}
+              disabled={leaving}
+              onClick={async () => {
+                if (tab === item.id || owner.leaving) return;
+                if (await beforeLeave()) setTab(item.id);
+              }}
             >
               <TabIcon />
               {item.label}
@@ -147,6 +232,21 @@ function RuntimePanelImpl(props: Props) {
           );
         })}
       </nav>
+      {leaving ? (
+        <p className="hint" role="status">
+          正在保存编辑，请稍候…
+        </p>
+      ) : null}
+      {leaveError ? (
+        <p className="hint error" role="alert">
+          {leaveError}
+        </p>
+      ) : null}
+      {serialWrites.error ? (
+        <p className="hint error" role="alert">
+          操作未完成：{serialWrites.error}。请核对当前内容后重试。
+        </p>
+      ) : null}
 
       {tab === 'scene' ? (
         <>
@@ -158,7 +258,7 @@ function RuntimePanelImpl(props: Props) {
               aria-label="这条对话使用的身份"
               onChange={(event) => {
                 const persona = props.personas.find((item) => item.id === event.target.value);
-                if (persona) props.onSelectPersona(persona);
+                if (persona) void serialWrites.run(() => props.onSelectPersona(persona));
               }}
             >
               <option value="">{props.playerName || '未选择身份'}</option>
@@ -174,9 +274,10 @@ function RuntimePanelImpl(props: Props) {
           {props.scene ? (
             <ScenePanel
               scene={props.scene}
-              disabled={props.disabled}
-              onChange={props.onSceneChange}
-              onStartNewScene={props.onStartNewScene}
+              disabled={props.disabled || leaving}
+              onChange={(patch) => serialWrites.run(() => props.onSceneChange(patch))}
+              onStartNewScene={(title) => serialWrites.run(() => props.onStartNewScene(title))}
+              onRegisterFlush={registerSceneFlush}
             />
           ) : null}
 
@@ -184,10 +285,12 @@ function RuntimePanelImpl(props: Props) {
             <CastPanel
               instances={props.instances}
               scene={props.scene}
-              disabled={props.disabled}
-              onSetPresence={props.onSetPresence}
-              onRename={props.onRenameInstance}
-              onRemove={props.onRemoveInstance}
+              disabled={props.disabled || leaving}
+              onSetPresence={(id, presence) => serialWrites.run(() => props.onSetPresence(id, presence))}
+              onRename={(id, name) => serialWrites.run(() => props.onRenameInstance(id, name))}
+              onRemove={(id) => serialWrites.run(() => props.onRemoveInstance(id))}
+              onOpenDetail={props.onOpenDetail}
+              onRegisterFlush={registerCastFlush}
             />
           ) : null}
 
@@ -202,7 +305,7 @@ function RuntimePanelImpl(props: Props) {
                       type="button"
                       className="ghost"
                       disabled={props.disabled || props.scene === null}
-                      onClick={() => props.onAddInstance(card)}
+                      onClick={() => void serialWrites.run(() => props.onAddInstance(card))}
                     >
                       加入场景
                     </button>
@@ -227,7 +330,7 @@ function RuntimePanelImpl(props: Props) {
                       className="ghost danger"
                       disabled={props.disabled}
                       title="解绑，不会删除世界书本身"
-                      onClick={() => props.onDetachWorldBook(book.id)}
+                      onClick={() => void serialWrites.run(() => props.onDetachWorldBook(book.id))}
                     >
                       解绑
                     </button>
@@ -269,15 +372,24 @@ function RuntimePanelImpl(props: Props) {
             world: props.usage.world,
             conversation: props.usage.conversation,
             latestTurn: props.usage.latestTurn,
+            usageError: props.usageError,
+            onRetryUsage: props.onRetryUsage,
             conversationTitle: props.conversationTitle,
             budget: props.budget,
             limits: props.budgetLimits,
+            budgetDrafts: props.budgetDrafts ?? budgetDraftsRef.current,
             onSaveBudget: props.onSaveBudget,
           }}
         />
       ) : null}
 
-      {tab === 'prompt' ? <PromptInspector prompt={props.prompt} /> : null}
+      {tab === 'prompt' ? (
+        <PromptInspector
+          prompt={props.prompt}
+          sourceLabel={props.promptSourceLabel}
+          preparedAt={props.promptPreparedAt}
+        />
+      ) : null}
     </aside>
   );
 }

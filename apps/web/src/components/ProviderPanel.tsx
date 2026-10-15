@@ -2,7 +2,7 @@ import type { KeyStore, ProviderPrice, ProviderRole } from '@dramatis/core';
 import { useEffect, useRef, useState } from 'react';
 import type { KeyStorageMode } from '../lib/keystore';
 import { describeKeyStore } from '../lib/keystore';
-import type { ProvidersApi } from '../lib/providers';
+import { type ProviderNumericField, type ProvidersApi, providerNumericErrors } from '../lib/providers';
 import { useDialogActions } from './DialogShell';
 
 interface Props {
@@ -29,9 +29,9 @@ interface Draft {
   model: string;
   baseUrl: string;
   role: ProviderRole;
-  temperature: number;
-  maxTokens: number;
-  reserveForReply: number;
+  temperature: string;
+  maxTokens: string;
+  reserveForReply: string;
   apiKey: string;
   keyMode: KeyStorageMode;
   /** 口令加密那一档用：新建库或解锁已有库。空字符串表示「还没填」。 */
@@ -65,9 +65,9 @@ function draftOf(api: ProvidersApi): Draft | null {
     model: active.model,
     baseUrl: active.baseUrl,
     role: active.role,
-    temperature: active.temperature,
-    maxTokens: active.maxTokens,
-    reserveForReply: active.reserveForReply,
+    temperature: String(active.temperature),
+    maxTokens: String(active.maxTokens),
+    reserveForReply: String(active.reserveForReply),
     apiKey: api.apiKey,
     keyMode: api.keyMode,
     vaultPassphrase: '',
@@ -86,10 +86,38 @@ function draftOf(api: ProvidersApi): Draft | null {
 function priceOf(draft: Draft): ProviderPrice | null {
   if (draft.priceInput.trim() === '' && draft.priceOutput.trim() === '') return null;
   return {
-    inputPerMillion: Number(draft.priceInput) || 0,
-    outputPerMillion: Number(draft.priceOutput) || 0,
+    inputPerMillion: Number(draft.priceInput),
+    outputPerMillion: Number(draft.priceOutput),
     currency: draft.priceCurrency.trim() === '' ? '¥' : draft.priceCurrency.trim(),
   };
+}
+
+function requiredNumber(value: string): number {
+  return value.trim() === '' ? Number.NaN : Number(value);
+}
+
+function keyGuide(baseUrl: string): { label: string; href?: string; local?: boolean } {
+  try {
+    const url = new URL(baseUrl.trim());
+    const path = url.pathname.replace(/\/+$/, '');
+    if (
+      ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname) &&
+      ['http:', 'https:'].includes(url.protocol) &&
+      ['11434', '1234'].includes(url.port) &&
+      ['', '/v1'].includes(path)
+    )
+      return { label: url.port === '11434' ? 'Ollama' : 'LM Studio', local: true };
+    if (url.protocol !== 'https:' || url.port !== '' || url.username !== '' || url.password !== '')
+      return { label: '兼容接口' };
+    if (url.hostname === 'api.deepseek.com' && ['', '/v1'].includes(path))
+      return { label: 'DeepSeek 开放平台', href: 'https://platform.deepseek.com/api_keys' };
+    if (url.hostname === 'api.openai.com' && ['', '/v1'].includes(path))
+      return { label: 'OpenAI 开放平台', href: 'https://platform.openai.com/api-keys' };
+    const known = ENDPOINT_PRESETS.find((preset) => preset.value === `${url.origin}${path}`);
+    return { label: known?.label ?? '兼容接口' };
+  } catch {
+    return { label: '兼容接口' };
+  }
 }
 
 function isSameDraft(left: Draft | null, right: Draft | null): boolean {
@@ -129,6 +157,7 @@ export function ProviderPanel({ api, disabled }: Props) {
   const [savedAt, setSavedAt] = useState<string | null>(null);
   /** 口令库的报错（口令不对 / 文件坏了）：就地显示，不弹窗。 */
   const [vaultError, setVaultError] = useState<string | null>(null);
+  const [validationErrors, setValidationErrors] = useState<Partial<Record<ProviderNumericField, string>>>({});
   const [profileBusy, setProfileBusy] = useState(false);
   const busyRef = useRef(false);
   const baselineRef = useRef(draftOf(api));
@@ -140,6 +169,7 @@ export function ProviderPanel({ api, disabled }: Props) {
   const active = api.active;
   const controlsDisabled = disabled || saveBusy || clipboardBusy || deleteBusy || profileBusy;
   const keyBlocked = api.keyLoading || api.keyError !== null || api.vaultLocked;
+  const guide = keyGuide(draft?.baseUrl ?? '');
 
   /**
    * 草稿的重置时机。
@@ -164,6 +194,7 @@ export function ProviderPanel({ api, disabled }: Props) {
       setDraft(draftRef.current);
     }
     if (switched) {
+      setValidationErrors({});
       setSavedAt(null);
       setDeleteArmed(false);
       setVaultError(null);
@@ -180,6 +211,7 @@ export function ProviderPanel({ api, disabled }: Props) {
     setSavedAt(null);
     setVaultError(null);
     setDeleteArmed(false);
+    setValidationErrors({});
   };
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: discard follows this render's draft and API; cleanup releases the panel guard
@@ -240,24 +272,27 @@ export function ProviderPanel({ api, disabled }: Props) {
       active === null ||
       apiRef.current.keyLoading ||
       apiRef.current.keyError !== null ||
-      apiRef.current.vaultLocked ||
-      !beginOperation()
+      apiRef.current.vaultLocked
     )
       return;
+    const profile = {
+      name: draft.name,
+      model: draft.model,
+      baseUrl: draft.baseUrl,
+      role: draft.role,
+      temperature: requiredNumber(draft.temperature),
+      maxTokens: requiredNumber(draft.maxTokens),
+      reserveForReply: requiredNumber(draft.reserveForReply),
+      price: priceOf(draft),
+    };
+    const errors = providerNumericErrors(profile);
+    setValidationErrors(errors);
+    if (Object.keys(errors).length > 0 || !beginOperation()) return;
     setVaultError(null);
     setSaveBusy(true);
     try {
       await api.commitConfig({
-        profile: {
-          name: draft.name,
-          model: draft.model,
-          baseUrl: draft.baseUrl,
-          role: draft.role,
-          temperature: draft.temperature,
-          maxTokens: draft.maxTokens,
-          reserveForReply: draft.reserveForReply,
-          price: priceOf(draft),
-        },
+        profile,
         apiKey: draft.apiKey,
         keyMode: draft.keyMode,
         vaultPassphrase: draft.vaultPassphrase,
@@ -316,6 +351,13 @@ export function ProviderPanel({ api, disabled }: Props) {
       {vaultError === null ? null : (
         <div className="notice error" role="alert">
           <p>{vaultError}</p>
+        </div>
+      )}
+      {Object.keys(validationErrors).length === 0 ? null : (
+        <div className="notice error" role="alert" id="provider-numeric-errors">
+          {Object.values(validationErrors).map((message) => (
+            <p key={message}>{message}</p>
+          ))}
         </div>
       )}
 
@@ -413,18 +455,21 @@ export function ProviderPanel({ api, disabled }: Props) {
           */}
           {!keyBlocked && draft.apiKey.trim() === '' ? (
             <div className="key-guide">
-              <strong>还没有 Key？三步就好（大约两分钟）</strong>
-              <ol>
-                <li>
-                  打开{' '}
-                  <a href="https://platform.deepseek.com/api_keys" target="_blank" rel="noreferrer">
-                    DeepSeek 开放平台
-                  </a>
-                  （注册 / 登录；充值在同一个控制台的「充值」页，最低几块钱就能聊很久）。
-                </li>
-                <li>在「API keys」里创建一个，名字随便起；它只显示这一次，当场复制。</li>
-                <li>回到这里点「粘贴 Key」，再点表单底部的「保存」。</li>
-              </ol>
+              <strong>{guide.local ? `${guide.label} 本地接口` : `${guide.label}的 API Key`}</strong>
+              {guide.local ? (
+                <p>本地服务未启用鉴权时，API Key 可以留空；启用鉴权时请填写服务设置中的 Key。</p>
+              ) : (
+                <p>
+                  {guide.href ? (
+                    <a href={guide.href} target="_blank" rel="noreferrer">
+                      {guide.label}
+                    </a>
+                  ) : (
+                    guide.label
+                  )}
+                  ：请在所用服务的控制台或接口文档中确认 Key 的获取方式和格式，手动粘贴后点击「保存」。
+                </p>
+              )}
               <div className="save-bar">
                 <button
                   type="button"
@@ -467,7 +512,7 @@ export function ProviderPanel({ api, disabled }: Props) {
             >
               <option value="session">仅本次会话（最安全）</option>
               <option value="device">保存在本机浏览器（最方便）</option>
-              <option value="encrypted">用一句口令加密后保存在本机（顺序 10）</option>
+              <option value="encrypted">用一句口令加密后保存在本机</option>
             </select>
           </label>
           <p className="hint warn">
@@ -579,30 +624,36 @@ export function ProviderPanel({ api, disabled }: Props) {
                   min="0"
                   max="2"
                   value={draft.temperature}
+                  aria-invalid={validationErrors.temperature !== undefined}
+                  aria-describedby={validationErrors.temperature ? 'provider-numeric-errors' : undefined}
                   disabled={controlsDisabled}
-                  onChange={(event) => patch({ temperature: Number(event.target.value) || 0 })}
+                  onChange={(event) => patch({ temperature: event.target.value })}
                 />
               </label>
               <label>
                 上下文窗口
                 <input
                   type="number"
-                  step="1024"
-                  min="1024"
+                  step="1"
+                  min="1"
                   value={draft.maxTokens}
+                  aria-invalid={validationErrors.maxTokens !== undefined}
+                  aria-describedby={validationErrors.maxTokens ? 'provider-numeric-errors' : undefined}
                   disabled={controlsDisabled}
-                  onChange={(event) => patch({ maxTokens: Number(event.target.value) || 1024 })}
+                  onChange={(event) => patch({ maxTokens: event.target.value })}
                 />
               </label>
               <label>
                 预留回复
                 <input
                   type="number"
-                  step="256"
-                  min="0"
+                  step="1"
+                  min="1"
                   value={draft.reserveForReply}
+                  aria-invalid={validationErrors.reserveForReply !== undefined}
+                  aria-describedby={validationErrors.reserveForReply ? 'provider-numeric-errors' : undefined}
                   disabled={controlsDisabled}
-                  onChange={(event) => patch({ reserveForReply: Number(event.target.value) || 0 })}
+                  onChange={(event) => patch({ reserveForReply: event.target.value })}
                 />
               </label>
             </div>
@@ -616,6 +667,8 @@ export function ProviderPanel({ api, disabled }: Props) {
                   min="0"
                   placeholder="留空＝不换算"
                   value={draft.priceInput}
+                  aria-invalid={validationErrors.priceInput !== undefined}
+                  aria-describedby={validationErrors.priceInput ? 'provider-numeric-errors' : undefined}
                   disabled={controlsDisabled}
                   onChange={(event) => patch({ priceInput: event.target.value })}
                 />
@@ -628,6 +681,8 @@ export function ProviderPanel({ api, disabled }: Props) {
                   min="0"
                   placeholder="留空＝不换算"
                   value={draft.priceOutput}
+                  aria-invalid={validationErrors.priceOutput !== undefined}
+                  aria-describedby={validationErrors.priceOutput ? 'provider-numeric-errors' : undefined}
                   disabled={controlsDisabled}
                   onChange={(event) => patch({ priceOutput: event.target.value })}
                 />

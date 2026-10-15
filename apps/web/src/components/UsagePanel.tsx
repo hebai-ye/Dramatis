@@ -17,13 +17,16 @@ import {
   type UsageTotals,
   validateBudgetDraft,
 } from '@dramatis/core';
-import { useEffect, useId, useRef, useState } from 'react';
+import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
+import { type BudgetDraftStore, useBudgetDraftMemory } from '../hooks/useBudgetDraftMemory';
 import { formatTime } from '../lib/format';
 import { CATEGORY_LABELS, formatCalibrationNote, formatCost, formatTokens } from '../lib/usage';
 
 interface Props {
   /** Explicit identity supplied by the caller; summaries/limits cannot identify a world. */
   worldId?: string | null;
+  /** Shell-owned memory, scoped to this local library; survives usage-tab unmounts. */
+  budgetDrafts?: BudgetDraftStore;
   world: UsageSummary | null;
   conversation: UsageSummary | null;
   latestTurn: UsageSummary | null;
@@ -32,8 +35,82 @@ interface Props {
   /** 已经保存的上限（草稿的初值）。 */
   limits: BudgetLimits | null;
   onSaveBudget: (limits: BudgetLimits | null) => void | Promise<void>;
+  /** Active ledger read failure; existing summaries are the last successful read. */
+  usageError?: string | null;
+  onRetryUsage?: () => void | Promise<void>;
   /** 当前对话名，用来给「本对话」那一段做标题。 */
   conversationTitle: string;
+}
+
+export function UsageReadFeedback({
+  error,
+  hasData,
+  onRetry,
+}: {
+  error: string | null;
+  hasData: boolean;
+  onRetry: (() => void | Promise<void>) | undefined;
+}) {
+  const [status, setStatus] = useState({ busy: false, error: null as string | null });
+  const request = useRef(0);
+  const busy = useRef(false);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: 上游读取状态变化时清掉旧重试错误，避免覆盖新结果。
+  useEffect(() => {
+    setStatus((previous) => ({ ...previous, error: null }));
+  }, [error]);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: 读取回调的身份代表当前账单范围；切换时废弃旧请求。
+  useLayoutEffect(() => {
+    request.current++;
+    busy.current = false;
+    setStatus({ busy: false, error: null });
+    return () => {
+      request.current++;
+    };
+  }, [onRetry]);
+  const failure = status.error ?? error;
+  if (failure === null && !status.busy) return null;
+  if (failure === null)
+    return (
+      <p className="hint" role="status">
+        正在重新读取账单…
+      </p>
+    );
+
+  async function retry() {
+    if (onRetry === undefined || busy.current) return;
+    const attempt = ++request.current;
+    busy.current = true;
+    setStatus({ busy: true, error: null });
+    try {
+      await onRetry();
+    } catch (retryError) {
+      if (request.current === attempt) {
+        setStatus({ busy: true, error: retryError instanceof Error ? retryError.message : String(retryError) });
+      }
+    } finally {
+      if (request.current === attempt) {
+        busy.current = false;
+        setStatus((previous) => ({ ...previous, busy: false }));
+      }
+    }
+  }
+
+  return (
+    <div className="notice error" role="alert">
+      <strong>账单读取失败</strong>
+      <p>{failure}</p>
+      <p>
+        {hasData
+          ? '以下用量与预算状态来自上次成功读取的数据，可能已经过时。'
+          : '当前无法确认账单与已用次数；不能据此判断没有调用或费用。'}
+      </p>
+      {onRetry === undefined ? null : (
+        <button type="button" disabled={status.busy} onClick={() => void retry()}>
+          {status.busy ? '正在重新读取…' : '重试读取账单'}
+        </button>
+      )}
+    </div>
+  );
 }
 
 /** Only an explicit save writes; selection, confirmation and clearing are draft operations. */
@@ -43,17 +120,18 @@ function BudgetEditor({
   state,
   summary,
   onSave,
+  usageUnavailable = false,
+  budgetDrafts,
 }: {
   worldId?: string | null;
   limits: BudgetLimits | null | undefined;
   state: BudgetState;
   summary: UsageSummary | null;
   onSave: (limits: BudgetLimits | null) => void | Promise<void>;
+  usageUnavailable?: boolean;
+  budgetDrafts?: BudgetDraftStore;
 }) {
-  const [editor, setEditor] = useState(() => {
-    const draft = createBudgetDraft(limits);
-    return { draft, baseSignature: budgetLimitsSignature(limits), cleanSignature: budgetDraftSignature(draft) };
-  });
+  const [editor, setEditor] = useBudgetDraftMemory(worldId, limits, budgetDrafts);
   const [actionErrors, setActionErrors] = useState<string[]>([]);
   const [saveStatus, setSaveStatus] = useState({ busy: false, error: false, unconfirmed: false, message: '' });
   const saveRequest = useRef<BudgetDraftSave | null>(null);
@@ -79,7 +157,7 @@ function BudgetEditor({
             confirmed: request.confirmed && !saveStatus.busy && !saveStatus.error && !saveStatus.unconfirmed,
           };
     setEditor((previous) => reconcileBudgetDraft(previous, limits, snapshot));
-  }, [limits, saveStatus.busy, saveStatus.error, saveStatus.unconfirmed]);
+  }, [limits, saveStatus.busy, saveStatus.error, saveStatus.unconfirmed, setEditor]);
 
   useEffect(
     () => () => {
@@ -171,7 +249,7 @@ function BudgetEditor({
   const errors = [...actionErrors, ...(validation.ok ? [] : validation.errors)];
 
   return (
-    <section className="panel">
+    <section className="panel budget-editor">
       <h2>本局上限</h2>
       {typeof worldId !== 'string' || worldId.trim() === '' ? (
         <p className="hint">
@@ -381,35 +459,59 @@ function BudgetEditor({
       ) : null}
 
       <h3>当前配置与用量（不是草稿预览）</h3>
-      <ul className="usage-list">
+      <ul className="budget-usage-list">
         <li>
-          <span className="usage-name">额外调用</span>
-          <span className="usage-figure">
-            已用 {state.extraCalls} 次 · 上限 {limits?.maxExtraCalls ?? '未设限'} · 剩余{' '}
-            {state.remainingCalls ?? '未设限'}
-          </span>
+          <strong>额外调用</strong>
+          <dl className="budget-metrics">
+            <div>
+              <dt>已用</dt>
+              <dd>{usageUnavailable ? '未知（账单读取失败）' : `${state.extraCalls} 次`}</dd>
+            </div>
+            <div>
+              <dt>上限</dt>
+              <dd>{limits?.maxExtraCalls ?? '未设限'}</dd>
+            </div>
+            <div>
+              <dt>剩余</dt>
+              <dd>{usageUnavailable ? '未知（账单读取失败）' : (state.remainingCalls ?? '未设限')}</dd>
+            </div>
+          </dl>
         </li>
         {currencyRows.map((row) => (
           <li key={row.currency}>
-            <span className="usage-name">{row.currency}</span>
-            <span className="usage-figure">
-              已知花费 {row.cost === null ? '未知（无已定价账单）' : String(row.cost)}
-              {' · '}上限 {row.limit === null ? '未设限' : String(row.limit)}
-              {' · '}剩余{' '}
-              {row.limit === null
-                ? '未设限'
-                : row.remaining === null
-                  ? '未知（不能据此当作全额可用）'
-                  : String(row.remaining)}
-              {' · '}触发原因：
-              {row.exceeded
-                ? `${row.currency} 已知花费达到上限`
-                : row.limit === null
-                  ? '无逐币种限制'
-                  : row.cost === null
-                    ? '金额未知，无法判断'
-                    : '已知花费未达上限'}
-            </span>
+            <code className="budget-currency-label">{JSON.stringify(row.currency)}</code>
+            <dl className="budget-metrics">
+              <div>
+                <dt>已知花费</dt>
+                <dd>{row.cost === null ? '未知（无已定价账单）' : String(row.cost)}</dd>
+              </div>
+              <div>
+                <dt>上限</dt>
+                <dd>{row.limit === null ? '未设限' : String(row.limit)}</dd>
+              </div>
+              <div>
+                <dt>剩余</dt>
+                <dd>
+                  {row.limit === null
+                    ? '未设限'
+                    : row.remaining === null
+                      ? '未知（不能据此当作全额可用）'
+                      : String(row.remaining)}
+                </dd>
+              </div>
+              <div>
+                <dt>触发原因</dt>
+                <dd>
+                  {row.exceeded
+                    ? '该币种已知花费达到上限'
+                    : row.limit === null
+                      ? '无逐币种限制'
+                      : row.cost === null
+                        ? '金额未知，无法判断'
+                        : '已知花费未达上限'}
+                </dd>
+              </div>
+            </dl>
           </li>
         ))}
       </ul>
@@ -472,6 +574,7 @@ function GroupList({
  */
 export function UsagePanel({
   worldId,
+  budgetDrafts,
   world,
   conversation,
   latestTurn,
@@ -479,29 +582,40 @@ export function UsagePanel({
   budget,
   limits,
   onSaveBudget,
+  usageError = null,
+  onRetryUsage,
 }: Props) {
   // Explicit identity isolates equal-budget worlds too; this cannot repair upstream stale writes.
   const budgetEditorKey = JSON.stringify(['budget-editor', worldId ?? null]);
   const calibrationNote = world === null ? null : formatCalibrationNote(world.total);
+  const budgetEditor = (
+    <BudgetEditor
+      key={budgetEditorKey}
+      worldId={worldId}
+      budgetDrafts={budgetDrafts}
+      limits={limits}
+      state={budget}
+      summary={world}
+      onSave={onSaveBudget}
+      usageUnavailable={usageError !== null && world === null}
+    />
+  );
 
   if (world === null || world.total.calls === 0) {
     return (
       <>
         <section className="panel">
           <h2>用量与花费</h2>
-          <p className="hint">还没有账单。每一次模型调用都会在这里记一笔，刷新和重启都不会丢。</p>
+          <p className="hint">统计范围：本世界的全部对话与模型调用。</p>
+          <UsageReadFeedback key={worldId ?? ''} error={usageError} hasData={world !== null} onRetry={onRetryUsage} />
+          {usageError !== null ? null : (
+            <p className="hint">还没有账单。每一次模型调用都会在这里记一笔，刷新和重启都不会丢。</p>
+          )}
           <p className="hint">
             花费需要单价：在设置 → 模型接入里填「每百万 token 的输入 / 输出价格」，这里就会换算成钱。
           </p>
         </section>
-        <BudgetEditor
-          key={budgetEditorKey}
-          worldId={worldId}
-          limits={limits}
-          state={budget}
-          summary={world}
-          onSave={onSaveBudget}
-        />
+        {budgetEditor}
       </>
     );
   }
@@ -510,6 +624,8 @@ export function UsagePanel({
     <>
       <section className="panel">
         <h2>用量与花费</h2>
+        <p className="hint">统计范围：本世界的全部对话与模型调用。</p>
+        <UsageReadFeedback key={worldId ?? ''} error={usageError} hasData={true} onRetry={onRetryUsage} />
         <ul className="usage-list">
           <li>
             <span className="usage-name">这个世界</span>
@@ -524,6 +640,16 @@ export function UsagePanel({
             </li>
           )}
         </ul>
+        <dl className="budget-metrics usage-cost-summary">
+          <div>
+            <dt>已知费用</dt>
+            <dd>{formatCost(world.total) ?? '未知（无可用价格快照）'}</dd>
+          </div>
+          <div>
+            <dt>未知费用调用</dt>
+            <dd>{Math.max(0, world.total.calls - world.total.pricedCalls)} 次；不能当作免费</dd>
+          </div>
+        </dl>
         <p className="hint">
           {formatCost(world.total) === null
             ? '没有可用的价格快照，所以只报 token，费用未知。新单价只用于后续调用，不会补算旧账单。'
@@ -531,6 +657,8 @@ export function UsagePanel({
         </p>
         {calibrationNote === null ? null : <p className="hint">{calibrationNote}</p>}
       </section>
+
+      {budgetEditor}
 
       {latestTurn === null || latestTurn.total.calls === 0 ? null : (
         <section className="panel">
@@ -575,15 +703,6 @@ export function UsagePanel({
         <h2>按模型</h2>
         <GroupList groups={world.byModel} labelOf={(group) => group.label || '（未命名）'} />
       </section>
-
-      <BudgetEditor
-        key={budgetEditorKey}
-        worldId={worldId}
-        limits={limits}
-        state={budget}
-        summary={world}
-        onSave={onSaveBudget}
-      />
     </>
   );
 }

@@ -309,6 +309,10 @@ export function AccountPanel({ disabled, sync }: { disabled: boolean; sync?: Syn
             liveStatus === 'needs-secret' ||
             liveStatus === 'error' ||
             (badge?.state === 'known' && badge.configured && !badge.unlocked);
+          const hasLiveSync = isActive && sync !== undefined;
+          const factsKnown = hasLiveSync || badge?.state === 'known';
+          const remoteEndpoint = hasLiveSync ? sync.config?.endpoint : badge?.endpoint;
+          const lastSuccess = hasLiveSync ? sync.config?.lastSyncAt : badge?.lastSyncAt;
           return (
             <li key={account.id} className={isActive ? 'account-card active' : 'account-card'}>
               <div className="account-card-head">
@@ -356,10 +360,25 @@ export function AccountPanel({ disabled, sync }: { disabled: boolean; sync?: Syn
               <p className="hint account-card-id">
                 ID：<code>{account.accountId}</code>
                 {account.legacy ? ' · 旧账户' : ''}
-                {(isActive ? sync?.config?.lastSyncAt : badge?.lastSyncAt)
-                  ? ` · 上次同步 ${formatWhen((isActive ? sync?.config?.lastSyncAt : badge?.lastSyncAt) as string)}`
-                  : ''}
               </p>
+              <dl className="account-facts hint">
+                <dt>当前本机容器</dt>
+                <dd>
+                  {account.name}（{isActive ? '当前使用' : '未使用'}）
+                </dd>
+                <dt>远端连接</dt>
+                <dd>
+                  {!factsKnown ? (
+                    '尚无法确认，请重试读取'
+                  ) : remoteEndpoint ? (
+                    <code>{remoteEndpoint}</code>
+                  ) : (
+                    '未连接，仅本机保存'
+                  )}
+                </dd>
+                <dt>上次成功</dt>
+                <dd>{!factsKnown ? '尚无法确认' : lastSuccess ? formatWhen(lastSuccess) : '还没有成功同步记录'}</dd>
+              </dl>
               {badge?.state === 'unknown' ? (
                 <div className="notice error" role="status">
                   无法读取此账户的同步状态：{badge.error}

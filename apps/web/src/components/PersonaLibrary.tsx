@@ -84,6 +84,10 @@ export function PersonaLibrary({
         <p className="hint">身份决定角色怎么称呼你，也是角色关系的目标。可以建多个，按世界切换。</p>
       ) : (
         <>
+          <p className="hint" role="status" aria-live="polite">
+            {editor.error ? '保存失败，输入已保留' : editor.busy ? '保存中…' : editor.dirty ? '待保存' : '已保存'}
+            {' · 修改后自动保存。'}
+          </p>
           <label>
             名字
             <input

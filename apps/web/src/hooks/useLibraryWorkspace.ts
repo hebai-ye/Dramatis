@@ -29,6 +29,7 @@ export function useLibraryNavigation(
   narrow: boolean,
   setCollapsed: (value: boolean) => void,
   setPanelOpen: (value: boolean) => void,
+  beforeNavigate?: () => Promise<boolean>,
 ) {
   useEffect(() => {
     if (narrow) setPanelOpen(false);
@@ -57,6 +58,7 @@ export function useLibraryNavigation(
       committed: () => boolean,
       options: { exists?: () => Promise<boolean>; onCommitted?: () => void } = {},
     ) => {
+      if (beforeNavigate && !(await beforeNavigate())) return false;
       const run = () =>
         runLibraryNavigation({
           action,
@@ -68,7 +70,7 @@ export function useLibraryNavigation(
       await run();
       return true;
     },
-    [dismiss],
+    [dismiss, beforeNavigate],
   );
   const openWorld = useCallback(
     (id: RoomId, onCommitted?: () => void) =>
@@ -127,6 +129,7 @@ export function useLibraryNavigation(
   );
   const navigateImported = useCallback(
     async <T extends { ok: boolean; error?: string; message?: string } | null>(action: () => Promise<T>) => {
+      if (beforeNavigate && !(await beforeNavigate())) return null;
       let result: T | null = null;
       const run = async () => {
         const before = currentSession.current.world?.id;
@@ -144,7 +147,7 @@ export function useLibraryNavigation(
       else await run();
       return result;
     },
-    [dismiss],
+    [dismiss, beforeNavigate],
   );
   return {
     libraryNavigation,

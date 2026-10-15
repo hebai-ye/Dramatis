@@ -5,6 +5,8 @@
     <title>同步探针（走 HTTP）</title>
   </head>
   <body style="font: 13px/1.6 ui-monospace, monospace; padding: 24px; white-space: pre-wrap">
+    <p id="probe-data">假数据 · 内存客户端；仅用于隔离开发后端（HTTP 服务端会持久写入）</p>
+    <p id="probe-status" role="status" aria-live="polite">运行中</p>
     <p id="out">正在通过 HTTP 跑两台设备的同步自测…</p>
     <script type="module" src="./sync-http-probe.ts"></script>
   </body>

@@ -103,7 +103,10 @@ function LeftRailImpl({
         </button>
       </div>
 
-      <div className="rail-body">{list}</div>
+      <div className="rail-body">
+        <h2 className="rail-section-title">世界与对话</h2>
+        {list}
+      </div>
 
       <footer className="rail-foot">
         {/*

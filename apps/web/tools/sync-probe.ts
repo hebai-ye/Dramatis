@@ -13,6 +13,7 @@ import {
   runSync,
   type SceneId,
 } from '@dramatis/core';
+import { createProbeReporter } from './probe-reporter';
 
 /**
  * 同步探针（P2-6 第三步，开发用页面，不进应用构建）。
@@ -30,16 +31,11 @@ import {
  * 是同一份接口契约，所以这一步验的就是真实链路，只是后端换成了内存。
  */
 
-const lines: string[] = [];
-const out = document.querySelector('#out');
-
-function say(text: string): void {
-  lines.push(text);
-  if (out) out.textContent = lines.join('\n');
-}
+const report = createProbeReporter('假数据 · 两台内存设备与内存后端，不读写用户库');
+const say = report.log;
 
 function check(label: string, ok: boolean): void {
-  say(`${ok ? '✅' : '❌'} ${label}`);
+  report.check(label, ok);
 }
 
 const delay = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
@@ -202,6 +198,4 @@ async function main(): Promise<void> {
   say(`全部检查结束，用时 ${(performance.now() - started).toFixed(0)} ms。`);
 }
 
-void main().catch((error: unknown) => {
-  say(`探针跑挂了：${error instanceof Error ? error.message : String(error)}`);
-});
+void main().then(() => report.finish(), report.fail);

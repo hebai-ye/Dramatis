@@ -11,6 +11,7 @@ import {
   type CardId,
   type ChapterSummary,
   type CharacterInstance,
+  COLLECTIONS,
   type Conversation,
   type ConversationId,
   createPersona,
@@ -58,6 +59,8 @@ export interface BootReport {
    * 等 `App.tsx` 不再被别的会话占着，再加到顶部提示里。
    */
   recoveredImports: number;
+  /** 导入恢复的损坏、归属核验和部分删除告警；即使成功数为零也必须向用户展示。 */
+  importRecoveryWarnings: string[];
   migrationsApplied: number;
   pendingAccountDeletions: number;
 }
@@ -106,12 +109,14 @@ export function useDatabase(): {
           );
         }
 
+        if (cancelled) return;
         setDb(opened);
         setBoot({
           backendKind: opened.backendKind,
           degraded: opened.backendKind === 'memory',
           recoveredTasks,
           recoveredImports: interrupted.rooms.length,
+          importRecoveryWarnings: [...interrupted.warnings],
           migrationsApplied: migration.applied.length,
           pendingAccountDeletions: pendingAccountDeletionCount(),
         });
@@ -323,7 +328,7 @@ export interface SessionApi {
   /** 删除身份；引用它的世界会退回内联字段，不会被连带删除。 */
   deletePersona: (id: string) => Promise<void>;
   listPersonas: () => Promise<Persona[]>;
-  appendMessages: (messages: readonly Message[]) => Promise<void>;
+  appendMessages: (messages: readonly Message[], onPersisted?: () => void) => Promise<void>;
 }
 
 export function useSession(db: DramatisDb | null): SessionApi {
@@ -689,6 +694,11 @@ export function useSession(db: DramatisDb | null): SessionApi {
       const conversations = merge(latest.conversations, switched.conversation);
       const scenes = switched.scene ? merge(latest.scenes, switched.scene) : latest.scenes;
       const scene = scenes.find((item) => item.id === switched.scene?.id) ?? null;
+      // The helper returns only changed records. Merge onto the latest complete
+      // snapshot so unchanged characters and newer unrelated fields stay visible.
+      const presenceChanges = scene
+        ? new Map(syncPresenceForScene(latest.instances, scene).map((instance) => [instance.id, instance]))
+        : null;
       const budget =
         budgetWriteVersion(latest.room.budget) === beforeBudget && latest.room.updatedAt <= switched.room.updatedAt
           ? switched.room.budget
@@ -703,7 +713,9 @@ export function useSession(db: DramatisDb | null): SessionApi {
           budget,
           updatedAt: latest.room.updatedAt > switched.room.updatedAt ? latest.room.updatedAt : switched.room.updatedAt,
         },
-        instances: scene ? syncPresenceForScene(latest.instances, scene) : latest.instances,
+        instances: presenceChanges
+          ? latest.instances.map((instance) => presenceChanges.get(instance.id) ?? instance)
+          : latest.instances,
       });
     },
     [db, owner, setSnapshot],
@@ -906,18 +918,20 @@ export function useSession(db: DramatisDb | null): SessionApi {
   );
 
   const appendMessages = useCallback(
-    (messages: readonly Message[]): Promise<void> => {
+    (messages: readonly Message[], onPersisted?: () => void): Promise<void> => {
       const batch = [...messages];
       const run = async (): Promise<void> => {
         // 等前一笔真正写完后再读最新快照；两个调用不能并发读到相同的 localSeq。
         const current = snapshotRef.current;
-        if (!db || batch.length === 0 || activeOwnerRef.current !== owner) return;
+        if (batch.length === 0) return;
+        if (!db || activeOwnerRef.current !== owner) throw new Error('当前账户已经变化，消息未保存。');
         const roomId = batch[0]?.roomId;
         if (roomId === undefined || batch.some((message) => message.roomId !== roomId)) {
           throw new Error('一次只能向同一个世界追加消息');
         }
 
         const stamped = await db.repository.appendMessages(roomId, batch);
+        onPersisted?.();
         if (activeOwnerRef.current !== owner) return;
         // 写库期间同步可能已更新快照；按最新快照合并，不能覆盖它。
         const latest = snapshotRef.current;
@@ -1221,19 +1235,61 @@ export function useSession(db: DramatisDb | null): SessionApi {
   const revertAffectChange = useCallback(
     async (id: InstanceId, changeId: string) => {
       const current = snapshotRef.current;
-      if (!db || !current) return;
-      const instance = current.instances.find((item) => item.id === id);
-      if (!instance) return;
-
-      const next = revertAffectChangeForInstance(instance, changeId);
-      if (next === instance) return;
-      await db.repository.saveInstance(next);
+      const ownsSession = () => activeOwnerRef.current === owner && snapshotOwnerRef.current === owner;
+      if (!db || !current || !ownsSession()) throw new Error('当前账户或世界已变化，未执行撤销。');
+      const worldId = current.room.id;
+      if (!current.instances.some((item) => item.id === id)) throw new Error('当前世界找不到这个角色，未执行撤销。');
+      const assertInstance = (value: CharacterInstance | null): CharacterInstance => {
+        if (!value || value.deletedAt != null || value.roomId !== worldId)
+          throw new Error('角色已删除或已离开目标世界，无法确认撤销。');
+        return value;
+      };
+      const historyOf = (value: CharacterInstance) => [
+        ...value.affect.history,
+        ...value.relationships.flatMap((edge) => edge.history),
+      ];
+      await db.repository.atomic(async (repository, store) => {
+        if (!ownsSession()) throw new Error('当前账户已变化，未执行撤销。');
+        const room = await repository.getRoom(worldId);
+        const stored = assertInstance(await store.get<CharacterInstance>(COLLECTIONS.instances, id));
+        if (!room?.instanceIds.includes(id)) throw new Error('角色已离开目标世界，未执行撤销。');
+        const original = historyOf(stored).find((change) => change.id === changeId);
+        if (!original || original.reversionOf !== null) throw new Error('找不到可撤销的影响记录，未修改角色。');
+        const next = revertAffectChangeForInstance(stored, changeId);
+        if (!ownsSession()) throw new Error('当前账户已变化，未执行撤销。');
+        if (next !== stored) await repository.saveInstance(next);
+        const saved = assertInstance(await store.get<CharacterInstance>(COLLECTIONS.instances, id));
+        if (!historyOf(saved).some((change) => change.reversionOf === changeId))
+          throw new Error('撤销后的影响记录未能核验，事务已撤回。');
+        if (!ownsSession()) throw new Error('当前账户已变化，事务已撤回。');
+      });
+      // A committed result belongs to its captured DB. Never restore its old world or session snapshot.
+      if (!ownsSession() || snapshotRef.current?.room.id !== worldId) return;
+      const persisted = assertInstance(await db.store.get<CharacterInstance>(COLLECTIONS.instances, id));
+      if (!historyOf(persisted).some((change) => change.reversionOf === changeId))
+        throw new Error('撤销结果已变化，请刷新角色状态后核对。');
+      const latest = snapshotRef.current;
+      if (!ownsSession() || !latest || latest.room.id !== worldId) return;
+      const visible = latest.instances.find((item) => item.id === id);
+      if (!visible || !latest.room.instanceIds.includes(id))
+        throw new Error('角色已离开当前世界，请刷新后核对撤销结果。');
+      // A newer reload/publication wins over a read that was delayed after capturing persisted state.
+      if (visible.updatedAt > persisted.updatedAt) return;
       setSnapshot({
-        ...current,
-        instances: current.instances.map((item) => (item.id === id ? next : item)),
+        ...latest,
+        instances: latest.instances.map((item) =>
+          item.id === id
+            ? {
+                ...item,
+                affect: persisted.affect,
+                relationships: persisted.relationships,
+                updatedAt: persisted.updatedAt,
+              }
+            : item,
+        ),
       });
     },
-    [db, setSnapshot],
+    [db, owner, setSnapshot],
   );
   const setPresence = useCallback(
     async (id: InstanceId, presence: Presence) => {

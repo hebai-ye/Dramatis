@@ -2,6 +2,15 @@
 
 > 记录「此刻在哪里」，供新会话快速接上。完整计划见 [ROADMAP.md](./ROADMAP.md)，验证方法见 [EVAL.md](./EVAL.md)。
 
+<!-- ui-fixes-20261010-owned:start -->
+## UI 缺口修复（2026-10-10–11，本分支自有节）
+
+接只读 UI 复核报告，用户要求推进并批准窄范围扩展。`codex/ui-review-fixes-20261010` 上完成 UI01–UI10 接线：分析提示词绑定原账户/回合修订；恢复告警可见；自动同步状态与部分失败刷新一致；账单错误可重试；逐币种详情换行并保留空格；管理操作显示关联编号；单条撤销走真实 Promise 和最新持久角色；合并印象标为主观；减少动效关闭脉冲、闪烁和强制平滑滚动。
+
+原报告与历史节保留；本节只说明此次 UI 修复。没有增加依赖、修改存储 schema、迁移用户数据或更改待裁定的记忆语义。授权内本地验收完成：最终 1890/1890 测试、typecheck、lint 422 文件、build 通过；桌面及 390/340px 预算无该项横向溢出。主包 500.63kB 触发既有 500kB 体积提示，没有放宽阈值。详细证据与实机边界见 EVAL 本批节。未提交、未 push、未部署。
+
+<!-- ui-fixes-20261010-owned:end -->
+
 <!-- task-120-owned:start -->
 ## 顺序120：预算保存闭环、B12量化与原生验收（2026-10-08，本分支自有记录）
 
@@ -1378,3 +1387,15 @@ T12（归档的可发现性与正文导出）、每轮结束自动同步，并�
 | 桌面端（真机） | `pnpm desktop:prod`（会跳过无谓的构建；`--force-build` 强制重建）。给用户做快捷方式：`pwsh -File tools/desktop/install-shortcut.ps1 -Destination Both` |
 | 安卓构建 | **JDK 必须是 21**：`$env:JAVA_HOME='C:\Program Files\Android\Android Studio\jbr'`，然后 `pnpm --filter @dramatis/android apk`。本机缓存里的 AGP 是 8.7.3（模板写 8.7.2），且模板那行 `google-services` 本机没有、也用不到——都只影响被 gitignore 的生成目录 |
 | 安卓真机 | `adb install -r apps/android/android/app/build/outputs/apk/debug/app-debug.apk`（手机开 USB 调试；本机 adb 在 `%LOCALAPPDATA%\Android\Sdk\platform-tools\adb.exe`） |
+
+
+<!-- ui-optimization-20261012-owned:begin -->
+## 顺序121：UI推荐方案本机交付（2026-10-14，独立工作区）
+
+用户2026-10-12批准推荐方案后完成来源绑定、键盘发送/真实接受保稿、模态与手机详情、素材布局/标签/裁图、模型校验/外观持久、记忆定位/Prompt范围、账户/同步/管理、普通保存队列及预算内存草稿、Plan与合成探针。最后复核拒绝无pending来源的旧角色回复；浏览器发现切线误把presence变更子集当完整阵容，已按ID合回最新快照，并有4项真实集成反例。身份编辑器补齐保存四态，账户卡固定显示容器/连接/上次成功。
+
+最终独立执行 pnpm test 退出0，Core1350＋Web533＋管理/服务端168＋local-bridge15＝2066/2066；typecheck退出0；lint退出0（449文件、5条测试non-null assertion警告）；production build及build:sync-server通过，diff/原工作区核对见实施报告；独立浏览器小封存/主副草稿/合法工具/Prompt/记忆原句/预算tab/消息保存/负价/三主题/360账户与详情/650素材/键盘裁图及缓存访问均有具体证据。原候选637文件SHA256变化0；未提交、push或部署。
+
+性能预算尚未通过：initial664004B（-2.499%），全部JS839972B（+5.3284%），清单JS+CSS892915B（+5.3667%）。大库为Node SSR/内存合成测量，不能宣称浏览器INP收益。物理手机、真实IME/读屏/壳、完整视觉/大库浏览器/断网升级继续待验。见 [实施报告](./UI-OPTIMIZATION-IMPLEMENTATION-2026-10-14.md)；本节为最新本批状态，旧任务历史记录保留。
+
+<!-- ui-optimization-20261012-owned:end -->

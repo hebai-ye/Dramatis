@@ -83,6 +83,30 @@ VIP身份不提供密码重置或解密能力。顺序110的托管调用还要�
 
 服务端强制 VACUUM INTO 到唯一.partial文件，经quick_check改为.bak；持久追加意图审计，再拿写锁重检世代及资料／策略版本，原子保存。备份或意图审计失败不写。提交成功但结果审计失败明确返回 applied: true 与提示，不能当作未提交盲目再点。并发修改、过期或错误句柄需重新预览。无网页备份下载。
 
+## 管理网页反馈与操作号核对
+
+搜索框中的输入是草稿；点“搜索”才生效并回到第一页。分页使用已提交的关键词，读取期间禁止连续翻页；可提交另一个关键词替换正在读取的搜索。总数缩减使当前页失效时自动回首页。读取失败保留上次快照与最近成功读取时间；若新筛选失败，先重试搜索，不能把旧筛选快照当作新筛选继续翻页。
+
+列表、概况、详情与预览表单各显示本区读取或保存状态。预览完成后焦点进入手动确认句柄框；取消回到预览按钮；确认过期须重新预览。套餐购买和人工调整提交期间禁止切换会员办理方式。保存结果或待核对结果保留在页面的操作结果区，包含安全操作号／确认摘要；切详情或普通读取不会清除它。退出管理会话会清除页面结果和 token。
+
+购买历史每笔显示并可复制 `operationId`；旧响应没有编号时明确显示“未知”，不从时间或套餐猜号。编号用于关联记录，不是确认票据，也不能替代支付收款证明。
+
+仅已有审计权限的管理员在服务器受限会话中，使用实际配置的 `DRAMATIS_ADMIN_AUDIT` JSONL 文件按 **operationId 字段精确相等** 核对。先检查文件与父目录实际 ACL，保持原只读权限；不要扩大权限、把日志复制到公开目录、粘贴整份日志或新增网页下载／公开审计 API。PowerShell 只投影安全核对字段的示例（变量填入经核验的受限路径与网页操作号）：
+
+```powershell
+$auditLookupPath = '受限审计文件的绝对路径'
+$operationLookupId = '从管理网页复制的操作号'
+Get-Content -LiteralPath $auditLookupPath | ForEach-Object {
+  try { $auditLookupEvent = $_ | ConvertFrom-Json -ErrorAction Stop }
+  catch { throw '审计 JSONL 有不完整记录；保留原文，先备份并人工核对。' }
+  if ($auditLookupEvent.operationId -ceq $operationLookupId) {
+    $auditLookupEvent | Select-Object time, action, status, operationId, confirmationHash, spaceHandle, backupFile
+  }
+}
+```
+
+对照目标空间、意图／已保存／拒绝事件与当前只读详情、购买历史和备份文件元数据。只有意图、响应中断或结果审计缺失时，不能据此断言未保存，也不能直接创建新的购买补交；保留编号，按既有人工核对流程决定下一步。没有操作号或存在不完整日志时停止推断。原始票据、token、凭证、密钥、模型正文不进入核对输出；本段未增加核销、退款、重试或资金变更入口。
+
 ## 配置与Windows服务
 
 DRAMATIS_ADMIN_DATA／_TOKEN／_AUDIT必填；_HOST只允许127.0.0.1；_PORT默认8788，_SYNC_PORT默认8787；_WRITE默认0只读，1编辑且必须有_BACKUPS。_DEFAULT_MAX_MB默认96（MiB，100663296字节），**必须与同步服务 DRAMATIS_SYNC_MAX_MB 或其默认值一致**；更改同步全局额度时更新此值并重启管理服务。未设固定配额时，有效VIP使用VIP额度，无有效VIP则继承默认；已有固定值保留。降低有效额度保留原数据，超额空间只允许不增长的写入。

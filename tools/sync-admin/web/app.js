@@ -1,9 +1,18 @@
 const byId = (id) => document.getElementById(id);
+// Reuse the existing wrapping style for long audit identifiers on narrow screens.
+byId('notice').className = 'handle';
 let token = '';
 let sessionVersion = 0;
 let offset = 0;
+let committedQuery = '';
+let listPending = false;
+let displayedOffset = 0;
+let displayedQuery = '';
+let listTotal = 0;
+const readTimes = new Map();
 let listVersion = 0;
 let detailVersion = 0;
+let selectedDetailHandle = '';
 let refreshVersion = 0;
 let editingEnabled = false;
 const limit = 50;
@@ -13,6 +22,34 @@ function node(tag, text, className) {
   if (text !== undefined) element.textContent = String(text);
   if (className) element.className = className;
   return element;
+}
+
+function readStatus(id, phase, error) {
+  if (phase === 'success') readTimes.set(id, Date.now());
+  const last = readTimes.get(id);
+  byId(id).textContent = [
+    phase === 'loading'
+      ? '读取中…'
+      : phase === 'error'
+        ? `读取失败：${error instanceof Error ? error.message : String(error)}；请重试。`
+        : '读取完成。',
+    last ? `最近成功读取：${date(last)}${phase !== 'success' ? '（上次读取，当前可能已变化）' : ''}` : '',
+  ]
+    .filter(Boolean)
+    .join(' · ');
+}
+
+function formFeedback(form) {
+  const feedback = node('p', undefined, 'local-status');
+  feedback.setAttribute('role', 'status');
+  feedback.setAttribute('aria-live', 'polite');
+  form.append(feedback);
+  return feedback;
+}
+
+function commitError(message) {
+  byId('operation-result').textContent = message;
+  return new Error(message);
 }
 
 function bytes(value) {
@@ -181,19 +218,19 @@ function capacityControls(id, initialBytes, { allowZero = true, onChange, onPres
   };
 }
 
-function handleCopy(value) {
+function handleCopy(value, operation = false) {
   const row = node('div', undefined, 'handle-copy');
   const source = node('input');
   source.value = value;
   source.readOnly = true;
-  source.setAttribute('aria-label', '待复制的完整空间句柄');
-  const copy = node('button', '复制完整句柄', 'secondary');
+  source.setAttribute('aria-label', operation ? '待复制的操作编号' : '待复制的完整空间句柄');
+  const copy = node('button', operation ? '复制操作编号' : '复制完整句柄', 'secondary');
   copy.type = 'button';
   copy.addEventListener('click', async () => {
     source.select();
     try {
       await navigator.clipboard.writeText(value);
-      copy.textContent = '已复制，请粘贴到确认框';
+      copy.textContent = operation ? '操作编号已复制' : '已复制，请粘贴到确认框';
     } catch {
       copy.textContent = '已选中，请按 Ctrl+C 复制';
     }
@@ -208,6 +245,13 @@ function logout() {
   detailVersion++;
   refreshVersion++;
   editingEnabled = false;
+  listPending = false;
+  committedQuery = displayedQuery = '';
+  offset = displayedOffset = listTotal = 0;
+  readTimes.clear();
+  selectedDetailHandle = '';
+  byId('search').value = '';
+  for (const id of ['list-status', 'overview-status', 'detail-status', 'operation-result']) byId(id).textContent = '';
   byId('mode').textContent = '只读';
   token = '';
   byId('token').value = '';
@@ -217,38 +261,116 @@ function logout() {
   for (const id of ['summary', 'spaces', 'backups', 'detail-content']) byId(id).replaceChildren();
 }
 
-async function api(path, input) {
+function operationNotice(result) {
+  return [
+    typeof result?.operationId === 'string' && result.operationId ? `操作编号：${result.operationId}` : '',
+    typeof result?.confirmationHash === 'string' && result.confirmationHash
+      ? `确认摘要：${result.confirmationHash}`
+      : '',
+  ]
+    .filter(Boolean)
+    .join(' · ');
+}
+
+async function showOperationResult(result, message, refreshDetails, submittedDetailVersion = detailVersion) {
   const version = sessionVersion;
-  const response = await fetch(path, {
-    method: input === undefined ? 'GET' : 'POST',
-    headers: {
-      authorization: `Bearer ${token}`,
-      ...(input === undefined ? {} : { 'content-type': 'application/json' }),
-    },
-    ...(input === undefined ? {} : { body: JSON.stringify(input) }),
-    cache: 'no-store',
-    signal: AbortSignal.timeout(input === undefined ? 10_000 : 60_000),
-  });
+  const saved = `${message}；前置备份：${result.backupFile}${result.auditWarning ? ` · ${result.auditWarning}` : ''}${operationNotice(result) ? ` · ${operationNotice(result)}` : ''}`;
+  byId('notice').textContent = saved;
+  byId('operation-result').textContent = saved;
+  if (detailVersion !== submittedDetailVersion) return;
+  try {
+    const refreshing = refresh();
+    // refresh invalidates the old detail immediately. A later user selection
+    // belongs to a newer detail generation and must stay open.
+    const expectedDetail = detailVersion;
+    await refreshing;
+    if (version !== sessionVersion) return;
+    if (detailVersion === expectedDetail) await refreshDetails();
+    if (version === sessionVersion) {
+      byId('notice').textContent = saved;
+      byId('operation-result').textContent = saved;
+    }
+  } catch (error) {
+    if (version === sessionVersion) {
+      const message = `${saved} · 已保存，但刷新失败：${error instanceof Error ? error.message : String(error)}；请刷新核对。`;
+      byId('notice').textContent = message;
+      byId('operation-result').textContent = message;
+    }
+  }
+}
+
+async function api(path, input, preparedOperation) {
+  const version = sessionVersion;
+  let response;
+  try {
+    response = await fetch(path, {
+      method: input === undefined ? 'GET' : 'POST',
+      headers: {
+        authorization: `Bearer ${token}`,
+        ...(input === undefined ? {} : { 'content-type': 'application/json' }),
+      },
+      ...(input === undefined ? {} : { body: JSON.stringify(input) }),
+      cache: 'no-store',
+      signal: AbortSignal.timeout(input === undefined ? 10_000 : 60_000),
+    });
+  } catch (error) {
+    if (version !== sessionVersion) throw new Error('session-ended');
+    if (path === '/api/changes/commit') {
+      const correlation = operationNotice(preparedOperation);
+      throw commitError(
+        `提交连接中断或超时，结果尚未确认；请按操作编号核对审计与当前数据，再决定下一步${correlation ? ` · ${correlation}` : ''}。`,
+      );
+    }
+    throw error;
+  }
   if (version !== sessionVersion) throw new Error('session-ended');
   if (response.status === 401) {
     logout();
     byId('notice').textContent = '管理 token 无效，请重新连接。';
     throw new Error('管理 token 无效，请重新连接。');
   }
-  const result = await response.json();
+  let result;
+  try {
+    result = await response.json();
+  } catch (error) {
+    if (version !== sessionVersion) throw new Error('session-ended');
+    if (path === '/api/changes/commit') {
+      const correlation = operationNotice(preparedOperation);
+      throw commitError(
+        `提交响应未能读取，结果尚未确认；请按操作编号核对审计与当前数据${correlation ? ` · ${correlation}` : ''}。`,
+      );
+    }
+    throw error;
+  }
   if (version !== sessionVersion) throw new Error('session-ended');
-  if (!response.ok) throw new Error(result.message ?? '管理请求失败，请检查服务、备份与审计权限。');
+  if (!response.ok) {
+    const correlation = operationNotice({ ...preparedOperation, ...result });
+    const message = `${result.message ?? '管理请求失败，请检查服务、备份与审计权限。'}${correlation ? ` · ${correlation}` : ''}`;
+    throw path === '/api/changes/commit' ? commitError(message) : new Error(message);
+  }
   return result;
 }
 
 async function showDetail(handle, mode = 'details') {
   const version = ++detailVersion;
-  byId('details').hidden = true;
-  const [detail, catalog] = await Promise.all([
-    api(`/api/spaces/${encodeURIComponent(handle)}`),
-    editingEnabled ? api('/api/plans') : Promise.resolve({ plans: [] }),
-  ]);
+  byId('details').hidden = false;
+  byId('detail-content').replaceChildren(node('p', handle, 'handle'));
+  if (selectedDetailHandle !== handle) readTimes.delete('detail-status');
+  selectedDetailHandle = handle;
+  readStatus('detail-status', 'loading');
+  let detail, catalog;
+  try {
+    [detail, catalog] = await Promise.all([
+      api(`/api/spaces/${encodeURIComponent(handle)}`),
+      editingEnabled ? api('/api/plans') : Promise.resolve({ plans: [] }),
+    ]);
+  } catch (error) {
+    if (version !== detailVersion) return;
+    readStatus('detail-status', 'error', error);
+    throw error;
+  }
   if (version !== detailVersion) return;
+  readStatus('detail-status', 'success');
   const content = byId('detail-content');
   content.replaceChildren();
   byId('details').querySelector('h2').textContent =
@@ -312,102 +434,150 @@ async function showDetail(handle, mode = 'details') {
 
 async function loadList() {
   const version = ++listVersion;
-  const query = new URLSearchParams({ q: byId('search').value, offset: String(offset), limit: String(limit) });
-  const result = await api(`/api/spaces?${query}`);
-  if (version !== listVersion) return;
-  const body = byId('spaces');
-  body.replaceChildren();
-  for (const space of result.spaces) {
-    const row = node('tr');
-    const profile = node('td');
-    profile.append(node('strong', space.profile?.displayName ?? '未认领'));
-    if (space.profile) profile.append(node('span', space.profile.accountId, 'account-id'));
-    if (space.membershipsAvailable) profile.append(node('span', membershipText(space.membership), 'membership-status'));
-    row.append(
-      profile,
-      node('td', space.spaceHandle, 'handle'),
-      node('td', space.records ?? '未知'),
-      node('td', `${bytes(space.quotaBytes)} / ${bytes(space.quotaLimitBytes)}`),
-      node('td', date(space.createdAt)),
-    );
-    const action = node('td');
-    action.className = 'row-actions';
-    const button = node('button', '查看', 'secondary');
-    button.type = 'button';
-    button.addEventListener('click', () => void perform(() => showDetail(space.spaceHandle)));
-    action.append(button);
-    if (editingEnabled) {
-      const quota = node('button', '配额', 'secondary');
-      quota.type = 'button';
-      quota.addEventListener('click', () => void perform(() => showDetail(space.spaceHandle, 'quota')));
-      action.append(quota);
-      if (space.profile && space.membershipsAvailable) {
-        const vip = node('button', space.membership && space.membership.status !== 'revoked' ? '续期 VIP' : '开通 VIP');
-        vip.type = 'button';
-        vip.addEventListener('click', () => void perform(() => showDetail(space.spaceHandle, 'vip')));
-        action.append(vip);
+  const queryText = committedQuery;
+  let requestOffset = offset;
+  listPending = true;
+  byId('previous').disabled = true;
+  byId('next').disabled = true;
+  byId('spaces').setAttribute?.('aria-busy', 'true');
+  readStatus('list-status', 'loading');
+  try {
+    let result;
+    while (true) {
+      const query = new URLSearchParams({ q: queryText, offset: String(requestOffset), limit: String(limit) });
+      result = await api(`/api/spaces?${query}`);
+      if (version !== listVersion) return;
+      if (requestOffset > 0 && requestOffset >= result.total) {
+        requestOffset = 0;
+        continue;
       }
+      break;
     }
-    row.append(action);
-    body.append(row);
+    offset = displayedOffset = requestOffset;
+    displayedQuery = queryText;
+    listTotal = result.total;
+    const body = byId('spaces');
+    body.replaceChildren();
+    for (const space of result.spaces) {
+      const row = node('tr');
+      const profile = node('td');
+      profile.append(node('strong', space.profile?.displayName ?? '未认领'));
+      if (space.profile) profile.append(node('span', space.profile.accountId, 'account-id'));
+      if (space.membershipsAvailable)
+        profile.append(node('span', membershipText(space.membership), 'membership-status'));
+      row.append(
+        profile,
+        node('td', space.spaceHandle, 'handle'),
+        node('td', space.records ?? '未知'),
+        node('td', `${bytes(space.quotaBytes)} / ${bytes(space.quotaLimitBytes)}`),
+        node('td', date(space.createdAt)),
+      );
+      const action = node('td');
+      action.className = 'row-actions';
+      const button = node('button', '查看', 'secondary');
+      button.type = 'button';
+      button.addEventListener('click', () => void perform(() => showDetail(space.spaceHandle)));
+      action.append(button);
+      if (editingEnabled) {
+        const quota = node('button', '配额', 'secondary');
+        quota.type = 'button';
+        quota.addEventListener('click', () => void perform(() => showDetail(space.spaceHandle, 'quota')));
+        action.append(quota);
+        if (space.profile && space.membershipsAvailable) {
+          const vip = node(
+            'button',
+            space.membership && space.membership.status !== 'revoked' ? '续期 VIP' : '开通 VIP',
+          );
+          vip.type = 'button';
+          vip.addEventListener('click', () => void perform(() => showDetail(space.spaceHandle, 'vip')));
+          action.append(vip);
+        }
+      }
+      row.append(action);
+      body.append(row);
+    }
+    if (!result.spaces.length) {
+      const cell = node('td', '没有匹配的账户或空间');
+      cell.colSpan = 6;
+      const row = node('tr');
+      row.append(cell);
+      body.append(row);
+    }
+    byId('count').textContent = `共 ${result.total} 个空间，本页 ${result.spaces.length} 个`;
+    readStatus('list-status', 'success');
+  } catch (error) {
+    if (version !== listVersion) return;
+    offset = displayedOffset;
+    readStatus('list-status', 'error', error);
+    throw error;
+  } finally {
+    if (version === listVersion) {
+      listPending = false;
+      byId('spaces').setAttribute?.('aria-busy', 'false');
+      const snapshotMatchesQuery = displayedQuery === committedQuery;
+      byId('previous').disabled = !snapshotMatchesQuery || displayedOffset === 0;
+      byId('next').disabled = !snapshotMatchesQuery || displayedOffset + limit >= listTotal;
+    }
   }
-  if (!result.spaces.length) {
-    const cell = node('td', '没有匹配的账户或空间');
-    cell.colSpan = 6;
-    const row = node('tr');
-    row.append(cell);
-    body.append(row);
-  }
-  byId('count').textContent = `共 ${result.total} 个空间，本页 ${result.spaces.length} 个`;
-  byId('previous').disabled = offset === 0;
-  byId('next').disabled = offset + limit >= result.total;
 }
 
 async function refresh() {
   const version = ++refreshVersion;
   detailVersion++;
   byId('details').hidden = true;
-  const overview = await api('/api/overview');
-  if (version !== refreshVersion) return;
-  editingEnabled = overview.editingEnabled === true;
-  byId('mode').textContent = editingEnabled ? '可编辑' : '只读';
-  const summary = byId('summary');
-  summary.replaceChildren();
-  const entries = [
-    ['已关联账户', overview.profilesAvailable ? overview.accounts : '登记未启用'],
-    ['未认领空间', overview.unclaimed],
-    ['有效 VIP', overview.membershipsAvailable ? overview.vipActive : '会员未启用'],
-    ['已到期 VIP', overview.membershipsAvailable ? overview.vipExpired : '会员未启用'],
-    ['已撤销 VIP', overview.membershipsAvailable ? overview.vipRevoked : '会员未启用'],
-    ['记录（含墓碑）', overview.records],
-    ['配额计量总用量', bytes(overview.quotaBytes)],
-    ['同步服务存活', overview.syncHealth.ok ? '正常' : '不可达'],
-    ['备份文件', overview.backups.available ? overview.backups.files.length : '未配置 / 不可读'],
-  ];
-  for (const [label, value] of entries) {
-    const card = node('div', undefined, 'stat');
-    card.append(node('span', label), node('strong', value));
-    summary.append(card);
+  byId('refresh').disabled = true;
+  readStatus('overview-status', 'loading');
+  try {
+    const overview = await api('/api/overview');
+    if (version !== refreshVersion) return;
+    editingEnabled = overview.editingEnabled === true;
+    byId('mode').textContent = editingEnabled ? '可编辑' : '只读';
+    const summary = byId('summary');
+    summary.replaceChildren();
+    const entries = [
+      ['已关联账户', overview.profilesAvailable ? overview.accounts : '登记未启用'],
+      ['未认领空间', overview.unclaimed],
+      ['有效 VIP', overview.membershipsAvailable ? overview.vipActive : '会员未启用'],
+      ['已到期 VIP', overview.membershipsAvailable ? overview.vipExpired : '会员未启用'],
+      ['已撤销 VIP', overview.membershipsAvailable ? overview.vipRevoked : '会员未启用'],
+      ['记录（含墓碑）', overview.records],
+      ['配额计量总用量', bytes(overview.quotaBytes)],
+      ['同步服务存活', overview.syncHealth.ok ? '正常' : '不可达'],
+      ['备份文件', overview.backups.available ? overview.backups.files.length : '未配置 / 不可读'],
+    ];
+    for (const [label, value] of entries) {
+      const card = node('div', undefined, 'stat');
+      card.append(node('span', label), node('strong', value));
+      summary.append(card);
+    }
+    const backups = byId('backups');
+    backups.replaceChildren();
+    if (!overview.backups.available) backups.append(node('p', '备份目录未配置或不可读。'));
+    else if (!overview.backups.files.length) backups.append(node('p', '未找到匹配的备份文件。'));
+    else {
+      const list = node('ul');
+      for (const file of overview.backups.files.slice(0, 10))
+        list.append(node('li', `${file.file} · ${bytes(file.bytes)} · ${date(file.modifiedAt)}`));
+      backups.append(list, node('p', '显示最新 10 份；未进行恢复演练。', 'hint'));
+    }
+    await loadList();
+    if (version !== refreshVersion) return;
+    byId('login').hidden = true;
+    byId('dashboard').hidden = false;
+    readStatus('overview-status', 'success');
+  } catch (error) {
+    if (version !== refreshVersion) return;
+    readStatus('overview-status', 'error', error);
+    throw error;
+  } finally {
+    if (version === refreshVersion) byId('refresh').disabled = false;
   }
-  const backups = byId('backups');
-  backups.replaceChildren();
-  if (!overview.backups.available) backups.append(node('p', '备份目录未配置或不可读。'));
-  else if (!overview.backups.files.length) backups.append(node('p', '未找到匹配的备份文件。'));
-  else {
-    const list = node('ul');
-    for (const file of overview.backups.files.slice(0, 10))
-      list.append(node('li', `${file.file} · ${bytes(file.bytes)} · ${date(file.modifiedAt)}`));
-    backups.append(list, node('p', '显示最新 10 份；未进行恢复演练。', 'hint'));
-  }
-  await loadList();
-  if (version !== refreshVersion) return;
-  byId('login').hidden = true;
-  byId('dashboard').hidden = false;
 }
 
 function addEditor(content, space, version, quotaOnly = false) {
   const form = node('form');
   form.className = 'editor';
+  const feedback = formFeedback(form);
   form.append(node('h3', quotaOnly ? '选择存储额度' : '编辑运营资料与存储配额'));
   const accountLabel = node('label', space.profile ? '已关联账户 ID' : '关联账户 ID');
   accountLabel.htmlFor = 'edit-account';
@@ -482,10 +652,12 @@ function addEditor(content, space, version, quotaOnly = false) {
   );
   form.addEventListener('submit', (event) => {
     event.preventDefault();
+    if (save.disabled) return;
     void perform(async () => {
       clear();
       const requestVersion = editVersion;
       save.disabled = true;
+      feedback.textContent = '预览读取中…';
       try {
         const maxBytes = inherit.checked ? null : capacity.value();
         const preview = await api('/api/changes/prepare', {
@@ -497,8 +669,10 @@ function addEditor(content, space, version, quotaOnly = false) {
             : {}),
         });
         if (version !== detailVersion || requestVersion !== editVersion) return;
+        feedback.textContent = '预览已读取，请核对并手动填写完整空间句柄。';
         confirmation.append(
           node('h3', '二次确认'),
+          node('p', operationNotice(preview), 'hint handle'),
           node('p', `有效容量：${quotaDescription(preview.before)} → ${quotaDescription(preview.after)}`),
         );
         if (preview.before.accountId !== preview.after.accountId)
@@ -529,7 +703,10 @@ function addEditor(content, space, version, quotaOnly = false) {
         });
         const cancel = node('button', '取消确认', 'secondary');
         cancel.type = 'button';
-        cancel.addEventListener('click', clear);
+        cancel.addEventListener('click', () => {
+          clear();
+          save.focus();
+        });
         expiryTimer = setTimeout(
           () => {
             if (version !== detailVersion || requestVersion !== editVersion) return;
@@ -542,6 +719,7 @@ function addEditor(content, space, version, quotaOnly = false) {
           'click',
           () =>
             void perform(async () => {
+              if (confirm.disabled) return;
               if (version !== detailVersion || requestVersion !== editVersion) return;
               if (expired()) throw new Error('确认已过期，请重新预览。');
               if (handle.value !== space.spaceHandle) throw new Error('请输入完整空间句柄。');
@@ -550,16 +728,23 @@ function addEditor(content, space, version, quotaOnly = false) {
               clearTimeout(expiryTimer);
               capacity.disable(true, true);
               for (const control of [account, name, inherit, save, handle]) control.disabled = true;
+              feedback.textContent = '保存中…正在备份并提交，请等待结果。';
               try {
-                const result = await api('/api/changes/commit', {
-                  confirmationId: preview.confirmationId,
-                  confirmSpaceHandle: handle.value,
-                });
-                if (version !== detailVersion) return;
-                await refresh();
-                await showDetail(space.spaceHandle, quotaOnly ? 'quota' : 'details');
-                byId('notice').textContent =
-                  `修改已保存；前置备份：${result.backupFile}${result.auditWarning ? ` · ${result.auditWarning}` : ''}`;
+                const result = await api(
+                  '/api/changes/commit',
+                  {
+                    confirmationId: preview.confirmationId,
+                    confirmSpaceHandle: handle.value,
+                  },
+                  preview,
+                );
+                await showOperationResult(
+                  result,
+                  '修改已保存',
+                  () => showDetail(space.spaceHandle, quotaOnly ? 'quota' : 'details'),
+                  version,
+                );
+                feedback.textContent = byId('operation-result').textContent;
               } finally {
                 capacity.disable(inherit.checked);
                 account.disabled = false;
@@ -567,13 +752,14 @@ function addEditor(content, space, version, quotaOnly = false) {
                 for (const control of [inherit, save, handle]) control.disabled = false;
                 clear();
               }
-            }),
+            }, feedback),
         );
         confirmation.append(label, handle, confirm, cancel);
+        handle.focus();
       } finally {
         save.disabled = false;
       }
-    });
+    }, feedback);
   });
   content.append(form);
 }
@@ -653,13 +839,18 @@ function addBillingDetail(content, billing) {
     summary.after(node('p', '可用余额为 0，额度不足；未结算预留仍保持冻结。', 'quota-warning'));
   const purchases = billing.purchases ?? [];
   const purchaseList = node('ul', undefined, 'billing-history');
-  for (const item of purchases)
-    purchaseList.append(
-      node(
-        'li',
-        `${date(item.eventAt)} · ${item.planName}（${item.planId} / ${item.planVersion}）· ${item.durationDays} 天 / ${bytes(item.maxBytes)} · 标价 ${priceText(item.priceFen)} · 整期发放 ${moneyNanoyuan(item.creditNanoyuan)} · 付费资格至 ${date(item.paidUntil)}`,
-      ),
+  for (const item of purchases) {
+    const entry = node(
+      'li',
+      `${date(item.eventAt)} · ${item.planName}（${item.planId} / ${item.planVersion}）· ${item.durationDays} 天 / ${bytes(item.maxBytes)} · 标价 ${priceText(item.priceFen)} · 整期发放 ${moneyNanoyuan(item.creditNanoyuan)} · 付费资格至 ${date(item.paidUntil)}`,
     );
+    const operationId = typeof item.operationId === 'string' ? item.operationId : '';
+    entry.append(
+      node('p', operationId ? `操作编号：${operationId}` : '操作编号：未知（旧记录未提供）', 'hint operation-id'),
+    );
+    if (operationId) entry.append(handleCopy(operationId, true));
+    purchaseList.append(entry);
+  }
   if (!purchases.length) purchaseList.append(node('li', '未发放托管额度；历史自定义会员未记录标价，不补推购买记录。'));
   section.append(
     purchaseList,
@@ -713,8 +904,12 @@ function addMembershipControls(content, space, version, plans, billing) {
   }
   const purchasePanel = node('div');
   const giftPanel = node('div');
-  const cancelPurchase = addPurchaseEditor(purchasePanel, space, version, plans, billing);
-  const cancelGift = addMembershipEditor(giftPanel, space, version);
+  const cancelPurchase = addPurchaseEditor(purchasePanel, space, version, plans, billing, (pending) => {
+    mode.disabled = pending;
+  });
+  const cancelGift = addMembershipEditor(giftPanel, space, version, (pending) => {
+    mode.disabled = pending;
+  });
   const activeCustom =
     space.membership?.status === 'active' &&
     !plans.some((plan) => plan.id === space.membership.planId && plan.maxBytes === space.membership.maxBytes);
@@ -725,14 +920,17 @@ function addMembershipControls(content, space, version, plans, billing) {
     purchasePanel.hidden = mode.value !== 'purchase';
     giftPanel.hidden = mode.value !== 'gift';
   };
-  mode.addEventListener('change', update);
+  mode.addEventListener('change', () => {
+    if (!mode.disabled) update();
+  });
   update();
   panel.append(modeLabel, mode, purchasePanel, giftPanel);
   content.append(panel);
 }
 
-function addPurchaseEditor(content, space, version, plans, billing) {
+function addPurchaseEditor(content, space, version, plans, billing, setCommitPending = () => {}) {
   const form = node('form', undefined, 'editor purchase-editor');
+  const feedback = formFeedback(form);
   form.append(node('h3', '套餐购买／付费续期（管理员确认）'));
   const label = node('label', '套餐');
   label.htmlFor = 'purchase-plan';
@@ -825,11 +1023,13 @@ function addPurchaseEditor(content, space, version, plans, billing) {
   updatePlan();
   form.addEventListener('submit', (event) => {
     event.preventDefault();
+    if (save.disabled) return;
     void perform(async () => {
       clear();
       if (restriction()) throw new Error(restriction());
       const requestVersion = editVersion;
       save.disabled = true;
+      feedback.textContent = '预览读取中…';
       try {
         const preview = await api('/api/changes/prepare', {
           spaceHandle: space.spaceHandle,
@@ -838,8 +1038,10 @@ function addPurchaseEditor(content, space, version, plans, billing) {
         if (version !== detailVersion || requestVersion !== editVersion) return;
         const purchase = preview.purchase;
         if (!purchase) throw new Error('服务器未返回购买快照，请刷新后重新预览。');
+        feedback.textContent = '预览已读取，请核对并手动填写完整空间句柄。';
         confirmation.append(
           node('h3', '二次确认套餐购买'),
+          node('p', operationNotice(preview), 'hint handle'),
           node(
             'p',
             `${purchase.planName}（${purchase.planId} / ${purchase.planVersion}）· ${purchase.durationDays} 天 · ${bytes(purchase.maxBytes)}`,
@@ -875,7 +1077,10 @@ function addPurchaseEditor(content, space, version, plans, billing) {
         });
         const cancel = node('button', '取消确认', 'secondary');
         cancel.type = 'button';
-        cancel.addEventListener('click', clear);
+        cancel.addEventListener('click', () => {
+          clear();
+          save.focus();
+        });
         expiryTimer = setTimeout(
           () => {
             if (version !== detailVersion || requestVersion !== editVersion) return;
@@ -888,39 +1093,52 @@ function addPurchaseEditor(content, space, version, plans, billing) {
           'click',
           () =>
             void perform(async () => {
+              if (confirm.disabled) return;
               if (version !== detailVersion || requestVersion !== editVersion) return;
               if (expired()) throw new Error('确认已过期，请重新预览套餐购买。');
               if (handle.value !== space.spaceHandle) throw new Error('请输入完整空间句柄。');
               for (const control of [selection, save, handle, confirm, cancel, ...planButtons]) control.disabled = true;
               clearTimeout(expiryTimer);
+              feedback.textContent = '保存中…正在备份并提交，请等待结果。';
+              setCommitPending(true);
               try {
-                const result = await api('/api/changes/commit', {
-                  confirmationId: preview.confirmationId,
-                  confirmSpaceHandle: handle.value,
-                });
-                if (version !== detailVersion) return;
-                await refresh();
-                await showDetail(space.spaceHandle, 'vip');
-                byId('notice').textContent =
-                  `套餐购买已保存；前置备份：${result.backupFile}${result.auditWarning ? ` · ${result.auditWarning}` : ''}`;
+                const result = await api(
+                  '/api/changes/commit',
+                  {
+                    confirmationId: preview.confirmationId,
+                    confirmSpaceHandle: handle.value,
+                  },
+                  preview,
+                );
+                await showOperationResult(
+                  result,
+                  '套餐购买已保存',
+                  () => showDetail(space.spaceHandle, 'vip'),
+                  version,
+                );
+                feedback.textContent = byId('operation-result').textContent;
               } finally {
+                setCommitPending(false);
+
                 for (const control of [selection, ...planButtons]) control.disabled = false;
                 updatePlan();
               }
-            }),
+            }, feedback),
         );
         confirmation.append(handleLabel, handle, confirm, cancel);
+        handle.focus();
       } finally {
         save.disabled = !!restriction();
       }
-    });
+    }, feedback);
   });
   content.append(form);
   return clear;
 }
 
-function addMembershipEditor(content, space, version) {
+function addMembershipEditor(content, space, version, setCommitPending = () => {}) {
   const form = node('form', undefined, 'editor');
+  const feedback = formFeedback(form);
   form.append(node('h3', '赠送／人工调整'));
   form.append(node('p', '本次 API 额度变动为 0，不延长 API 付费资格；撤销只暂停调用，账本余额保留。', 'hint'));
   form.append(node('p', `当前状态：${membershipText(space.membership)}`));
@@ -1015,10 +1233,12 @@ function addMembershipEditor(content, space, version) {
   updateAction();
   form.addEventListener('submit', (event) => {
     event.preventDefault();
+    if (save.disabled) return;
     void perform(async () => {
       clear();
       const requestVersion = editVersion;
       save.disabled = true;
+      feedback.textContent = '预览读取中…';
       try {
         const membership = { action: action.value };
         if (action.value !== 'revoke') {
@@ -1031,8 +1251,10 @@ function addMembershipEditor(content, space, version) {
         }
         const preview = await api('/api/changes/prepare', { spaceHandle: space.spaceHandle, membership });
         if (version !== detailVersion || requestVersion !== editVersion) return;
+        feedback.textContent = '预览已读取，请核对并手动填写完整空间句柄。';
         confirmation.append(
           node('h3', '二次确认会员变更'),
+          node('p', operationNotice(preview), 'hint handle'),
           node('p', '本次 API 额度变动：¥0.00；不延长 API 付费资格。', 'hint'),
           node('p', `操作：${membershipActionText(membership.action)}`),
           node(
@@ -1068,7 +1290,10 @@ function addMembershipEditor(content, space, version) {
         });
         const cancel = node('button', '取消确认', 'secondary');
         cancel.type = 'button';
-        cancel.addEventListener('click', clear);
+        cancel.addEventListener('click', () => {
+          clear();
+          save.focus();
+        });
         expiryTimer = setTimeout(
           () => {
             if (version !== detailVersion || requestVersion !== editVersion) return;
@@ -1081,6 +1306,7 @@ function addMembershipEditor(content, space, version) {
           'click',
           () =>
             void perform(async () => {
+              if (confirm.disabled) return;
               if (version !== detailVersion || requestVersion !== editVersion) return;
               if (expired()) throw new Error('确认已过期，请重新预览会员变更。');
               if (handle.value !== space.spaceHandle) throw new Error('请输入完整空间句柄。');
@@ -1089,17 +1315,27 @@ function addMembershipEditor(content, space, version) {
               for (const control of [action, days, save, handle, ...dayButtons]) control.disabled = true;
               capacity.disable(true, true);
               clearTimeout(expiryTimer);
+              feedback.textContent = '保存中…正在备份并提交，请等待结果。';
+              setCommitPending(true);
               try {
-                const result = await api('/api/changes/commit', {
-                  confirmationId: preview.confirmationId,
-                  confirmSpaceHandle: handle.value,
-                });
-                if (version !== detailVersion) return;
-                await refresh();
-                await showDetail(space.spaceHandle, 'vip');
-                byId('notice').textContent =
-                  `会员变更已保存；前置备份：${result.backupFile}${result.auditWarning ? ` · ${result.auditWarning}` : ''}`;
+                const result = await api(
+                  '/api/changes/commit',
+                  {
+                    confirmationId: preview.confirmationId,
+                    confirmSpaceHandle: handle.value,
+                  },
+                  preview,
+                );
+                await showOperationResult(
+                  result,
+                  '会员变更已保存',
+                  () => showDetail(space.spaceHandle, 'vip'),
+                  version,
+                );
+                feedback.textContent = byId('operation-result').textContent;
               } finally {
+                setCommitPending(false);
+
                 action.disabled = false;
                 days.disabled = action.value === 'revoke';
                 capacity.disable(action.value === 'revoke', action.value === 'revoke');
@@ -1107,31 +1343,36 @@ function addMembershipEditor(content, space, version) {
                 save.disabled = false;
                 clear();
               }
-            }),
+            }, feedback),
         );
         confirmation.append(handleLabel, handle, confirm, cancel);
+        handle.focus();
       } finally {
         save.disabled = false;
       }
-    });
+    }, feedback);
   });
   content.append(form);
   return clear;
 }
 
-async function perform(work) {
+async function perform(work, feedback) {
   const version = sessionVersion;
   byId('notice').textContent = '';
+  if (feedback) feedback.textContent = '';
   try {
     await work();
   } catch (error) {
-    if (version === sessionVersion)
-      byId('notice').textContent =
+    if (version === sessionVersion) {
+      const message =
         error instanceof Error
           ? error.name === 'TimeoutError'
             ? '请求超时；若刚提交，请刷新核对结果后再试。'
             : error.message
           : '连接失败，请检查 SSH 隧道。';
+      byId('notice').textContent = message;
+      if (feedback) feedback.textContent = message;
+    }
   }
 }
 
@@ -1144,20 +1385,27 @@ byId('login-form').addEventListener('submit', (event) => {
   void perform(refresh);
 });
 byId('logout').addEventListener('click', logout);
-byId('refresh').addEventListener('click', () => void perform(refresh));
+byId('refresh').addEventListener('click', () => {
+  if (!byId('refresh').disabled) void perform(refresh);
+});
 byId('search-form').addEventListener('submit', (event) => {
   event.preventDefault();
+  const query = byId('search').value.trim();
+  if (listPending && query === committedQuery && offset === 0) return;
+  committedQuery = query;
   offset = 0;
   detailVersion++;
   byId('details').hidden = true;
   void perform(loadList);
 });
 byId('previous').addEventListener('click', () => {
-  offset = Math.max(0, offset - limit);
+  if (listPending || byId('previous').disabled) return;
+  offset = Math.max(0, displayedOffset - limit);
   void perform(loadList);
 });
 byId('next').addEventListener('click', () => {
-  offset += limit;
+  if (listPending || byId('next').disabled) return;
+  offset = displayedOffset + limit;
   void perform(loadList);
 });
 window.addEventListener('pagehide', logout);

@@ -1,11 +1,9 @@
 import {
   type AdminArtifact,
   type AssembledPrompt,
-  applyTurnAnalysis,
   budgetWriteVersion,
   buildSceneTransitionNarration,
   buildSignatures,
-  buildTurnAnalysisMessages,
   type Card,
   type CastName,
   type Conversation,
@@ -19,15 +17,15 @@ import {
   type MessageId,
   needsWebBridge,
   type RoomId,
-  renderPromptForWeb,
   type SignatureOwner,
   selectSceneMembers,
 } from '@dramatis/core';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { CastDetail } from './components/CastDetail';
 import { CastRail } from './components/CastRail';
 import { CastStrip } from './components/CastStrip';
 import { ChatControls } from './components/ChatControls';
+import { DeepSeekKeyDialog } from './components/DeepSeekKeyDialog';
 import { DialogShell } from './components/DialogShell';
 import { LazyPanel } from './components/LazyPanel';
 import { LeftRail } from './components/LeftRail';
@@ -35,12 +33,14 @@ import { LibraryWorkspace, LibraryWorkspaceProvider } from './components/Library
 import { type FocusRequest, MainChat } from './components/MainChat';
 import { MainHeader } from './components/MainHeader';
 import { NewConversationDialog } from './components/NewConversationDialog';
-import { RuntimePanel } from './components/RuntimePanel';
+import runtimeAddress from './components/RuntimePanel?lazy-module-url';
 import { SceneDialog } from './components/SceneDialog';
 import type { SettingsCategory } from './components/SettingsDialog';
-import { SideChat } from './components/SideChat';
+import sideAddress from './components/SideChat?lazy-module-url';
 import { TopBar } from './components/TopBar';
 import { WorldTree } from './components/WorldTree';
+import { createBudgetDraftStore } from './hooks/useBudgetDraftMemory';
+import { useDeepSeekSetup } from './hooks/useDeepSeekSetup';
 import { useImport } from './hooks/useImport';
 import { useLibraryNavigation, useLibrarySurface } from './hooks/useLibraryWorkspace';
 import { useNotices } from './hooks/useNotices';
@@ -50,12 +50,18 @@ import { useAdminChat } from './lib/admin';
 import { useAppearance } from './lib/appearance';
 import { useArchive } from './lib/archive';
 import {
+  applyBridgeAnalysis,
   bridgeReplyBatch,
+  prepareBridgeAnalysis,
+  prepareReassignedBridgeAnalysis,
   readPendingBridgeProgress,
   recoverPendingBridgeState,
   validateBridgeReplyContent,
   validatePendingBridgeTurn,
 } from './lib/bridge-store';
+import { ChatDraftProvider, type SubmitOutcome } from './lib/chat-draft';
+import { activeDbName } from './lib/db';
+import { createLazyModule } from './lib/lazy-module';
 import { avatarOf } from './lib/portraits';
 import { useProviders } from './lib/providers';
 import { useDatabase, useSession } from './lib/session';
@@ -65,6 +71,12 @@ import { extraCalls, useUsage } from './lib/usage';
 import { NARROW_SCREEN_QUERY, useNarrowScreen } from './lib/viewport';
 import { useBackgroundWorker } from './lib/worker';
 import { UNLIMITED_PROMPT } from './prompt/unlimitedPreset';
+
+const loadRuntimePanel = createLazyModule(
+  runtimeAddress,
+  (module: typeof import('./components/RuntimePanel')) => module.RuntimePanel,
+);
+const loadSideChat = createLazyModule(sideAddress, (module: typeof import('./components/SideChat')) => module.SideChat);
 
 const loadSettingsDialog = () =>
   import('./components/SettingsDialog').then((module) => ({ default: module.SettingsDialog }));
@@ -135,6 +147,7 @@ export function App() {
   });
 
   const admin = useAdminChat({
+    accountKey: activeDbName(),
     db,
     session,
     providers,
@@ -148,7 +161,11 @@ export function App() {
    */
   const archive = useArchive({
     db,
-    onImported: (id) => session.openWorld(id),
+    onImported: async (id) => {
+      if (!(await beforeNavigate())) throw new Error('当前编辑尚未保存，未切换世界。导入的世界可从左栏稍后打开。');
+      await session.refreshAll();
+      await session.openWorld(id);
+    },
   });
 
   /** 本机存储的持久化与配额（P2-3）：配额快满时在界面上提醒导出封存。 */
@@ -172,6 +189,16 @@ export function App() {
     if (narrow) setCollapsed(true);
   }, [narrow]);
   const [panelOpen, setPanelOpen] = useState(false);
+  const runtimeFlushRef = useRef<(() => Promise<boolean>) | null>(null);
+  const beforeNavigate = useCallback(() => runtimeFlushRef.current?.() ?? Promise.resolve(true), []);
+  const registerRuntimeFlush = useCallback((flush: (() => Promise<boolean>) | null) => {
+    runtimeFlushRef.current = flush;
+  }, []);
+  const closeRuntime = useCallback(() => {
+    void beforeNavigate().then((ok) => {
+      if (ok) setPanelOpen(false);
+    });
+  }, [beforeNavigate]);
   const {
     libraryNavigation,
     enterLibrary,
@@ -181,7 +208,8 @@ export function App() {
     navigateCreated,
     navigateSide,
     navigateImported,
-  } = useLibraryNavigation(session, db, narrow, setCollapsed, setPanelOpen);
+  } = useLibraryNavigation(session, db, narrow, setCollapsed, setPanelOpen, beforeNavigate);
+  const [libraryOccupied, setLibraryOccupied] = useState(false);
   /** 账户与设置独立打开，入口函数确保不叠窗。 */
   const [settingsCategory, setSettingsCategory] = useState<SettingsCategory | null>(null);
   const [accountOpen, setAccountOpen] = useState(false);
@@ -228,6 +256,16 @@ export function App() {
           ],
     );
   }, [boot?.pendingAccountDeletions, openAccount, setWarnings]);
+  useEffect(() => {
+    const recoveryWarnings = boot?.importRecoveryWarnings ?? [];
+    if (recoveryWarnings.length === 0) return;
+    setWarnings((previous) => [
+      ...previous,
+      ...recoveryWarnings
+        .filter((message) => !previous.some((item) => item.code === 'import-recovery' && item.message === message))
+        .map((message) => ({ code: 'import-recovery', message })),
+    ]);
+  }, [boot?.importRecoveryWarnings, setWarnings]);
 
   /** 「跳到原句」的最近一次请求（T11）：带序号，重复点击同一条也能再闪一次。 */
   const [focus, setFocus] = useState<FocusRequest | null>(null);
@@ -240,12 +278,82 @@ export function App() {
   // 流式四态（正文 / 说话人 / 推理流 / 阶段）住在 lib/stream-store.ts（顺序 59）：
   // 每个 token 只让流式气泡重画，不再让整棵树跟着 setState。
   const [busy, setBusy] = useState(false);
-  const [lastPrompt, setLastPrompt] = useState<AssembledPrompt | null>(null);
+  const [ownedPrompt, setOwnedPrompt] = useState<{
+    prompt: AssembledPrompt;
+    scope: string;
+    label: string;
+    preparedAt: string;
+  } | null>(null);
 
   const scene = session.scene;
   const messages = session.messages;
   const instances = session.instances;
   const personas = session.personas;
+  const accountKey = activeDbName();
+  const budgetDraftOwnerRef = useRef({ accountKey, store: createBudgetDraftStore() });
+  if (budgetDraftOwnerRef.current.accountKey !== accountKey)
+    budgetDraftOwnerRef.current = { accountKey, store: createBudgetDraftStore() };
+  const promptScope = JSON.stringify([accountKey, world?.id ?? null, conversation?.id ?? null]);
+  const promptScopeRef = useRef(promptScope);
+  promptScopeRef.current = promptScope;
+  const promptLabel = [world?.title, conversation?.title].filter(Boolean).join(' / ');
+  const setLastPrompt = useCallback(
+    (prompt: AssembledPrompt | null, speakerName?: string) => {
+      if (promptScopeRef.current !== promptScope) return;
+      setOwnedPrompt(
+        prompt === null
+          ? null
+          : {
+              prompt,
+              scope: promptScope,
+              label: [promptLabel, speakerName].filter(Boolean).join(' / '),
+              preparedAt: new Date().toISOString(),
+            },
+      );
+    },
+    [promptScope, promptLabel],
+  );
+  const currentPrompt = ownedPrompt?.scope === promptScope ? ownedPrompt : null;
+  const consumeFocus = useCallback(
+    (seq: number, found: boolean) => {
+      setFocus((current) => (current?.seq === seq ? null : current));
+      if (!found)
+        setWarnings((previous) => [
+          ...previous.filter((item) => item.code !== 'message.locate'),
+          { code: 'message.locate', message: '这条原句已不在当前记录中，可以继续查看其他消息。' },
+        ]);
+    },
+    [setWarnings],
+  );
+
+  const bridgeRequestRef = useRef<symbol | null>(null);
+  const runnerBridgeRequestRef = useRef(0);
+  const bridgeOwnerRef = useRef<{
+    db: typeof db;
+    bridge: typeof bridge;
+    roomId: RoomId | null;
+    conversationId: ConversationId | null;
+    sceneId: string | null;
+    accountKey: string;
+  } | null>(null);
+  useLayoutEffect(() => {
+    if (bridgeRequestRef.current !== null) {
+      bridgeRequestRef.current = null;
+      setBusy(false);
+    }
+    runnerBridgeRequestRef.current++;
+    bridgeOwnerRef.current = {
+      db,
+      bridge,
+      roomId: world?.id ?? null,
+      conversationId: conversation?.id ?? null,
+      sceneId: scene?.id ?? null,
+      accountKey,
+    };
+    return () => {
+      bridgeOwnerRef.current = null;
+    };
+  }, [db, bridge, world?.id, conversation?.id, scene?.id, accountKey]);
 
   const activePersona = personas.find((persona) => persona.id === world?.personaId) ?? null;
   const ready = world !== null && conversation !== null;
@@ -349,6 +457,58 @@ export function App() {
     [instances, session.library.cards],
   );
 
+  // The runner also opens analysis after “改归属”. Prepare from committed data
+  // before displaying that prompt, just as the normal pasted-reply path does.
+  const publishRunnerBridge = useCallback(
+    (next: typeof bridge) => {
+      const owner = bridgeOwnerRef.current;
+      if (
+        !owner ||
+        owner.db !== db ||
+        owner.roomId !== (world?.id ?? null) ||
+        owner.conversationId !== (conversation?.id ?? null) ||
+        owner.sceneId !== (scene?.id ?? null) ||
+        owner.accountKey !== accountKey ||
+        activeDbName() !== accountKey
+      )
+        return;
+      const request = ++runnerBridgeRequestRef.current;
+      if (next?.stage !== 'analysis') {
+        setBridge(next);
+        return;
+      }
+      if (!db || !world || !conversation || !scene || !next.turnId) {
+        setError('当前世界或场景已变化，无法准备桥接分析。');
+        return;
+      }
+      void prepareReassignedBridgeAnalysis(
+        db.repository,
+        {
+          roomId: world.id,
+          conversationId: conversation.id,
+          sceneId: scene.id,
+        },
+        next.turnId,
+        accountKey,
+      )
+        .then((prepared) => {
+          if (
+            runnerBridgeRequestRef.current === request &&
+            bridgeOwnerRef.current === owner &&
+            activeDbName() === accountKey
+          )
+            setBridge(prepared);
+        })
+        .catch((failure: unknown) => {
+          if (runnerBridgeRequestRef.current === request && bridgeOwnerRef.current === owner)
+            setError(
+              `回复归属已保存，但分析准备失败：${failure instanceof Error ? failure.message : String(failure)}；请检查原回合后重试。`,
+            );
+        });
+    },
+    [accountKey, conversation, db, scene, setBridge, setError, world],
+  );
+
   /*
    * 一轮对话的主循环（顺序 66 搬到 hooks/useTurnRunner）：跑一次生成、生成前的
    * 导演调用、发一句、重抽、改归属，连同它们共用的「造一条角色消息」「排一个场记
@@ -377,10 +537,12 @@ export function App() {
     burned,
     budgetReason: budget.reason,
     busy,
+    accountKey,
+    bridgeOpen: bridge !== null,
     setBusy,
     setError,
     setWarnings,
-    setBridge,
+    setBridge: publishRunnerBridge,
     setLastPrompt,
   });
 
@@ -448,8 +610,8 @@ export function App() {
       worldTime: string;
     }) => {
       const mode = newConversationMode;
-      if (mode === null || (mode.kind === 'in-world' && world?.id !== mode.worldId)) return;
-      setNewConversationMode(null);
+      if (mode === null || (mode.kind === 'in-world' && world?.id !== mode.worldId))
+        throw new Error('创建目标已变化，请重新打开新对话。');
       const cards = session.library.cards.filter((card) => input.cardIds.includes(card.id));
 
       // 顶层「新对话」总是创建一个独立世界和它的首条对话。
@@ -495,20 +657,22 @@ export function App() {
 
   /** 「创建」走副对话；还没有世界就先建一个空世界，否则管理员无处落脚。 */
   const handleCreateWithAi = useCallback(async () => {
+    if (!(await beforeNavigate())) return;
     if (session.world === null) {
       await session.createWorld({ title: '新世界', persona: activePersona, cards: [] });
     }
     await session.openSideConversation();
-  }, [activePersona, session]);
+  }, [activePersona, session, beforeNavigate]);
 
   const handleToggleKind = useCallback(async () => {
+    if (!(await beforeNavigate())) return;
     if (conversation?.kind === 'side') {
       const main = session.conversations.find((item) => item.kind === 'main');
       if (main) await session.openConversation(main.id);
       return;
     }
     await session.openSideConversation();
-  }, [conversation, session]);
+  }, [conversation, session, beforeNavigate]);
 
   /**
    * 手机上左右两张卡片互斥（用户 2026-09-24 要求的「推开」效果里，同时推开两侧没有意义，
@@ -524,7 +688,8 @@ export function App() {
     if (opening) setPanelOpen(false);
   }, [collapsed, narrow]);
 
-  const handleTogglePanel = useCallback((): void => {
+  const handleTogglePanel = useCallback(async (): Promise<void> => {
+    if (panelOpen && !(await beforeNavigate())) return;
     if (!narrow) {
       setPanelOpen((value) => !value);
       return;
@@ -532,7 +697,7 @@ export function App() {
     const opening = !panelOpen;
     setPanelOpen(opening);
     if (opening) setCollapsed(true);
-  }, [narrow, panelOpen]);
+  }, [narrow, panelOpen, beforeNavigate]);
 
   const handleArchive = useCallback(
     async (targetConversationId: string) => {
@@ -604,6 +769,14 @@ export function App() {
       if (bridge.turnId === undefined || bridge.speakerInstanceId === undefined) return;
 
       const pending = bridge.pendingTurn;
+      if (!pending) {
+        setError('这份旧回复缺少来源绑定，未写入任何消息；请放弃旧进度并重新准备这一轮。');
+        return;
+      }
+      if (pending.accountKey !== accountKey) {
+        setError('这份回复不属于当前本机账户，或旧进度缺少账户来源；请回到原账户，或放弃后重新准备。');
+        return;
+      }
       const savedTurn = session.messages.filter((message) => message.turnId === bridge.turnId);
       if (pending) {
         const issue = validatePendingBridgeTurn(
@@ -633,7 +806,11 @@ export function App() {
         setError('贴回来的内容是空的。');
         return;
       }
-
+      if (bridgeRequestRef.current !== null) return;
+      const request = Symbol('bridge-reply');
+      bridgeRequestRef.current = request;
+      const owner = bridgeOwnerRef.current;
+      const isCurrent = () => owner !== null && bridgeOwnerRef.current === owner && activeDbName() === accountKey;
       setBusy(true);
       let committed = false;
       try {
@@ -644,59 +821,55 @@ export function App() {
         const batch = bridgeReplyBatch(pending, line, world.playerName);
         await session.appendMessages(batch);
         committed = true;
+        if (!isCurrent()) return;
         sync.requestAutoSync();
         const turnMessages = [...savedTurn, ...batch];
 
         if (pending) {
-          setBridge(
-            await recoverPendingBridgeState({
-              pending,
-              committed: pending.nextIndex + 1,
-              history: [...session.messages.filter((message) => message.turnId !== bridge.turnId), ...turnMessages],
-              speakers: instances,
-              preparePrompt: async (state, history) => prepareBridgeReply({ pendingTurn: state, history }),
-              analysisPrompt: () =>
-                renderPromptForWeb(
-                  buildTurnAnalysisMessages({
-                    scene,
-                    cast: instances.filter((instance) => scene.cast.includes(instance.id)),
-                    playerName: world.playerName,
-                    messages: turnMessages,
-                  }),
-                ),
-            }),
-          );
+          const prepared = await recoverPendingBridgeState({
+            pending,
+            committed: pending.nextIndex + 1,
+            history: [...session.messages.filter((message) => message.turnId !== bridge.turnId), ...turnMessages],
+            speakers: instances,
+            preparePrompt: async (state, history) => prepareBridgeReply({ pendingTurn: state, history }),
+            prepareAnalysis: () =>
+              prepareBridgeAnalysis(
+                db.repository,
+                {
+                  roomId: pending.roomId,
+                  conversationId: pending.conversationId,
+                  sceneId: pending.sceneId,
+                  turnId: pending.turnId,
+                },
+                accountKey,
+              ),
+          });
+          if (isCurrent()) setBridge(prepared);
           return;
         }
 
-        // 这一轮要说给谁听：名单里在场的那几位，与自动路径的 audience 一致
-        const cast = instances.filter((instance) => scene.cast.includes(instance.id));
-
-        setBridge({
-          stage: 'analysis',
-          turnId: bridge.turnId,
-          speakerInstanceId: speaker.id,
-          speakerName: speaker.displayName,
-          prompt: renderPromptForWeb(
-            buildTurnAnalysisMessages({
-              scene,
-              cast,
-              playerName: world.playerName,
-              messages: turnMessages,
-            }),
-          ),
-        });
+        const prepared = await prepareBridgeAnalysis(
+          db.repository,
+          { roomId: world.id, conversationId: conversation.id, sceneId: scene.id, turnId: bridge.turnId },
+          accountKey,
+        );
+        if (isCurrent()) setBridge(prepared);
       } catch (bridgeError) {
+        if (!isCurrent()) return;
         const detail = bridgeError instanceof Error ? bridgeError.message : String(bridgeError);
         setError(
           committed ? `已保存贴回的回复，但下一步未完成：${detail}。桥接进度会按已保存消息恢复；刷新可重试。` : detail,
         );
       } finally {
-        setBusy(false);
+        if (bridgeRequestRef.current === request) {
+          bridgeRequestRef.current = null;
+          setBusy(false);
+        }
       }
     },
     [
       bridge,
+      accountKey,
       conversation,
       db,
       instances,
@@ -721,20 +894,34 @@ export function App() {
     async (raw: string) => {
       if (!db || !world || !scene || !conversation || bridge === null || bridge.stage !== 'analysis') return;
       if (bridge.turnId === undefined) return;
-
+      if (bridgeRequestRef.current !== null) return;
+      const request = Symbol('bridge-analysis');
+      bridgeRequestRef.current = request;
+      const isCurrent = () => {
+        const owner = bridgeOwnerRef.current;
+        return (
+          owner?.db === db &&
+          owner.bridge === bridge &&
+          owner.roomId === world.id &&
+          owner.conversationId === conversation.id &&
+          owner.sceneId === scene.id &&
+          owner.accountKey === accountKey &&
+          activeDbName() === accountKey
+        );
+      };
       setBusy(true);
       try {
-        const result = await applyTurnAnalysis({
+        const result = await applyBridgeAnalysis({
           repository: db.repository,
-          roomId: world.id,
-          sceneId: scene.id,
-          conversationId: conversation.id,
-          turnId: bridge.turnId,
-          worldTime: scene.worldTime,
-          participants: instances.filter((instance) => scene.cast.includes(instance.id)),
+          bridge,
+          current: { roomId: world.id, sceneId: scene.id, conversationId: conversation.id },
+          accountKey,
           raw,
+          isCurrent,
         });
+        if (!isCurrent()) return;
         await session.reloadWorld();
+        if (!isCurrent()) return;
         setBridge(null);
         setWarnings([
           {
@@ -750,12 +937,15 @@ export function App() {
         ]);
         sync.requestAutoSync();
       } catch (bridgeError) {
-        setError(bridgeError instanceof Error ? bridgeError.message : String(bridgeError));
+        if (isCurrent()) setError(bridgeError instanceof Error ? bridgeError.message : String(bridgeError));
       } finally {
-        setBusy(false);
+        if (bridgeRequestRef.current === request) {
+          bridgeRequestRef.current = null;
+          setBusy(false);
+        }
       }
     },
-    [bridge, conversation, db, instances, scene, session, sync, world, setWarnings, setError, setBridge],
+    [bridge, accountKey, conversation, db, scene, session, sync, world, setWarnings, setError, setBridge],
   );
 
   /** 放弃这一次转接：第一步放弃等于这一轮没有回复，第二步放弃等于这一轮没写记忆。 */
@@ -803,6 +993,10 @@ export function App() {
     ) {
       return;
     }
+    if (pending.accountKey !== accountKey) {
+      setError('这份桥接进度缺少当前账户来源，请回到原账户，或放弃后重新准备。');
+      return;
+    }
     const turnMessages = session.messages.filter((message) => message.turnId === pending.turnId);
     const progress = readPendingBridgeProgress(
       pending,
@@ -826,14 +1020,16 @@ export function App() {
         history: session.messages,
         speakers: instances,
         preparePrompt: async (state, history) => prepareBridgeReply({ pendingTurn: state, history }),
-        analysisPrompt: () =>
-          renderPromptForWeb(
-            buildTurnAnalysisMessages({
-              scene,
-              cast: instances.filter((instance) => scene.cast.includes(instance.id)),
-              playerName: world.playerName,
-              messages: turnMessages,
-            }),
+        prepareAnalysis: () =>
+          prepareBridgeAnalysis(
+            db.repository,
+            {
+              roomId: pending.roomId,
+              conversationId: pending.conversationId,
+              sceneId: pending.sceneId,
+              turnId: pending.turnId,
+            },
+            accountKey,
           ),
       });
       if (cancelled) return;
@@ -849,6 +1045,7 @@ export function App() {
     };
   }, [
     bridge,
+    accountKey,
     busy,
     conversation,
     db,
@@ -890,14 +1087,35 @@ export function App() {
   const reassignRef = useRef(handleReassignMessage);
   reassignRef.current = handleReassignMessage;
 
-  const handleSendText = useCallback((text: string) => void handleSend(text), [handleSend]);
-  const handleRegenerateId = useCallback((id: MessageId) => void regenerateRef.current(id), []);
-  const handleEditMessage = useCallback(
-    (id: MessageId, content: string) => void sessionRef.current.updateMessage(id, { content }),
-    [],
+  const handleSendText = useCallback(
+    (text: string) =>
+      new Promise<SubmitOutcome>((resolve) => {
+        void handleSend(text, resolve)
+          .then(resolve)
+          .catch((error) =>
+            resolve({ status: 'uncertain', reason: error instanceof Error ? error.message : String(error) }),
+          );
+      }),
+    [handleSend],
   );
+  const handleRegenerateId = useCallback((id: MessageId) => void regenerateRef.current(id), []);
+  const handleEditMessage = useCallback(async (id: MessageId, content: string) => {
+    await sessionRef.current.updateMessage(id, { content });
+  }, []);
   const handleDeleteId = useCallback((id: MessageId) => void deleteMessageRef.current(id), []);
-  const handleOpenScene = useCallback(() => setSceneOpen(true), []);
+  const handleOpenScene = useCallback(() => {
+    void beforeNavigate().then((ok) => {
+      if (ok) setSceneOpen(true);
+    });
+  }, [beforeNavigate]);
+  const handleOpenDetail = useCallback(
+    (id: InstanceId) => {
+      void beforeNavigate().then((ok) => {
+        if (ok) setDetailId(id);
+      });
+    },
+    [beforeNavigate],
+  );
   const handleDropInstance = useCallback((id: InstanceId) => void session.setPresence(id, 'onstage'), [session]);
   const handleReassignId = useCallback(
     (id: MessageId, instanceId: InstanceId) => void reassignRef.current(id, instanceId),
@@ -941,7 +1159,18 @@ export function App() {
    * 副对话（世界管理员）那一批回调同理（顺序 59）：`SideChat` 也 memo 了，
    * 传内联箭头函数等于每次 App 渲染都让它白重画一遍。
    */
-  const handleAdminSend = useCallback((text: string) => void admin.send(text), [admin]);
+  const handleAdminSend = useCallback(
+    (text: string) =>
+      new Promise<SubmitOutcome>((resolve) => {
+        void admin
+          .send(text, resolve)
+          .then(resolve)
+          .catch((error) =>
+            resolve({ status: 'uncertain', reason: error instanceof Error ? error.message : String(error) }),
+          );
+      }),
+    [admin],
+  );
   const handleAdminBridgeCommit = useCallback((text: string) => void admin.commitBridge(text), [admin]);
   const handleAdoptArtifact = useCallback(
     (id: MessageId, artifact: AdminArtifact) => void session.adoptArtifact(id, artifact.id),
@@ -966,6 +1195,25 @@ export function App() {
   );
 
   const disabled = busy || admin.busy || !session.ready;
+  const keySetup = useDeepSeekSetup({
+    accountKey,
+    providers,
+    blocked:
+      disabled ||
+      bridge !== null ||
+      admin.bridge != null ||
+      accountOpen ||
+      settingsCategory !== null ||
+      newConversationMode !== null ||
+      sceneOpen ||
+      detailId !== null ||
+      libraryOccupied,
+  });
+  const configureDeepSeek = useCallback(() => {
+    dialogReturnFocus.current =
+      typeof document !== 'undefined' && document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    keySetup.requestOpen();
+  }, [keySetup.requestOpen]);
   const { libraryCounts, librarySurface } = useLibrarySurface(session, disabled, handleImport);
   const detail = detailId === null ? null : (instances.find((instance) => instance.id === detailId) ?? null);
   const worldId = world?.id ?? null;
@@ -978,416 +1226,464 @@ export function App() {
 
   return (
     // 外观变量供聊天固定背景使用；素材状态由局部 Provider 持有。
-    <LibraryWorkspaceProvider navigationRef={libraryNavigation} onEnter={enterLibrary} onReturn={returnFromLibrary}>
-      <div
-        className={[
-          'app',
-          appearance.value.background === '' ? '' : 'has-bg',
-          /*
-           * 手机上左右两侧都是「把主对话推开」的卡片（用户 2026-09-24 要求，
-           * 参考他给的 DeepSeek 截图），所以打开状态要落在根上，CSS 才能一起位移
-           * 顶栏与工作区。桌面不加这两个类，行为一个字不变。
-           */
-          narrow && !collapsed ? 'rail-open' : '',
-          narrow && panelOpen ? 'panel-open' : '',
-        ]
-          .filter((name) => name !== '')
-          .join(' ')}
-        style={
-          {
-            '--chat-bg': appearance.value.background === '' ? 'none' : `url("${appearance.value.background}")`,
-            '--chat-bg-opacity': appearance.value.background === '' ? 0 : appearance.value.backgroundOpacity,
-          } as React.CSSProperties
-        }
+    <ChatDraftProvider key={accountKey}>
+      <LibraryWorkspaceProvider
+        navigationRef={libraryNavigation}
+        onEnter={enterLibrary}
+        onReturn={returnFromLibrary}
+        onOccupancyChange={setLibraryOccupied}
       >
-        <TopBar
-          collapsed={collapsed}
-          onToggleCollapsed={handleToggleRail}
-          degraded={boot?.degraded ?? false}
-          backgroundPending={worker.pending}
-          narrow={narrow}
-          castStrip={<CastStrip cast={castNames} isSide={isSide} onAsk={handleAskCast} />}
-          chatControls={
-            <ChatControls
-              isSide={isSide}
-              disabled={disabled}
-              panelOpen={panelOpen}
-              onToggleKind={() => void handleToggleKind()}
-              onTogglePanel={handleTogglePanel}
-            />
+        <div
+          className={[
+            'app',
+            appearance.value.background === '' ? '' : 'has-bg',
+            /*
+             * 手机上左右两侧都是「把主对话推开」的卡片（用户 2026-09-24 要求，
+             * 参考他给的 DeepSeek 截图），所以打开状态要落在根上，CSS 才能一起位移
+             * 顶栏与工作区。桌面不加这两个类，行为一个字不变。
+             */
+            narrow && !collapsed ? 'rail-open' : '',
+            narrow && panelOpen ? 'panel-open' : '',
+          ]
+            .filter((name) => name !== '')
+            .join(' ')}
+          style={
+            {
+              '--chat-bg': appearance.value.background === '' ? 'none' : `url("${appearance.value.background}")`,
+              '--chat-bg-opacity': appearance.value.background === '' ? 0 : appearance.value.backgroundOpacity,
+            } as React.CSSProperties
           }
-        />
+        >
+          <TopBar
+            collapsed={collapsed}
+            onToggleCollapsed={handleToggleRail}
+            degraded={boot?.degraded ?? false}
+            backgroundPending={worker.pending}
+            narrow={narrow}
+            castStrip={<CastStrip cast={castNames} isSide={isSide} onAsk={handleAskCast} />}
+            chatControls={
+              <ChatControls
+                isSide={isSide}
+                disabled={disabled}
+                panelOpen={panelOpen}
+                onToggleKind={() => void handleToggleKind()}
+                onTogglePanel={handleTogglePanel}
+              />
+            }
+          />
 
-        <div className={collapsed ? 'app-body collapsed' : 'app-body'}>
-          {/*
+          <div className={collapsed ? 'app-body collapsed' : 'app-body'}>
+            {/*
           手机上左栏**始终挂着**（收起时用位移推到屏幕外）：不挂就没法播「滑出来」的动效，
           而打开时主对话是靠 CSS 平移让位的。桌面保持原样——收起就是不渲染那一列。
         */}
-          {collapsed && !narrow ? null : (
-            <LeftRail
-              counts={libraryCounts}
-              onNewConversation={() => {
-                void libraryNavigation.current?.requestAction(() => {
-                  setNewConversationMode({ kind: 'new-world' });
-                  closeRailOnNarrow();
-                });
-              }}
-              onCreateWithAi={() => void navigateSide(handleCreateWithAi)}
-              onImportFile={(file) => void navigateImported(() => handleImport(file))}
-              onOpenSettings={() => openSettings('model')}
-              onOpenAccount={openAccount}
-              disabled={disabled}
-              list={
-                <>
-                  {error !== null || dbError !== null || session.error !== null ? (
-                    <div className="notice error">
-                      <strong>出错了</strong>
-                      <p>{error ?? session.error ?? dbError}</p>
-                      <button
-                        type="button"
-                        className="ghost"
-                        onClick={() => {
-                          setError(null);
-                          session.clearError();
-                        }}
-                      >
-                        知道了
-                      </button>
-                    </div>
-                  ) : null}
+            {collapsed && !narrow ? null : (
+              <LeftRail
+                counts={libraryCounts}
+                onNewConversation={() => {
+                  void libraryNavigation.current?.requestAction(() => {
+                    setNewConversationMode({ kind: 'new-world' });
+                    closeRailOnNarrow();
+                  });
+                }}
+                onCreateWithAi={() => void navigateSide(handleCreateWithAi)}
+                onImportFile={(file) => void navigateImported(() => handleImport(file))}
+                onOpenSettings={() => openSettings('model')}
+                onOpenAccount={openAccount}
+                disabled={disabled}
+                list={
+                  <>
+                    {error !== null || dbError !== null || session.error !== null ? (
+                      <div className="notice error">
+                        <strong>出错了</strong>
+                        <p>{error ?? session.error ?? dbError}</p>
+                        <button
+                          type="button"
+                          className="ghost"
+                          onClick={() => {
+                            setError(null);
+                            session.clearError();
+                          }}
+                        >
+                          知道了
+                        </button>
+                      </div>
+                    ) : null}
 
-                  {warnings.length > 0 ? (
-                    <div className="notice warn">
-                      <strong>提示</strong>
-                      <ul>
-                        {warnings.map((item, index) => (
-                          <li key={`${String(index)}-${item.message.slice(0, 12)}`}>
-                            {item.message}
-                            {item.action === undefined ? null : (
-                              <button type="button" className="ghost" onClick={item.action?.run}>
-                                {item.action.label}
-                              </button>
-                            )}
-                          </li>
-                        ))}
-                      </ul>
-                      <button type="button" className="ghost" onClick={() => setWarnings([])}>
-                        知道了
-                      </button>
-                    </div>
-                  ) : null}
+                    {warnings.length > 0 ? (
+                      <div className="notice warn">
+                        <strong>提示</strong>
+                        <ul>
+                          {warnings.map((item, index) => (
+                            <li key={`${String(index)}-${item.message.slice(0, 12)}`}>
+                              {item.message}
+                              {item.action === undefined ? null : (
+                                <button type="button" className="ghost" onClick={item.action?.run}>
+                                  {item.action.label}
+                                </button>
+                              )}
+                            </li>
+                          ))}
+                        </ul>
+                        <button type="button" className="ghost" onClick={() => setWarnings([])}>
+                          知道了
+                        </button>
+                      </div>
+                    ) : null}
 
-                  <WorldTree
-                    worlds={session.worlds}
-                    activeWorldId={world?.id ?? null}
-                    conversations={session.conversations}
-                    activeConversationId={conversation?.id ?? null}
-                    disabled={disabled}
-                    onOpenWorld={handleOpenWorld}
-                    onNewConversation={(id) => void handleNewConversationInWorld(id)}
-                    onOpenConversation={handleOpenConversation}
-                    onArchiveConversation={handleArchiveConversation}
-                    onRenameConversation={(target, title) => void session.renameConversation(target.id, title)}
-                    onDeleteConversation={handleDeleteConversation}
-                    onDeleteWorld={handleDeleteWorld}
-                  />
-                </>
-              }
-            />
-          )}
+                    <WorldTree
+                      worlds={session.worlds}
+                      activeWorldId={world?.id ?? null}
+                      conversations={session.conversations}
+                      activeConversationId={conversation?.id ?? null}
+                      disabled={disabled}
+                      onOpenWorld={handleOpenWorld}
+                      onNewConversation={(id) => void handleNewConversationInWorld(id)}
+                      onOpenConversation={handleOpenConversation}
+                      onArchiveConversation={handleArchiveConversation}
+                      onRenameConversation={(target, title) => void session.renameConversation(target.id, title)}
+                      onDeleteConversation={handleDeleteConversation}
+                      onDeleteWorld={handleDeleteWorld}
+                    />
+                  </>
+                }
+              />
+            )}
 
-          <LibraryWorkspace surfaceProps={librarySurface} hasConversation={conversation !== null}>
-            {/*
+            <LibraryWorkspace surfaceProps={librarySurface} hasConversation={conversation !== null}>
+              {/*
             手机上这一行（「世界名 · 对话名」）整条不渲染（用户 2026-09-24 要求）：
             在场角色与两颗按钮已经搬到顶栏，剩下的标题在对话区上面白占一行。
             改名入口搬到左栏的对话列表里（WorldTree 的「改名」）。
           */}
-            {narrow ? null : (
-              <MainHeader
-                world={world}
-                conversation={conversation}
-                cast={cast}
-                disabled={disabled}
-                panelOpen={panelOpen}
-                narrow={narrow}
-                onToggleKind={() => void handleToggleKind()}
-                onTogglePanel={handleTogglePanel}
-                onRenameConversation={(title) => void session.updateConversation({ title })}
-              />
-            )}
+              {narrow ? null : (
+                <MainHeader
+                  world={world}
+                  conversation={conversation}
+                  cast={cast}
+                  disabled={disabled}
+                  panelOpen={panelOpen}
+                  narrow={narrow}
+                  onToggleKind={() => void handleToggleKind()}
+                  onTogglePanel={handleTogglePanel}
+                  onRenameConversation={(title) => void session.updateConversation({ title })}
+                />
+              )}
 
-            {world === null || conversation === null ? (
-              <section className="chat-surface empty">
-                <p className="hint">还没有打开的对话。</p>
-                <p className="hint">
-                  导入一张角色卡，或者用左栏的「新对话」开一条线；也可以点「创建」让世界管理员陪你起草。
-                </p>
-                {needsWebBridge(providers.apiKey) ? (
+              {world === null || conversation === null ? (
+                <section className="chat-surface empty">
+                  <p className="hint">还没有打开的对话。</p>
                   <p className="hint">
-                    <strong>没有 API Key 也能开始</strong>
-                    ：导入一张卡之后，应用会把每一轮要发的提示词交给你，贴进 DeepSeek 网页版，再把回复粘回来。
+                    导入一张角色卡，或者用左栏的「新对话」开一条线；也可以点「创建」让世界管理员陪你起草。
                   </p>
-                ) : null}
-              </section>
-            ) : (
-              <div className="workspace-body">
-                {isSide ? (
-                  <SideChat
-                    conversation={conversation}
-                    messages={messages}
-                    busy={admin.busy}
-                    ready={ready}
-                    archived={archived}
-                    bridge={admin.bridge}
-                    manualMode={needsWebBridge(providers.apiKey)}
-                    error={admin.error}
-                    onBridgeCommit={handleAdminBridgeCommit}
-                    onBridgeCancel={admin.cancelBridge}
-                    onSend={handleAdminSend}
-                    onStop={admin.stop}
-                    onAdopt={handleAdoptArtifact}
-                    onDiscard={handleDiscardArtifact}
-                    onRevoke={handleRevokeArtifact}
-                    existingIds={adminExistingIds}
-                  />
-                ) : (
-                  <MainChat
-                    conversation={conversation}
-                    scene={scene}
-                    messages={messages}
-                    cast={cast}
-                    avatars={avatars}
-                    busy={busy}
-                    ready={ready}
-                    archived={archived}
-                    focus={focus}
-                    showIntent={appearance.value.showIntent}
-                    bridge={bridge}
-                    manualMode={bridge !== null || needsWebBridge(providers.apiKey)}
-                    insertRequest={castAsk}
-                    onBridgeReply={handleBridgeReplyText}
-                    onBridgeAnalysis={handleBridgeAnalysisText}
-                    onBridgeSkip={handleBridgeSkip}
-                    onSend={handleSendText}
-                    onStop={handleStop}
-                    onRegenerate={handleRegenerateId}
-                    onEdit={handleEditMessage}
-                    onDelete={handleDeleteId}
-                    onChangeModes={handleChangeModes}
-                    unlimitedPrompt={unlimitedPrompt}
-                    onOpenScene={handleOpenScene}
-                    onDropInstance={handleDropInstance}
-                    onReassign={handleReassignId}
-                    signatures={signatures}
-                  />
-                )}
+                  {needsWebBridge(providers.apiKey) ? (
+                    <p className="hint">
+                      尚未配置 Key ·{' '}
+                      <button type="button" className="ghost" onClick={configureDeepSeek}>
+                        配置 DeepSeek Key
+                      </button>
+                    </p>
+                  ) : null}
+                </section>
+              ) : (
+                <div className="workspace-body">
+                  {isSide ? (
+                    <LazyPanel
+                      load={loadSideChat}
+                      label="世界管理员"
+                      panelProps={{
+                        draftScope: `${accountKey}:${conversation.id}`,
+                        conversation: conversation,
+                        messages: messages,
+                        busy: admin.busy,
+                        ready: ready,
+                        archived: archived,
+                        bridge: admin.bridge,
+                        manualMode: needsWebBridge(providers.apiKey),
+                        error: admin.error,
+                        onBridgeCommit: handleAdminBridgeCommit,
+                        onBridgeCancel: admin.cancelBridge,
+                        onSend: handleAdminSend,
+                        onStop: admin.stop,
+                        onAdopt: handleAdoptArtifact,
+                        onDiscard: handleDiscardArtifact,
+                        onRevoke: handleRevokeArtifact,
+                        existingIds: adminExistingIds,
+                      }}
+                    />
+                  ) : (
+                    <MainChat
+                      draftScope={`${accountKey}:${conversation.id}`}
+                      conversation={conversation}
+                      scene={scene}
+                      messages={messages}
+                      cast={cast}
+                      avatars={avatars}
+                      busy={busy}
+                      ready={ready}
+                      archived={archived}
+                      focus={focus}
+                      onFocusConsumed={consumeFocus}
+                      showIntent={appearance.value.showIntent}
+                      bridge={bridge}
+                      manualMode={bridge !== null || needsWebBridge(providers.apiKey)}
+                      onConfigureDeepSeekKey={configureDeepSeek}
+                      insertRequest={castAsk}
+                      onBridgeReply={handleBridgeReplyText}
+                      onBridgeAnalysis={handleBridgeAnalysisText}
+                      onBridgeSkip={handleBridgeSkip}
+                      onSend={handleSendText}
+                      onStop={handleStop}
+                      onRegenerate={handleRegenerateId}
+                      onEdit={handleEditMessage}
+                      onDelete={handleDeleteId}
+                      onChangeModes={handleChangeModes}
+                      unlimitedPrompt={unlimitedPrompt}
+                      onOpenScene={handleOpenScene}
+                      onDropInstance={handleDropInstance}
+                      onReassign={handleReassignId}
+                      signatures={signatures}
+                    />
+                  )}
 
-                {/*
+                  {/*
                 手机上运行时面板也是一张从右侧滑出来的卡片（CSS ≤640px）：
                 打开时主对话向左让位，不再铺一层黑遮罩盖住它。
               */}
-                <div className={panelOpen ? 'runtime-drawer open' : 'runtime-drawer'}>
-                  {panelOpen || narrow ? (
-                    <RuntimePanel
-                      open={panelOpen}
-                      focusOnOpen={narrow}
-                      onClose={() => setPanelOpen(false)}
-                      scene={scene}
-                      instances={instances}
-                      memories={session.memories}
-                      conversations={session.conversations}
-                      activeConversationId={conversation?.id ?? null}
-                      personas={session.personas}
-                      personaId={conversation?.personaId ?? null}
-                      playerName={conversation?.playerName ?? world?.playerName ?? ''}
-                      chapters={session.chapters}
-                      attachedWorldBooks={session.worldBooks}
-                      libraryCards={session.library.cards}
-                      worldCards={session.cards}
-                      prompt={lastPrompt}
-                      pending={worker.pending}
-                      extraCalls={extraCalls(usage.world)}
-                      usage={{ world: usage.world, conversation: usage.conversation, latestTurn: usage.latestTurn }}
-                      budget={budget}
-                      budgetLimits={world?.budget ?? null}
-                      worldId={world?.id ?? null}
-                      onSaveBudget={async (limits) => {
-                        if (!world) throw new Error('没有当前世界，预算未保存。');
-                        await session.setBudget(limits, {
-                          roomId: world.id,
-                          expectedVersion: budgetWriteVersion(world.budget),
-                        });
-                      }}
-                      conversationTitle={conversation?.title ?? ''}
-                      workerError={worker.lastError}
-                      failedTasks={worker.failed}
-                      onRetryFailed={() => void worker.retryFailed()}
-                      disabled={disabled}
-                      onSceneChange={(patch) => void session.updateScene(patch)}
-                      onStartNewScene={(title) => void handleStartNewScene({ title, location: '', worldTime: '' })}
-                      onSetPresence={(id, presence) => void session.setPresence(id, presence)}
-                      onSelectPersona={(persona) => void session.setPersona(persona)}
-                      onRenameInstance={(id, name) => void session.updateInstance(id, { displayName: name })}
-                      onRemoveInstance={(id) => void session.removeInstance(id)}
-                      onAddInstance={(card) => void session.addInstance(card)}
-                      onDetachWorldBook={(id) => void session.detachWorldBook(id)}
-                      onUpdateMemory={(id, patch) => void session.updateMemory(id, patch)}
-                      onDeleteMemory={(id) => void session.deleteMemory(id)}
-                      onLocateMemory={handleLocateMemory}
-                    />
-                  ) : null}
+                  <div className={panelOpen ? 'runtime-drawer open' : 'runtime-drawer'}>
+                    {panelOpen || narrow ? (
+                      <LazyPanel
+                        load={loadRuntimePanel}
+                        label="运行时内容"
+                        panelProps={{
+                          onOpenDetail: handleOpenDetail,
+                          budgetDrafts: budgetDraftOwnerRef.current.store,
+                          open: panelOpen,
+                          focusOnOpen: narrow,
+                          onClose: closeRuntime,
+                          onRegisterFlush: registerRuntimeFlush,
+                          scene: scene,
+                          instances: instances,
+                          memories: session.memories,
+                          conversations: session.conversations,
+                          activeConversationId: conversation?.id ?? null,
+                          personas: session.personas,
+                          personaId: conversation?.personaId ?? null,
+                          playerName: conversation?.playerName ?? world?.playerName ?? '',
+                          chapters: session.chapters,
+                          attachedWorldBooks: session.worldBooks,
+                          libraryCards: session.library.cards,
+                          worldCards: session.cards,
+                          prompt: currentPrompt?.prompt ?? null,
+                          promptSourceLabel: currentPrompt?.label,
+                          promptPreparedAt: currentPrompt?.preparedAt,
+                          pending: worker.pending,
+                          extraCalls: extraCalls(usage.world),
+                          usage: { world: usage.world, conversation: usage.conversation, latestTurn: usage.latestTurn },
+                          usageError: usage.error ?? null,
+                          onRetryUsage: usage.reload,
+                          budget: budget,
+                          budgetLimits: world?.budget ?? null,
+                          worldId: world?.id ?? null,
+                          onSaveBudget: async (limits) => {
+                            if (!world) throw new Error('没有当前世界，预算未保存。');
+                            await session.setBudget(limits, {
+                              roomId: world.id,
+                              expectedVersion: budgetWriteVersion(world.budget),
+                            });
+                          },
+                          conversationTitle: conversation?.title ?? '',
+                          workerError: worker.lastError,
+                          failedTasks: worker.failed,
+                          onRetryFailed: () => void worker.retryFailed(),
+                          disabled: disabled,
+                          onSceneChange: (patch) => session.updateScene(patch),
+                          onStartNewScene: (title) => handleStartNewScene({ title, location: '', worldTime: '' }),
+                          onSetPresence: (id, presence) => session.setPresence(id, presence),
+                          onSelectPersona: (persona) => session.setPersona(persona),
+                          onRenameInstance: (id, name) => session.updateInstance(id, { displayName: name }),
+                          onRemoveInstance: (id) => session.removeInstance(id),
+                          onAddInstance: async (card) => {
+                            await session.addInstance(card);
+                          },
+                          onDetachWorldBook: (id) => session.detachWorldBook(id),
+                          onUpdateMemory: (id, patch) => void session.updateMemory(id, patch),
+                          onDeleteMemory: (id) => void session.deleteMemory(id),
+                          onLocateMemory: handleLocateMemory,
+                        }}
+                      />
+                    ) : null}
+                  </div>
                 </div>
-              </div>
-            )}
+              )}
 
-            {!isSide && world !== null && conversation !== null ? (
-              <CastRail
-                instances={instances}
-                scene={scene}
-                cards={session.library.cards}
-                disabled={disabled}
-                onOpenDetail={setDetailId}
-                availableCards={availableCards}
-                onAddInstance={handleAddInstance}
-              />
-            ) : null}
-          </LibraryWorkspace>
-        </div>
-
-        {narrow && installHint ? (
-          <div className="notice warn install-hint">
-            <strong>手机上想要全屏，把它装成应用</strong>
-            <p>
-              地址栏与底部工具栏会一直占着地方。用浏览器菜单里的「安装应用」／「添加到主屏幕」 （iPhone 上是分享 →
-              添加到主屏幕）装一次，打开就是全屏，也更容易拿到持久化存储。
-            </p>
-            <button
-              type="button"
-              className="ghost"
-              onClick={() => {
-                dismissInstallHint();
-              }}
-            >
-              知道了
-            </button>
+              {!isSide && world !== null && conversation !== null ? (
+                <CastRail
+                  instances={instances}
+                  scene={scene}
+                  cards={session.library.cards}
+                  disabled={disabled}
+                  onOpenDetail={handleOpenDetail}
+                  availableCards={availableCards}
+                  onAddInstance={handleAddInstance}
+                />
+              ) : null}
+            </LibraryWorkspace>
           </div>
-        ) : null}
 
-        {/*
+          {narrow && installHint ? (
+            <div className="notice warn install-hint">
+              <strong>手机上想要全屏，把它装成应用</strong>
+              <p>
+                地址栏与底部工具栏会一直占着地方。用浏览器菜单里的「安装应用」／「添加到主屏幕」 （iPhone 上是分享 →
+                添加到主屏幕）装一次，打开就是全屏，也更容易拿到持久化存储。
+              </p>
+              <button
+                type="button"
+                className="ghost"
+                onClick={() => {
+                  dismissInstallHint();
+                }}
+              >
+                知道了
+              </button>
+            </div>
+          ) : null}
+
+          {/*
         点「被移开的对话区」= 收起侧栏（用户 2026-09-24 第二轮要求）：
         一层透明的可点区域，盖在对话与顶栏之上、侧栏卡片之下。
         侧栏自己那些关闭按钮（左栏的 ≡、面板的「收起面板」）已经按用户要求删掉。
       */}
-        {narrow && (!collapsed || panelOpen) ? (
-          <button
-            type="button"
-            className="drawer-backdrop"
-            aria-label="收起侧栏"
-            onClick={() => {
-              setCollapsed(true);
-              setPanelOpen(false);
-            }}
-          />
-        ) : null}
-
-        {newConversationMode !== null &&
-        (newConversationMode.kind === 'new-world' || world?.id === newConversationMode.worldId) ? (
-          <NewConversationDialog
-            mode={newConversationMode.kind}
-            currentWorldTitle={world?.title}
-            cards={session.library.cards}
-            worldBooks={session.library.worldBooks}
-            defaultCardIds={
-              newConversationMode.kind === 'new-world' ? [] : instances.map((instance) => instance.cardId)
-            }
-            attachedBookIds={newConversationMode.kind === 'new-world' ? [] : (world?.worldBookIds ?? [])}
-            disabled={disabled}
-            onClose={() => setNewConversationMode(null)}
-            onSubmit={(input) => void navigateCreated(() => handleNewConversation(input))}
-          />
-        ) : null}
-
-        {sceneOpen ? (
-          <SceneDialog
-            scene={scene}
-            instances={instances}
-            disabled={disabled}
-            onClose={() => setSceneOpen(false)}
-            onSave={(patch) => void session.updateScene(patch)}
-            onStartNewScene={(input) => void handleStartNewScene(input)}
-          />
-        ) : null}
-
-        {detail === null ? null : (
-          <CastDetail
-            instance={detail}
-            card={session.library.cards.find((card) => card.id === detail.cardId) ?? null}
-            memories={session.memories}
-            disabled={disabled}
-            onClose={() => setDetailId(null)}
-            onRename={(id, name) => void session.updateInstance(id, { displayName: name })}
-            onSetPresence={(id, presence) => void session.setPresence(id, presence)}
-            onSetRelationship={(id, field, value) => void session.setRelationship(id, field, value)}
-            onRemove={(id) => {
-              setDetailId(null);
-              void session.removeInstance(id);
-            }}
-            onRevertChange={(id, changeId) => void session.revertAffectChange(id, changeId)}
-          />
-        )}
-
-        {accountOpen ? (
-          <DialogShell
-            label="账户"
-            className="account-dialog"
-            returnFocus={dialogReturnFocus.current}
-            onClose={() => setAccountOpen(false)}
-          >
-            <LazyPanel load={loadAccountDialog} label="账户" panelProps={{ sync, disabled }} />
-          </DialogShell>
-        ) : null}
-
-        {settingsCategory === null ? null : (
-          <DialogShell
-            label="设置"
-            className="settings-dialog"
-            returnFocus={dialogReturnFocus.current}
-            onClose={() => setSettingsCategory(null)}
-          >
-            <LazyPanel
-              load={loadSettingsDialog}
-              label="设置"
-              panelProps={{
-                category: settingsCategory,
-                onCategoryChange: setSettingsCategory,
-                providers,
-                appearance,
-                archivedConversations: session.archivedConversations,
-                activeConversationId: conversation?.id ?? null,
-                disabled,
-                onOpenArchived: (id: ConversationId) => {
-                  // Close the settings focus trap before a possible library discard dialog.
-                  setSettingsCategory(null);
-                  requestAnimationFrame(() => {
-                    void openConversation(id);
-                  });
-                },
-                onDeleteArchived: (target: Conversation) => session.deleteArchivedConversation(target.id),
-                onExportArchive: () => (world === null ? Promise.resolve(null) : archive.exportWorld(world.id)),
-                onImportArchive: async () => {
-                  setSettingsCategory(null);
-                  await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
-                  return navigateImported(archive.importArchive);
-                },
-                onExportTranscript: (id: ConversationId) =>
-                  archive.exportTranscript(session.bundleOf(id), world?.title ?? ''),
-                storage,
-                backendKind: boot?.backendKind ?? '',
+          {narrow && (!collapsed || panelOpen) ? (
+            <button
+              type="button"
+              className="drawer-backdrop"
+              aria-label="收起侧栏"
+              onClick={() => {
+                setCollapsed(true);
+                setPanelOpen(false);
               }}
             />
-          </DialogShell>
-        )}
-      </div>
-    </LibraryWorkspaceProvider>
+          ) : null}
+
+          {keySetup.open ? (
+            <DeepSeekKeyDialog
+              providers={providers}
+              onClose={keySetup.dismiss}
+              returnFocus={dialogReturnFocus.current}
+              onRecover={() => {
+                keySetup.requestOpen();
+                openSettings('model');
+              }}
+            />
+          ) : null}
+
+          {newConversationMode !== null &&
+          (newConversationMode.kind === 'new-world' || world?.id === newConversationMode.worldId) ? (
+            <NewConversationDialog
+              mode={newConversationMode.kind}
+              currentWorldTitle={world?.title}
+              cards={session.library.cards}
+              worldBooks={session.library.worldBooks}
+              defaultCardIds={
+                newConversationMode.kind === 'new-world' ? [] : instances.map((instance) => instance.cardId)
+              }
+              attachedBookIds={newConversationMode.kind === 'new-world' ? [] : (world?.worldBookIds ?? [])}
+              disabled={disabled}
+              onClose={() => setNewConversationMode(null)}
+              onSubmit={async (input) => {
+                if (!(await navigateCreated(() => handleNewConversation(input))))
+                  throw new Error('对话尚未创建，请核对提示后重试。');
+              }}
+            />
+          ) : null}
+
+          {sceneOpen ? (
+            <SceneDialog
+              key={JSON.stringify([world?.id, conversation?.id])}
+              scene={scene}
+              instances={instances}
+              disabled={disabled}
+              onClose={() => setSceneOpen(false)}
+              onSave={(patch) => session.updateScene(patch)}
+              onStartNewScene={(input) => handleStartNewScene(input)}
+            />
+          ) : null}
+
+          {detail === null ? null : (
+            <CastDetail
+              key={JSON.stringify([detail.roomId, detail.id])}
+              instance={detail}
+              card={session.library.cards.find((card) => card.id === detail.cardId) ?? null}
+              memories={session.memories}
+              disabled={disabled}
+              onClose={() => setDetailId(null)}
+              onRename={(id, name) => session.updateInstance(id, { displayName: name })}
+              onSetPresence={(id, presence) => session.setPresence(id, presence)}
+              onSetRelationship={(id, field, value) => session.setRelationship(id, field, value)}
+              onRemove={async (id) => {
+                await session.removeInstance(id);
+                setDetailId((current) => (current === id ? null : current));
+              }}
+              onRevertChange={(id, changeId) => session.revertAffectChange(id, changeId)}
+            />
+          )}
+
+          {accountOpen ? (
+            <DialogShell
+              label="账户"
+              className="account-dialog"
+              returnFocus={dialogReturnFocus.current}
+              onClose={() => setAccountOpen(false)}
+            >
+              <LazyPanel load={loadAccountDialog} label="账户" panelProps={{ sync, disabled }} />
+            </DialogShell>
+          ) : null}
+
+          {settingsCategory === null ? null : (
+            <DialogShell
+              label="设置"
+              className="settings-dialog"
+              returnFocus={dialogReturnFocus.current}
+              onClose={() => setSettingsCategory(null)}
+            >
+              <LazyPanel
+                load={loadSettingsDialog}
+                label="设置"
+                panelProps={{
+                  category: settingsCategory,
+                  worldTitle: world?.title ?? null,
+                  onCategoryChange: setSettingsCategory,
+                  providers,
+                  appearance,
+                  archivedConversations: session.archivedConversations,
+                  activeConversationId: conversation?.id ?? null,
+                  disabled,
+                  onOpenArchived: (id: ConversationId) => {
+                    // Close the settings focus trap before a possible library discard dialog.
+                    setSettingsCategory(null);
+                    requestAnimationFrame(() => {
+                      void openConversation(id);
+                    });
+                  },
+                  onDeleteArchived: (target: Conversation) => session.deleteArchivedConversation(target.id),
+                  onExportArchive: () => (world === null ? Promise.resolve(null) : archive.exportWorld(world.id)),
+                  onImportArchive: async () => {
+                    setSettingsCategory(null);
+                    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+                    return navigateImported(archive.importArchive);
+                  },
+                  onExportTranscript: (id: ConversationId) =>
+                    archive.exportTranscript(session.bundleOf(id), world?.title ?? ''),
+                  storage,
+                  backendKind: boot?.backendKind ?? '',
+                }}
+              />
+            </DialogShell>
+          )}
+        </div>
+      </LibraryWorkspaceProvider>
+    </ChatDraftProvider>
   );
 }

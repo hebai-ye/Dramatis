@@ -32,39 +32,59 @@ function portraitDataUrl(image: HTMLImageElement): string {
 }
 
 export function AvatarCropper({ source, disabled, onCancel, onConfirm }: Props) {
-  const [image, setImage] = useState<HTMLImageElement | null>(null);
-  const [previewUrl, setPreviewUrl] = useState('');
+  const generation = useRef({ source, revision: 0, disabled });
+  if (generation.current.source !== source) {
+    generation.current = { source, revision: generation.current.revision + 1, disabled };
+  }
+  generation.current.disabled = disabled;
+  const revision = generation.current.revision;
+  const [decoded, setDecoded] = useState<{
+    revision: number;
+    image: HTMLImageElement | null;
+    url: string;
+    error: string | null;
+  } | null>(null);
+  const current = decoded?.revision === revision ? decoded : null;
+  const image = current?.image ?? null;
+  const previewUrl = current?.url ?? '';
   const [zoom, setZoom] = useState(1);
   const [offset, setOffset] = useState({ x: 0, y: 0 });
-  const [error, setError] = useState<string | null>(null);
+  const error = current?.error ?? null;
   const drag = useRef<{ x: number; y: number; offsetX: number; offsetY: number } | null>(null);
 
   useEffect(() => {
     let active = true;
+    setDecoded({ revision, image: null, url: '', error: null });
+    setZoom(1);
+    setOffset({ x: 0, y: 0 });
+    drag.current = null;
     const url = typeof source === 'string' ? source : URL.createObjectURL(source);
     const loaded = new Image();
     loaded.onload = () => {
-      if (!active) return;
-      setImage(loaded);
-      setPreviewUrl(url);
-      setZoom(1);
-      setOffset({ x: 0, y: 0 });
-      setError(null);
+      if (!active || generation.current.revision !== revision) return;
+      setDecoded({ revision, image: loaded, url, error: null });
     };
     loaded.onerror = () => {
-      if (active) setError('无法读取这张图片，请选择 PNG、JPEG 或 WebP。');
+      if (active && generation.current.revision === revision)
+        setDecoded({
+          revision,
+          image: null,
+          url: '',
+          error: '无法读取这张图片，请选择 PNG、JPEG 或 WebP。',
+        });
     };
     loaded.src = url;
     return () => {
       active = false;
+      if (generation.current.revision === revision) generation.current.revision += 1;
       if (typeof source !== 'string') URL.revokeObjectURL(url);
     };
-  }, [source]);
+  }, [source, revision]);
 
   const layout = image ? cropLayout(image.naturalWidth, image.naturalHeight, zoom, offset.x, offset.y) : null;
 
   const confirm = (): void => {
-    if (!image || !layout) return;
+    if (!image || !layout || generation.current.revision !== revision || generation.current.disabled) return;
     try {
       const canvas = document.createElement('canvas');
       canvas.width = AVATAR_CROP_VIEW;
@@ -77,26 +97,63 @@ export function AvatarCropper({ source, disabled, onCancel, onConfirm }: Props) 
       context.drawImage(image, layout.left, layout.top, layout.width, layout.height);
       const avatar = canvas.toDataURL('image/webp', 0.9);
       const portrait = typeof source === 'string' && source.startsWith('data:image/') ? source : portraitDataUrl(image);
-      onConfirm(portrait, avatar);
+      if (generation.current.revision === revision && !generation.current.disabled) onConfirm(portrait, avatar);
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : String(reason));
+      if (generation.current.revision === revision)
+        setDecoded({
+          revision,
+          image,
+          url: previewUrl,
+          error: reason instanceof Error ? reason.message : String(reason),
+        });
     }
   };
 
   return (
     <div className="avatar-crop-editor">
       <strong>选取圆形头像</strong>
-      <p className="hint">拖动图片对准面部，再用滑块缩放。圆圈内就是对话头像。</p>
+      <p className="hint">
+        拖动图片对准面部，或聚焦裁切区后用方向键平移，按住 Shift
+        加快移动。滑块可缩放，重置裁切可回到中心。圆圈内就是对话头像。
+      </p>
+      {!image && !error ? (
+        <p role="status" className="hint">
+          正在读取图片…
+        </p>
+      ) : null}
       <section
+        role="application"
         className="avatar-crop-window"
         aria-label="拖动图片调整圆形头像区域"
+        // biome-ignore lint/a11y/noNoninteractiveTabindex: This bounded crop workspace implements arrow-key movement and must receive keyboard focus.
+        tabIndex={0}
+        onKeyDown={(event) => {
+          if (!image || !layout || disabled) return;
+          const step = event.shiftKey ? 24 : 4;
+          const delta = {
+            ArrowLeft: [-step, 0],
+            ArrowRight: [step, 0],
+            ArrowUp: [0, -step],
+            ArrowDown: [0, step],
+          }[event.key];
+          if (!delta) return;
+          event.preventDefault();
+          const next = cropLayout(
+            image.naturalWidth,
+            image.naturalHeight,
+            zoom,
+            layout.offsetX + (delta[0] ?? 0),
+            layout.offsetY + (delta[1] ?? 0),
+          );
+          setOffset({ x: next.offsetX, y: next.offsetY });
+        }}
         onPointerDown={(event) => {
-          if (!layout) return;
+          if (!layout || disabled) return;
           event.currentTarget.setPointerCapture(event.pointerId);
           drag.current = { x: event.clientX, y: event.clientY, offsetX: layout.offsetX, offsetY: layout.offsetY };
         }}
         onPointerMove={(event) => {
-          if (!drag.current || !image) return;
+          if (!drag.current || !image || disabled) return;
           const next = cropLayout(
             image.naturalWidth,
             image.naturalHeight,
@@ -142,8 +199,24 @@ export function AvatarCropper({ source, disabled, onCancel, onConfirm }: Props) 
           }}
         />
       </label>
-      {error ? <p className="notice error">{error}</p> : null}
+      {error ? (
+        <p role="alert" className="notice error">
+          {error}
+        </p>
+      ) : null}
       <div className="inline">
+        <button
+          type="button"
+          className="ghost"
+          disabled={disabled || !image}
+          onClick={() => {
+            setZoom(1);
+            setOffset({ x: 0, y: 0 });
+            drag.current = null;
+          }}
+        >
+          重置裁切
+        </button>
         <button type="button" disabled={disabled || !image} onClick={confirm}>
           保存图片与头像
         </button>

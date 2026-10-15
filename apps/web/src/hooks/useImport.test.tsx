@@ -168,4 +168,19 @@ describe('library import mode', () => {
     expect(h.navigation).toEqual([]);
     expect(h.error()).toBe('Storage unavailable');
   });
+  it.each([json(st), pngFile()])('returns compatibility warnings beside the library import result', async (file) => {
+    const h = setup();
+    const result = await h.api.handleImport(file, 'library');
+    expect(result).toMatchObject({
+      ok: true,
+      warnings: expect.arrayContaining([expect.objectContaining({ message: expect.any(String) })]),
+    });
+    if (result.ok) expect(result.warnings).toEqual(h.warnings());
+  });
+  it('returns an empty warnings list for native material', async () => {
+    const h = setup();
+    expect(
+      await h.api.handleImport(json(serializeLibraryItem('personas', createPersona({ name: 'Native' }))), 'library'),
+    ).toMatchObject({ ok: true, warnings: [] });
+  });
 });

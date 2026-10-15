@@ -1,5 +1,5 @@
 import { type Card, type CardId, createBlankCard } from '@dramatis/core';
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useLibraryEditor } from '../lib/library-editor';
 import { avatarOf, PORTRAITS, portraitOf } from '../lib/portraits';
 import { AvatarCropper } from './AvatarCropper';
@@ -37,6 +37,8 @@ export function CardDesigner({
   const [cropSource, setCropSource] = useState<File | string | null>(null);
   const [imageError, setImageError] = useState<string | null>(null);
   const imageInput = useRef<HTMLInputElement | null>(null);
+  const [tagText, setTagText] = useState<{ id: string; value: string } | null>(null);
+  const rawTags = useRef(tagText);
 
   const editor = useLibraryEditor({
     items: cards,
@@ -47,12 +49,31 @@ export function CardDesigner({
     onSave,
     pending: () => (cropSource ? '角色图裁切尚未确认，是否放弃这次裁切？' : null),
     discard: () => setCropSource(null),
+    prepare: (current) => {
+      const raw = rawTags.current;
+      if (!raw || !current || raw.id !== current.id) return;
+      rawTags.current = null;
+      setTagText(null);
+      return {
+        ...current,
+        tags: raw.value
+          .split(/[,，、]/)
+          .map((tag) => tag.trim())
+          .filter((tag) => tag !== ''),
+      };
+    },
   });
   const draft = editor.draft;
   const writeDisabled = editor.writeDisabled;
   const patch = editor.patch;
   const commit = editor.commit;
   const createCard = () => editor.create(createBlankCard());
+  useEffect(() => {
+    if (rawTags.current && rawTags.current.id !== draft?.id) {
+      rawTags.current = null;
+      setTagText(null);
+    }
+  }, [draft?.id]);
   return (
     <div className="stack" onCompositionStart={editor.beginComposition} onCompositionEnd={editor.endComposition}>
       <div className="inline">
@@ -78,6 +99,12 @@ export function CardDesigner({
           <button type="button" disabled={writeDisabled} onClick={commit}>
             重试保存
           </button>
+        </p>
+      ) : null}
+      {draft && !editor.error ? (
+        <p role="status" className="hint" aria-live="polite">
+          {editor.busy ? '保存中…' : editor.dirty || tagText?.id === draft.id ? '待保存' : '已保存'}
+          {' · 普通字段自动保存；标签失焦或保存时提交。'}
         </p>
       ) : null}
       {draft === null ? (
@@ -125,7 +152,12 @@ export function CardDesigner({
                 <strong>角色立绘</strong>
                 <p className="hint">可选内置立绘，或上传自己的角色图并裁切对话头像。</p>
               </div>
-              <button type="button" className="ghost" onClick={() => setShowPortraits((value) => !value)}>
+              <button
+                type="button"
+                className="ghost"
+                aria-expanded={showPortraits}
+                onClick={() => setShowPortraits((value) => !value)}
+              >
                 {showPortraits ? '收起图库' : '浏览图库'}
               </button>
             </div>
@@ -166,6 +198,8 @@ export function CardDesigner({
                 const file = event.target.files?.[0];
                 event.target.value = '';
                 if (!file || writeDisabled) return;
+                setCropSource(null);
+                setImageError(null);
                 if (!['image/png', 'image/jpeg', 'image/webp'].includes(file.type)) {
                   setImageError('请选择 PNG、JPEG 或 WebP 图片。');
                   return;
@@ -198,7 +232,11 @@ export function CardDesigner({
                 </button>
               ) : null}
             </div>
-            {imageError ? <p className="notice error">{imageError}</p> : null}
+            {imageError ? (
+              <p role="alert" className="notice error">
+                {imageError}
+              </p>
+            ) : null}
             {cropSource ? (
               <AvatarCropper
                 source={cropSource}
@@ -228,6 +266,7 @@ export function CardDesigner({
                     type="button"
                     key={portrait.src}
                     className={portraitOf(draft) === portrait.src ? 'portrait-tile selected' : 'portrait-tile'}
+                    aria-pressed={portraitOf(draft) === portrait.src}
                     disabled={writeDisabled}
                     title={`${String(portrait.number).padStart(2, '0')} · ${portrait.name}（${portrait.namingStyle}）`}
                     onClick={() => {
@@ -298,16 +337,13 @@ export function CardDesigner({
             标签（用逗号分隔）
             <input
               type="text"
-              value={draft.tags.join('、')}
+              value={tagText?.id === draft.id ? tagText.value : draft.tags.join('、')}
               disabled={writeDisabled}
-              onChange={(event) =>
-                patch({
-                  tags: event.target.value
-                    .split(/[,，、]/)
-                    .map((tag) => tag.trim())
-                    .filter((tag) => tag !== ''),
-                })
-              }
+              onChange={(event) => {
+                const raw = { id: draft.id, value: event.target.value };
+                rawTags.current = raw;
+                setTagText(raw);
+              }}
               onBlur={commit}
             />
           </label>

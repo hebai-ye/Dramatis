@@ -1,8 +1,6 @@
 import {
   type AdminArtifact,
   type AdminDraft,
-  buildAdminBridgeMessages,
-  buildAdminMessages,
   createOpenAICompatibleProvider,
   createPlayerMessage,
   createTurnId,
@@ -13,13 +11,11 @@ import {
   needsWebBridge,
   newId,
   nowIso,
-  parseAdminBridgeOutput,
-  parseAdminToolCall,
-  renderPromptForWeb,
-  runAdminTurn,
 } from '@dramatis/core';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import type { ScopedAdminBridge } from './admin-source';
 import { loadBridge, saveBridge } from './bridge-store';
+import type { SubmitOutcome } from './chat-draft';
 import type { DramatisDb } from './db';
 import type { ProvidersApi } from './providers';
 import type { SessionApi } from './session';
@@ -28,7 +24,7 @@ import { handoffStreamState, resetStreamState, setStreamState } from './stream-s
 export interface AdminChatApi {
   busy: boolean;
   error: string | null;
-  send: (text: string) => Promise<void>;
+  send: (text: string, onAcceptance?: (outcome: SubmitOutcome) => void) => Promise<SubmitOutcome>;
   stop: () => void;
   /**
    * 没有 API Key 时的网页版桥接（副对话）。
@@ -37,7 +33,7 @@ export interface AdminChatApi {
    * 东西里除了正文还有 `{"tool":…,"arguments":{…}}` 代码块——解析之后走的是与 API
    * 那条路**同一套校验与执行**（`parseAdminToolCall` → `execute`）。
    */
-  bridge: { prompt: string } | null;
+  bridge: { prompt: string; binding?: ScopedAdminBridge['binding'] } | null;
   commitBridge: (raw: string) => Promise<void>;
   cancelBridge: () => void;
 }
@@ -111,21 +107,40 @@ export function useAdminChat(options: {
   db: DramatisDb | null;
   session: SessionApi;
   providers: ProvidersApi;
+  accountKey: string;
   /** 后台/副对话共用的便宜模型配置；缺省时用主配置。 */
   onChanged: () => void;
 }): AdminChatApi {
-  const { db, session, providers, onChanged } = options;
+  const { db, session, providers, onChanged, accountKey } = options;
+  const currentRef = useRef(options);
+  currentRef.current = options;
+  const operationRef = useRef(0);
+  const inFlightRef = useRef(false);
+  const sameView = useCallback(
+    (room: string, conversation: string) =>
+      currentRef.current.db === db &&
+      currentRef.current.accountKey === accountKey &&
+      currentRef.current.session.world?.id === room &&
+      currentRef.current.session.conversation?.id === conversation,
+    [db, accountKey],
+  );
+
   const [busy, setBusy] = useState(false);
   // 流式正文不住在这里（顺序 59）：它写进 `lib/stream-store.ts` 的 `admin` 通道，
   // 由 `SideChat` 自己订阅。住在这里等于每个 token 都把整个 App 重画一遍。
   const [error, setError] = useState<string | null>(null);
-  const [bridge, setBridge] = useState<{ prompt: string } | null>(() => loadBridge<{ prompt: string }>('admin'));
+  const [bridge, setBridge] = useState<{ prompt: string; binding?: ScopedAdminBridge['binding'] } | null>(() =>
+    loadBridge<{ prompt: string; binding?: ScopedAdminBridge['binding'] }>('admin'),
+  );
 
   // 副对话的桥接进度同样落进 sessionStorage（顺序 25）
   useEffect(() => {
     saveBridge('admin', bridge);
   }, [bridge]);
   const abortRef = useRef<AbortController | null>(null);
+
+  // biome-ignore lint/correctness/useExhaustiveDependencies: changing source must abort the previous API request before a new tool execution.
+  useEffect(() => () => abortRef.current?.abort(), [db, accountKey, session.world?.id, session.conversation?.id]);
 
   /**
    * 把解析出来的工具调用真正执行掉。
@@ -155,15 +170,30 @@ export function useAdminChat(options: {
   );
 
   const send = useCallback(
-    async (text: string) => {
+    async (text: string, onAcceptance?: (outcome: SubmitOutcome) => void): Promise<SubmitOutcome> => {
+      let outcome: SubmitOutcome = { status: 'rejected', reason: '当前副对话还未准备好；输入已保留。' };
+      const accept = () => {
+        outcome = { status: 'accepted' };
+        onAcceptance?.(outcome);
+      };
       const world = session.world;
       const conversation = session.conversation;
-      if (!db || !world || !conversation || conversation.kind !== 'side' || busy) return;
+      if (
+        !db ||
+        !world ||
+        !conversation ||
+        conversation.kind !== 'side' ||
+        conversation.archivedAt !== null ||
+        busy ||
+        bridge !== null ||
+        inFlightRef.current
+      )
+        return outcome;
 
       const profile = providers.active;
       if (!profile) {
         setError('还没有模型配置');
-        return;
+        return outcome;
       }
       /*
        * 没有 API Key 就走**网页版桥接**：把管理员的提示词（含五个工具的声明与
@@ -173,48 +203,53 @@ export function useAdminChat(options: {
        */
       const manual = needsWebBridge(providers.apiKey);
 
+      const operation = ++operationRef.current;
+      inFlightRef.current = true;
       setError(null);
       setBusy(true);
       resetStreamState('admin');
       setBridge(null);
 
       const history = session.messages;
-      await session.appendMessages([
-        createPlayerMessage({
-          roomId: world.id,
-          conversationId: conversation.id,
-          sceneId: null,
-          turnId: createTurnId(),
-          speakerName: world.playerName,
-          content: text,
-          audience: [],
-        }),
-      ]);
-
+      const playerMessage = createPlayerMessage({
+        roomId: world.id,
+        conversationId: conversation.id,
+        sceneId: null,
+        turnId: createTurnId(),
+        speakerName: world.playerName,
+        content: text,
+        audience: [],
+      });
       const pendingDrafts = history
         .flatMap((message) => message.artifacts ?? [])
         .filter((artifact) => artifact.status === 'pending')
         .map((artifact) => artifact.summary);
-
-      if (manual) {
-        setBridge({
-          prompt: renderPromptForWeb(
-            buildAdminBridgeMessages({
-              room: world,
-              conversation,
-              scene: null,
-              instances: session.instances,
-              cards: session.library.cards,
-              worldBooks: session.library.worldBooks,
-              personas: session.personas,
-              history,
-              userInput: text,
-              pendingDrafts,
-            }),
-          ),
-        });
+      try {
+        await session.appendMessages([playerMessage], accept);
+        if (!sameView(world.id, conversation.id)) throw new Error('起草来源已经变化，请回到原副对话后继续。');
+        if (manual) {
+          const { prepareAdminSource } = await import('./admin-source');
+          const prepared = await prepareAdminSource(
+            db.repository,
+            { accountKey, roomId: world.id, conversationId: conversation.id },
+            text,
+            playerMessage.id,
+          );
+          if (!sameView(world.id, conversation.id) || operationRef.current !== operation)
+            throw new Error('起草来源已经变化，未发布旧提示词。');
+          saveBridge('admin', prepared, true);
+          setBridge(prepared);
+          setBusy(false);
+          inFlightRef.current = false;
+          return outcome;
+        }
+      } catch (error) {
+        if (outcome.status !== 'accepted')
+          outcome = { status: 'uncertain', reason: '保存结果未确认，输入已保留；请先核对消息记录。' };
+        if (sameView(world.id, conversation.id)) setError(error instanceof Error ? error.message : String(error));
         setBusy(false);
-        return;
+        inFlightRef.current = false;
+        return outcome;
       }
 
       const provider = createOpenAICompatibleProvider({
@@ -256,6 +291,7 @@ export function useAdminChat(options: {
       });
 
       try {
+        const { buildAdminMessages, runAdminTurn } = await import('./admin-engine');
         let answer = '';
         let usage: MessageUsage | null = null;
         for await (const event of runAdminTurn(
@@ -283,7 +319,11 @@ export function useAdminChat(options: {
               worldBooks: session.library.worldBooks,
               knownPersonas: session.personas,
             },
-            execute: (draft) => executeDraft(draft, artifacts),
+            execute: (draft) => {
+              if (controller.signal.aborted || !sameView(world.id, conversation.id))
+                throw new Error('起草来源已经变化，已停止执行工具。');
+              return executeDraft(draft, artifacts);
+            },
             /*
              * 顺序 104：正文逐块交给副对话，不再等整轮收完（用户原话：副对话看不到它在写）。
              * 累计放在这里：core 给的是增量，`answer` 要跨轮拼起来才是这一回合的全文。
@@ -371,9 +411,11 @@ export function useAdminChat(options: {
         if (!handedOff) resetStreamState('admin');
         setBusy(false);
         abortRef.current = null;
+        inFlightRef.current = false;
       }
+      return outcome;
     },
-    [busy, db, executeDraft, onChanged, providers, session],
+    [busy, bridge, db, executeDraft, onChanged, providers, session, accountKey, sameView],
   );
 
   /**
@@ -385,91 +427,58 @@ export function useAdminChat(options: {
     async (raw: string) => {
       const world = session.world;
       const conversation = session.conversation;
-      if (!db || !world || !conversation || conversation.kind !== 'side' || bridge === null || busy) return;
-
+      if (
+        !db ||
+        !world ||
+        !conversation ||
+        conversation.kind !== 'side' ||
+        bridge === null ||
+        busy ||
+        inFlightRef.current
+      )
+        return;
+      const operation = ++operationRef.current;
+      const isCurrent = () => operationRef.current === operation && sameView(world.id, conversation.id);
+      inFlightRef.current = true;
       setBusy(true);
       setError(null);
+      let committed = false;
       try {
-        const parsed = parseAdminBridgeOutput(raw);
-        const context = {
-          knownCardIds: session.library.cards.map((card) => card.id),
-          knownBookIds: session.library.worldBooks.map((book) => book.id),
-          // 改已有素材要「以现有内容为底」做字段级合并（顺序 86，审计 B6）
-          cards: session.library.cards,
-          worldBooks: session.library.worldBooks,
-          knownPersonas: session.personas,
-        };
-
-        const artifacts: AdminArtifact[] = [];
-        const failed: string[] = [];
-        const unknown: string[] = [];
-        for (const call of parsed.calls) {
-          const result = parseAdminToolCall(call, context);
-          if (!result.ok) {
-            failed.push(result.error);
-            continue;
-          }
-          if (result.unknownArgs !== undefined) unknown.push(...result.unknownArgs);
-          // 顺序 104：网页版这条路上没有流式，但「刚才执行了哪件素材」同样要看得见
-          setStreamState('admin', { progress: result.draft.summary });
-          await executeDraft(result.draft, artifacts);
+        const { commitAdminSource } = await import('./admin-source');
+        await commitAdminSource({
+          repository: db.repository,
+          bridge: bridge as ScopedAdminBridge,
+          current: { accountKey, roomId: world.id, conversationId: conversation.id },
+          raw,
+          isCurrent,
+          artifactFor: draftToArtifact,
+        });
+        committed = true;
+        if (isCurrent()) {
+          setBridge(null);
+          await session.reloadWorld();
+          if (isCurrent()) onChanged();
         }
-
-        const notes: string[] = [];
-        if (parsed.invalid.length > 0) {
-          notes.push(`它提到了一件这里没有的事（${parsed.invalid.join('、')}），那部分没有执行。`);
-        }
-        // 多写的参数要说一声（顺序 67）：界面上没有工具结果的回填通道，只能在这儿落下
-        if (unknown.length > 0) {
-          notes.push(`它多写了几个用不上的参数（${[...new Set(unknown)].join('、')}），那部分没有生效。`);
-        }
-        if (failed.length > 0) {
-          notes.push(`有一件没能落下：${failed.join('；')}。可以把要求说得更具体一点，再贴一次。`);
-        }
-
-        const fallback =
-          artifacts.length > 0 ? '（草稿已经放在下面，采纳后就能用。）' : '（它这次没有起草任何素材，只说了几句话。）';
-        const content =
-          [parsed.answer.trim(), ...notes].filter((part) => part !== '').join('\n\n') ||
-          (artifacts.length > 0 ? fallback : parsed.answer.trim() || fallback);
-
-        await session.appendMessages([
-          {
-            id: messageId(newId()),
-            roomId: world.id,
-            conversationId: conversation.id,
-            sceneId: null,
-            turnId: createTurnId(),
-            localSeq: 0,
-            deviceId: '',
-            role: 'admin',
-            speakerInstanceId: null,
-            speakerName: '世界管理员',
-            audience: [],
-            content,
-            // 网页版这一轮不经过服务商：没有 usage，也没有账单
-            ...(artifacts.length > 0 ? { artifacts } : {}),
-            createdAt: nowIso(),
-            updatedAt: nowIso(),
-            deletedAt: null,
-          },
-        ]);
-
-        setBridge(null);
-        onChanged();
-      } catch (commitError) {
-        setError(commitError instanceof Error ? commitError.message : String(commitError));
+      } catch (error) {
+        if (isCurrent())
+          setError(
+            `${committed ? '起草已保存，但读取失败，请刷新核对。' : ''}${error instanceof Error ? error.message : String(error)}`,
+          );
       } finally {
-        // 网页版这一轮落库之后，流式/工具那两行都该收掉（它本来也不是真的流式）
-        resetStreamState('admin');
-        setBusy(false);
+        if (operationRef.current === operation) {
+          resetStreamState('admin');
+          setBusy(false);
+          inFlightRef.current = false;
+        }
       }
     },
-    [bridge, busy, db, executeDraft, onChanged, session],
+    [bridge, busy, db, session, accountKey, onChanged, sameView],
   );
 
   const stop = useCallback(() => abortRef.current?.abort(), []);
-  const cancelBridge = useCallback(() => setBridge(null), []);
+  const cancelBridge = useCallback(() => {
+    if (!inFlightRef.current) setBridge(null);
+  }, []);
 
   // 返回对象要稳定（顺序 59）：App 拿它当依赖，每次渲染新造一个会让下游的 memo 全部失效
   return useMemo(

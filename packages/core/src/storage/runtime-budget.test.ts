@@ -6,11 +6,14 @@ import type { UsageSummary } from './usage.js';
 
 // Vitest/Vite transpiles and executes the real TSX modules; no source-text assertions.
 // Core has no React/JSX runtime of its own: use the existing web installation, as usage-hook.test.ts does.
-// RuntimePanel, LazyPanel, and createLazyModule execute from their real source. Only hooks, sibling
-// panels, generated URL metadata, and transport are controlled. Failed per-URL module promises and
+// RuntimePanel, LazyPanel, the budget/serial-save hooks, and createLazyModule execute from real source.
+// The Core barrel is narrowed to its real budget-editor exports; unrelated Core modules are outside
+// this UI wiring fixture. Only hooks, sibling panels, URL metadata, and transport are controlled.
+// Failed per-URL module promises and
 // stale HTTP responses survive recovery; the production loader must actually bypass/refresh them.
 // This is NOT native DOM/StrictMode, browser fault-injection evidence, or a production chunk-size test.
 const paths = {
+  budgetEditor: './budget-editor.js',
   react: '../../../../apps/web/node_modules/react/index.js',
   server: '../../../../apps/web/node_modules/react-dom/server.node.js',
   runtime: '../../../../apps/web/src/components/RuntimePanel.tsx',
@@ -26,6 +29,7 @@ const paths = {
   scene: '../../../../apps/web/src/components/ScenePanel.tsx',
 };
 const mockedPaths = [
+  '@dramatis/core',
   paths.react,
   paths.loader,
   paths.address,
@@ -240,7 +244,7 @@ function textOf(tree: Tree): string {
 function click(tree: Tree, label: string) {
   const button = nodes(tree).find((node) => node.type === 'button' && textOf(node) === label);
   if (!button) throw new Error(`Missing button: ${label}`);
-  (button.props.onClick as () => void)();
+  return (button.props.onClick as () => void | Promise<void>)();
 }
 function suspenseOf(boundary: BoundaryElement): SuspenseElement {
   return boundary.props.children as SuspenseElement;
@@ -343,6 +347,8 @@ async function createHarness() {
     (address: LazyModuleAddress, select: (module: UsageModule) => React.ComponentType<UsageProps>) =>
       actualLoader.createLazyModule(address, select, network),
   );
+  // Keep the real budget hook while avoiding a cold transform of every Core barrel export per worker.
+  vi.doMock('@dramatis/core', () => vi.importActual<typeof import('./budget-editor.js')>(paths.budgetEditor));
   // This adapter ONLY injects the real loader's supported network argument; no retry logic is mocked.
   vi.doMock(paths.loader, () => ({ createLazyModule: createLoader }));
   vi.doMock(paths.address, () => ({ default: moduleAddress }));
@@ -354,6 +360,7 @@ async function createHarness() {
     useState: hooks.state,
     useRef: hooks.ref,
     useMemo: hooks.memo,
+    useCallback: (callback: unknown, deps?: readonly unknown[]) => hooks.memo(() => callback, deps),
     useEffect: hooks.effect,
   }));
   const empty = () => null;
@@ -381,7 +388,7 @@ async function createHarness() {
     return { tree, panel, boundary, suspense, html: server.renderToString(suspense) };
   }
   async function loaded(overrides: Partial<RuntimeProps> = {}) {
-    click(render(overrides), '用量');
+    await click(render(overrides), '用量');
     renderUsage(overrides);
     await vi.dynamicImportSettled();
     const view = renderUsage(overrides);
@@ -429,7 +436,7 @@ describe('RuntimePanel budget wiring through the real LazyPanel', () => {
     expect(host.network.fetched).toEqual([]);
     let tree = host.render();
     for (const label of ['场景与阵容', '记忆', 'Prompt']) {
-      click(tree, label);
+      await click(tree, label);
       tree = host.render();
       expect(host.findPanel(tree)).toBeUndefined();
     }
@@ -440,7 +447,7 @@ describe('RuntimePanel budget wiring through the real LazyPanel', () => {
   });
 
   it('mounts the real LazyPanel on usage and displays its loading status before the dynamic module resolves', async () => {
-    click(host.render(), '用量');
+    await click(host.render(), '用量');
     const panel = host.findPanel(host.render());
     expect(panel?.props.label).toBe('用量');
     expect(host.imports()).toBe(0);
@@ -550,7 +557,7 @@ describe('RuntimePanel budget wiring through the real LazyPanel', () => {
   it('recovers through the real loader and retry button while the original module URL remains cached as failed', async () => {
     const failure = new Error('cached native module failure');
     host.network.failImports(failure);
-    click(host.render(), '用量');
+    await click(host.render(), '用量');
     const failed = host.renderUsage({ worldId: 'world-a' });
     await vi.dynamicImportSettled();
     expect(host.renderUsage({ worldId: 'world-a' }).html).not.toContain('data-usage-ready');
@@ -567,7 +574,7 @@ describe('RuntimePanel budget wiring through the real LazyPanel', () => {
 
     host.network.recoverImports(); // Do not evict or replace the failed module promise.
     await expect(cachedFailure).rejects.toBe(failure);
-    click(errorTree, '重试加载');
+    await click(errorTree, '重试加载');
     const retry = host.renderUsage({ worldId: 'world-a' });
     expect(retry.boundary.key).not.toBe(failed.boundary.key);
     expect(retry.suspense.props.children.type).not.toBe(failed.suspense.props.children.type);
@@ -591,10 +598,10 @@ describe('RuntimePanel budget wiring through the real LazyPanel', () => {
   it('uses a third URL after two cached import failures without replacing the stable loader', async () => {
     const failure = new Error('module still unavailable');
     host.network.failImports(failure);
-    click(host.render(), '用量');
+    await click(host.render(), '用量');
     const first = host.renderUsage();
     await vi.dynamicImportSettled();
-    click(boundaryError(first.boundary, failure), '重试加载');
+    await click(boundaryError(first.boundary, failure), '重试加载');
     const second = host.renderUsage();
     await vi.dynamicImportSettled();
     expect(host.network.imported).toEqual([moduleAddress.url, retryUrl]);
@@ -603,7 +610,7 @@ describe('RuntimePanel budget wiring through the real LazyPanel', () => {
     host.network.recoverImports();
     await expect(originalFailure).rejects.toBe(failure);
     await expect(retryFailure).rejects.toBe(failure);
-    click(boundaryError(second.boundary, failure), '重试加载');
+    await click(boundaryError(second.boundary, failure), '重试加载');
     const third = host.renderUsage();
     await vi.dynamicImportSettled();
     expect(host.renderUsage().html).toContain('data-usage-ready');
@@ -616,7 +623,7 @@ describe('RuntimePanel budget wiring through the real LazyPanel', () => {
 
   it('preflights dependencies and refreshes a cached 503 at its original URL before retrying native import', async () => {
     host.network.failDependency();
-    click(host.render(), '用量');
+    await click(host.render(), '用量');
     const failed = host.renderUsage();
     await vi.dynamicImportSettled();
     expect(host.renderUsage().html).not.toContain('data-usage-ready');
@@ -624,7 +631,7 @@ describe('RuntimePanel budget wiring through the real LazyPanel', () => {
     expect(host.network.http.get(dependencyUrl)).toBe(503);
     host.network.recoverDependency();
     expect(host.network.http.get(dependencyUrl)).toBe(503); // Reconnect alone must not clear HTTP cache.
-    click(boundaryError(failed.boundary, new Error('dependency 503')), '重试加载');
+    await click(boundaryError(failed.boundary, new Error('dependency 503')), '重试加载');
     host.renderUsage();
     await vi.dynamicImportSettled();
     expect(host.renderUsage().html).toContain('data-usage-ready');
@@ -641,7 +648,7 @@ describe('RuntimePanel budget wiring through the real LazyPanel', () => {
   it('shares a pending loader Promise and waits for dependency bodies before importing the module', async () => {
     const body = deferred<void>();
     host.network.holdDependencyBody(body.promise);
-    click(host.render(), '用量');
+    await click(host.render(), '用量');
     const panel = host.findPanel(host.render());
     if (!panel) throw new Error('Usage tab did not mount LazyPanel');
     const first = panel.props.load();
@@ -667,7 +674,7 @@ describe('RuntimePanel budget wiring through the real LazyPanel', () => {
     host.usage.mockClear();
     let tree = host.render();
     for (const label of ['记忆', 'Prompt', '场景与阵容']) {
-      click(tree, label);
+      await click(tree, label);
       tree = host.render();
       expect(host.findPanel(tree)).toBeUndefined();
     }

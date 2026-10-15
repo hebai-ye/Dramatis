@@ -65,7 +65,7 @@ export function Composer({
             if (event.key !== 'Enter' || event.shiftKey || event.nativeEvent.isComposing) return;
             if (coarsePointer) return;
             event.preventDefault();
-            onSend();
+            if (!disabled && !busy && !bridgeOpen && value.trim() !== '') onSend();
           }}
         />
 

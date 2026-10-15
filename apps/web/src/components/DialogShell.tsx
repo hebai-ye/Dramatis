@@ -28,6 +28,12 @@ interface Props {
   onClose: () => void;
   returnFocus: HTMLElement | null;
   children: ReactNode;
+  appearance?: 'dialog' | 'modal';
+  head?: ReactNode;
+  closeLabel?: string;
+  footer?: ReactNode | ((requestClose: () => void) => ReactNode);
+  initialFocus?: string;
+  guard?: DialogGuard | null;
 }
 
 const FOCUSABLE =
@@ -48,7 +54,19 @@ function visibleInViewport(element: HTMLElement): boolean {
 }
 
 /** 两个大弹窗共用外壳；业务内容加载和确认都保留在同一焦点范围内。 */
-export function DialogShell({ label, className = '', onClose, returnFocus, children }: Props) {
+export function DialogShell({
+  label,
+  className = '',
+  onClose,
+  returnFocus,
+  children,
+  appearance = 'dialog',
+  head,
+  closeLabel = '关闭',
+  footer,
+  initialFocus,
+  guard,
+}: Props) {
   const [state, setState] = useState<DialogState>({ guard: null, pending: null, notice: null });
   const controllerRef = useRef<ReturnType<typeof createDialogController> | null>(null);
   if (controllerRef.current === null) controllerRef.current = createDialogController(setState);
@@ -62,6 +80,9 @@ export function DialogShell({ label, className = '', onClose, returnFocus, child
   const titleId = useId();
   const confirmId = useId();
   const descriptionId = useId();
+  useLayoutEffect(() => {
+    if (guard !== undefined) controller.setGuard(guard);
+  }, [controller, guard]);
 
   useLayoutEffect(() => {
     const backdrop = backdropRef.current;
@@ -77,7 +98,9 @@ export function DialogShell({ label, className = '', onClose, returnFocus, child
     isolate();
     const observer = new MutationObserver(isolate);
     observer.observe(document.body, { childList: true });
-    closeRef.current?.focus();
+    const initial = initialFocus === undefined ? null : sectionRef.current?.querySelector<HTMLElement>(initialFocus);
+    if (initial && available(initial)) initial.focus();
+    else closeRef.current?.focus();
     const keepFocus = (event: FocusEvent): void => {
       if (event.target instanceof Node && !sectionRef.current?.contains(event.target)) closeRef.current?.focus();
     };
@@ -95,7 +118,7 @@ export function DialogShell({ label, className = '', onClose, returnFocus, child
         if (fallback !== null && visibleInViewport(fallback)) fallback.focus();
       }
     };
-  }, [returnFocus]);
+  }, [returnFocus, initialFocus]);
 
   useEffect(() => {
     const viewport = window.visualViewport;
@@ -158,7 +181,7 @@ export function DialogShell({ label, className = '', onClose, returnFocus, child
   };
   const content = (
     <DialogContext.Provider value={actions}>
-      <div ref={backdropRef} className="dialog-backdrop">
+      <div ref={backdropRef} className={`dialog-backdrop${appearance === 'modal' ? ' modal-backdrop' : ''}`}>
         <button
           type="button"
           className="dialog-scrim"
@@ -169,17 +192,25 @@ export function DialogShell({ label, className = '', onClose, returnFocus, child
         />
         <section
           ref={sectionRef}
-          className={`dialog ${className}`}
+          className={`${appearance === 'modal' ? 'modal' : 'dialog'} ${className}`}
           role="dialog"
           aria-modal="true"
-          aria-labelledby={titleId}
+          aria-labelledby={head === undefined ? titleId : undefined}
+          aria-label={head === undefined ? undefined : label}
           tabIndex={-1}
           onKeyDown={handleKeyDown}
         >
-          <header className="dialog-head">
-            <h2 id={titleId}>{label}</h2>
+          <header className={appearance === 'modal' ? 'modal-head' : 'dialog-head'}>
+            {head === undefined ? (
+              <h2 id={titleId}>{label}</h2>
+            ) : (
+              <div className="modal-head-content" inert={state.pending !== null}>
+                {head}
+              </div>
+            )}
+            {appearance === 'modal' ? <div className="topbar-spacer" /> : null}
             <button ref={closeRef} type="button" className="ghost" onClick={requestClose}>
-              关闭
+              {closeLabel}
             </button>
           </header>
           {state.notice === null ? null : (
@@ -213,9 +244,14 @@ export function DialogShell({ label, className = '', onClose, returnFocus, child
               </div>
             </section>
           )}
-          <div className="dialog-content" inert={state.pending !== null}>
+          <div className={appearance === 'modal' ? 'modal-body' : 'dialog-content'} inert={state.pending !== null}>
             {children}
           </div>
+          {footer === undefined ? null : (
+            <footer className="modal-foot" inert={state.pending !== null}>
+              {typeof footer === 'function' ? footer(requestClose) : footer}
+            </footer>
+          )}
         </section>
       </div>
     </DialogContext.Provider>

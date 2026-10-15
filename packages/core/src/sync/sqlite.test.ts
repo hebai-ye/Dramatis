@@ -47,6 +47,31 @@ async function harness() {
 }
 
 describe('SQLite 存储', () => {
+  it('换密码按实际参数位置写入，并保留恢复凭证与其他空间', async () => {
+    const db = new DatabaseSync(':memory:');
+    onTestFinished(() => db.close());
+    const store = createSqliteSyncStore(db);
+    const record = {
+      spaceHandle: 'fixture-positional',
+      credentialHash: 'fixture-old',
+      recoveryCredentialHash: 'fixture-recovery',
+      keyWraps: { password: { fixture: 'old' }, recovery: { fixture: 'recovery' } },
+      createdAt: AT,
+    };
+    await store.createSpace(record);
+    await store.createSpace({ ...record, spaceHandle: 'fixture-other' });
+    expect(
+      await store.rotatePassword?.(record.spaceHandle, {
+        credentialHash: 'fixture-new',
+        passwordWrap: { fixture: 'new' },
+      }),
+    ).toBe(true);
+    const changed = await store.getSpace(record.spaceHandle);
+    expect(changed?.credentialHash).toBe('fixture-new');
+    expect(changed?.recoveryCredentialHash).toBe(record.recoveryCredentialHash);
+    expect(changed?.keyWraps).toEqual({ password: { fixture: 'new' }, recovery: record.keyWraps.recovery });
+    expect((await store.getSpace('fixture-other'))?.credentialHash).toBe('fixture-old');
+  });
   it('空间：建一次成功，再建同一个句柄返回 false（不覆盖）', async () => {
     const { server, created } = await harness();
 

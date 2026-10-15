@@ -23,7 +23,14 @@ interface AdminScope {
 }
 export interface ScopedAdminBridge {
   prompt: string;
-  binding: AdminScope & { version: 1; revision: string; worldTitle: string; conversationTitle: string };
+  binding: AdminScope & {
+    version: 1;
+    revision: string;
+    worldTitle: string;
+    conversationTitle: string;
+    targetConversationId: ConversationId | null;
+    targetName: string | null;
+  };
 }
 function stale(message = '起草来源已经变化，未应用旧内容；请回到原世界与副对话，或放弃后重新准备。'): Error {
   return new Error(message);
@@ -42,24 +49,29 @@ async function revision(text: string): Promise<string> {
   const hash = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
   return [...new Uint8Array(hash)].map((byte) => byte.toString(16).padStart(2, '0')).join('');
 }
-async function readSource(repository: Repository, scope: AdminScope) {
+async function readSource(repository: Repository, scope: AdminScope, targetConversationId?: ConversationId | null) {
   const room = await repository.getRoom(scope.roomId);
   const conversation = await repository.getConversation(scope.conversationId);
   if (
     !room ||
+    room.deletedAt !== null ||
     !conversation ||
     conversation.roomId !== room.id ||
     conversation.kind !== 'side' ||
-    conversation.archivedAt !== null
+    conversation.archivedAt !== null ||
+    conversation.deletedAt !== null
   )
     throw stale();
   const conversations = await repository.listConversations(room.id);
-  const main =
-    conversations
-      .filter((item) => item.kind === 'main' && item.archivedAt === null)
-      .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0] ?? null;
+  const mains = conversations.filter(
+    (item) => item.roomId === room.id && item.kind === 'main' && item.archivedAt === null && item.deletedAt === null,
+  );
+  const target = targetConversationId === undefined ? (mains.length === 1 ? mains[0]?.id : null) : targetConversationId;
+  const main = target ? (mains.find((item) => item.id === target) ?? null) : null;
+  if (target && !main) throw stale('原目标主对话已失效，未应用旧起草；请重新选择目标。');
   const scene = main?.activeSceneId ? await repository.getScene(main.activeSceneId) : null;
-  if (scene && (scene.roomId !== room.id || scene.conversationId !== main?.id)) throw stale();
+  if (scene && (scene.roomId !== room.id || scene.conversationId !== main?.id || scene.deletedAt !== null))
+    throw stale();
   const cards = await repository.listCards();
   const worldBooks = await repository.listWorldBooks();
   const personas = await repository.listPersonas();
@@ -68,7 +80,12 @@ async function readSource(repository: Repository, scope: AdminScope) {
   // Navigation writes room.activeConversationId/updatedAt; it does not change prompt source.
   const source = JSON.stringify(
     canonical({
-      scope: { accountKey: scope.accountKey, roomId: scope.roomId, conversationId: scope.conversationId },
+      scope: {
+        accountKey: scope.accountKey,
+        roomId: scope.roomId,
+        conversationId: scope.conversationId,
+        targetConversationId: main?.id ?? null,
+      },
       room: {
         id: room.id,
         title: room.title,
@@ -79,7 +96,12 @@ async function readSource(repository: Repository, scope: AdminScope) {
         instanceIds: room.instanceIds,
       },
       conversation,
-      main: main && { id: main.id, activeSceneId: main.activeSceneId, stateSnapshot: main.stateSnapshot },
+      main: main && {
+        id: main.id,
+        title: main.title,
+        activeSceneId: main.activeSceneId,
+        stateSnapshot: main.stateSnapshot,
+      },
       scene,
       cards,
       worldBooks,
@@ -95,15 +117,17 @@ export async function prepareAdminSource(
   scope: AdminScope,
   input: string,
   playerMessageId: MessageId,
+  targetConversationId?: ConversationId | null,
 ): Promise<ScopedAdminBridge> {
-  const source = await repository.atomic((tx) => readSource(tx, scope));
+  const source = await repository.atomic((tx) => readSource(tx, scope, targetConversationId));
   const history = source.history.filter((message) => message.id !== playerMessageId);
   return {
     prompt: renderPromptForWeb(
       buildAdminBridgeMessages({
         room: source.room,
         conversation: source.conversation,
-        scene: null,
+        scene: source.scene,
+        ...(source.main ? { targetConversationId: source.main.id, targetName: source.main.title } : {}),
         cards: source.cards,
         worldBooks: source.worldBooks,
         personas: source.personas,
@@ -122,6 +146,8 @@ export async function prepareAdminSource(
       revision: await revision(source.source),
       worldTitle: source.room.title,
       conversationTitle: source.conversation.title,
+      targetConversationId: source.main?.id ?? null,
+      targetName: source.main?.title ?? null,
     },
   };
 }
@@ -142,7 +168,7 @@ export async function commitAdminSource(input: {
     binding.roomId === input.current.roomId &&
     binding.conversationId === input.current.conversationId;
   if (!matches()) throw stale();
-  const before = await input.repository.atomic((tx) => readSource(tx, binding));
+  const before = await input.repository.atomic((tx) => readSource(tx, binding, binding.targetConversationId));
   if (!matches() || (await revision(before.source)) !== binding.revision) throw stale();
   const parsed = parseAdminBridgeOutput(input.raw);
   const drafts: AdminDraft[] = [];
@@ -166,7 +192,7 @@ export async function commitAdminSource(input: {
   const id = messageId(newId());
   const at = nowIso();
   return input.repository.atomic(async (tx) => {
-    const latest = await readSource(tx, binding);
+    const latest = await readSource(tx, binding, binding.targetConversationId);
     if (!matches() || latest.source !== before.source) throw stale();
     const artifacts: AdminArtifact[] = [];
     let activeScene = latest.scene;
@@ -191,8 +217,16 @@ export async function commitAdminSource(input: {
         await tx.saveScene(next);
         if (!activeScene) await tx.saveConversation({ ...latest.main, activeSceneId: next.id });
         activeScene = next;
-        artifacts.push({ ...artifact, status: 'applied' });
-      } else artifacts.push(draft.kind === 'scene' ? { ...artifact, status: 'pending' } : artifact);
+        artifacts.push({
+          ...artifact,
+          status: 'applied',
+          summary: `目标「${latest.main.title}」：${artifact.summary}`,
+          targetId: next.id,
+        });
+      } else {
+        if (draft.kind === 'scene') notes.push('场景未设置：请先选择一条主对话作为目标。');
+        artifacts.push(draft.kind === 'scene' ? { ...artifact, status: 'pending' } : artifact);
+      }
     }
     if (!matches()) throw stale();
     const content =

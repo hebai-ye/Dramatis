@@ -8,7 +8,7 @@
 #
 # 实测证据（2026-09-21）：
 #   本机 `curl 127.0.0.1:80` → 000（nginx 没监听 80，早就把 default 站点移出去了）
-#   外网 `http://dramatissync.com` → 502（云厂商网关回的）
+#   外网 `http://app.example.com` → 502（云厂商网关回的）
 #   `ss -ltnp` 上对外只有 8443（以及 Tailscale 自己的 443，那个在 100.x 内网地址上）
 #
 # 用法：sudo cp nginx-80-redirect.conf.example /etc/nginx/conf.d/dramatis-80.conf
@@ -17,8 +17,8 @@
 server {
     listen 80;
     listen [::]:80;
-    server_name dramatissync.com www.dramatissync.com;
+    server_name app.example.com www.app.example.com;
 
     # 只跳转，不提供任何内容：这样「顺手输 http://」的人也能到
-    return 301 https://dramatissync.com:8443$request_uri;
+    return 301 https://app.example.com:8443$request_uri;
 }

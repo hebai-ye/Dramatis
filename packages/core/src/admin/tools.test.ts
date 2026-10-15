@@ -422,7 +422,7 @@ describe('顺序 103：角色卡正文的长度口径（人设 5 句以内、性
 });
 
 describe('upsert_world_book · 审计 B6（改书时保留历史与条目设置）', () => {
-  it('保留创建时间与未识别字段；同名条目沿用原 id 与用户调过的设置', () => {
+  it('保留创建时间与未识别字段；指定 entryId 的条目沿用原 id 与用户调过的设置', () => {
     const entry = createWorldBookEntry({ title: '旧城', keys: ['旧城'], content: '城墙是青的。' });
     // 用户在界面上调过的两项：插到深处、只在 60% 的时候插入
     entry.position = 'at_depth';
@@ -439,7 +439,7 @@ describe('upsert_world_book · 审计 B6（改书时保留历史与条目设置�
         bookId: book.id,
         name: '旧城设定',
         entries: [
-          { title: '旧城', keys: ['旧城'], content: '城墙是青的，雨里有苔。' },
+          { entryId: entry.id, title: '旧城', keys: ['旧城'], content: '城墙是青的，雨里有苔。' },
           { keys: ['码头'], content: '码头在东门外。' },
         ],
       }),

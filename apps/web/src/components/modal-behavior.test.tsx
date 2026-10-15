@@ -125,6 +125,9 @@ class ElementFixture {
   contains(target: unknown) {
     return target === this || this.candidates.includes(target as ElementFixture);
   }
+  matches(selector: string) {
+    return selector === ':disabled' && this.attrs.has('disabled');
+  }
   closest() {
     return this.attrs.has('inert') ? this : null;
   }
@@ -351,12 +354,15 @@ describe('dialog consumers', () => {
       onClose: () => {
         closed++;
       },
-      onSave() {},
-      onStartNewScene: () => wait.promise,
+      async onSave() {},
+      onStartNewScene: vi.fn(async () => {
+        await wait.promise;
+        return { status: 'complete' as const };
+      }),
     };
     let tree = render(() => SceneDialog(props));
     const switching = click(button(tree.props.footer as ReactNode, '从这里切换场景'));
-    await Promise.resolve();
+    await vi.waitFor(() => expect(props.onStartNewScene).toHaveBeenCalledOnce());
     props.scene = { ...props.scene, id: sceneId('created-scene'), title: '新场' };
     tree = render(() => SceneDialog(props));
     wait.resolve();
@@ -403,14 +409,15 @@ describe('dialog consumers', () => {
       onClose: () => {
         events.push('close');
       },
-      onSave: (patch: Partial<Scene>) => {
+      onSave: async (patch: Partial<Scene>) => {
         if (patch.summary) {
           events.push(`summary:${patch.summary}`);
           return wait.promise;
         }
       },
-      onStartNewScene: () => {
+      onStartNewScene: async () => {
         events.push('next');
+        return { status: 'complete' as const };
       },
     };
     let tree = render(() => SceneDialog(props));
@@ -420,7 +427,7 @@ describe('dialog consumers', () => {
     );
     tree = render(() => SceneDialog(props));
     const switching = click(button(tree.props.footer as ReactNode, '从这里切换场景'));
-    expect(events).toEqual(['summary:旧场的设定']);
+    await vi.waitFor(() => expect(events).toEqual(['summary:旧场的设定']));
     wait.resolve();
     await switching;
     expect(events).toEqual(['summary:旧场的设定', 'next', 'close']);
@@ -469,7 +476,16 @@ describe('dialog consumers', () => {
   });
   it('scene protects unsaved manual fields while retaining the summary flush close path', () => {
     const scene = createScene({ roomId: roomId('modal-world'), title: '原场景' });
-    const props = { scene, instances: [], disabled: false, onClose() {}, onSave() {}, onStartNewScene() {} };
+    const props = {
+      scene,
+      instances: [],
+      disabled: false,
+      onClose() {},
+      async onSave() {},
+      async onStartNewScene() {
+        return { status: 'complete' as const };
+      },
+    };
     let tree = render(() => SceneDialog(props));
     change(
       nodes(tree).find((node) => node.type === 'input'),
@@ -582,7 +598,9 @@ describe('dialog consumers', () => {
       disabled: false,
       onClose: () => closed++,
       onSave: () => wait.promise,
-      onStartNewScene() {},
+      async onStartNewScene() {
+        return { status: 'complete' as const };
+      },
     };
     let tree = render(() => SceneDialog(props));
     const action = click(button(tree.props.footer as ReactNode, '保存当前场景'));

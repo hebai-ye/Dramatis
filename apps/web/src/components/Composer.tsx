@@ -51,6 +51,7 @@ export function Composer({
   const coarsePointer = useCoarsePointer();
 
   const sendLabel = manualMode ? '生成提示词' : '发送';
+  const canSend = !disabled && !busy && !bridgeOpen && value.trim() !== '';
 
   return (
     <div className="composer">
@@ -64,6 +65,7 @@ export function Composer({
           onKeyDown={(event) => {
             if (event.key !== 'Enter' || event.shiftKey || event.nativeEvent.isComposing) return;
             if (coarsePointer) return;
+            if (!canSend) return;
             event.preventDefault();
             if (!disabled && !busy && !bridgeOpen && value.trim() !== '') onSend();
           }}
@@ -87,7 +89,7 @@ export function Composer({
           ) : (
             <button
               type="button"
-              disabled={disabled || value.trim() === '' || bridgeOpen}
+              disabled={!canSend}
               title={bridgeOpen ? bridgeTitle : undefined}
               aria-label={sendLabel}
               className={manualMode ? 'composer-action labelled' : 'composer-action'}

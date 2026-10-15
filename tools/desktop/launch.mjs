@@ -17,11 +17,12 @@
  * 补强启动器 + 支持装成 PWA。
  */
 import { spawn } from 'node:child_process';
-import { existsSync, readdirSync, statSync } from 'node:fs';
+import { existsSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import process from 'node:process';
 import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
+import { buildProductionOutput } from './build-inputs.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(HERE, '..', '..');
@@ -140,53 +141,20 @@ function openWindow(url) {
   return '已用系统默认浏览器打开（没找到 Edge 或 Chrome，无法使用应用窗口模式）';
 }
 
-/**
- * 生产构建是不是已经是最新的。
- *
- * 每天用这个壳的人不希望每次双击都等一遍构建。判据是「构建产物的时间」比
- * 「所有源码里最新的那个文件」还新——够糙，但方向总是安全的：
- * 拿不准就重构建，绝不会拿旧产物当新的用。
- */
-function productionBuildIsFresh() {
-  const indexPath = resolve(WEB_APP_DIR, 'dist', 'index.html');
-  if (!existsSync(indexPath)) return false;
-
-  const builtAt = statSync(indexPath).mtimeMs;
-  const watch = [resolve(WEB_APP_DIR, 'src'), resolve(REPO_ROOT, 'packages', 'core', 'src')];
-  const extraFiles = [
-    resolve(WEB_APP_DIR, 'index.html'),
-    resolve(WEB_APP_DIR, 'vite.config.ts'),
-    resolve(WEB_APP_DIR, 'package.json'),
-    resolve(REPO_ROOT, 'packages', 'core', 'package.json'),
-  ];
-
-  const newest = (dir) => {
-    let latest = 0;
-    for (const entry of readdirSync(dir, { withFileTypes: true })) {
-      const full = resolve(dir, entry.name);
-      if (entry.isDirectory()) latest = Math.max(latest, newest(full));
-      else if (entry.isFile()) latest = Math.max(latest, statSync(full).mtimeMs);
-    }
-    return latest;
-  };
-
-  for (const dir of watch) {
-    if (!existsSync(dir)) continue;
-    if (newest(dir) > builtAt) return false;
-  }
-  for (const file of extraFiles) {
-    if (!existsSync(file)) continue;
-    if (statSync(file).mtimeMs > builtAt) return false;
-  }
-  return true;
-}
-
 async function main() {
   console.log('Dramatis · 登场');
   console.log(`地址：${ORIGIN}`);
   console.log(`数据保存在这个地址下（换端口等于换一个空数据库，所以端口是固定的）\n`);
 
-  // 依赖没装时给出可执行的命令，而不是让 Vite 抛一堆解析错误
+  if (await isServing(ORIGIN)) {
+    console.log('这个地址上已经有一个实例在跑了，直接打开它。');
+    if (useProductionBuild)
+      console.warn('已有服务的构建来源无法确认，可能是旧版本；请在对应终端停止后重试以验证本地构建。');
+    if (shouldOpen) console.log(openWindow(ORIGIN));
+    return;
+  }
+
+  // 仅启动新 Vite 进程才需要本地依赖；已有服务的来源始终单独提示。
   if (!existsSync(resolve(WEB_APP_DIR, 'node_modules'))) {
     console.error('还没安装依赖。在项目目录里执行其中一条：');
     console.error('  npx --yes pnpm install');
@@ -195,24 +163,26 @@ async function main() {
     return;
   }
 
-  if (await isServing(ORIGIN)) {
-    console.log('这个地址上已经有一个实例在跑了，直接打开它。');
-    if (shouldOpen) console.log(openWindow(ORIGIN));
-    return;
-  }
-
   if (useProductionBuild) {
-    if (!forceBuild && productionBuildIsFresh()) {
-      console.log('构建产物是最新的，跳过构建（想看一遍构建过程就加 --force-build）。');
-    } else {
-      console.log('先构建生产版本……');
-      const build = spawnVite(['build']);
-      const code = await new Promise((done) => build.on('exit', done));
-      if (code !== 0) {
-        console.error('构建失败，先把上面的错误解决掉。');
-        process.exitCode = 1;
-        return;
-      }
+    try {
+      const result = await buildProductionOutput(
+        REPO_ROOT,
+        async () => {
+          console.log('先构建生产版本……');
+          const build = spawnVite(['build']);
+          const code = await new Promise((done, reject) => {
+            build.on('error', reject);
+            build.on('exit', done);
+          });
+          if (code !== 0) throw Error(`Vite build exit code: ${code}`);
+        },
+        { force: forceBuild },
+      );
+      if (result === 'reused') console.log('构建产物已验证为最新，跳过构建（想重建就加 --force-build）。');
+    } catch (error) {
+      console.error(`构建或产物校验失败，未启动预览：${error.message}`);
+      process.exitCode = 1;
+      return;
     }
   }
 

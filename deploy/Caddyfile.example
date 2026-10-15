@@ -28,9 +28,10 @@ sync.你的域名 {
 	header /sw.js Cache-Control "no-cache"
 
 	# 安全响应头（审计 A15）。Caddy 的 header 不存在 nginx 那种继承问题，sw.js 也会带上。
-	# CSP 各指令的理由与 Report-Only 灰度步骤见 nginx-security-headers.conf：
-	#   先用 Content-Security-Policy-Report-Only 跑几天，控制台无报错后
-	#   把它改名为 Content-Security-Policy。
+	# CSP 各指令的理由与强制验收步骤见 nginx-security-headers.conf。
+	#   正式配置保留 Report-Only，待验证（归 Codex）：隔离环境实际 enforced，
+	#   真浏览器完整验收真实 BYOK 与模型来源后，才可提交并推广正式 CSP。
+	#   假模型通过或 Report-Only 几天无报错，均不能代替这个验收。
 	header {
 		Strict-Transport-Security "max-age=31536000"
 		X-Content-Type-Options "nosniff"

@@ -130,7 +130,7 @@ it.each([
     host.flush();
     return tree;
   };
-  render({ id: messageId('target'), seq: 1 });
+  render({ id: messageId('target'), seq: 1, conversationId: conversation.id });
   expect(consumed).toHaveBeenCalledWith(1, true);
   expect(body.scrollTo).toHaveBeenCalledTimes(1);
   render(null);
@@ -155,9 +155,10 @@ it.each([
 });
 it('找不到目标也消费请求，避免永久阻断流式跟随', () => {
   const consumed = vi.fn();
+  const conversation = createConversation({ roomId: roomId('synthetic'), title: 'Missing' });
   host.begin();
   const tree = (MainChat as unknown as { type: (props: unknown) => unknown }).type({
-    conversation: createConversation({ roomId: roomId('synthetic'), title: 'Missing' }),
+    conversation,
     scene: null,
     messages: [],
     cast: [],
@@ -167,7 +168,7 @@ it('找不到目标也消费请求，避免永久阻断流式跟随', () => {
     archived: false,
     unlimitedPrompt: '',
     onSend: vi.fn(),
-    focus: { id: messageId('gone'), seq: 2 },
+    focus: { id: messageId('gone'), seq: 2, conversationId: conversation.id, settled: true },
     onFocusConsumed: consumed,
   });
   (find(tree, 'chat-body')?.props.ref as { current: unknown }).current = { querySelectorAll: () => [] };

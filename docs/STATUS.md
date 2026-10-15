@@ -2,6 +2,10 @@
 
 > 记录「此刻在哪里」，供新会话快速接上。完整计划见 [ROADMAP.md](./ROADMAP.md)，验证方法见 [EVAL.md](./EVAL.md)。
 
+## 2026-10-15：DeepSeek Key 前置配置发布准备
+
+用户已授权 push 及部署。极简 Key 弹窗与已验收 UI 候选整合最新远端主线 `356e726`，保留此前线上修复及 README；完整测试 2293/2293、类型检查、lint（原有5条警告）、网页/管理/同步构建通过。正式发布范围仅静态网页，准备执行普通推送与带回滚保护的切换，尚未以本节宣称上线。最新结果见[实施与发布记录](./DEEPSEEK-KEY-ONBOARDING-IMPLEMENTATION-2026-10-15.md)。
+
 <!-- ui-fixes-20261010-owned:start -->
 ## UI 缺口修复（2026-10-10–11，本分支自有节）
 
@@ -147,6 +151,8 @@ A08来源语义、B08/B09/B10/B11/B12仍待拍板；未接近重复去重，不�
 | 每个文件是什么时候加的 | [FILE-LOG.md](./FILE-LOG.md) |
 | 新会话怎么接手（可直接贴的提示词） | [HANDOFF-PROMPT.md](./HANDOFF-PROMPT.md) |
 | 项目对外介绍与快速开始 | [../README.md](../README.md) |
+
+**当前部署口径（2026-10-03 文档校正）：** 最新部署记录中的网页、同步和管理宿主为 Windows/Caddy/WinSW；旧 Linux 机仍承担公网入口与隧道。下方旧 `systemctl`、`/var/lib` 与 `scp` 行保留当时事实，不能当作当前宿主操作命令；现行备份、恢复边界见 [SYNC-DEPLOY.md 的当前运维入口](./SYNC-DEPLOY.md#当前运维入口2026-10-03-文档校正)。本文出现的 `app.example.com` 是公开占位符。周期快照目前默认保留 30 份，管理操作快照尚无统一自动清理；每桶保留最近 30 个成功快照是待服务端实现的目标，生产恢复演练未在本批验证。
 
 ## 新会话从这里接（2026-09-23）
 
@@ -746,7 +752,7 @@ Playwright 从 `C:\Users\35350\.cache\codex-runtimes\codex-primary-runtime\depen
 > | 网页构建 | `apps/web/dist` → `index-CqzQpPAn.js` + `index-D0RqXr07.css`（提交 `6086096`） |
 > | 同步服务端 | `tools/sync-server/dist`（同一提交；含 61 的 WAL / 护栏 / 去掉 `baseHead`） |
 > | 本机探针 | `http://127.0.0.1:8787/health` = 200；`sqlite3 … "PRAGMA journal_mode;"` = **wal** |
-> | 公网 | `https://dramatissync.com:8443/` = 200（引用新构建）、`…/sync/health` = 200 |
+> | 公网 | `https://app.example.com:8443/` = 200（引用新构建）、`…/sync/health` = 200 |
 > | 同步冒烟 | **6/6**：建空间 → 设备 A 推 → 设备 B 拉并合并 → 设备 B 再推 → 设备 A 合并成三条 → 设备 A 删一条、设备 B 拉到墓碑后那条消失（用一次性随机账户，密文） |
 > | 回滚点（网页） | `/var/www/dramatis.bak-20260924-214123` |
 > | 回滚点（服务端） | `/opt/dramatis-sync/dist.bak-20260924-214123` 与 `backup.mjs.bak-20260924-214123` |
@@ -765,7 +771,7 @@ Playwright 从 `C:\Users\35350\.cache\codex-runtimes\codex-primary-runtime\depen
 
 > **第二批已上线（2026-09-24 22:02）**：`main` 推到 `origin/main`（`4953961..b656faf`），
 > 网页换成 `index-75pZ50Ty.js`；同步服务端本批未变（`health=200`）。
-> 公网复核：`https://dramatissync.com:8443/` = 200 且引用新产物；线上 bundle 里含
+> 公网复核：`https://app.example.com:8443/` = 200 且引用新产物；线上 bundle 里含
 > `rail-open` / `panel-open` / `renameConversation`，**不含**旧的 `rail-scrim`（黑遮罩真的删了）。
 > 回滚点：`/var/www/dramatis.bak-20260924-220250`（上一批的 `/var/www/dramatis.bak-20260924-214123`
 > 也在，两步都能退）。
@@ -900,7 +906,7 @@ pnpm typecheck && pnpm lint && pnpm test && pnpm build && pnpm build:sync-server
   索引 `byCollection`）按集合名读原始记录——比从界面绕一圈可靠。
 - **长对话脚本**：`measure-long.mjs N`（导入卡 → 配假模型 → 连发 N 句 → 采样记忆条数与提示词长度）。
   300 轮实测：提示词第 60 轮封顶（老设置）→ 记忆 2 条/轮 → 300 轮 590 条。
-- **线上**：`https://dramatissync.com:8443/`（nginx 托管 `apps/web/dist`，`/sync` 反代本机 8787）。
+- **线上**：`https://app.example.com:8443/`（nginx 托管 `apps/web/dist`，`/sync` 反代本机 8787）。
   部署顺序**必须**是「先确认包到了 → 旧的改名成备份 → 换 → `chmod -R a+rX` → 重启 → 核健康」；
   同步服务端同理（`/opt/dramatis-sync/dist`），**权限那步不能省**（scp 过来是 700）。
 - **不要提交**：`deploy/LOCAL-NOTES.md`（已 gitignore，里面有服务器与域名信息）。
@@ -910,7 +916,7 @@ pnpm typecheck && pnpm lint && pnpm test && pnpm build && pnpm build:sync-server
 
 ## 一句话
 
-Dramatis 是一个多角色扮演酒馆，兼容 SillyTavern 资产格式。**P0（9 项）全部完成，P1 全部收口（11/11，P1-11 以评测结论收口：证据不支持上向量）；P2 已完成响应式 / PWA / 存储持久化 / 封存导出；界面改版三批（A/B/C）全部完成；P1-10 七轮真模型验证 + 六次评测回归跑完**，441 个测试通过；**P2-6 已上线**：数据层 / 加密 / 同步循环 / 服务端 / 界面全部交付，并已部署在用户自己的腾讯云 Ubuntu 24.04 上（systemd + SQLite + 每 6 小时备份，冒烟测试通过）。**域名线已上线（2026-09-20）：`dramatissync.com` + Let's Encrypt（8443 同源托管网页与 /sync）+ 公网两台设备端到端验证通过；下一步备案 + 切 443**（细节见 deploy/LOCAL-NOTES.md，不进仓库）。
+Dramatis 是一个多角色扮演酒馆，兼容 SillyTavern 资产格式。**P0（9 项）全部完成，P1 全部收口（11/11，P1-11 以评测结论收口：证据不支持上向量）；P2 已完成响应式 / PWA / 存储持久化 / 封存导出；界面改版三批（A/B/C）全部完成；P1-10 七轮真模型验证 + 六次评测回归跑完**，441 个测试通过；**P2-6 已上线**：数据层 / 加密 / 同步循环 / 服务端 / 界面全部交付，并已部署在用户自己的腾讯云 Ubuntu 24.04 上（systemd + SQLite + 每 6 小时备份，冒烟测试通过）。**域名线已上线（2026-09-20）：`app.example.com` + Let's Encrypt（8443 同源托管网页与 /sync）+ 公网两台设备端到端验证通过；下一步备案 + 切 443**（细节见 deploy/LOCAL-NOTES.md，不进仓库）。
 
 > **2026-09-20 晚更新（本轮：项目主体 + 桌面版 + 安卓壳）**：468 个测试通过。
 > 项目主体做了三件（都先复现再动手）：**T11 记忆面板的对话维度**（按对话筛选 / 对照视图 /
@@ -925,7 +931,7 @@ Dramatis 是一个多角色扮演酒馆，兼容 SillyTavern 资产格式。**P0
 > **当前接续点**：① 安卓真机（文件下载 / 切后台 / 键盘安全区）；② 部署线的域名（等审核）；
 > ③ 项目主体的下一批候选（T13 管理员工具体验、T3 后半的记忆合并、记录分块与坏记录隔离）。
 
-> **2026-09-20 深夜（体验优先）**：域名 `dramatissync.com:8443` **已经上线**（nginx 托管网页 +
+> **2026-09-20 深夜（体验优先）**：域名 `app.example.com:8443` **已经上线**（nginx 托管网页 +
 > `/sync` 反代，Let's Encrypt 证书），所以按用户要求**暂停桌面版与安卓**，先修体验。
 > 这一批做的是「**没有 API Key 也能聊第一轮**」：发送时不再拦「还没有填 API Key」，
 > 而是把这一轮**本来要发出去的提示词**交给用户，贴进 DeepSeek 网页版，再把回复粘回来；
@@ -1004,7 +1010,7 @@ Dramatis 是一个多角色扮演酒馆，兼容 SillyTavern 资产格式。**P0
 > （菜单里带 **Token 用量**与改归属）；手机什么都不常驻、**长按 450ms** 出同一个菜单，
 > 菜单项 44px 高（顺手把顺序 9 的触控目标在菜单这一处补上）。
 > 验证：本机无头 Chrome（1360×900 与 390×844，CDP 真触摸事件）**23/23**，
-> 线上 `dramatissync.com:8443`（导入卡 → 网页版桥接跑出真消息）**13/13**；
+> 线上 `app.example.com:8443`（导入卡 → 网页版桥接跑出真消息）**13/13**；
 > 过程中撞出一个真问题并修掉（顺序 40）：菜单原本绝对定位在消息列里，**最下面那条消息的
 > 菜单坐标对、人看不见**——被对话区的 `overflow` 裁掉了，现在挂 `document.body` 并自动推回可视区。
 > 见 [EVAL.md](./EVAL.md) 第二十四节、[LAYOUT.md](./LAYOUT.md) 第 28/29 条。
@@ -1309,7 +1315,7 @@ node tools/fake-model/server.mjs --port 5280
 
 工作约定：每个批次结束时都必须能构建、能测试、能提交；提交信息带任务编号；实现与计划有偏差时写进 ROADMAP 而不是悄悄改掉。
 
-### 部署线（搁置中，等域名审核通过再接）
+### 部署线（2026-09-20 的历史接续提示）
 
 这一条不属于「下一轮要做的事」，但别丢：域名审核通过后，用下面这段开一条单独的会话。
 
@@ -1317,7 +1323,7 @@ node tools/fake-model/server.mjs --port 5280
 接着做 Dramatis 的部署收尾（P2-6 的部署线）。先读 docs/STATUS.md、docs/SYNC-DEPLOY.md 与
 deploy/LOCAL-NOTES.md（服务器私有信息在这里，已 gitignore，别提交）。
 
-现状：同步服务已经跑在用户自己的腾讯云上（Ubuntu 24.04 + systemd + SQLite + 每 6 小时备份），
+当时现状：同步服务已经跑在用户自己的腾讯云上（Ubuntu 24.04 + systemd + SQLite + 每 6 小时备份），
 界面「设置 → 同步」已完成并真机验证；只差「用域名访问」这一步。
 
 这次要做：
@@ -1378,7 +1384,7 @@ T12（归档的可发现性与正文导出）、每轮结束自动同步，并�
 | 部署服务器 | 用户自己的腾讯云（Ubuntu 24.04，`ssh dramatis`，sudo 免密）——**地址与凭据只在 `deploy/LOCAL-NOTES.md`（gitignore）**，不要写进任何仓库文件 |
 | 服务器上的服务 | `systemctl status dramatis-sync`；`curl -s 127.0.0.1:8787/health`；`journalctl -u dramatis-sync`；数据在 `/var/lib/dramatis-sync/sync.db`，备份在 `/var/backups/dramatis` |
 | 改完服务端怎么上线 | 本机 `pnpm build:sync-server` → `scp -r tools/sync-server/dist dramatis:/tmp/dist-new` → 服务器上 `sudo rm -rf /opt/dramatis-sync/dist && sudo mv /tmp/dist-new /opt/dramatis-sync/dist && sudo systemctl restart dramatis-sync` |
-| **改完网页怎么上线**（2026-09-20 实践过） | 本机 `pnpm build` → `scp -r apps/web/dist dramatis:/tmp/dist-web-new` → 服务器上 `sudo mv /var/www/dramatis /var/www/dramatis.bak-$(date +%Y%m%d-%H%M%S) && sudo mv /tmp/dist-web-new /var/www/dramatis && sudo chown -R root:root /var/www/dramatis && sudo chmod -R a+rX /var/www/dramatis`。**权限那一步不能省**（scp 过来是 700，nginx 读不到就是 500）。验证：`curl -s https://dramatissync.com:8443/ \| grep -o 'assets/index-[A-Za-z0-9_-]*\.js'` 看哈希有没有变；`curl -s -o /dev/null -w '%{http_code}' https://dramatissync.com:8443/sync/spaces/probe/head` 应该是 404（说明反代活着）而不是 502 |
+| **改完网页怎么上线**（2026-09-20 实践过） | 本机 `pnpm build` → `scp -r apps/web/dist dramatis:/tmp/dist-web-new` → 服务器上 `sudo mv /var/www/dramatis /var/www/dramatis.bak-$(date +%Y%m%d-%H%M%S) && sudo mv /tmp/dist-web-new /var/www/dramatis && sudo chown -R root:root /var/www/dramatis && sudo chmod -R a+rX /var/www/dramatis`。**权限那一步不能省**（scp 过来是 700，nginx 读不到就是 500）。验证：`curl -s https://app.example.com:8443/ \| grep -o 'assets/index-[A-Za-z0-9_-]*\.js'` 看哈希有没有变；`curl -s -o /dev/null -w '%{http_code}' https://app.example.com:8443/sync/spaces/probe/head` 应该是 404（说明反代活着）而不是 502 |
 | SSH/SCP 的坑 | Windows 下私钥必须先 `icacls <key> /inheritance:r /grant:r "<账户>:(R)"`，否则 OpenSSH 报 "bad permissions" 直接忽略；`scp`/`ssh` 一律要用**提权**执行，否则读不到 `~/.ssh/config`（表现为 `Could not resolve hostname dramatis`） |
 | 真模型验证 | 两条路：应用里直接聊（Key 在浏览器配置里），或 `pnpm --filter @dramatis/core test prompt-samples --silent=false --disableConsoleIntercept` 生成提示词、贴进 DeepSeek 网页版 |
 | 假模型（不花钱跑一整轮） | `node tools/fake-model/server.mjs --port 5280`，应用里把接口地址填 `http://127.0.0.1:5280`、模型 `fake-model`、密钥随便填一个非空值。日志打在 stderr，能核对这一回合发了几次调用 |
@@ -1387,6 +1393,44 @@ T12（归档的可发现性与正文导出）、每轮结束自动同步，并�
 | 桌面端（真机） | `pnpm desktop:prod`（会跳过无谓的构建；`--force-build` 强制重建）。给用户做快捷方式：`pwsh -File tools/desktop/install-shortcut.ps1 -Destination Both` |
 | 安卓构建 | **JDK 必须是 21**：`$env:JAVA_HOME='C:\Program Files\Android\Android Studio\jbr'`，然后 `pnpm --filter @dramatis/android apk`。本机缓存里的 AGP 是 8.7.3（模板写 8.7.2），且模板那行 `google-services` 本机没有、也用不到——都只影响被 gitignore 的生成目录 |
 | 安卓真机 | `adb install -r apps/android/android/app/build/outputs/apk/debug/app-debug.apk`（手机开 USB 调试；本机 adb 在 `%LOCALAPPDATA%\Android\Sdk\platform-tools\adb.exe`） |
+
+## 2026-10-04 界面/桥接/文档组接续点（4c5169a）
+
+用户已选 Q1B、Q2–Q10A并授权继续实施。本组已完成文档校正、界面导航代码和桥接状态机的独立复核；真实 IndexedDB 双页设施（Edge）也已通过。当前按顺序执行 B03，之后 A09/A10/D03、B06、B07/A13 web。当前结果与剩余接口统一见 [本组执行台账](./superpowers/plans/2026-10-03-ui-bridge-ops-execution.md)，规格仍以 [第一轮报告](./superpowers/plans/2026-10-03-ui-bridge-ops-review.md) 为准。
+
+真实 DeepSeek 桥接对话 DOM 尚未取得，未知页会在发送前拒绝，手动回填可继续使用。模型质量与 CSP 测试指定 DeepSeek 官方 V4.1 Flash / Low，用户将在隔离页输入 Key；本轮全部真实请求共用 48 次、5 元总账，当前未调用。正式 CSP 仍 Report-Only，**待验证（归 Codex）**。Android 真机由用户后续处理；C06 建议现役 Windows 数据目录同卷旁路恢复，不替换生产库，目录/窗口/访问条件尚待明确。
+
+A13 核心坏标记恢复、根 Node engines、systemd 模板加固、备份每桶30成功快照与存储 CAS/通知接口仍归部分一，本组不会越界。A01/D05仅复审、D04仅方案。当前所有改动均为工作区差异，无提交、push或生产部署。
+
+### 2026-10-08 本组最终代码门禁续记
+
+按用户“多个功能完成后总测”安排，子任务只实现和静态审查，root集中执行。管理员条目diff/增改显删、场景目标、通用Modal、左右栏与桥接发送、跟底、桥接settle、桌面新鲜度、SW生命周期和session UI版本守卫已在本组边界落地。最终session27/27、完整web328/328、全仓typecheck/lint通过；先前未再修改的core878/878、sync-admin88/88、桌面/质量/桥接工具57/57证据保持有效。真实Edge UI12/12、SW6/6、IDB双页6/6通过；最终实际生产构建190模块，fresh及第二次复用通过。完整范围及限制见执行台账。
+
+隔离质量页增强fake smoke与最终实际App CSP fake矩阵7通过/1已知协议skip均已通过，失败夹具的最小对齐经独立复审PASS。随后用户手动发送首个真实质量样本：1/48次、按预留上限保守扣记¥0.01213/5，budget-truncation停止锁生效，无可评分结果；原账本保留，恢复选择见[提案](./superpowers/plans/2026-10-08-real-budget-truncation-proposal.md)。本机浏览器控制helper故障，Key只由用户页内输入且未读取。正式CSP继续Report-Only，待验证（归 Codex）。Low工具多轮产品协议缺口归部分一；质量测试的共同shim不替代产品修复。A13 web容错/告警已测，但核心坏marker安全和世界留存尚未修。session只保护已安装UI快照，存储active/CAS与后续background loaded读取边界仍保留。服务器恢复、Android真机及真站桥接DOM没有新通过证据。本组未提交、push或部署。
+
+4096保账选择已获用户批准。root集中新增validation40/40、quality50/50、类型/lint/隔离构建与四种fake收尾，独立两遍规格/质量PASS。原账本仅追加首条checkpoint恢复审计，旧history/entries与1次/¥0.01213保持。10-09完整退出后6285再次离线，不沿用此前host locked/Edge ready状态，不等待Key输入窗口，没有后续真实请求/评分。详情见[接续报告](./superpowers/plans/2026-10-08-live-validation-browser-report.md)。C05仍Report-Only，待验证（归 Codex），其它边界不因这次恢复关闭。
+
+2026-10-09 本组文档收口：按用户要求停止初始化排障；官方CLI重新获取Computer Use成功，本地installed/enabled且版本不变，未证明插件列表或控制能力恢复。项目补齐部署三处CSP真BYOK/enforced验收门槛及备份30为份数的提示，没有改变正式头或备份命令。systemd只读模板仍与installer加固不一致，具体差异交部分一，未越界修改或削弱installer。全26项状态、既有集中证据与真模型/服务器/Android/真站桥接待验范围见[收口矩阵](./superpowers/plans/2026-10-09-ui-bridge-ops-closeout.md)。本次无新增模型调用、测试、提交或部署。
+
+2026-10-09 C06实演续记：用户授权沿用已有运维连接。root确认完成历史快照并在现役Windows同卷私有新目录恢复两副本，大小20,156,416B、源/副本hash一致；只读quick_check与关键关联通过，核心spaces4/records6880/heads4。现役Sync仅对工作副本启动迁移、回环health200，沿既有关闭钩子退出0、测试端口释放；后只读检查通过、核心行数保持、源与原始副本不变，六生产服务均Running。旁路副本保留；账户读写/解密/增量同步、RPO/应用RTO仍未测，保留策略仍交部分一。本次只核对及运行C06，未重跑稳定产品门禁、未调用模型、未提交或部署，详见[实演记录](./superpowers/plans/2026-10-09-c06-recovery-report.md)。
+
+2026-10-09 B06补验：同一native worker在437 ms内节流、31,020 ms后发布public-only C（模块仍A），执行实例身份与原生生命周期核对无重启，新离线页C+lazy A通过，root独立Edge补例1/1、退出0。产品SW不变，已有门禁不重跑；最初配置/屏障错误作为夹具失败留证。完整Android离线/系统回收仍待用户真机，详见[补验报告](./superpowers/plans/2026-10-09-b06-standing-worker-report.md)。C05/D02本次无新增真实调用，正式CSP保持Report-Only。
+
+2026-10-09 C06客户端续验：root在全新恢复副本上用两个独立真实Edge context完成合成新账户六阶段：注册/密文写入、B登录拉取与UI精确解密核验、B写回、A增量及重载同步，退出0。游标7→15（A最终17），两套实体均可打开，quarantine/非预期外连为0。旁路优雅停机、SQLite关联检查及再核对通过，源/原副本hash不变，测试进程/端口/本机转发为0，六生产服务Running。旧账户历史正文仍需本地原密码/恢复码验收，RPO/完整应用RTO未测，保留策略仍交部分一；不整体关闭C06。前五个验证器入口/定位失败独立留证，未覆盖副本或削弱内容断言；详见[客户端报告](./superpowers/plans/2026-10-09-c06-account-client-report.md)。未改产品代码或稳定门禁、未新增模型调用、未提交或部署。
+
+2026-10-10 状态复核与UI预分析：原26项按本组交付与整体验收分开记账，仍有5组外部真实验收、7组部分一交接及D01退出分支1个本组验证缺口；组间重叠，不给虚假完成百分比。本组既有代码/复审/方案/文档交付已收口；真实桥接/C05真BYOK/C06旧历史及恢复指标/D02质量/Android仍待验，D01中断/强制升级退出证据由root补验，不能归给部分一。root与两位Luna只读梳理当前功能所需UI：素材异步结果反馈、场景未保存字段保护、即时场景修改/复制反馈文案、diff用户化；另列手机提示、阅读跟随、账户/外壳组合联验候选。沿用已批准主题与布局，尚未启动整体改版实施，未运行新门禁/浏览器/模型/服务器。具体计数、优先级、源码依据与范围见[预分析](./superpowers/plans/2026-10-10-task-status-ui-preanalysis.md)。
+
+2026-10-11 D01退出补验：root在自有PTY中对真实Windows/Edge隔离探针发Ctrl+C，正常清理与受控Vite首次SIGTERM传输故障后的3002 ms升级SIGKILL均取得运行证据；运行器记录130，外层PowerShell/tool因Ctrl+C传播返回1，分别保留。两次13个自有进程（含9个Edge）身份及6273均无残留，关闭此前这一窄证据缺口；worker通知/跨标签CAS及其他退出分支不计完成。仅修改ignored探针和本组文档，子任务只静态复核，旧稳定门禁未重跑。账本SHA核对未变，仍1/48、¥0.01213；没有新模型调用、服务器操作、提交或部署。仍有5组外部真实验收/7组部分一交接，UI仅预分析。详见[补验报告](./superpowers/plans/2026-10-11-d01-runner-exit-report.md)。
+
+2026-10-11 UI首批实施：已按批准设计完成素材异步反馈、场景保存及离开保护、桥接复制/助手过期保护、世界书diff阅读。外部换场保留原输入并拒绝后续新写，确认放弃后不flush新目标；已有写入不取消/回滚，不称CAS。root首轮Web341通过、最终相关7项通过，Edge23/23及主题按钮可达性补例1/1，类型/lint/190模块构建通过；初轮2个Esc失败因禁用/移除按钮后焦点落body，DialogShell补提交后检查，原断言通过。六张三主题截图已核，子任务仅静态；不再是“UI仅预分析”，见[报告](./superpowers/plans/2026-10-11-ui-optimization-report.md)。原5组外部验收/7组交接仍按台账推进；本批没有提交、部署、服务器/Android或真实模型操作。共享工作树D02合计更新只作非秘密只读观察，详见报告，不覆盖其他会话推进。
+
+
+## 2026-10-11 顺序121集成发布准备
+
+用户明确授权push及部署。本组审计/UI已合并427dcf0主线，保留素材工作区、容器滚动、预算CAS；集中Web451、预算34、桥接/桌面97、真实SW6及23个不同UI用例的有效回归通过，类型与511文件lint通过，212模块正式构建完成。现役预检六服务Running、同步健康，准备仅换静态前端并保留旧哈希资源；生产尚未切换，后台不随本次部署。完整分次验证与回滚边界见[发布报告](./superpowers/plans/2026-10-11-ui-release-report.md)。
+
+
+2026-10-11 顺序121发布完成：代码a3cd4c9已普通推送main，正式前端183文件已切换；公网TLS27份关键资源SHA/MIME/缓存与同步health通过，六服务PID不变，旧目录及35份旧哈希资源保留。可见内置浏览器正式页面/素材懒加载/设置及Esc焦点恢复核验完成。后台部署与外部验收继续按各自台账推进，CSP仍Report-Only。详见[发布报告](./superpowers/plans/2026-10-11-ui-release-report.md)。
 
 
 <!-- ui-optimization-20261012-owned:begin -->

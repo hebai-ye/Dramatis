@@ -1,6 +1,7 @@
 import {
   type AdminArtifact,
   type AdminDraft,
+  type ConversationId,
   createOpenAICompatibleProvider,
   createPlayerMessage,
   createTurnId,
@@ -11,6 +12,7 @@ import {
   needsWebBridge,
   newId,
   nowIso,
+  type RoomId,
 } from '@dramatis/core';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ScopedAdminBridge } from './admin-source';
@@ -24,7 +26,11 @@ import { handoffStreamState, resetStreamState, setStreamState } from './stream-s
 export interface AdminChatApi {
   busy: boolean;
   error: string | null;
-  send: (text: string, onAcceptance?: (outcome: SubmitOutcome) => void) => Promise<SubmitOutcome>;
+  send: (
+    text: string,
+    targetOrAcceptance?: ConversationId | ((outcome: SubmitOutcome) => void),
+    onAcceptance?: (outcome: SubmitOutcome) => void,
+  ) => Promise<SubmitOutcome>;
   stop: () => void;
   /**
    * 没有 API Key 时的网页版桥接（副对话）。
@@ -33,9 +39,20 @@ export interface AdminChatApi {
    * 东西里除了正文还有 `{"tool":…,"arguments":{…}}` 代码块——解析之后走的是与 API
    * 那条路**同一套校验与执行**（`parseAdminToolCall` → `execute`）。
    */
-  bridge: { prompt: string; binding?: ScopedAdminBridge['binding'] } | null;
+  bridge: AdminBridge | null;
   commitBridge: (raw: string) => Promise<void>;
   cancelBridge: () => void;
+}
+
+interface AdminRequestScope {
+  roomId: RoomId;
+  conversationId: ConversationId;
+  targetConversationId: ConversationId | null;
+  targetName: string | null;
+}
+interface AdminBridge extends Partial<AdminRequestScope> {
+  prompt: string;
+  binding?: ScopedAdminBridge['binding'];
 }
 
 function draftToArtifact(draft: AdminDraft): AdminArtifact {
@@ -62,6 +79,7 @@ function draftToArtifact(draft: AdminDraft): AdminArtifact {
         summary: draft.summary,
         status: 'pending',
         payload: draft.book,
+        previousPayload: draft.previous,
         baseUpdatedAt: draft.baseUpdatedAt,
       };
     case 'persona-upsert':
@@ -129,15 +147,15 @@ export function useAdminChat(options: {
   // 流式正文不住在这里（顺序 59）：它写进 `lib/stream-store.ts` 的 `admin` 通道，
   // 由 `SideChat` 自己订阅。住在这里等于每个 token 都把整个 App 重画一遍。
   const [error, setError] = useState<string | null>(null);
-  const [bridge, setBridge] = useState<{ prompt: string; binding?: ScopedAdminBridge['binding'] } | null>(() =>
-    loadBridge<{ prompt: string; binding?: ScopedAdminBridge['binding'] }>('admin'),
-  );
+  const [bridge, setBridge] = useState<AdminBridge | null>(() => loadBridge<AdminBridge>('admin'));
 
   // 副对话的桥接进度同样落进 sessionStorage（顺序 25）
   useEffect(() => {
     saveBridge('admin', bridge);
   }, [bridge]);
   const abortRef = useRef<AbortController | null>(null);
+  const sessionRef = useRef(session);
+  sessionRef.current = session;
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: changing source must abort the previous API request before a new tool execution.
   useEffect(() => () => abortRef.current?.abort(), [db, accountKey, session.world?.id, session.conversation?.id]);
@@ -149,18 +167,16 @@ export function useAdminChat(options: {
    * 角色卡与世界书只落草稿」这些语义只写了一份。
    */
   const executeDraft = useCallback(
-    async (draft: AdminDraft, artifacts: AdminArtifact[]): Promise<string> => {
+    async (draft: AdminDraft, artifacts: AdminArtifact[], scope: AdminRequestScope): Promise<string> => {
+      if (sessionRef.current.world?.id !== scope.roomId) return '原世界已切换，本次工具未执行。';
       if (draft.kind === 'scene') {
-        const applied = await session.setWorldScene(draft.patch);
-        /*
-         * 场景没落下去时**别把卡片标成「已生效」**（这是原来就有的小毛病：先 push 再判断）。
-         * 这个世界还没有主对话时 setWorldScene 会返回 null，那时标成「待你决定」更诚实。
-         */
-        const artifact = draftToArtifact(draft);
-        artifacts.push(applied === null ? { ...artifact, status: 'pending' } : artifact);
-        return applied === null
-          ? '这个世界还没有主对话，场景没能设置；请先让用户开一条主对话。'
-          : `已把当前场景设为：${draft.summary}（生效于主对话）`;
+        if (!scope.targetConversationId) return '场景未设置：请先选择一条主对话作为目标。';
+        const applied = await session.setWorldScene(draft.patch, scope.targetConversationId, scope.roomId);
+        if (applied === null)
+          return `场景未设置：目标「${scope.targetName ?? scope.targetConversationId}」已失效或世界已切换，请重新选择。`;
+        const summary = `目标「${scope.targetName ?? scope.targetConversationId}」：${draft.summary}`;
+        artifacts.push({ ...draftToArtifact(draft), summary, targetId: applied.id });
+        return `已即时设置${summary}`;
       }
 
       artifacts.push(draftToArtifact(draft));
@@ -170,11 +186,17 @@ export function useAdminChat(options: {
   );
 
   const send = useCallback(
-    async (text: string, onAcceptance?: (outcome: SubmitOutcome) => void): Promise<SubmitOutcome> => {
+    async (
+      text: string,
+      targetOrAcceptance?: ConversationId | ((outcome: SubmitOutcome) => void),
+      onAcceptance?: (outcome: SubmitOutcome) => void,
+    ): Promise<SubmitOutcome> => {
+      const targetConversationId = typeof targetOrAcceptance === 'string' ? targetOrAcceptance : undefined;
+      const accepted = typeof targetOrAcceptance === 'function' ? targetOrAcceptance : onAcceptance;
       let outcome: SubmitOutcome = { status: 'rejected', reason: '当前副对话还未准备好；输入已保留。' };
       const accept = () => {
         outcome = { status: 'accepted' };
-        onAcceptance?.(outcome);
+        accepted?.(outcome);
       };
       const world = session.world;
       const conversation = session.conversation;
@@ -184,6 +206,7 @@ export function useAdminChat(options: {
         !conversation ||
         conversation.kind !== 'side' ||
         conversation.archivedAt !== null ||
+        conversation.deletedAt !== null ||
         busy ||
         bridge !== null ||
         inFlightRef.current
@@ -210,6 +233,43 @@ export function useAdminChat(options: {
       resetStreamState('admin');
       setBridge(null);
 
+      const mains = session.conversations.filter(
+        (item) =>
+          item.roomId === world.id && item.kind === 'main' && item.archivedAt === null && item.deletedAt === null,
+      );
+      const requestedTarget = targetConversationId ?? (mains.length === 1 ? mains[0]?.id : undefined);
+      let target = null;
+      let targetScene = null;
+      try {
+        target = requestedTarget ? await db.repository.getConversation(requestedTarget) : null;
+        if (
+          target &&
+          (target.roomId !== world.id ||
+            target.kind !== 'main' ||
+            target.archivedAt !== null ||
+            target.deletedAt !== null)
+        )
+          target = null;
+        targetScene = target?.activeSceneId ? await db.repository.getScene(target.activeSceneId) : null;
+        if (targetScene && (targetScene.roomId !== world.id || targetScene.conversationId !== target?.id))
+          targetScene = null;
+      } catch (error) {
+        if (sameView(world.id, conversation.id)) setError(error instanceof Error ? error.message : String(error));
+        setBusy(false);
+        inFlightRef.current = false;
+        return outcome;
+      }
+      if (!sameView(world.id, conversation.id) || operationRef.current !== operation) {
+        setBusy(false);
+        inFlightRef.current = false;
+        return outcome;
+      }
+      const scope: AdminRequestScope = {
+        roomId: world.id,
+        conversationId: conversation.id,
+        targetConversationId: target?.id ?? null,
+        targetName: target?.title ?? null,
+      };
       const history = session.messages;
       const playerMessage = createPlayerMessage({
         roomId: world.id,
@@ -229,14 +289,16 @@ export function useAdminChat(options: {
         if (!sameView(world.id, conversation.id)) throw new Error('起草来源已经变化，请回到原副对话后继续。');
         if (manual) {
           const { prepareAdminSource } = await import('./admin-source');
-          const prepared = await prepareAdminSource(
+          const source = await prepareAdminSource(
             db.repository,
             { accountKey, roomId: world.id, conversationId: conversation.id },
             text,
             playerMessage.id,
+            scope.targetConversationId,
           );
           if (!sameView(world.id, conversation.id) || operationRef.current !== operation)
             throw new Error('起草来源已经变化，未发布旧提示词。');
+          const prepared: AdminBridge = { ...source, ...scope };
           saveBridge('admin', prepared, true);
           setBridge(prepared);
           setBusy(false);
@@ -299,7 +361,10 @@ export function useAdminChat(options: {
           buildAdminMessages({
             room: world,
             conversation,
-            scene: null,
+            scene: targetScene,
+            ...(scope.targetConversationId
+              ? { targetConversationId: scope.targetConversationId, targetName: scope.targetName ?? undefined }
+              : {}),
             instances: session.instances,
             cards: session.library.cards,
             worldBooks: session.library.worldBooks,
@@ -322,7 +387,7 @@ export function useAdminChat(options: {
             execute: (draft) => {
               if (controller.signal.aborted || !sameView(world.id, conversation.id))
                 throw new Error('起草来源已经变化，已停止执行工具。');
-              return executeDraft(draft, artifacts);
+              return executeDraft(draft, artifacts, scope);
             },
             /*
              * 顺序 104：正文逐块交给副对话，不再等整轮收完（用户原话：副对话看不到它在写）。
@@ -331,7 +396,8 @@ export function useAdminChat(options: {
              */
             onDelta: (delta) => {
               answer += delta;
-              setStreamState('admin', { text: answer, phase: 'writing', progress: '' });
+              if (sameView(world.id, conversation.id) && operationRef.current === operation)
+                setStreamState('admin', { text: answer, phase: 'writing', progress: '' });
             },
           },
         )) {
@@ -349,7 +415,8 @@ export function useAdminChat(options: {
                * 要注意这个事件是「模型已经点名、本地已经执行完」之后才来的，不是「正在想」——
                * 所以界面上的措辞是「工具调用：…」而不是「正在调用…」。
                */
-              setStreamState('admin', { progress: describeToolExecution(event.execution) });
+              if (sameView(world.id, conversation.id) && operationRef.current === operation)
+                setStreamState('admin', { progress: describeToolExecution(event.execution) });
               break;
             case 'done':
               answer = event.text === '' ? answer : event.text;
@@ -375,8 +442,10 @@ export function useAdminChat(options: {
          * 清空是同步的，而消息要等 IndexedDB 写完再提交一次才出现，中间那几帧就是
          * 「文字先消失、过一会儿整条出现」；交接给 SideChat，等它看见这条消息再收。
          */
-        handoffStreamState('admin', message.id);
-        handedOff = true;
+        if (sameView(world.id, conversation.id) && operationRef.current === operation) {
+          handoffStreamState('admin', message.id);
+          handedOff = true;
+        }
 
         // 记账。世界管理员不属于任何角色，所以不填 speaker（T7）
         await db.ledger.record({
@@ -392,7 +461,8 @@ export function useAdminChat(options: {
         onChanged();
       } catch (sendError) {
         const message = sendError instanceof Error ? sendError.message : String(sendError);
-        setError(controller.signal.aborted ? `已停止生成（${message}）` : message);
+        if (sameView(world.id, conversation.id))
+          setError(controller.signal.aborted ? `已停止生成（${message}）` : message);
         /*
          * 中途出错或被停止时，已经执行过的工具（尤其是立即生效的 set_scene）也要留痕
          * （审计 C13）：以前这里直接丢掉 artifacts，场景已经被改了，界面上却既没有记录

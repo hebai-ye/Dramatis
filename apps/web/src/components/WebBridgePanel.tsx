@@ -80,10 +80,30 @@ async function copyText(text: string): Promise<boolean> {
 export function WebBridgePanel({ bridge, busy, disabled, onReply, onAnalysis, onAdmin, onSkip }: Props) {
   const [paste, setPaste] = useState('');
   const [copied, setCopied] = useState(false);
+  const [copyBusy, setCopyBusy] = useState(false);
+  const [copyError, setCopyError] = useState(false);
+  const copyBusyRef = useRef(false);
+  const copyRequestId = useRef(0);
+  const promptRef = useRef(bridge.prompt);
+  const promptDetailsRef = useRef<HTMLDetailsElement>(null);
   /** 本地助手（顺序 38）：没起进程就是 null，起了就是它的状态。 */
   const [helper, setHelper] = useState<LocalBridgeStatus | null>(null);
   const [helperBusy, setHelperBusy] = useState(false);
   const [helperError, setHelperError] = useState<string | null>(null);
+  const helperBusyRef = useRef(false);
+  const helperRequestId = useRef(0);
+  const bridgeStageRef = useRef(bridge.stage);
+  if (bridgeStageRef.current !== bridge.stage) bridgeStageRef.current = bridge.stage;
+
+  useEffect(
+    () => () => {
+      copyRequestId.current += 1;
+      copyBusyRef.current = false;
+      helperRequestId.current += 1;
+      helperBusyRef.current = false;
+    },
+    [],
+  );
 
   /*
    * 打开面板时问一次本机有没有助手在跑（一次请求，不轮询）。
@@ -119,8 +139,26 @@ export function WebBridgePanel({ bridge, busy, disabled, onReply, onAnalysis, on
     setStage(bridgeStep);
     setPaste('');
     setCopied(false);
-    setHelperError(null);
+    copyRequestId.current += 1;
+    copyBusyRef.current = false;
+    setCopyBusy(false);
+    setCopyError(false);
+    helperRequestId.current += 1;
+    helperBusyRef.current = false;
     setHelperBusy(false);
+    setHelperError(null);
+  }
+  if (promptRef.current !== bridge.prompt) {
+    promptRef.current = bridge.prompt;
+    copyRequestId.current += 1;
+    copyBusyRef.current = false;
+    setCopied(false);
+    setCopyBusy(false);
+    setCopyError(false);
+    helperRequestId.current += 1;
+    helperBusyRef.current = false;
+    setHelperBusy(false);
+    setHelperError(null);
   }
 
   /**
@@ -166,10 +204,36 @@ export function WebBridgePanel({ bridge, busy, disabled, onReply, onAnalysis, on
   const isReply = bridge.stage === 'reply';
   const isAdmin = bridge.stage === 'admin';
   const submit = (): void => {
-    if (paste.trim() === '' || busy || disabled) return;
+    if (paste.trim() === '' || busy || disabled || helperBusyRef.current) return;
     if (isReply) onReply(paste);
     else if (isAdmin) onAdmin?.(paste);
     else onAnalysis(paste);
+  };
+
+  const copyPrompt = async (): Promise<void> => {
+    if (copyBusyRef.current) return;
+    copyBusyRef.current = true;
+    const requestId = ++copyRequestId.current;
+    const prompt = bridge.prompt;
+    setCopyBusy(true);
+    setCopied(false);
+    setCopyError(false);
+    try {
+      const ok = await copyText(prompt);
+      if (requestId !== copyRequestId.current) return;
+      if (ok) {
+        setCopied(true);
+      } else {
+        setCopyError(true);
+        // 展开已有提示词区，用户可以自行选择内容并按 Ctrl+C；不把焦点从当前控件移走。
+        if (promptDetailsRef.current) promptDetailsRef.current.open = true;
+      }
+    } finally {
+      if (requestId === copyRequestId.current) {
+        copyBusyRef.current = false;
+        setCopyBusy(false);
+      }
+    }
   };
 
   /**
@@ -178,23 +242,43 @@ export function WebBridgePanel({ bridge, busy, disabled, onReply, onAnalysis, on
    * 收下路径（`submit` 用的那几个 handler），所以解析、落盘、校验一份都不少。
    */
   const askHelper = async (): Promise<void> => {
-    if (helperBusy || busy || disabled) return;
+    if (helperBusyRef.current || busy || disabled) return;
+    helperBusyRef.current = true;
+    const requestId = ++helperRequestId.current;
+    const prompt = bridge.prompt;
+    const requestStage = bridge.stage;
     setHelperError(null);
     setHelperBusy(true);
     const step = bridgeStep;
     try {
-      const text = await askLocalBridge(bridge.prompt);
-      if (stepRef.current !== step) return;
+      const text = await askLocalBridge(prompt);
+      if (
+        requestId !== helperRequestId.current ||
+        prompt !== promptRef.current ||
+        requestStage !== bridgeStageRef.current ||
+        stepRef.current !== step
+      )
+        return;
       setPaste(text);
       if (text.trim() === '') throw new Error('助手回来了，但没读到回复内容（页面结构可能变了）。');
-      if (isReply) onReply(text);
-      else if (isAdmin) onAdmin?.(text);
+      if (requestStage === 'reply') onReply(text);
+      else if (requestStage === 'admin') onAdmin?.(text);
       else onAnalysis(text);
     } catch (error) {
-      if (stepRef.current === step) setHelperError(error instanceof Error ? error.message : String(error));
+      if (requestId === helperRequestId.current) {
+        setHelperError(error instanceof Error ? error.message : String(error));
+      }
     } finally {
-      if (stepRef.current === step) setHelperBusy(false);
+      if (requestId === helperRequestId.current) {
+        helperBusyRef.current = false;
+        setHelperBusy(false);
+      }
     }
+  };
+
+  const skip = (): void => {
+    if (helperBusyRef.current) return;
+    onSkip();
   };
 
   return (
@@ -202,14 +286,14 @@ export function WebBridgePanel({ bridge, busy, disabled, onReply, onAnalysis, on
       <header className="bridge-head">
         <strong>
           {isAdmin
-            ? `让 ${WEB_BRIDGE_TARGET.name} 替世界管理员起草`
+            ? `让 ${WEB_BRIDGE_TARGET.name} 协助世界管理员`
             : isReply
               ? `① 让 ${WEB_BRIDGE_TARGET.name} 写「${bridge.speakerName ?? ''}」（第 ${String((bridge.pendingTurn?.nextIndex ?? 0) + 1)}/${String(bridge.pendingTurn?.speakerIds.length ?? 1)} 位）`
               : '② 顺手把这一轮的记忆也写一下'}
         </strong>
         <span className="hint">
           {isAdmin
-            ? '没配 API Key，所以起草这一步由你手动转一手：贴过去、贴回来，草稿由应用解析成角色卡 / 世界书 / 场景。'
+            ? '没配 API Key，所以起草这一步由你手动转一手：贴回后，角色卡和世界书等素材先成为待采纳草稿；场景修改会立即应用到本轮选定的主对话。'
             : isReply
               ? '没配 API Key，所以这一轮由你手动转一手：贴过去、贴回来，剩下的交给应用。'
               : '可选。贴回来之后，这一轮就会被谁记住、谁对谁起了变化——不贴也能接着聊。'}
@@ -233,15 +317,14 @@ export function WebBridgePanel({ bridge, busy, disabled, onReply, onAnalysis, on
             {helperBusy ? '本地助手正在等它写完…' : '一键用本地助手（免复制粘贴）'}
           </button>
         ) : null}
-        <button
-          type="button"
-          className="ghost"
-          disabled={disabled}
-          onClick={() => {
-            void copyText(bridge.prompt).then((ok) => setCopied(ok));
-          }}
-        >
-          {copied ? '已复制 ✓' : isReply || isAdmin ? '1. 复制提示词' : '1. 复制这一步的提示词'}
+        <button type="button" className="ghost" disabled={disabled || copyBusy} onClick={() => void copyPrompt()}>
+          {copyBusy
+            ? '正在复制…'
+            : copied
+              ? '已复制 ✓'
+              : isReply || isAdmin
+                ? '1. 复制提示词'
+                : '1. 复制这一步的提示词'}
         </button>
         <a className="bridge-link" href={WEB_BRIDGE_TARGET.url} target="_blank" rel="noreferrer">
           2. 打开 {WEB_BRIDGE_TARGET.name}
@@ -249,10 +332,15 @@ export function WebBridgePanel({ bridge, busy, disabled, onReply, onAnalysis, on
         <span className="hint">{WEB_BRIDGE_TARGET.hint}</span>
       </div>
 
-      <details className="bridge-prompt">
+      <details className="bridge-prompt" ref={promptDetailsRef}>
         <summary>看一眼这段提示词（{bridge.prompt.length} 字）</summary>
         <pre>{bridge.prompt}</pre>
       </details>
+      {copyError ? (
+        <p className="notice error" role="status">
+          自动复制失败。提示词已展开；请手动选择上方内容并按 Ctrl+C（Mac 上按 ⌘C）。
+        </p>
+      ) : null}
 
       {/* 助手那条路的解释与报错都摆在这儿：它做的事越自动，越要说清它是什么 */}
       {helper?.attached === true ? (
@@ -291,10 +379,10 @@ export function WebBridgePanel({ bridge, busy, disabled, onReply, onAnalysis, on
       </label>
 
       <div className="save-bar">
-        <button type="button" disabled={disabled || busy || paste.trim() === ''} onClick={submit}>
+        <button type="button" disabled={disabled || busy || helperBusy || paste.trim() === ''} onClick={submit}>
           {busy ? '处理中…' : isAdmin ? '收下这次起草' : isReply ? '收下这条回复' : '收下这段记忆'}
         </button>
-        <button type="button" className="ghost" disabled={disabled || busy} onClick={onSkip}>
+        <button type="button" className="ghost" disabled={disabled || busy || helperBusy} onClick={skip}>
           {isAdmin
             ? '放弃这次起草'
             : isReply

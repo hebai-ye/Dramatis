@@ -1,7 +1,11 @@
-# 部署模板（腾讯云 / 任意一台 Linux 服务器）
+# Linux 部署模板（可选新节点）
 
 这里的文件都是**模板**：里面没有、也不该有你的地址、id、密码与证书。
 你的真实值只写进服务器上的配置文件（不在仓库里）。
+
+这份 README 的 `systemd`、Linux 路径和安装脚本供新建 Linux 节点使用。当前网页、同步与管理宿主按 [现行运维入口](../docs/SYNC-DEPLOY.md#当前运维入口2026-10-03-文档校正) 的 Windows/Caddy/WinSW 记录处理，旧 Linux 机承担入口与隧道。模板中的 `app.example.com` 是占位符。
+
+完整构建使用 Node **22.13.0 以上的 22.x 或 24.x**，与根 `engines.node` 一致；新节点部署前核对版本。
 
 ## 一条重要的架构选择：应用与 API 同源
 
@@ -61,8 +65,11 @@ systemd 单元开了 `ProtectSystem=strict`、`ProtectHome` 等隔离，`ExecSta
   `nginx-8443.conf.example` 里已经 include 它（`location = /sw.js` 里也 include 了一次，因为 nginx 的
   `add_header` 在 location 里不继承）。
 - Caddy：`Caddyfile.example` 里直接写了 `header { ... }`。
-- CSP 默认是 **Report-Only**：只在浏览器控制台报违规，不拦。把各功能走一遍、观察几天没报错，
-  再按 `nginx-security-headers.conf` 顶部的步骤切成正式的 `Content-Security-Policy`。
+- CSP 默认是 **Report-Only**，正式强制**待验证（归 Codex）**。必须先在隔离环境实际启用
+  `Content-Security-Policy`，用真浏览器完整验收真实 BYOK（保存配置、请求、流式响应、工具续传）
+  与自定义 HTTPS 模型来源，以及聊天、同步、导入卡、背景和本地模型；记录响应头与控制台违规。
+  验收通过后才可提交并推广正式 CSP，无法验证就继续 Report-Only。假模型通过或观察几天无报错
+  均不能替代验收；具体步骤见 `nginx-security-headers.conf`，清单见 [验证计划](../docs/VALIDATION-2026-10-03.md)。
 
 ## 证书
 
@@ -76,4 +83,4 @@ systemd 单元开了 `ProtectSystem=strict`、`ProtectHome` 等隔离，`ExecSta
 
 - 防火墙只开需要的端口：SSH + 443（或 8443）；**不要**把 8787 直接开到公网；
 - `.env`、证书、`*.db`、`backups/` 都不进仓库（`.gitignore` 已经挡住）；
-- 备份见 [../tools/sync-server/README.md](../tools/sync-server/README.md) 第 6 节。
+- 备份与恢复先看 [现行运维入口](../docs/SYNC-DEPLOY.md#当前运维入口2026-10-03-文档校正)：只运输完成的一致性快照，切换前停止或隔离全部持库服务；Linux 脚本用法另见 [服务端 README](../tools/sync-server/README.md) 第 6 节。

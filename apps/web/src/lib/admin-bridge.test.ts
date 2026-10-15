@@ -86,6 +86,7 @@ async function fixture() {
   const session = {
     world,
     conversation: side,
+    conversations: [side, { ...main, activeSceneId: scene.id }],
     messages: [],
     instances: [],
     personas: [],

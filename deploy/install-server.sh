@@ -138,4 +138,6 @@ cat <<'NEXT'
 
 备份（建议放进 crontab）：
     node --no-warnings /opt/dramatis-sync/backup.mjs /var/lib/dramatis-sync/sync.db /var/backups/dramatis 30
+    30 是周期脚本的保留份数，不是天数；管理操作快照尚未统一保留规则。
+    “每桶 30 个成功快照”仍是待实现目标；现行运维与恢复入口见 docs/SYNC-DEPLOY.md。
 NEXT

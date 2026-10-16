@@ -125,6 +125,8 @@ function fixtureApi(): ProvidersApi {
   });
   return {
     profiles: [first, second],
+    setupOwner: { profileId: first.id, keyMode: 'session', context: {}, token: {} },
+    saveDeepSeekKey: async () => ({ profileId: first.id, keyRef: first.keyRef, baseUrl: first.baseUrl }),
     activeId: first.id,
     active: first,
     apiKey: '',

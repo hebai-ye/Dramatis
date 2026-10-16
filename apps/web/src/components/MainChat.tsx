@@ -2,6 +2,7 @@ import {
   type CastName,
   type CharacterInstance,
   type Conversation,
+  type ConversationId,
   type ConversationModes,
   DEFAULT_HISTORY_NEAR_WINDOW,
   historyPolicyOf,
@@ -79,6 +80,7 @@ interface Props {
   bridge?: WebBridgeState | null;
   /** 没配 API Key：这一轮的提示词要用户自己贴到网页版。 */
   manualMode?: boolean;
+  onConfigureDeepSeekKey?: () => void;
   onBridgeReply?: (text: string) => void;
   onBridgeAnalysis?: (text: string) => void;
   onBridgeSkip?: () => void;
@@ -115,6 +117,9 @@ interface Props {
 export interface FocusRequest {
   id: MessageId;
   seq: number;
+  conversationId: ConversationId;
+  /** True after navigation has finished loading the requested conversation. */
+  settled?: boolean;
 }
 
 const MODE_OPTIONS: Array<{
@@ -277,6 +282,7 @@ function MainChatImpl({
   onDropInstance,
   onReassign,
   signatures,
+  onConfigureDeepSeekKey,
 }: Props) {
   countRender('MainChat');
   const coarsePointer = useCoarsePointer();
@@ -482,12 +488,14 @@ function MainChatImpl({
    */
   const nearBottomRef = useRef(true);
   const [readingHistory, setReadingHistory] = useState(false);
+  const [awayFromBottom, setAwayFromBottom] = useState(false);
   const [hasNewBelow, setHasNewBelow] = useState(false);
   const onBodyScroll = useCallback(() => {
     const node = bodyRef.current;
     if (node === null || !visibleRef.current) return;
     const near = isNearBottom(node);
     nearBottomRef.current = near;
+    setAwayFromBottom(!near);
     // A located message within the ordinary follow threshold still counts as reading.
     // Manual scrolling all the way to the bottom explicitly resumes following.
     if (node.scrollHeight - node.clientHeight - node.scrollTop <= 2) {
@@ -499,6 +507,7 @@ function MainChatImpl({
     if (!visibleRef.current) return;
     nearBottomRef.current = true;
     setReadingHistory(false);
+    setAwayFromBottom(false);
     setHasNewBelow(false);
     const node = bodyRef.current;
     if (node !== null) scrollChatTo(node, node.scrollHeight);
@@ -508,32 +517,50 @@ function MainChatImpl({
   const lastMessageKey = lastMessage === undefined ? '' : `${lastMessage.id}:${String(lastMessage.content.length)}`;
   const lastIsPlayer = lastMessage?.role === 'player';
   const conversationKeyRef = useRef<string | null>(null);
-  const handledMessageKeyRef = useRef('');
-  useEffect(() => {
-    if (lastMessageKey === '') return;
-    // 正在跳原句时别把用户又拽到底部——下面那条 effect 会自己滚到位
-    if (focus !== null && consumedFocus.current !== focus.seq) return;
-    // 刚切进一条对话：总是从底部开始看
+  const lastMessageKeyRef = useRef<string | null>(null);
+  // Decide follow mode before post-commit scroll events can measure the newly enlarged history.
+  useLayoutEffect(() => {
     const switched = conversationKeyRef.current !== conversation.id;
+    const changed = lastMessageKeyRef.current !== lastMessageKey;
     conversationKeyRef.current = conversation.id;
-    if (!switched && handledMessageKeyRef.current === lastMessageKey) return;
-    handledMessageKeyRef.current = lastMessageKey;
+    lastMessageKeyRef.current = lastMessageKey;
     const node = bodyRef.current;
     if (node === null) return;
     if (!visibleRef.current) {
-      if (scrollVisibility.followHiddenRef.current === true) node.scrollTop = node.scrollHeight;
-      else setHasNewBelow(true);
+      if (lastMessageKey !== '' && changed) {
+        if (!readingHistory && scrollVisibility.followHiddenRef.current === true) node.scrollTop = node.scrollHeight;
+        else setHasNewBelow(true);
+      }
       return;
     }
-    if (switched || lastIsPlayer || (!readingHistory && nearBottomRef.current)) {
+    if (switched) {
       nearBottomRef.current = true;
       setReadingHistory(false);
+      setAwayFromBottom(false);
+      setHasNewBelow(false);
+    }
+    if (lastMessageKey === '' || (!switched && !changed)) return;
+    // 定位请求还没消费时，让定位效应掌管滚动。
+    if (focus?.conversationId === conversation.id && consumedFocus.current !== focus.seq) return;
+    if (switched || (!readingHistory && !awayFromBottom && (lastIsPlayer || nearBottomRef.current))) {
+      nearBottomRef.current = true;
+      setReadingHistory(false);
+      setAwayFromBottom(false);
       setHasNewBelow(false);
       scrollChatTo(node, node.scrollHeight, switched);
       return;
     }
     setHasNewBelow(true);
-  }, [lastMessageKey, lastIsPlayer, focus, conversation.id, visibleRef, scrollVisibility, readingHistory]);
+  }, [
+    lastMessageKey,
+    lastIsPlayer,
+    focus,
+    conversation.id,
+    awayFromBottom,
+    visibleRef,
+    scrollVisibility,
+    readingHistory,
+  ]);
 
   /**
    * 跳到原句（T11）。
@@ -541,28 +568,34 @@ function MainChatImpl({
    * 高亮的时长是刻意的：闪一下就走，用户看得到「就是这一条」，
    * 又不会让整屏一直有人在发光。
    */
+  // biome-ignore lint/correctness/useExhaustiveDependencies: messages 变化表示延迟加载的目标节点可能刚挂载，需要重试 DOM 定位。
   useEffect(() => {
-    if (!visible || focus === null || consumedFocus.current === focus.seq) return;
+    if (!visible || focus === null || focus.conversationId !== conversation.id || consumedFocus.current === focus.seq) {
+      return;
+    }
     const body = bodyRef.current;
     const node = Array.from(body?.querySelectorAll<HTMLElement>('[data-message-id]') ?? []).find(
       (message) => message.dataset.messageId === focus.id,
     );
     if (body === null) return;
+    // A pending navigation may not have loaded its messages yet.
+    if (node === undefined && focus.settled !== true) return;
     consumedFocus.current = focus.seq;
     conversationKeyRef.current = conversation.id;
-    handledMessageKeyRef.current = lastMessageKey;
+    lastMessageKeyRef.current = lastMessageKey;
     onFocusConsumed?.(focus.seq, node !== undefined);
     if (node === undefined) return;
     nearBottomRef.current = false;
     setReadingHistory(true);
-    setHasNewBelow(true);
+    setAwayFromBottom(true);
+    setHasNewBelow(false);
     const rect = node.getBoundingClientRect();
     const top = body.scrollTop + rect.top - body.getBoundingClientRect().top - (body.clientHeight - rect.height) / 2;
-    scrollChatTo(body, Math.max(0, top));
+    scrollChatTo(body, Math.max(0, top), true);
     setHighlightId(focus.id);
     if (highlightTimer.current !== null) window.clearTimeout(highlightTimer.current);
     highlightTimer.current = window.setTimeout(() => setHighlightId(null), 2600);
-  }, [focus, visible, conversation.id, lastMessageKey, onFocusConsumed]);
+  }, [focus, messages, conversation.id, onFocusConsumed, visible, lastMessageKey]);
 
   /*
    * 只有最后一条角色回复可以重抽：更早的回复换掉之后，后面那些回复是照着旧版本说的，
@@ -769,16 +802,20 @@ function MainChatImpl({
           busy={busy}
           onStop={onStop}
           lastMessageId={messages[messages.length - 1]?.id ?? null}
-          suspendAutoScroll={readingHistory || (focus !== null && consumedFocus.current !== focus.seq)}
+          suspendAutoScroll={
+            readingHistory ||
+            awayFromBottom ||
+            (focus?.conversationId === conversation.id && consumedFocus.current !== focus.seq)
+          }
           bottomRef={bottomRef}
           scrollVisibility={scrollVisibility}
           cast={castNames}
           avatars={avatars}
         />
 
-        {hasNewBelow ? (
+        {awayFromBottom || readingHistory || hasNewBelow ? (
           <button type="button" className="jump-to-latest" onClick={jumpToBottom}>
-            ↓ 回到最新消息
+            {hasNewBelow ? '↓ 有新消息' : '↓ 回到底部'}
           </button>
         ) : null}
 
@@ -869,10 +906,17 @@ function MainChatImpl({
         />
       )}
 
-      {manualMode && bridge === null && messages.length === 0 ? (
+      {manualMode && bridge === null ? (
         <p className="hint bridge-hint">
-          还没填 API Key——不要紧，先这么玩：把话发出去，应用会给你一段<strong>提示词</strong>， 贴进 DeepSeek
-          网页版，再把它的回复粘回来就行。想省掉这一步，去「设置 → 模型接入」填一个 Key。
+          尚未配置 Key
+          {onConfigureDeepSeekKey === undefined ? null : (
+            <>
+              {' · '}
+              <button type="button" className="ghost" onClick={onConfigureDeepSeekKey}>
+                配置 DeepSeek Key
+              </button>
+            </>
+          )}
         </p>
       ) : null}
 

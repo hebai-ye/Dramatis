@@ -215,7 +215,7 @@ describe('SQLite 增量用量与事务内配额（审计 C10 / C11）', () => {
         `SELECT COUNT(*) AS records, SUM(LENGTH(CAST(collection AS BLOB)) + LENGTH(CAST(id AS BLOB))
            + LENGTH(CAST(updated_at AS BLOB)) + COALESCE(LENGTH(CAST(deleted_at AS BLOB)), 0)
            + COALESCE(LENGTH(CAST(device_id AS BLOB)), 0) + LENGTH(CAST(sealed AS BLOB))) AS bytes
-         FROM records WHERE space_handle = ?1`,
+         FROM records WHERE space_handle = ?`,
       )
       .get(created.spaceHandle) as { records: number; bytes: number };
     expect(usage).toEqual({ records: truth.records, bytes: truth.bytes });

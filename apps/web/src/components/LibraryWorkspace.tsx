@@ -27,11 +27,13 @@ export function LibraryWorkspaceProvider({
   navigationRef,
   onEnter,
   onReturn,
+  onOccupancyChange,
 }: {
   children: ReactNode;
   navigationRef: MutableRefObject<LibraryViewActions | null>;
   onEnter: () => void;
   onReturn: () => void;
+  onOccupancyChange?: (occupied: boolean) => void;
 }) {
   const [state, setState] = useState<LibraryNavigationState>({
     activeView: null,
@@ -42,8 +44,8 @@ export function LibraryWorkspaceProvider({
   });
   const [controller] = useState(() => createLibraryNavigation(setState));
   const lastView = useRef<LibraryView>('personas');
-  const callbacks = useRef({ onEnter, onReturn });
-  callbacks.current = { onEnter, onReturn };
+  const callbacks = useRef({ onEnter, onReturn, onOccupancyChange });
+  callbacks.current = { onEnter, onReturn, onOccupancyChange };
   const actions = useMemo<LibraryViewActions>(
     () => ({
       activeView: state.activeView,
@@ -57,6 +59,9 @@ export function LibraryWorkspaceProvider({
     [controller, state.activeView, state.busy],
   );
   navigationRef.current = actions;
+  useLayoutEffect(() => {
+    callbacks.current.onOccupancyChange?.(state.activeView !== null || state.busy);
+  }, [state.activeView, state.busy]);
   const previous = useRef<LibraryView | null>(null);
   useLayoutEffect(() => {
     let returnFrame: number | null = null;

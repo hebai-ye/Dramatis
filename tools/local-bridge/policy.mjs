@@ -129,26 +129,60 @@ function tooLarge(limit) {
  * 排队的超过 `maxQueued` 时 `run` 抛出 `status = 429` 的错误。
  */
 export function createSerialQueue(maxQueued = MAX_QUEUED_ASKS) {
-  let tail = Promise.resolve();
-  let active = 0;
+  const waiting = [];
+  let active = false;
+  const timeout = () => new Error('本地助手操作超时（包括排队和网页通信）。');
+  function startNext() {
+    if (active) return;
+    const entry = waiting.shift();
+    if (!entry) return;
+    entry.signal?.removeEventListener('abort', entry.onAbort);
+    if (entry.signal?.aborted || (entry.deadline && entry.deadline.remaining() <= 0)) {
+      entry.reject(entry.signal?.reason ?? timeout());
+      startNext();
+      return;
+    }
+    active = true;
+    Promise.resolve()
+      .then(() => entry.task({ signal: entry.signal, deadline: entry.deadline }))
+      .then(
+        (value) => {
+          active = false;
+          startNext();
+          entry.resolve(value);
+        },
+        (error) => {
+          active = false;
+          startNext();
+          entry.reject(error);
+        },
+      );
+  }
   return {
     get pending() {
-      return active;
+      return Number(active) + waiting.length;
     },
-    run(task) {
-      if (active >= maxQueued + 1) {
+    run(task, { signal, deadline } = {}) {
+      const taskSignal = signal ?? deadline?.signal;
+      if (taskSignal?.aborted || (deadline && deadline.remaining() <= 0))
+        return Promise.reject(taskSignal?.reason ?? timeout());
+      if (Number(active) + waiting.length >= maxQueued + 1) {
         const error = new Error('本地助手正忙（已有任务在排队），稍后再试。');
         error.status = 429;
         return Promise.reject(error);
       }
-      active += 1;
-      const result = tail.then(task);
-      tail = result.then(
-        () => undefined,
-        () => undefined,
-      );
-      return result.finally(() => {
-        active -= 1;
+      return new Promise((resolve, reject) => {
+        const entry = { task, resolve, reject, signal: taskSignal, deadline };
+        entry.onAbort = () => {
+          const index = waiting.indexOf(entry);
+          if (index >= 0) {
+            waiting.splice(index, 1);
+            reject(taskSignal.reason);
+          }
+        };
+        waiting.push(entry);
+        taskSignal?.addEventListener('abort', entry.onAbort, { once: true });
+        startNext();
       });
     },
   };

@@ -31,7 +31,9 @@ jobs:
           cache: pnpm
 
       - name: 安装依赖
-        run: pnpm install --frozen-lockfile
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm --dir apps/web/tests install --frozen-lockfile
 
       - name: Lint 与格式检查
         run: pnpm lint

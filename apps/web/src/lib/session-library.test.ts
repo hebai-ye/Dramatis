@@ -118,6 +118,33 @@ function gate() {
   return { promise, release };
 }
 
+// Observe the real commit before delaying publication, so no test gate holds the transaction lock.
+function observeCommittedRoom(repository: Repository, onSaved: (room: Room) => Promise<void>) {
+  const atomic = repository.atomic.bind(repository);
+  const saveRoom = repository.saveRoom.bind(repository);
+  const direct = vi.spyOn(repository, 'saveRoom').mockImplementation(async (room) => {
+    await saveRoom(room);
+    await onSaved(room);
+  });
+  const transaction = vi.spyOn(repository, 'atomic').mockImplementation(async (action) => {
+    const writes: Room[] = [];
+    const result = await atomic(async (scope, store) => {
+      const save = scope.saveRoom.bind(scope);
+      scope.saveRoom = async (room) => {
+        await save(room);
+        writes.push(room);
+      };
+      return action(scope, store);
+    });
+    for (const room of writes) await onSaved(room);
+    return result;
+  });
+  return () => {
+    direct.mockRestore();
+    transaction.mockRestore();
+  };
+}
+
 describe('library snapshot publications', () => {
   it.each(['savePersona', 'attachWorldBook', 'detachWorldBook', 'deleteWorldBook'] as const)(
     '%s preserves messages loaded during delayed save',
@@ -125,6 +152,7 @@ describe('library snapshot publications', () => {
       const h = await setup();
       const wait = gate();
       const started = gate();
+      let restoreRoom: (() => void) | undefined;
       if (operation === 'savePersona') {
         const save = h.repository.saveConversation.bind(h.repository);
         vi.spyOn(h.repository, 'saveConversation').mockImplementation(async (item) => {
@@ -133,11 +161,9 @@ describe('library snapshot publications', () => {
           await save(item);
         });
       } else {
-        const save = h.repository.saveRoom.bind(h.repository);
-        vi.spyOn(h.repository, 'saveRoom').mockImplementation(async (item) => {
+        restoreRoom = observeCommittedRoom(h.repository, async () => {
           started.release();
           await wait.promise;
-          await save(item);
         });
       }
       const pending =
@@ -150,6 +176,7 @@ describe('library snapshot publications', () => {
       await h.lateReload();
       wait.release();
       await pending;
+      restoreRoom?.();
       expect(h.render().messages.map((message) => message.content)).toEqual(['Arrived during save']);
       if (operation === 'savePersona') expect(h.render().conversation?.playerName).toBe('After');
     },
@@ -184,16 +211,16 @@ describe('library snapshot publications', () => {
     const save = h.repository.saveRoom.bind(h.repository);
     const other = { ...h.room, id: roomId(newId()), title: 'Other', activeConversationId: null, worldBookIds: [] };
     await save(other);
-    vi.spyOn(h.repository, 'saveRoom').mockImplementation(async (item) => {
+    const restoreRoom = observeCommittedRoom(h.repository, async () => {
       started.release();
       await wait.promise;
-      await save(item);
     });
     const pending = h.api.attachWorldBook(createBlankWorldBook('Attached'));
     await started.promise;
     await h.api.openWorld(other.id);
     wait.release();
     await pending;
+    restoreRoom();
     expect(h.render().world?.id).toBe(other.id);
     expect(h.render().worldBooks).toEqual([]);
   });

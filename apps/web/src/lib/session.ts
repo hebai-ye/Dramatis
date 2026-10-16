@@ -18,6 +18,7 @@ import {
   defaultTravelCast,
   type EventId,
   type InstanceId,
+  isCompleteWorldBook,
   META_KEYS,
   type MemoryEvent,
   type Message,
@@ -34,6 +35,7 @@ import {
   type RoomSummary,
   recoverInterruptedImports,
   reuseUnchangedCollections,
+  reverseWorldBookDraft,
   revertAffectChange as revertAffectChangeForInstance,
   type Scene,
   saveRoomBudget,
@@ -55,19 +57,52 @@ import { type DeletionFeedback, deleteWithFeedback } from './deletion-feedback';
 import { revertTurnWrites, rewriteTurnWrites } from './turn-write';
 import { createInstanceFor, createSceneFor } from './world';
 
+export interface ImportRecoveryWarning {
+  code: string;
+  message: string;
+  markerId?: string;
+}
+
+/** Optional structured core result; counts remain the core's actual completed rollbacks. */
+export function importRecoveryWarnings(result: { warnings?: unknown }): ImportRecoveryWarning[] {
+  if (result.warnings === undefined) return [];
+  if (!Array.isArray(result.warnings))
+    return [
+      {
+        code: 'invalid-recovery-report',
+        message: '导入恢复检查返回的信息不完整，请检查现有世界。',
+      },
+    ];
+  return result.warnings.map((warning: unknown): ImportRecoveryWarning => {
+    if (typeof warning === 'string') return { code: 'import-recovery-warning', message: warning };
+    if (
+      warning === null ||
+      typeof warning !== 'object' ||
+      !('code' in warning) ||
+      typeof warning.code !== 'string' ||
+      !('message' in warning) ||
+      typeof warning.message !== 'string'
+    )
+      return {
+        code: 'invalid-recovery-report',
+        message: '导入恢复检查返回的信息不完整，请检查现有世界。',
+      };
+    return {
+      code: warning.code,
+      message: warning.message,
+      ...('markerId' in warning && typeof warning.markerId === 'string' ? { markerId: warning.markerId } : {}),
+    };
+  });
+}
+
 export interface BootReport {
   backendKind: string;
   degraded: boolean;
   recoveredTasks: number;
-  /**
-   * 上次导入崩在半路、这次启动撤掉的世界数（审计 C7）。
-   *
-   * 界面暂时没显示它（`BootReport` 只有降级提示在用），先在控制台里留一行；
-   * 等 `App.tsx` 不再被别的会话占着，再加到顶部提示里。
-   */
+  /** Core-reported completed rollbacks; skipped or failed markers are never included. */
   recoveredImports: number;
   /** 导入恢复的损坏、归属核验和部分删除告警；即使成功数为零也必须向用户展示。 */
-  importRecoveryWarnings: string[];
+  importRecoveryWarnings: ImportRecoveryWarning[];
   migrationsApplied: number;
   pendingAccountDeletions: number;
 }
@@ -109,21 +144,35 @@ export function useDatabase(): {
          * 上次导入崩在半路（页面被关、崩溃）：把那半个世界撤掉（审计 C7）。
          * 太新的标记不动——可能另一个标签页正在导入，撤掉等于删掉人家正在写的东西。
          */
-        const interrupted = await recoverInterruptedImports(opened.repository);
-        if (interrupted.rooms.length > 0 || interrupted.stillPending > 0) {
-          console.warn(
-            `[dramatis] 未完成的导入：撤掉 ${interrupted.rooms.length} 个世界，另有 ${interrupted.stillPending} 个标记还太新没动`,
-          );
+        let recoveredImports = 0;
+        let recoveryWarnings: ImportRecoveryWarning[] = [];
+        try {
+          const interrupted = await recoverInterruptedImports(opened.repository);
+          recoveredImports = interrupted.rooms.length;
+          // Normalize the core's text warnings while accepting structured recovery reports.
+          recoveryWarnings = importRecoveryWarnings(interrupted as typeof interrupted & { warnings?: unknown });
+          if (interrupted.rooms.length > 0 || interrupted.stillPending > 0) {
+            console.warn(
+              `[dramatis] 未完成的导入：撤掉 ${interrupted.rooms.length} 个世界，另有 ${interrupted.stillPending} 个标记还太新没动`,
+            );
+          }
+        } catch {
+          // The legacy recovery may already have modified storage before throwing. Do not retry or claim preservation.
+          recoveryWarnings = [
+            {
+              code: 'import-recovery-failed',
+              message: '导入恢复检查未完成。已继续加载可读取的本机数据，请检查现有世界和导入记录。',
+            },
+          ];
         }
-
         if (cancelled) return;
         setDb(opened);
         setBoot({
           backendKind: opened.backendKind,
           degraded: opened.backendKind === 'memory',
           recoveredTasks,
-          recoveredImports: interrupted.rooms.length,
-          importRecoveryWarnings: [...interrupted.warnings],
+          recoveredImports,
+          importRecoveryWarnings: recoveryWarnings,
           migrationsApplied: migration.applied.length,
           pendingAccountDeletions: pendingAccountDeletionCount(),
         });
@@ -283,7 +332,12 @@ export interface SessionApi {
    * 必须落到主对话上——否则「设置当前场景」会写进一条没有场景的对话里，
    * 用户什么也看不到。
    */
-  setWorldScene: (patch: Partial<Scene>, onEffect?: (effect: AdminSceneEffect) => void) => Promise<Scene | null>;
+  setWorldScene: (
+    patch: Partial<Scene>,
+    targetConversationId: ConversationId | undefined,
+    expectedRoomId?: RoomId,
+    onEffect?: (effect: AdminSceneEffect) => void,
+  ) => Promise<Scene | null>;
 
   deleteMessage: (id: MessageId) => Promise<void>;
   updateMessage: (id: MessageId, patch: Partial<Message>) => Promise<Message | null>;
@@ -326,6 +380,7 @@ export interface SessionApi {
   /** 撤回一条已采纳的草稿（顺序 26）：删掉刚进素材库的那份，草稿退回「待采纳」。 */
   revokeArtifact: (messageId: MessageId, artifactId: string) => Promise<ArtifactActionResult>;
   inspectArtifact: (messageId: MessageId, artifactId: string, action: ArtifactAction) => Promise<ArtifactActionResult>;
+  reverseArtifact: (messageId: MessageId, artifactId: string) => Promise<void>;
   /**
    * 切换**当前对话**使用的玩家身份，并把它同步为这个世界的默认值。
    *
@@ -337,6 +392,68 @@ export interface SessionApi {
   deletePersona: (id: string) => Promise<void>;
   listPersonas: () => Promise<Persona[]>;
   appendMessages: (messages: readonly Message[], onPersisted?: () => void) => Promise<void>;
+}
+
+interface SnapshotScope {
+  owner: { db: DramatisDb | null };
+  epoch: number;
+  revision: number;
+  roomId: RoomId | null;
+}
+
+type ConversationReadPolicy =
+  | { kind: 'latest'; excludedConversationId?: ConversationId }
+  | { kind: 'target'; id: ConversationId };
+
+/** Apply only this write's changed fields to the latest entity. This is UI merging, not repository CAS. */
+function mergeChangedFields<T extends object>(before: T, next: T, latest: T): T {
+  const merged = { ...latest };
+  for (const key of Object.keys(next) as (keyof T)[]) {
+    if (Object.is(before[key], next[key])) continue;
+    const oldValue = before[key];
+    const nextValue = next[key];
+    const latestValue = latest[key];
+    // Room references and scene casts are sets: preserve unrelated additions while applying this write's delta.
+    if (
+      Array.isArray(oldValue) &&
+      Array.isArray(nextValue) &&
+      Array.isArray(latestValue) &&
+      [...oldValue, ...nextValue, ...latestValue].every((item) => typeof item === 'string')
+    ) {
+      const removed = new Set(oldValue.filter((item) => !nextValue.includes(item)));
+      merged[key] = [
+        ...new Set([
+          ...latestValue.filter((item) => !removed.has(item)),
+          ...nextValue.filter((item) => !oldValue.includes(item)),
+        ]),
+      ] as unknown as T[keyof T];
+    } else {
+      merged[key] = next[key];
+    }
+  }
+  return merged;
+}
+
+function mergeChangedCollection<T extends { id: string }>(before: T[], next: T[] | undefined, latest: T[]): T[] {
+  if (next === undefined || next === before) return latest;
+  const previous = new Map(before.map((item) => [item.id, item]));
+  const changes = new Map(next.map((item) => [item.id, item]));
+  const merged = latest
+    .filter((item) => !previous.has(item.id) || changes.has(item.id))
+    .map((item) => {
+      const old = previous.get(item.id);
+      const changed = changes.get(item.id);
+      return old && changed && changed !== old ? mergeChangedFields(old, changed, item) : item;
+    });
+  const visible = new Set(merged.map((item) => item.id));
+  for (const item of next) {
+    // A concurrently deleted entity stays deleted; only newly created entities are appended.
+    if (!previous.has(item.id) && !visible.has(item.id)) {
+      merged.push(item);
+      visible.add(item.id);
+    }
+  }
+  return merged;
 }
 
 export function useSession(db: DramatisDb | null): SessionApi {
@@ -369,11 +486,15 @@ export function useSession(db: DramatisDb | null): SessionApi {
   const snapshotOwnerRef = useRef<typeof owner | null>(null);
   const navigationRef = useRef(0);
   const reloadRequestRef = useRef(0);
+  const selectionEpochRef = useRef(0);
+  const snapshotRevisionRef = useRef(0);
+  const lastRoomQueueRef = useRef<Promise<void>>(Promise.resolve());
   const setSnapshot = useCallback(
     (next: RoomSnapshot | null) => {
       if (activeOwnerRef.current !== owner) return;
       snapshotRef.current = next;
       snapshotOwnerRef.current = owner;
+      snapshotRevisionRef.current++;
       setSnapshotState({ owner, value: next });
     },
     [owner],
@@ -382,6 +503,7 @@ export function useSession(db: DramatisDb | null): SessionApi {
   useEffect(() => {
     activeOwnerRef.current = owner;
     if (snapshotOwnerRef.current !== owner) {
+      selectionEpochRef.current++;
       navigationRef.current++;
       reloadRequestRef.current++;
       setSnapshot(null);
@@ -394,11 +516,191 @@ export function useSession(db: DramatisDb | null): SessionApi {
     return () => {
       if (activeOwnerRef.current === owner) {
         activeOwnerRef.current = null;
+        selectionEpochRef.current++;
         navigationRef.current++;
         reloadRequestRef.current++;
       }
     };
   }, [owner, setSnapshot]);
+
+  const captureScope = useCallback(
+    (): SnapshotScope => ({
+      owner,
+      epoch: selectionEpochRef.current,
+      revision: snapshotRevisionRef.current,
+      roomId: snapshotRef.current?.room.id ?? null,
+    }),
+    [owner],
+  );
+  const beginSelection = useCallback(
+    (roomId: RoomId | null): SnapshotScope => ({
+      owner,
+      epoch: ++selectionEpochRef.current,
+      revision: snapshotRevisionRef.current,
+      roomId,
+    }),
+    [owner],
+  );
+  const isScopeCurrent = useCallback(
+    (scope: SnapshotScope, selection = false) =>
+      scope.owner === owner &&
+      activeOwnerRef.current === owner &&
+      scope.epoch === selectionEpochRef.current &&
+      (selection || snapshotRef.current?.room.id === scope.roomId),
+    [owner],
+  );
+  const conditionalCommit = useCallback(
+    (
+      scope: SnapshotScope,
+      update: (latest: RoomSnapshot | null) => RoomSnapshot | null,
+      revision?: number,
+      selection = false,
+    ): boolean => {
+      if (
+        !isScopeCurrent(scope, selection) ||
+        (!selection && snapshotOwnerRef.current !== owner) ||
+        (revision !== undefined && revision !== snapshotRevisionRef.current)
+      )
+        return false;
+      setSnapshot(update(snapshotRef.current));
+      return true;
+    },
+    [isScopeCurrent, owner, setSnapshot],
+  );
+  const readSnapshot = useCallback(
+    async (
+      scope: SnapshotScope,
+      selection = false,
+      retry = true,
+      conversationPolicy?: ConversationReadPolicy,
+      isReadCurrent?: () => boolean,
+    ): Promise<boolean> => {
+      if (!db || scope.owner !== owner || scope.roomId === null) return false;
+      while (isScopeCurrent(scope, selection) && (isReadCurrent?.() ?? true)) {
+        const revision = snapshotRevisionRef.current;
+        const loaded = await db.repository.loadRoom(scope.roomId);
+        if (
+          !loaded ||
+          loaded.room.id !== scope.roomId ||
+          !isScopeCurrent(scope, selection) ||
+          scope.owner !== owner ||
+          !(isReadCurrent?.() ?? true)
+        )
+          return false;
+        if (
+          conditionalCommit(
+            scope,
+            (latest) => {
+              if (latest?.room.id !== loaded.room.id) return loaded;
+              const activeId =
+                conversationPolicy?.kind === 'target'
+                  ? conversationPolicy.id
+                  : conversationPolicy?.kind === 'latest'
+                    ? latest.room.activeConversationId === conversationPolicy.excludedConversationId
+                      ? null
+                      : latest.room.activeConversationId
+                    : null;
+              const activeStillExists = loaded.conversations.some(
+                (item) => item.id === activeId && item.deletedAt === null,
+              );
+              const next = activeStillExists
+                ? { ...loaded, room: { ...loaded.room, activeConversationId: activeId } }
+                : loaded;
+              return reuseUnchangedCollections(latest, next);
+            },
+            revision,
+            selection,
+          )
+        )
+          return true;
+        if (!retry) return false;
+      }
+      return false;
+    },
+    [conditionalCommit, db, isScopeCurrent, owner],
+  );
+  const commitPatch = useCallback(
+    async (
+      scope: SnapshotScope,
+      before: RoomSnapshot,
+      patch: Partial<RoomSnapshot>,
+      targetConversationId?: ConversationId,
+    ): Promise<boolean> => {
+      if (!isScopeCurrent(scope)) return false;
+      if (scope.revision !== snapshotRevisionRef.current)
+        return readSnapshot(
+          scope,
+          false,
+          true,
+          targetConversationId === undefined ? { kind: 'latest' } : { kind: 'target', id: targetConversationId },
+        );
+      return conditionalCommit(
+        scope,
+        (latest) =>
+          latest === null
+            ? null
+            : {
+                ...latest,
+                room: patch.room ? mergeChangedFields(before.room, patch.room, latest.room) : latest.room,
+                conversations: mergeChangedCollection(before.conversations, patch.conversations, latest.conversations),
+                scenes: mergeChangedCollection(before.scenes, patch.scenes, latest.scenes),
+                instances: mergeChangedCollection(before.instances, patch.instances, latest.instances),
+                cards: mergeChangedCollection(before.cards, patch.cards, latest.cards),
+                worldBooks: mergeChangedCollection(before.worldBooks, patch.worldBooks, latest.worldBooks),
+                messages: mergeChangedCollection(before.messages, patch.messages, latest.messages),
+                memories: mergeChangedCollection(before.memories, patch.memories, latest.memories),
+                chapters: mergeChangedCollection(before.chapters, patch.chapters, latest.chapters),
+                personas: mergeChangedCollection(before.personas, patch.personas, latest.personas),
+              },
+        scope.revision,
+      );
+    },
+    [conditionalCommit, isScopeCurrent, readSnapshot],
+  );
+  const rememberRoom = useCallback(
+    (scope: SnapshotScope): Promise<void> => {
+      const task = lastRoomQueueRef.current.then(async () => {
+        if (db && scope.owner === owner && isScopeCurrent(scope, true))
+          await db.repository.setMeta(META_KEYS.lastRoomId, scope.roomId);
+      });
+      lastRoomQueueRef.current = task.catch(() => {});
+      return task;
+    },
+    [db, isScopeCurrent, owner],
+  );
+  const saveFreshRoom = useCallback(
+    async (before: Room, proposed: Room): Promise<Room> => {
+      if (!db) throw new Error('当前世界不可用，未保存修改。');
+      return db.repository.atomic(async (repository) => {
+        const latest = await repository.getRoom(before.id);
+        if (!latest) throw new Error('这个世界已经不存在了');
+        await repository.saveRoom(mergeChangedFields(before, proposed, latest));
+        const saved = await repository.getRoom(before.id);
+        if (!saved) throw new Error('世界保存后无法核验。');
+        return saved;
+      });
+    },
+    [db],
+  );
+  const saveSnapshotWithFreshRoom = useCallback(
+    async (
+      before: Room,
+      proposed: Room,
+      snapshotParts: Omit<Parameters<DramatisDb['repository']['saveSnapshot']>[0], 'room'>,
+    ): Promise<Room> => {
+      if (!db) throw new Error('当前世界不可用，未保存修改。');
+      return db.repository.atomic(async (repository) => {
+        const latest = await repository.getRoom(before.id);
+        if (!latest) throw new Error('这个世界已经不存在了');
+        const room = mergeChangedFields(before, proposed, latest);
+        await repository.saveSnapshot({ ...snapshotParts, room });
+        const saved = await repository.getRoom(before.id);
+        if (!saved) throw new Error('世界保存后无法核验。');
+        return saved;
+      });
+    },
+    [db],
+  );
 
   const refreshWorlds = useCallback(async () => {
     if (!db || activeOwnerRef.current !== owner) return;
@@ -421,45 +723,62 @@ export function useSession(db: DramatisDb | null): SessionApi {
   const reloadWorld = useCallback(async () => {
     const current = snapshotRef.current;
     if (!db || !current || activeOwnerRef.current !== owner || snapshotOwnerRef.current !== owner) return;
+    const scope = captureScope();
     const request = ++reloadRequestRef.current;
     const navigation = navigationRef.current;
-    const loaded = await db.repository.loadRoom(current.room.id);
+    // Both request order and snapshot revision must still match before a reload may publish.
+    await readSnapshot(
+      scope,
+      false,
+      false,
+      undefined,
+      () => reloadRequestRef.current === request && navigationRef.current === navigation,
+    );
     if (
       activeOwnerRef.current !== owner ||
+      scope.owner !== owner ||
       navigationRef.current !== navigation ||
-      reloadRequestRef.current !== request ||
-      snapshotRef.current !== current
+      reloadRequestRef.current !== request
     )
       return;
-    setSnapshot(loaded ? reuseUnchangedCollections(current, loaded) : null);
-  }, [db, owner, setSnapshot]);
+  }, [captureScope, db, owner, readSnapshot]);
 
   const refreshAll = useCallback(async () => {
     if (!db) return;
+    const scope = captureScope();
     await refreshWorlds();
     await refreshLibrary();
     await refreshPersonas();
-    await reloadWorld();
-  }, [db, refreshLibrary, refreshPersonas, refreshWorlds, reloadWorld]);
+    await readSnapshot(scope, false, false);
+  }, [captureScope, db, readSnapshot, refreshLibrary, refreshPersonas, refreshWorlds]);
 
   useEffect(() => {
     if (!db) return;
     let cancelled = false;
+    const restoreScope = captureScope();
+    const restoreRevision = snapshotRevisionRef.current;
     const navigation = navigationRef.current;
 
     void (async () => {
       try {
         const lastRoomId = await db.repository.getMeta<RoomId>(META_KEYS.lastRoomId);
-        if (lastRoomId !== null) {
+        if (
+          lastRoomId !== null &&
+          restoreScope.owner === owner &&
+          !cancelled &&
+          activeOwnerRef.current === owner &&
+          isScopeCurrent(restoreScope, true)
+        ) {
           const loaded = await db.repository.loadRoom(lastRoomId);
           if (
             loaded &&
             !cancelled &&
+            restoreScope.owner === owner &&
             activeOwnerRef.current === owner &&
             navigationRef.current === navigation &&
             snapshotRef.current === null
           )
-            setSnapshot(loaded);
+            conditionalCommit({ ...restoreScope, roomId: lastRoomId }, () => loaded, restoreRevision, true);
         }
         await refreshWorlds();
         await refreshLibrary();
@@ -476,7 +795,7 @@ export function useSession(db: DramatisDb | null): SessionApi {
     return () => {
       cancelled = true;
     };
-  }, [db, owner, refreshLibrary, refreshPersonas, refreshWorlds, setSnapshot]);
+  }, [captureScope, conditionalCommit, db, isScopeCurrent, owner, refreshLibrary, refreshPersonas, refreshWorlds]);
 
   // 没有身份就先造一个，否则新世界无从创建
   useEffect(() => {
@@ -497,19 +816,25 @@ export function useSession(db: DramatisDb | null): SessionApi {
   const openWorld = useCallback(
     async (id: RoomId) => {
       if (!db || activeOwnerRef.current !== owner) return;
+      const scope = beginSelection(id);
       const request = ++navigationRef.current;
       reloadRequestRef.current++;
-      const loaded = await db.repository.loadRoom(id);
-      if (activeOwnerRef.current !== owner || navigationRef.current !== request) return;
+      const loaded = await readSnapshot(scope, true);
+      if (
+        activeOwnerRef.current !== owner ||
+        scope.owner !== owner ||
+        navigationRef.current !== request ||
+        !isScopeCurrent(scope, true)
+      )
+        return;
       if (!loaded) {
         setError('这个世界已经不存在了');
         return;
       }
-      setSnapshot(loaded);
-      await db.repository.setMeta(META_KEYS.lastRoomId, id);
+      await rememberRoom(scope);
       await refreshWorlds();
     },
-    [db, owner, refreshWorlds, setSnapshot],
+    [beginSelection, db, isScopeCurrent, owner, readSnapshot, refreshWorlds, rememberRoom],
   );
 
   const createWorld = useCallback(
@@ -556,6 +881,7 @@ export function useSession(db: DramatisDb | null): SessionApi {
         worldTime: input.worldTime ?? '',
       });
 
+      const scope = beginSelection(plan.room.id);
       await db.repository.saveSnapshot({
         room: plan.room,
         conversations: [plan.conversation],
@@ -563,30 +889,28 @@ export function useSession(db: DramatisDb | null): SessionApi {
         instances: plan.createdInstances,
         cards,
       });
-      await db.repository.setMeta(META_KEYS.lastRoomId, plan.room.id);
-
-      const loaded = await db.repository.loadRoom(plan.room.id);
-      setSnapshot(loaded);
+      if (await readSnapshot(scope, true)) await rememberRoom(scope);
       await refreshWorlds();
       await refreshLibrary();
       return plan.room.id;
     },
-    [db, refreshLibrary, refreshWorlds, setSnapshot],
+    [beginSelection, db, readSnapshot, refreshLibrary, refreshWorlds, rememberRoom],
   );
 
   const deleteWorld = useCallback(
     async (id: RoomId) => {
       if (!db) return;
+      const scope = captureScope();
       await db.repository.deleteRoom(id);
 
-      const current = snapshotRef.current;
-      if (current?.room.id === id) {
-        setSnapshot(null);
-        await db.repository.setMeta(META_KEYS.lastRoomId, null);
+      if (scope.roomId === id && isScopeCurrent(scope)) {
+        const cleared = beginSelection(null);
+        conditionalCommit(cleared, () => null, undefined, true);
+        await rememberRoom(cleared);
       }
       await refreshWorlds();
     },
-    [db, refreshWorlds, setSnapshot],
+    [beginSelection, captureScope, conditionalCommit, db, isScopeCurrent, refreshWorlds, rememberRoom],
   );
 
   const renameWorld = useCallback(
@@ -668,9 +992,9 @@ export function useSession(db: DramatisDb | null): SessionApi {
     async (id: ConversationId) => {
       const current = snapshotRef.current;
       if (!db || !current || activeOwnerRef.current !== owner || snapshotOwnerRef.current !== owner) return;
-      if (current.room.activeConversationId === id) return;
       const worldId = current.room.id;
-      const beforeBudget = budgetWriteVersion(current.room.budget);
+      // Any selection, including reselecting the visible conversation, cancels older in-flight choices.
+      const selection = beginSelection(worldId);
       const navigation = ++navigationRef.current;
       reloadRequestRef.current++;
       const switched = await db.repository.atomic(async (repository) => {
@@ -692,7 +1016,13 @@ export function useSession(db: DramatisDb | null): SessionApi {
         return { room: saved, conversation, scene };
       });
       const latest = snapshotRef.current;
-      if (activeOwnerRef.current !== owner || navigationRef.current !== navigation || latest?.room.id !== worldId)
+      if (
+        activeOwnerRef.current !== owner ||
+        selection.owner !== owner ||
+        navigationRef.current !== navigation ||
+        !isScopeCurrent(selection, true) ||
+        latest?.room.id !== worldId
+      )
         return;
       const merge = <T extends { id: string; updatedAt: string }>(items: T[], incoming: T): T[] => {
         const previous = items.find((item) => item.id === incoming.id);
@@ -707,26 +1037,27 @@ export function useSession(db: DramatisDb | null): SessionApi {
       const presenceChanges = scene
         ? new Map(syncPresenceForScene(latest.instances, scene).map((instance) => [instance.id, instance]))
         : null;
-      const budget =
-        budgetWriteVersion(latest.room.budget) === beforeBudget && latest.room.updatedAt <= switched.room.updatedAt
-          ? switched.room.budget
-          : latest.room.budget;
-      setSnapshot({
-        ...latest,
-        conversations,
-        scenes,
-        room: {
-          ...latest.room,
-          activeConversationId: id,
-          budget,
-          updatedAt: latest.room.updatedAt > switched.room.updatedAt ? latest.room.updatedAt : switched.room.updatedAt,
+      const room: Room = {
+        ...current.room,
+        activeConversationId: id,
+        budget: switched.room.budget,
+        updatedAt: switched.room.updatedAt,
+      };
+      await commitPatch(
+        selection,
+        current,
+        {
+          conversations,
+          scenes,
+          room,
+          instances: presenceChanges
+            ? latest.instances.map((instance) => presenceChanges.get(instance.id) ?? instance)
+            : latest.instances,
         },
-        instances: presenceChanges
-          ? latest.instances.map((instance) => presenceChanges.get(instance.id) ?? instance)
-          : latest.instances,
-      });
+        id,
+      );
     },
-    [db, owner, setSnapshot],
+    [beginSelection, commitPatch, db, isScopeCurrent, owner],
   );
 
   const startConversation = useCallback(
@@ -734,6 +1065,7 @@ export function useSession(db: DramatisDb | null): SessionApi {
       const current = snapshotRef.current;
       if (!db || !current) return null;
 
+      const selection = beginSelection(current.room.id);
       const sourceConversation =
         current.conversations.find((item) => item.id === current.room.activeConversationId) ?? null;
       const extraKeywords = [
@@ -783,14 +1115,13 @@ export function useSession(db: DramatisDb | null): SessionApi {
       const worldBookIds = [...new Set([...plan.room.worldBookIds, ...(input.worldBookIds ?? [])])];
       const room: Room = { ...plan.room, worldBookIds, updatedAt: nowIso() };
 
-      await db.repository.saveSnapshot({
-        room,
+      await saveSnapshotWithFreshRoom(current.room, room, {
         conversations: [plan.conversation],
         scenes: [plan.scene],
         instances: plan.createdInstances,
         cards,
       });
-      await db.repository.setMeta(META_KEYS.lastRoomId, room.id);
+      await rememberRoom(selection);
 
       // 新对话只带一部分人上台，其余人应当转为「在幕后」：
       // 名单是权威，presence 跟着名单走（T10）
@@ -800,13 +1131,12 @@ export function useSession(db: DramatisDb | null): SessionApi {
 
       // 顺序 90：开场白已从卡上删掉，新对话不再自动生成角色开场消息
 
-      const loaded = await db.repository.loadRoom(room.id);
-      setSnapshot(loaded);
+      await readSnapshot(selection, false, true, { kind: 'target', id: plan.conversation.id });
       await refreshWorlds();
       await refreshLibrary();
       return { conversation: plan.conversation, attachments };
     },
-    [db, refreshLibrary, refreshWorlds, setSnapshot],
+    [beginSelection, db, readSnapshot, refreshLibrary, refreshWorlds, rememberRoom, saveSnapshotWithFreshRoom],
   );
 
   const openSideConversation = useCallback(async (): Promise<Conversation | null> => {
@@ -819,6 +1149,7 @@ export function useSession(db: DramatisDb | null): SessionApi {
       return existing;
     }
 
+    const selection = beginSelection(current.room.id);
     const now = nowIso();
     const conversation: Conversation = {
       id: asConversationId(newId()),
@@ -838,33 +1169,47 @@ export function useSession(db: DramatisDb | null): SessionApi {
     };
     const room: Room = { ...current.room, activeConversationId: conversation.id, updatedAt: now };
 
-    await db.repository.saveConversation(conversation);
-    await db.repository.saveRoom(room);
-    setSnapshot({ ...current, room, conversations: [...current.conversations, conversation] });
+    await db.repository.atomic(async (repository) => {
+      const latest = await repository.getRoom(current.room.id);
+      if (!latest) throw new Error('这个世界已经不存在了');
+      await repository.saveConversation(conversation);
+      await repository.saveRoom(mergeChangedFields(current.room, room, latest));
+    });
+    const committed = await commitPatch(
+      selection,
+      current,
+      {
+        room,
+        conversations: [...current.conversations, conversation],
+      },
+      conversation.id,
+    );
+    if (committed) await rememberRoom(selection);
     return conversation;
-  }, [db, openConversation, setSnapshot]);
+  }, [beginSelection, commitPatch, db, openConversation, rememberRoom]);
 
   const updateConversation = useCallback(
     async (patch: Partial<Conversation>) => {
       const current = snapshotRef.current;
+      const scope = captureScope();
       if (!db || !current) return;
       const target = current.conversations.find((item) => item.id === current.room.activeConversationId);
       if (!target) return;
 
       const next: Conversation = { ...target, ...patch, id: target.id, roomId: target.roomId, updatedAt: nowIso() };
       await db.repository.saveConversation(next);
-      setSnapshot({
-        ...current,
+      await commitPatch(scope, current, {
         conversations: current.conversations.map((item) => (item.id === next.id ? next : item)),
       });
     },
-    [db, setSnapshot],
+    [db, captureScope, commitPatch],
   );
 
   /** 按 id 改名（左栏列表用）：不动「当前是哪条对话」，所以不会打断对话。 */
   const renameConversation = useCallback(
     async (id: ConversationId, title: string) => {
       const current = snapshotRef.current;
+      const scope = captureScope();
       if (!db || !current) return;
       const target = current.conversations.find((item) => item.id === id);
       if (!target) return;
@@ -873,61 +1218,65 @@ export function useSession(db: DramatisDb | null): SessionApi {
 
       const renamed: Conversation = { ...target, title: next, updatedAt: nowIso() };
       await db.repository.saveConversation(renamed);
-      setSnapshot({
-        ...current,
+      await commitPatch(scope, current, {
         conversations: current.conversations.map((item) => (item.id === renamed.id ? renamed : item)),
       });
     },
-    [db, setSnapshot],
+    [db, captureScope, commitPatch],
   );
 
   const archiveConversation = useCallback(
     async (id: ConversationId): Promise<ArchiveReport | null> => {
       const current = snapshotRef.current;
+      const scope = captureScope();
       if (!db || !current) return null;
 
       const report = await db.repository.archiveConversation(id);
-      const loaded = await db.repository.loadRoom(current.room.id);
-      if (loaded) setSnapshot(loaded);
+      await readSnapshot(scope, false, true, { kind: 'latest', excludedConversationId: id });
       await refreshWorlds();
       return report;
     },
-    [db, refreshWorlds, setSnapshot],
+    [db, refreshWorlds, captureScope, readSnapshot],
   );
 
   const deleteConversation = useCallback(
     async (id: ConversationId) => {
       const current = snapshotRef.current;
+      const scope = captureScope();
       if (!db || !current) return;
 
       await db.repository.deleteConversation(id);
-      const loaded = await db.repository.loadRoom(current.room.id);
-      if (loaded) setSnapshot(loaded);
+      await readSnapshot(scope, false, true, { kind: 'latest' });
       await refreshWorlds();
     },
-    [db, refreshWorlds, setSnapshot],
+    [db, refreshWorlds, captureScope, readSnapshot],
   );
 
   const deleteArchivedConversation = useCallback(
     async (id: ConversationId): Promise<DeletionFeedback> => {
       const current = snapshotRef.current;
+      const scope = captureScope();
       if (!db || !current) return { ok: false, applied: false, message: '本机数据尚未就绪，请稍后再试。' };
       return deleteWithFeedback(
         () => db.repository.deleteConversation(id),
         async () => {
-          const loaded = await db.repository.loadRoom(current.room.id);
-          if (loaded === null) throw new Error('当前世界无法重新读取');
-          setSnapshot(loaded);
+          if (
+            isScopeCurrent(scope) &&
+            !(await readSnapshot(scope, false, true, { kind: 'latest' })) &&
+            isScopeCurrent(scope)
+          )
+            throw new Error('当前世界无法重新读取');
           await refreshWorlds();
         },
       );
     },
-    [db, refreshWorlds, setSnapshot],
+    [db, refreshWorlds, captureScope, isScopeCurrent, readSnapshot],
   );
 
   const appendMessages = useCallback(
     (messages: readonly Message[], onPersisted?: () => void): Promise<void> => {
       const batch = [...messages];
+      const scope = captureScope();
       const run = async (): Promise<void> => {
         // 等前一笔真正写完后再读最新快照；两个调用不能并发读到相同的 localSeq。
         const current = snapshotRef.current;
@@ -943,7 +1292,7 @@ export function useSession(db: DramatisDb | null): SessionApi {
         if (activeOwnerRef.current !== owner) return;
         // 写库期间同步可能已更新快照；按最新快照合并，不能覆盖它。
         const latest = snapshotRef.current;
-        if (latest === null || latest.room.id !== roomId) {
+        if (!isScopeCurrent(scope) || latest === null || latest.room.id !== roomId) {
           // 用户恰好切换了世界：旧世界的消息已落库，不要塞进新世界快照。
           await refreshWorlds();
           return;
@@ -953,15 +1302,29 @@ export function useSession(db: DramatisDb | null): SessionApi {
         let nextMessages: Message[];
         if (latest === current) {
           nextMessages = [...latest.messages, ...stamped];
-          setSnapshot({ ...latest, messages: nextMessages });
+          conditionalCommit(scope, (fresh) => (fresh === null ? null : { ...fresh, messages: nextMessages }));
         } else {
+          const revision = snapshotRevisionRef.current;
           nextMessages = await db.repository.listMessages(roomId);
           const fresh = snapshotRef.current;
-          if (fresh === null || fresh.room.id !== roomId) {
+          if (!isScopeCurrent(scope) || fresh === null || fresh.room.id !== roomId) {
             await refreshWorlds();
             return;
           }
-          setSnapshot({ ...fresh, messages: nextMessages });
+          if (
+            !conditionalCommit(
+              scope,
+              (visible) => (visible === null ? null : { ...visible, messages: nextMessages }),
+              revision,
+            )
+          ) {
+            await readSnapshot(scope, false, true, { kind: 'latest' });
+            if (!isScopeCurrent(scope)) {
+              await refreshWorlds();
+              return;
+            }
+            nextMessages = snapshotRef.current?.messages ?? nextMessages;
+          }
         }
         // 与快照更新同批提交；并发全量刷新若已经读到这批消息，不重复加数。
         if (activeOwnerRef.current !== owner) return;
@@ -981,27 +1344,28 @@ export function useSession(db: DramatisDb | null): SessionApi {
       appendQueueRef.current = task.catch(() => {});
       return task;
     },
-    [db, owner, refreshWorlds, setSnapshot],
+    [db, owner, captureScope, isScopeCurrent, conditionalCommit, readSnapshot, refreshWorlds],
   );
 
   const updateMessage = useCallback(
     async (id: MessageId, patch: Partial<Message>): Promise<Message | null> => {
       const current = snapshotRef.current;
+      const scope = captureScope();
       if (!db || !current) return null;
       const updated = await db.repository.updateMessage(id, patch);
       if (!updated) return null;
-      setSnapshot({
-        ...current,
+      await commitPatch(scope, current, {
         messages: current.messages.map((message) => (message.id === id ? updated : message)),
       });
       return updated;
     },
-    [db, setSnapshot],
+    [db, captureScope, commitPatch],
   );
 
   const updateScene = useCallback(
     async (patch: Partial<Scene>) => {
       const current = snapshotRef.current;
+      const scope = captureScope();
       if (!db || !current) return;
 
       const conversation = current.conversations.find((item) => item.id === current.room.activeConversationId);
@@ -1010,54 +1374,70 @@ export function useSession(db: DramatisDb | null): SessionApi {
 
       const next: Scene = { ...scene, ...patch, id: scene.id, roomId: scene.roomId };
       await db.repository.saveScene(next);
-      setSnapshot({
-        ...current,
+      await commitPatch(scope, current, {
         scenes: current.scenes.map((item) => (item.id === next.id ? next : item)),
       });
     },
-    [db, setSnapshot],
+    [db, captureScope, commitPatch],
   );
 
   const setWorldScene = useCallback(
-    async (patch: Partial<Scene>, onEffect?: (effect: AdminSceneEffect) => void): Promise<Scene | null> => {
+    async (
+      patch: Partial<Scene>,
+      targetConversationId: ConversationId | undefined,
+      expectedRoomId?: RoomId,
+      onEffect?: (effect: AdminSceneEffect) => void,
+    ): Promise<Scene | null> => {
       const current = snapshotRef.current;
-      if (!db || !current) return null;
-
-      const mains = current.conversations
-        .filter((item) => item.kind === 'main' && item.archivedAt === null)
-        .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
-      const target =
-        current.conversations.find((item) => item.id === current.room.activeConversationId && item.kind === 'main') ??
-        mains[0] ??
-        null;
-      if (!target) return null;
-
-      const existing = current.scenes.find((item) => item.id === target.activeSceneId) ?? null;
-      const now = nowIso();
-
-      // 主对话还没有场景时顺手开一个：管理员说「把地点设成酒馆」，
-      // 用户应该马上看到场景存在，而不是收到一句「没有场景可改」
+      const scope = captureScope();
+      if (
+        !db ||
+        !current ||
+        !targetConversationId ||
+        (expectedRoomId !== undefined && current.room.id !== expectedRoomId)
+      )
+        return null;
+      const roomId = current.room.id;
+      const target = await db.repository.getConversation(targetConversationId);
+      if (
+        !target ||
+        target.roomId !== roomId ||
+        target.kind !== 'main' ||
+        target.archivedAt !== null ||
+        target.deletedAt !== null
+      )
+        return null;
+      const existing = target.activeSceneId === null ? null : await db.repository.getScene(target.activeSceneId);
+      if (
+        target.activeSceneId !== null &&
+        (!existing || existing.roomId !== roomId || existing.conversationId !== target.id)
+      )
+        return null;
+      // The explicit target still belongs to the captured room; a selection change only blocks its UI commit.
+      const fields = {
+        ...(patch.title === undefined ? {} : { title: patch.title }),
+        ...(patch.location === undefined ? {} : { location: patch.location }),
+        ...(patch.worldTime === undefined ? {} : { worldTime: patch.worldTime }),
+        ...(patch.summary === undefined ? {} : { summary: patch.summary }),
+        ...(patch.castPolicy === undefined ? {} : { castPolicy: patch.castPolicy }),
+      };
       const next: Scene =
         existing === null
-          ? createSceneFor(
-              current.room.id,
-              target.id,
-              target.stateSnapshot.map((item) => item.instanceId),
-              {
-                title: patch.title ?? '开场',
-                summary: patch.summary ?? '',
-                location: patch.location ?? '',
-                worldTime: patch.worldTime ?? '',
-              },
-            )
-          : {
-              ...existing,
-              ...patch,
-              id: existing.id,
-              roomId: existing.roomId,
-              conversationId: existing.conversationId,
-            };
-
+          ? {
+              ...createSceneFor(
+                roomId,
+                target.id,
+                target.stateSnapshot.map((item) => item.instanceId),
+                {
+                  title: fields.title ?? '开场',
+                  summary: fields.summary ?? '',
+                  location: fields.location ?? '',
+                  worldTime: fields.worldTime ?? '',
+                },
+              ),
+              ...fields,
+            }
+          : { ...existing, ...fields };
       await db.repository.saveScene(next);
       const report = (activeLinked: boolean) => {
         try {
@@ -1080,32 +1460,26 @@ export function useSession(db: DramatisDb | null): SessionApi {
       };
       report(existing !== null);
       if (existing === null) {
-        await db.repository.saveConversation({ ...target, activeSceneId: next.id, updatedAt: now });
+        await db.repository.saveConversation({ ...target, activeSceneId: next.id, updatedAt: nowIso() });
         report(true);
       }
 
       const latest = snapshotRef.current;
-      if (
-        activeOwnerRef.current !== owner ||
-        !latest ||
-        latest.room.id !== current.room.id ||
-        latest.room.activeConversationId !== current.room.activeConversationId
-      )
-        return next;
-      setSnapshot({
-        ...latest,
-        scenes:
-          existing === null
-            ? [...latest.scenes.filter((item) => item.id !== next.id), next]
-            : latest.scenes.map((item) => (item.id === next.id ? next : item)),
-        conversations:
-          existing === null
-            ? latest.conversations.map((item) => (item.id === target.id ? { ...item, activeSceneId: next.id } : item))
-            : latest.conversations,
-      });
+      if (latest && isScopeCurrent(scope))
+        await commitPatch(scope, current, {
+          scenes: current.scenes.some((item) => item.id === next.id)
+            ? current.scenes.map((item) => (item.id === next.id ? next : item))
+            : [...current.scenes, next],
+          conversations:
+            existing === null
+              ? current.conversations.map((item) =>
+                  item.id === target.id ? { ...item, activeSceneId: next.id } : item,
+                )
+              : current.conversations,
+        });
       return next;
     },
-    [db, owner, setSnapshot],
+    [db, captureScope, commitPatch, isScopeCurrent],
   );
 
   const startNewScene = useCallback(
@@ -1117,6 +1491,7 @@ export function useSession(db: DramatisDb | null): SessionApi {
       cast?: readonly InstanceId[];
     }): Promise<Scene | null> => {
       const current = snapshotRef.current;
+      const scope = captureScope();
       if (!db || !current) return null;
 
       const active = current.conversations.find((item) => item.id === current.room.activeConversationId);
@@ -1145,8 +1520,7 @@ export function useSession(db: DramatisDb | null): SessionApi {
       const synced = syncPresenceForScene(current.instances, nextScene, now);
       for (const instance of synced) await db.repository.saveInstance(instance);
 
-      setSnapshot({
-        ...current,
+      await commitPatch(scope, current, {
         scenes: [
           ...current.scenes.map((scene) => (closedScene && scene.id === closedScene.id ? closedScene : scene)),
           nextScene,
@@ -1156,12 +1530,13 @@ export function useSession(db: DramatisDb | null): SessionApi {
       });
       return nextScene;
     },
-    [db, setSnapshot],
+    [db, captureScope, commitPatch],
   );
 
   const addInstance = useCallback(
     async (card: Card): Promise<CharacterInstance | null> => {
       const current = snapshotRef.current;
+      const scope = captureScope();
       if (!db || !current) return null;
 
       // 世界里已经有过这个角色的实例就复用：同一个角色在世界里只应该存在一份
@@ -1188,10 +1563,9 @@ export function useSession(db: DramatisDb | null): SessionApi {
 
       await db.repository.saveCard(card);
       if (!existing) await db.repository.saveInstance(instance);
-      await db.repository.saveRoom(room);
+      await saveFreshRoom(current.room, room);
 
-      setSnapshot({
-        ...current,
+      await commitPatch(scope, current, {
         room,
         scenes,
         instances: existing ? current.instances : [...current.instances, instance],
@@ -1200,12 +1574,13 @@ export function useSession(db: DramatisDb | null): SessionApi {
       await refreshWorlds();
       return instance;
     },
-    [db, refreshWorlds, setSnapshot],
+    [db, refreshWorlds, captureScope, commitPatch, saveFreshRoom],
   );
 
   const removeInstance = useCallback(
     async (id: InstanceId) => {
       const current = snapshotRef.current;
+      const scope = captureScope();
       if (!db || !current) return;
 
       const room: Room = { ...current.room, instanceIds: current.room.instanceIds.filter((item) => item !== id) };
@@ -1220,40 +1595,40 @@ export function useSession(db: DramatisDb | null): SessionApi {
         scenes = scenes.map((item) => (item.id === nextScene.id ? nextScene : item));
       }
 
-      await db.repository.saveRoom(room);
+      await saveFreshRoom(current.room, room);
       await db.repository.deleteInstance(id);
 
-      setSnapshot({
-        ...current,
+      await commitPatch(scope, current, {
         room,
         scenes,
         instances: current.instances.filter((item) => item.id !== id),
       });
       await refreshWorlds();
     },
-    [db, refreshWorlds, setSnapshot],
+    [db, refreshWorlds, captureScope, commitPatch, saveFreshRoom],
   );
 
   const updateInstance = useCallback(
     async (id: InstanceId, patch: Partial<CharacterInstance>) => {
       const current = snapshotRef.current;
+      const scope = captureScope();
       if (!db || !current) return;
       const instance = current.instances.find((item) => item.id === id);
       if (!instance) return;
 
       const next: CharacterInstance = { ...instance, ...patch, updatedAt: nowIso() };
       await db.repository.saveInstance(next);
-      setSnapshot({
-        ...current,
+      await commitPatch(scope, current, {
         instances: current.instances.map((item) => (item.id === id ? next : item)),
       });
     },
-    [db, setSnapshot],
+    [db, captureScope, commitPatch],
   );
 
   const setRelationship = useCallback(
     async (id: InstanceId, field: RelationshipField, value: number) => {
       const current = snapshotRef.current;
+      const scope = captureScope();
       if (!db || !current) return;
       const instance = current.instances.find((item) => item.id === id);
       if (!instance) return;
@@ -1261,18 +1636,19 @@ export function useSession(db: DramatisDb | null): SessionApi {
       const next = setRelationshipFieldForInstance(instance, field, value, { at: nowIso() });
       if (next === instance) return; // 值没变：不写库、不重建快照
       await db.repository.saveInstance(next);
-      setSnapshot({
-        ...current,
+      await commitPatch(scope, current, {
         instances: current.instances.map((item) => (item.id === id ? next : item)),
       });
     },
-    [db, setSnapshot],
+    [db, captureScope, commitPatch],
   );
 
   const revertAffectChange = useCallback(
     async (id: InstanceId, changeId: string) => {
       const current = snapshotRef.current;
-      const ownsSession = () => activeOwnerRef.current === owner && snapshotOwnerRef.current === owner;
+      const scope = captureScope();
+      const ownsAccount = () => activeOwnerRef.current === owner && snapshotOwnerRef.current === owner;
+      const ownsSession = () => ownsAccount() && isScopeCurrent(scope);
       if (!db || !current || !ownsSession()) throw new Error('当前账户或世界已变化，未执行撤销。');
       const worldId = current.room.id;
       if (!current.instances.some((item) => item.id === id)) throw new Error('当前世界找不到这个角色，未执行撤销。');
@@ -1301,19 +1677,19 @@ export function useSession(db: DramatisDb | null): SessionApi {
         if (!ownsSession()) throw new Error('当前账户已变化，事务已撤回。');
       });
       // A committed result belongs to its captured DB. Never restore its old world or session snapshot.
-      if (!ownsSession() || snapshotRef.current?.room.id !== worldId) return;
+      if (!ownsAccount() || snapshotRef.current?.room.id !== worldId) return;
+      const publicationScope = captureScope();
       const persisted = assertInstance(await db.store.get<CharacterInstance>(COLLECTIONS.instances, id));
       if (!historyOf(persisted).some((change) => change.reversionOf === changeId))
         throw new Error('撤销结果已变化，请刷新角色状态后核对。');
       const latest = snapshotRef.current;
-      if (!ownsSession() || !latest || latest.room.id !== worldId) return;
+      if (!ownsAccount() || !latest || latest.room.id !== worldId || !isScopeCurrent(publicationScope)) return;
       const visible = latest.instances.find((item) => item.id === id);
       if (!visible || !latest.room.instanceIds.includes(id))
         throw new Error('角色已离开当前世界，请刷新后核对撤销结果。');
       // A newer reload/publication wins over a read that was delayed after capturing persisted state.
       if (visible.updatedAt > persisted.updatedAt) return;
-      setSnapshot({
-        ...latest,
+      await commitPatch(publicationScope, latest, {
         instances: latest.instances.map((item) =>
           item.id === id
             ? {
@@ -1326,11 +1702,12 @@ export function useSession(db: DramatisDb | null): SessionApi {
         ),
       });
     },
-    [db, owner, setSnapshot],
+    [db, owner, captureScope, isScopeCurrent, commitPatch],
   );
   const setPresence = useCallback(
     async (id: InstanceId, presence: Presence) => {
       const current = snapshotRef.current;
+      const scope = captureScope();
       if (!db || !current) return;
       const instance = current.instances.find((item) => item.id === id);
       if (!instance) return;
@@ -1354,29 +1731,32 @@ export function useSession(db: DramatisDb | null): SessionApi {
         }
       }
 
-      setSnapshot({
-        ...current,
+      await commitPatch(scope, current, {
         scenes,
         instances: current.instances.map((item) => (item.id === id ? next : item)),
       });
     },
-    [db, setSnapshot],
+    [db, captureScope, commitPatch],
   );
 
   const deleteMessage = useCallback(
     async (id: MessageId) => {
       const current = snapshotRef.current;
+      const scope = captureScope();
       if (!db || !current) return;
       await db.repository.deleteMessage(id);
-      setSnapshot({ ...current, messages: current.messages.filter((message) => message.id !== id) });
+      await commitPatch(scope, current, {
+        messages: current.messages.filter((message) => message.id !== id),
+      });
       await refreshWorlds();
     },
-    [db, refreshWorlds, setSnapshot],
+    [db, refreshWorlds, captureScope, commitPatch],
   );
 
   const setPersona = useCallback(
     async (persona: Persona) => {
       const current = snapshotRef.current;
+      const scope = captureScope();
       if (!db || !current) return;
       const conversation = current.conversations.find((item) => item.id === current.room.activeConversationId);
       if (!conversation) return;
@@ -1396,14 +1776,13 @@ export function useSession(db: DramatisDb | null): SessionApi {
         updatedAt: nowIso(),
       };
       await db.repository.saveConversation(nextConversation);
-      await db.repository.saveRoom(room);
-      setSnapshot({
-        ...current,
+      await saveFreshRoom(current.room, room);
+      await commitPatch(scope, current, {
         room,
         conversations: current.conversations.map((item) => (item.id === nextConversation.id ? nextConversation : item)),
       });
     },
-    [db, setSnapshot],
+    [db, captureScope, commitPatch, saveFreshRoom],
   );
 
   const savePersona = useCallback(
@@ -1485,20 +1864,20 @@ export function useSession(db: DramatisDb | null): SessionApi {
   const revertTurn = useCallback(
     async (turnId: string) => {
       const current = snapshotRef.current;
+      const scope = captureScope();
       if (!db || !current) return;
 
       // 顺序 77：记忆与情绪在一个事务里撤（见 turn-write.ts），撤完再对齐界面状态。
       const { revertedInstances } = await revertTurnWrites(db.store, current.room.id, turnId);
 
-      setSnapshot({
-        ...current,
+      await commitPatch(scope, current, {
         memories: current.memories.filter((memory) => !memory.sourceTurnIds.includes(turnId)),
         instances: current.instances.map(
           (instance) => revertedInstances.find((item) => item.id === instance.id) ?? instance,
         ),
       });
     },
-    [db, setSnapshot],
+    [db, captureScope, commitPatch],
   );
 
   /**
@@ -1512,6 +1891,7 @@ export function useSession(db: DramatisDb | null): SessionApi {
   const rewriteTurn = useCallback(
     async (input: { messageId: MessageId; patch: Partial<Message>; turnId: string }): Promise<Message | null> => {
       const current = snapshotRef.current;
+      const scope = captureScope();
       if (!db || !current) return null;
 
       const { message, reverted } = await rewriteTurnWrites(db.store, {
@@ -1522,8 +1902,7 @@ export function useSession(db: DramatisDb | null): SessionApi {
       });
       if (message === null) return null;
 
-      setSnapshot({
-        ...current,
+      await commitPatch(scope, current, {
         messages: current.messages.map((item) => (item.id === message.id ? message : item)),
         memories: current.memories.filter((memory) => !memory.sourceTurnIds.includes(input.turnId)),
         instances: current.instances.map(
@@ -1533,37 +1912,41 @@ export function useSession(db: DramatisDb | null): SessionApi {
 
       return message;
     },
-    [db, setSnapshot],
+    [db, captureScope, commitPatch],
   );
 
   const updateMemory = useCallback(
     async (id: EventId, patch: Partial<MemoryEvent>) => {
       const current = snapshotRef.current;
+      const scope = captureScope();
       if (!db || !current) return;
       const updated = await db.repository.updateMemory(id, patch);
       if (!updated) return;
-      setSnapshot({
-        ...current,
+      await commitPatch(scope, current, {
         memories: current.memories.map((memory) => (memory.id === id ? updated : memory)),
       });
     },
-    [db, setSnapshot],
+    [db, captureScope, commitPatch],
   );
 
   const deleteMemory = useCallback(
     async (id: EventId) => {
       const current = snapshotRef.current;
+      const scope = captureScope();
       if (!db || !current) return;
       await db.repository.deleteMemory(id);
-      setSnapshot({ ...current, memories: current.memories.filter((memory) => memory.id !== id) });
+      await commitPatch(scope, current, {
+        memories: current.memories.filter((memory) => memory.id !== id),
+      });
     },
-    [db, setSnapshot],
+    [db, captureScope, commitPatch],
   );
 
   /** 被回想过的记忆累计次数，「越想越牢」参与后续评分。 */
   const markRecalled = useCallback(
     async (events: readonly MemoryEvent[], now: string) => {
       const current = snapshotRef.current;
+      const scope = captureScope();
       if (!db || !current || events.length === 0) return;
 
       /*
@@ -1575,85 +1958,71 @@ export function useSession(db: DramatisDb | null): SessionApi {
         events.map((event) => event.id),
         now,
       );
-      setSnapshot({
-        ...current,
+      await commitPatch(scope, current, {
         memories: current.memories.map((memory) => touched.find((item) => item.id === memory.id) ?? memory),
       });
     },
-    [db, setSnapshot],
+    [db, captureScope, commitPatch],
   );
 
   const attachWorldBook = useCallback(
     async (book: WorldBook) => {
-      const targetWorldId = snapshotRef.current?.room.id;
-      if (!db || !targetWorldId) return;
+      const current = snapshotOwnerRef.current === owner ? snapshotRef.current : null;
+      const scope = captureScope();
+      if (!db || !current) return;
       await db.repository.saveWorldBook(book);
       await refreshLibrary();
-      const current = snapshotRef.current;
-      if (!current || current.room.id !== targetWorldId || current.room.worldBookIds.includes(book.id)) return;
-      const room: Room = {
-        ...current.room,
-        worldBookIds: [...current.room.worldBookIds, book.id],
-        updatedAt: nowIso(),
-      };
-      await db.repository.saveRoom(room);
-      const latest = snapshotRef.current;
-      if (!latest || latest.room.id !== targetWorldId) return;
-      setSnapshot({
-        ...latest,
-        room: {
-          ...latest.room,
-          worldBookIds: [...new Set([...latest.room.worldBookIds, book.id])],
-          updatedAt: room.updatedAt,
-        },
-        worldBooks: [...latest.worldBooks.filter((item) => item.id !== book.id), book],
+      const room = current.room.worldBookIds.includes(book.id)
+        ? current.room
+        : {
+            ...current.room,
+            worldBookIds: [...current.room.worldBookIds, book.id],
+            updatedAt: nowIso(),
+          };
+      if (room !== current.room) await saveFreshRoom(current.room, room);
+      await commitPatch(scope, current, {
+        ...(room === current.room ? {} : { room }),
+        worldBooks: [...current.worldBooks.filter((item) => item.id !== book.id), book],
       });
     },
-    [db, refreshLibrary, setSnapshot],
+    [captureScope, commitPatch, db, owner, refreshLibrary, saveFreshRoom],
   );
 
   const detachWorldBook = useCallback(
     async (id: WorldBookId) => {
-      const current = snapshotRef.current;
+      const current = snapshotOwnerRef.current === owner ? snapshotRef.current : null;
+      const scope = captureScope();
       if (!db || !current?.room.worldBookIds.includes(id)) return;
-      const targetWorldId = current.room.id;
       const room: Room = {
         ...current.room,
         worldBookIds: current.room.worldBookIds.filter((item) => item !== id),
         updatedAt: nowIso(),
       };
-      await db.repository.saveRoom(room);
-      const latest = snapshotRef.current;
-      if (!latest || latest.room.id !== targetWorldId) return;
-      setSnapshot({
-        ...latest,
-        room: {
-          ...latest.room,
-          worldBookIds: latest.room.worldBookIds.filter((item) => item !== id),
-          updatedAt: room.updatedAt,
-        },
-        worldBooks: latest.worldBooks.filter((book) => book.id !== id),
+      await saveFreshRoom(current.room, room);
+      await commitPatch(scope, current, {
+        room,
+        worldBooks: current.worldBooks.filter((book) => book.id !== id),
       });
     },
-    [db, setSnapshot],
+    [captureScope, commitPatch, db, owner, saveFreshRoom],
   );
 
   const saveCard = useCallback(
     async (card: Card) => {
+      const current = snapshotRef.current;
+      const scope = captureScope();
       if (!db) return;
       await db.repository.saveCard(card);
       await refreshLibrary();
 
       // 世界快照里的卡也要跟着更新，否则界面上还是旧的
-      const current = snapshotRef.current;
       if (current?.cards.some((item) => item.id === card.id)) {
-        setSnapshot({
-          ...current,
+        await commitPatch(scope, current, {
           cards: current.cards.map((item) => (item.id === card.id ? card : item)),
         });
       }
     },
-    [db, refreshLibrary, setSnapshot],
+    [db, refreshLibrary, captureScope, commitPatch],
   );
 
   const deleteCard = useCallback(
@@ -1667,50 +2036,45 @@ export function useSession(db: DramatisDb | null): SessionApi {
 
   const saveWorldBook = useCallback(
     async (book: WorldBook) => {
+      const current = snapshotRef.current;
+      const scope = captureScope();
       if (!db) return;
       await db.repository.saveWorldBook(book);
       await refreshLibrary();
 
       // 挂在这个世界上的世界书改了内容，prompt 里用的也得是新版本
-      const current = snapshotRef.current;
       if (current?.worldBooks.some((item) => item.id === book.id)) {
-        setSnapshot({
-          ...current,
+        await commitPatch(scope, current, {
           worldBooks: current.worldBooks.map((item) => (item.id === book.id ? book : item)),
         });
       }
     },
-    [db, refreshLibrary, setSnapshot],
+    [db, refreshLibrary, captureScope, commitPatch],
   );
 
   const deleteWorldBook = useCallback(
     async (id: WorldBookId) => {
-      const targetWorldId = snapshotRef.current?.room.id;
+      const current = snapshotOwnerRef.current === owner ? snapshotRef.current : null;
+      const scope = captureScope();
       if (!db) return;
       await db.repository.deleteWorldBook(id);
-      const current = snapshotRef.current;
-      if (current && current.room.id === targetWorldId && current.room.worldBookIds.includes(id)) {
+      if (current?.room.worldBookIds.includes(id)) {
         const room: Room = {
           ...current.room,
           worldBookIds: current.room.worldBookIds.filter((item) => item !== id),
           updatedAt: nowIso(),
         };
-        await db.repository.saveRoom(room);
-        const latest = snapshotRef.current;
-        if (latest && latest.room.id === targetWorldId)
-          setSnapshot({
-            ...latest,
-            room: {
-              ...latest.room,
-              worldBookIds: latest.room.worldBookIds.filter((item) => item !== id),
-              updatedAt: room.updatedAt,
-            },
-            worldBooks: latest.worldBooks.filter((book) => book.id !== id),
-          });
+        await saveFreshRoom(current.room, room);
+        await commitPatch(scope, current, {
+          room,
+          worldBooks: current.worldBooks.filter((book) => book.id !== id),
+        });
+      } else if (current?.worldBooks.some((book) => book.id === id)) {
+        await commitPatch(scope, current, { worldBooks: current.worldBooks.filter((book) => book.id !== id) });
       }
       await refreshLibrary();
     },
-    [db, refreshLibrary, setSnapshot],
+    [captureScope, commitPatch, db, owner, refreshLibrary, saveFreshRoom],
   );
 
   const runArtifactAction = useCallback(
@@ -1781,6 +2145,54 @@ export function useSession(db: DramatisDb | null): SessionApi {
   const inspectArtifact = useCallback(
     (id: MessageId, artifactId: string, action: ArtifactAction) => runArtifactAction(id, artifactId, action, true),
     [runArtifactAction],
+  );
+
+  const reverseArtifact = useCallback(
+    async (messageId: MessageId, artifactId: string) => {
+      const current = snapshotRef.current;
+      const scope = captureScope();
+      if (!db || !current) return;
+      const message = current.messages.find((item) => item.id === messageId && item.roomId === current.room.id);
+      const artifact = message?.artifacts?.find((item) => item.id === artifactId);
+      if (!message || !artifact || !isCompleteWorldBook(artifact.payload)) return;
+      try {
+        const book = await db.repository.getWorldBook(artifact.payload.id);
+        if (!book) throw Error('原世界书已不存在，不能反向修改');
+        const draft = reverseWorldBookDraft(artifact, book);
+        if (!isScopeCurrent(scope)) return;
+        const pending = {
+          id: newId(),
+          kind: 'world-book' as const,
+          title: draft.book.name,
+          summary: draft.summary,
+          status: 'pending' as const,
+          targetId: null,
+          payload: draft.book,
+          previousPayload: draft.previous,
+          baseUpdatedAt: draft.baseUpdatedAt,
+          createdAt: nowIso(),
+        };
+        // Use the session append queue, and omit the original model usage from this local draft.
+        const { usage: _usage, ...source } = message;
+        await appendMessages([
+          {
+            ...source,
+            id: newId() as MessageId,
+            role: 'admin',
+            speakerName: '世界管理员',
+            turnId: newId(),
+            content: '已起草反向修改；请核对具体差异后采纳。',
+            artifacts: [pending],
+            localSeq: 0,
+            createdAt: nowIso(),
+            updatedAt: nowIso(),
+          },
+        ]);
+      } catch (error) {
+        if (isScopeCurrent(scope)) setError(error instanceof Error ? error.message : String(error));
+      }
+    },
+    [appendMessages, captureScope, db, isScopeCurrent],
   );
 
   const conversation =
@@ -1920,6 +2332,7 @@ export function useSession(db: DramatisDb | null): SessionApi {
       discardArtifact,
       revokeArtifact,
       inspectArtifact,
+      reverseArtifact,
       setPersona,
       savePersona,
       deletePersona,
@@ -1966,6 +2379,7 @@ export function useSession(db: DramatisDb | null): SessionApi {
     rewriteTurn,
     revokeArtifact,
     inspectArtifact,
+    reverseArtifact,
     saveCard,
     savePersona,
     saveWorldBook,

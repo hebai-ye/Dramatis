@@ -1,6 +1,7 @@
 import {
   type AdminArtifact,
   type AdminDraft,
+  type ConversationId,
   createOpenAICompatibleProvider,
   createPlayerMessage,
   createTurnId,
@@ -11,6 +12,7 @@ import {
   needsWebBridge,
   newId,
   nowIso,
+  type RoomId,
 } from '@dramatis/core';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
@@ -42,7 +44,11 @@ export interface AdminChatApi {
   inspectRun: () => Promise<BridgeCommitOutcome>;
   busy: boolean;
   error: string | null;
-  send: (text: string, onAcceptance?: (outcome: SubmitOutcome) => void) => Promise<SubmitOutcome>;
+  send: (
+    text: string,
+    targetOrAcceptance?: ConversationId | ((outcome: SubmitOutcome) => void),
+    onAcceptance?: (outcome: SubmitOutcome) => void,
+  ) => Promise<SubmitOutcome>;
   stop: () => void;
   /**
    * 没有 API Key 时的网页版桥接（副对话）。
@@ -51,10 +57,21 @@ export interface AdminChatApi {
    * 东西里除了正文还有 `{"tool":…,"arguments":{…}}` 代码块——解析之后走的是与 API
    * 那条路**同一套校验与执行**（`parseAdminToolCall` → `execute`）。
    */
-  bridge: { prompt: string; binding?: ScopedAdminBridge['binding'] } | null;
+  bridge: AdminBridge | null;
   commitBridge: (raw: string) => Promise<BridgeCommitOutcome>;
   inspectBridge: () => Promise<BridgeCommitOutcome>;
   cancelBridge: () => void;
+}
+
+interface AdminRequestScope {
+  roomId: RoomId;
+  conversationId: ConversationId;
+  targetConversationId: ConversationId | null;
+  targetName: string | null;
+}
+interface AdminBridge extends Partial<AdminRequestScope> {
+  prompt: string;
+  binding?: ScopedAdminBridge['binding'];
 }
 
 function draftToArtifact(draft: AdminDraft): AdminArtifact {
@@ -81,6 +98,7 @@ function draftToArtifact(draft: AdminDraft): AdminArtifact {
         summary: draft.summary,
         status: 'pending',
         payload: draft.book,
+        previousPayload: draft.previous,
         baseUpdatedAt: draft.baseUpdatedAt,
       };
     case 'persona-upsert':
@@ -165,9 +183,7 @@ export function useAdminChat(options: {
     canStop: boolean;
     error: string | null;
   }>({ scope: null, runId: null, busy: false, canStop: false, error: null });
-  const [bridge, setBridge] = useState<{ prompt: string; binding?: ScopedAdminBridge['binding'] } | null>(() =>
-    loadBridge('admin'),
-  );
+  const [bridge, setBridge] = useState<AdminBridge | null>(() => loadBridge<AdminBridge>('admin'));
   useEffect(() => {
     saveBridge('admin', bridge);
   }, [bridge]);
@@ -256,7 +272,13 @@ export function useAdminChat(options: {
     [visible],
   );
   const send = useCallback(
-    async (text: string, onAcceptance?: (outcome: SubmitOutcome) => void): Promise<SubmitOutcome> => {
+    async (
+      text: string,
+      targetOrAcceptance?: ConversationId | ((outcome: SubmitOutcome) => void),
+      onAcceptance?: (outcome: SubmitOutcome) => void,
+    ): Promise<SubmitOutcome> => {
+      const targetConversationId = typeof targetOrAcceptance === 'string' ? targetOrAcceptance : undefined;
+      const accepted = typeof targetOrAcceptance === 'function' ? targetOrAcceptance : onAcceptance;
       if (scope && pendingApi.current.some((p) => sameAdminScope(p.scope, scope)))
         return { status: 'uncertain', reason: '上一轮保存结果待核对，正文和草稿已保留；请先只读核对。' };
       let outcome: SubmitOutcome = {
@@ -272,6 +294,7 @@ export function useAdminChat(options: {
         !conversation ||
         conversation.kind !== 'side' ||
         conversation.archivedAt !== null ||
+        conversation.deletedAt !== null ||
         bridge ||
         activeRef.current?.busy
       )
@@ -284,6 +307,47 @@ export function useAdminChat(options: {
       const op = begin();
       if (!op) return outcome;
       resetStreamState('admin');
+      const mains = session.conversations.filter(
+        (item) =>
+          item.roomId === world.id && item.kind === 'main' && item.archivedAt === null && item.deletedAt === null,
+      );
+      const requestedTarget = targetConversationId ?? (mains.length === 1 ? mains[0]?.id : undefined);
+      let target = null;
+      let targetScene = null;
+      try {
+        target = requestedTarget ? await db.repository.getConversation(requestedTarget) : null;
+        if (
+          target &&
+          (target.roomId !== world.id ||
+            target.kind !== 'main' ||
+            target.archivedAt !== null ||
+            target.deletedAt !== null)
+        )
+          target = null;
+        targetScene = target?.activeSceneId ? await db.repository.getScene(target.activeSceneId) : null;
+        if (
+          targetScene &&
+          (targetScene.roomId !== world.id ||
+            targetScene.conversationId !== target?.id ||
+            targetScene.deletedAt !== null)
+        )
+          targetScene = null;
+      } catch (error) {
+        const reason = error instanceof Error ? error.message : String(error);
+        phase(op, 'failed', { kind: 'error', text: reason });
+        finish(op);
+        return { status: 'rejected', reason };
+      }
+      if (!visible(op)) {
+        finish(op);
+        return outcome;
+      }
+      const requestScope: AdminRequestScope = {
+        roomId: world.id,
+        conversationId: conversation.id,
+        targetConversationId: target?.id ?? null,
+        targetName: target?.title ?? null,
+      };
       const history = session.messages;
       const player = createPlayerMessage({
         roomId: world.id,
@@ -296,7 +360,7 @@ export function useAdminChat(options: {
       });
       const accept = () => {
         outcome = { status: 'accepted' };
-        onAcceptance?.(outcome);
+        accepted?.(outcome);
       };
       try {
         await session.appendMessages([player], accept);
@@ -304,13 +368,15 @@ export function useAdminChat(options: {
         phase(op, 'preparing');
         if (needsWebBridge(providers.apiKey)) {
           const { prepareAdminSource } = await import('./admin-source');
-          const prepared = await prepareAdminSource(
+          const source = await prepareAdminSource(
             db.repository,
             { accountKey, roomId: world.id, conversationId: conversation.id },
             text,
             player.id,
+            requestScope.targetConversationId,
           );
           if (!visible(op)) throw new Error('起草来源已经变化，未发布旧提示词。');
+          const prepared: AdminBridge = { ...source, ...requestScope };
           saveBridge('admin', prepared, true);
           setBridge(prepared);
           phase(op, 'preparing');
@@ -388,7 +454,13 @@ export function useAdminChat(options: {
           buildAdminMessages({
             room: world,
             conversation,
-            scene: null,
+            scene: targetScene,
+            ...(requestScope.targetConversationId
+              ? {
+                  targetConversationId: requestScope.targetConversationId,
+                  targetName: requestScope.targetName ?? undefined,
+                }
+              : {}),
             instances: session.instances,
             cards: session.library.cards,
             worldBooks: session.library.worldBooks,
@@ -414,13 +486,47 @@ export function useAdminChat(options: {
               if (controller.signal.aborted || !visible(op)) throw new Error('起草来源已经变化，已停止执行工具。');
               observation?.markStarted();
               if (draft.kind === 'scene') {
+                if (!requestScope.targetConversationId) return '场景未设置：请先选择一条主对话作为目标。';
                 let lastEffect: AdminSceneEffect | null = null;
-                const applied = await session.setWorldScene(draft.patch, (effect) => {
-                  lastEffect = effect;
-                  adminProcessStore.sceneEffect(op.scope, op.runId, effect);
-                });
                 const artifact = draftToArtifact(draft);
-                artifacts.push(applied ? artifact : { ...artifact, status: 'pending' });
+                const recordUnlinked = (effect: AdminSceneEffect) => {
+                  artifacts.push({
+                    ...artifact,
+                    status: 'pending',
+                    targetId: effect.scene.id,
+                    summary: `目标「${requestScope.targetName ?? requestScope.targetConversationId}」：场景已写入，主对话关联待核对。`,
+                  });
+                  adminProcessStore.bindSceneTarget(op.scope, op.runId, artifact.id, effect.target);
+                  controller.abort();
+                };
+                let applied: Awaited<ReturnType<SessionApi['setWorldScene']>>;
+                try {
+                  applied = await session.setWorldScene(
+                    draft.patch,
+                    requestScope.targetConversationId,
+                    requestScope.roomId,
+                    (effect) => {
+                      lastEffect = effect;
+                      adminProcessStore.sceneEffect(op.scope, op.runId, effect);
+                    },
+                  );
+                } catch (error) {
+                  const effect = lastEffect as AdminSceneEffect | null;
+                  if (effect && !effect.activeLinked) recordUnlinked(effect);
+                  throw error;
+                }
+                const effect = lastEffect as AdminSceneEffect | null;
+                if (effect && !effect.activeLinked) {
+                  recordUnlinked(effect);
+                  throw new Error('场景已写入，主对话关联待核对；已停止本轮后续工具。');
+                }
+                if (!applied)
+                  return `场景未设置：目标「${requestScope.targetName ?? requestScope.targetConversationId}」已失效或世界已切换，请重新选择。`;
+                artifacts.push({
+                  ...artifact,
+                  summary: `目标「${requestScope.targetName ?? requestScope.targetConversationId}」：${artifact.summary}`,
+                  targetId: applied.id,
+                });
                 if (applied && lastEffect)
                   adminProcessStore.bindSceneTarget(
                     op.scope,
@@ -523,7 +629,7 @@ export function useAdminChat(options: {
         const effects = adminProcessStore.get(op.scope, { runId: op.runId })?.sceneEffects ?? [];
         if (effects.some((e) => !e.activeLinked)) uncertain = true;
         if (uncertain) rememberUncertain();
-        adminProcessStore.update(op.scope, op.runId, {
+        adminProcessStore.settle(op.scope, op.runId, {
           unsaved: persisted ? null : { text: answer, artifacts: [...artifacts] },
         });
         phase(
@@ -560,13 +666,21 @@ export function useAdminChat(options: {
     const attempt =
       pendingApi.current.find((p) => sameAdminScope(p.scope, scope)) ??
       (current?.phase === 'saved-read-failed' && current.messageId
-        ? { scope, id: current.messageId, runId: current.runId, sceneLinks: [] }
+        ? {
+            scope,
+            id: current.messageId,
+            runId: current.runId,
+            sceneLinks: current.sceneEffects
+              .filter((effect) => !effect.activeLinked)
+              .map((effect) => ({ conversationId: effect.target.conversationId, sceneId: effect.target.sceneId })),
+          }
         : null);
     if (!attempt) return { status: 'rejected', reason: '当前没有待核对的保存结果。' };
     const op = begin(attempt.runId);
     if (!op) return { status: 'rejected', reason: '来源不可用' };
     phase(op, 'saving-output');
     let saved = false;
+    let knownUnlinked = false;
     try {
       const found = await db.repository.readAdminMessage(attempt.id);
       if (!found || found.roomId !== scope.roomId || found.conversationId !== scope.conversationId)
@@ -576,10 +690,13 @@ export function useAdminChat(options: {
           scene = await db.repository.getScene(link.sceneId);
         if (
           conversation?.roomId !== scope.roomId ||
-          conversation.activeSceneId !== link.sceneId ||
-          scene?.conversationId !== link.conversationId
+          conversation.deletedAt !== null ||
+          scene?.roomId !== scope.roomId ||
+          scene.conversationId !== link.conversationId ||
+          scene.deletedAt !== null
         )
-          throw new Error('场景已写入，但主对话关联尚未核实；本次仅核对，没有再次设置场景。');
+          throw new Error('场景或主对话归属尚未核实；本次仅核对，没有再次设置场景。');
+        if (conversation.activeSceneId !== link.sceneId) knownUnlinked = true;
       }
       saved = true;
       pendingApi.current = pendingApi.current.filter((p) => p !== attempt);
@@ -589,7 +706,13 @@ export function useAdminChat(options: {
         await session.reloadWorld();
         if (visible(op)) onChanged();
       }
-      phase(op, 'saved');
+      phase(
+        op,
+        knownUnlinked ? 'partial' : 'saved',
+        knownUnlinked
+          ? { kind: 'error', text: '已核实：场景已保存但未设为当前场景。可以重新设置；本次没有重放写入。' }
+          : null,
+      );
       return { status: 'confirmed', messageId: found.id };
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error);
@@ -605,6 +728,17 @@ export function useAdminChat(options: {
         conversation = session.conversation;
       if (bridgeAttempt.current?.uncertain)
         return { status: 'uncertain', reason: '此前提交结果未确认，请只读核对，不能重复应用。' };
+      if (
+        scope &&
+        bridge?.binding &&
+        (bridge.binding.accountKey !== scope.accountKey ||
+          bridge.binding.roomId !== scope.roomId ||
+          bridge.binding.conversationId !== scope.conversationId)
+      ) {
+        const reason = '请回原世界、原账户和原副对话处理这份起草。';
+        setUi({ scope, runId: null, busy: false, canStop: false, error: reason });
+        return { status: 'rejected', reason };
+      }
       if (
         !db ||
         !scope ||

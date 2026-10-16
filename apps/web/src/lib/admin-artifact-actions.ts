@@ -1,4 +1,14 @@
-import type { AdminArtifact, CardId, Message, MessageId, Repository, WorldBookId } from '@dramatis/core';
+import {
+  type AdminArtifact,
+  type CardId,
+  isCompleteWorldBook,
+  isModifiedWorldBookArtifact,
+  type Message,
+  type MessageId,
+  type Repository,
+  type WorldBookId,
+  worldBookArtifactConflict,
+} from '@dramatis/core';
 
 export type ArtifactAction = 'adopt' | 'discard' | 'revoke';
 export type ArtifactActionResult =
@@ -95,6 +105,28 @@ export async function performAdminArtifactAction(
     if (before.artifact.status !== (action === 'revoke' ? 'adopted' : 'pending')) {
       map.delete(id);
       return { ...before, status: 'blocked', reason: '状态已变化，请查看当前结果。' };
+    }
+    if (action === 'revoke' && isModifiedWorldBookArtifact(before.artifact)) {
+      map.delete(id);
+      return { ...before, status: 'blocked', reason: '修改世界书不能直接撤回，请起草反向修改。' };
+    }
+    if (action === 'adopt' && before.artifact.kind === 'world-book') {
+      const current = isCompleteWorldBook(before.artifact.payload)
+        ? await repository.getWorldBook(before.artifact.payload.id)
+        : null;
+      const conflict = worldBookArtifactConflict(before.artifact, current);
+      if (conflict) {
+        const message = await repository.updateMessage(messageId, {
+          artifacts: before.message.artifacts?.map((item) => (item.id === artifactId ? { ...item, conflict } : item)),
+        });
+        map.delete(id);
+        return {
+          message: message ?? before.message,
+          artifact: { ...before.artifact, conflict },
+          status: 'blocked',
+          reason: conflict,
+        };
+      }
     }
     receipt.attempted = true;
     const result =

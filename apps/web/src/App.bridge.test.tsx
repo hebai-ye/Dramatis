@@ -5,6 +5,7 @@ import {
   createCharacterMessage,
   createMemoryEntityStore,
   createPersona,
+  createProviderProfile,
   createUsageLedger,
   createWorldFromCard,
   type Message,
@@ -14,12 +15,16 @@ import {
 import { type ComponentProps, isValidElement, type ReactNode } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { App } from './App';
+import { DeepSeekKeyDialog } from './components/DeepSeekKeyDialog';
+import { LibraryWorkspaceProvider } from './components/LibraryWorkspace';
 import { MainChat } from './components/MainChat';
 import type { WebBridgeState } from './components/WebBridgePanel';
 import type { Notice } from './hooks/useNotices';
 import type { TurnRunnerApi, TurnRunnerOptions } from './hooks/useTurnRunner';
 import { loadBridge, prepareBridgeAnalysis, saveBridge } from './lib/bridge-store';
 import type { DramatisDb } from './lib/db';
+import type { LibraryViewActions } from './lib/library-view';
+import type { ProvidersApi } from './lib/providers';
 import type { SessionApi } from './lib/session';
 import { createTaskQueueExtras } from './lib/task-queue';
 
@@ -52,6 +57,7 @@ type CaptureDelay = { started: Gate; release: Gate; finished: Gate };
 // services are idle fixtures; bridge capture, source fingerprints and writes stay real.
 const model = vi.hoisted(() => ({
   db: null as DramatisDb | null,
+  providers: null as ProvidersApi | null,
   session: null as FixtureSession | null,
   runnerOptions: null as TurnRunnerOptions | null,
   runnerApi: null as TurnRunnerApi | null,
@@ -59,71 +65,101 @@ const model = vi.hoisted(() => ({
   captureDelay: null as CaptureDelay | null,
   errors: [] as (string | null)[],
   requestAutoSync: vi.fn(),
+  libraryNavigation: { current: null as LibraryViewActions | null },
 }));
 const host = vi.hoisted(() => {
-  type Slot = {
-    value: unknown;
-    deps?: readonly unknown[];
-    cleanup?: () => void;
-    setter?: (value: unknown) => void;
-  };
-  let slots: Slot[] = [];
-  let cursor = 0;
-  let changed = false;
-  let layouts: (() => void)[] = [];
-  let effects: (() => void)[] = [];
-  const same = (a?: readonly unknown[], b?: readonly unknown[]) =>
-    a !== undefined && b !== undefined && a.length === b.length && a.every((v, i) => Object.is(v, b[i]));
-  const state = (initial: unknown) => {
-    const index = cursor++;
-    slots[index] ??= { value: typeof initial === 'function' ? initial() : initial };
-    const cell = slots[index];
-    if (!cell) throw new Error('Missing hook cell');
-    cell.setter ??= (next) => {
-      const value = typeof next === 'function' ? next(cell.value) : next;
-      if (!Object.is(value, cell.value)) changed = true;
-      cell.value = value;
+  const createHost = () => {
+    type Slot = {
+      value: unknown;
+      deps?: readonly unknown[];
+      cleanup?: () => void;
+      setter?: (value: unknown) => void;
     };
-    return [cell.value, cell.setter];
+    let slots: Slot[] = [];
+    let cursor = 0;
+    let changed = false;
+    let layouts: (() => void)[] = [];
+    let effects: (() => void)[] = [];
+    const same = (a?: readonly unknown[], b?: readonly unknown[]) =>
+      a !== undefined && b !== undefined && a.length === b.length && a.every((v, i) => Object.is(v, b[i]));
+    const state = (initial: unknown) => {
+      const index = cursor++;
+      slots[index] ??= { value: typeof initial === 'function' ? initial() : initial };
+      const cell = slots[index];
+      if (!cell) throw new Error('Missing hook cell');
+      cell.setter ??= (next) => {
+        const value = typeof next === 'function' ? next(cell.value) : next;
+        if (!Object.is(value, cell.value)) changed = true;
+        cell.value = value;
+      };
+      return [cell.value, cell.setter];
+    };
+    const memo = <T,>(run: () => T, deps?: readonly unknown[]): T => {
+      const index = cursor++;
+      if (!slots[index] || !same(slots[index]?.deps, deps)) slots[index] = { value: run(), deps };
+      return slots[index]?.value as T;
+    };
+    const effect = (run: () => (() => void) | undefined, deps?: readonly unknown[], layout = false) => {
+      const index = cursor++;
+      const previous = slots[index];
+      if (previous && same(previous.deps, deps)) return;
+      (layout ? layouts : effects).push(() => {
+        previous?.cleanup?.();
+        slots[index] = { value: null, deps, cleanup: run() };
+      });
+    };
+    return {
+      state,
+      memo,
+      effect,
+      ref: (initial: unknown) => state(() => ({ current: initial }))[0],
+      callback: <T,>(callback: T, deps?: readonly unknown[]) => memo(() => callback, deps),
+      begin() {
+        cursor = 0;
+        changed = false;
+      },
+      flush() {
+        const currentLayouts = layouts;
+        const currentEffects = effects;
+        layouts = [];
+        effects = [];
+        for (const run of currentLayouts) run();
+        for (const run of currentEffects) run();
+        return changed;
+      },
+      pending: () => changed,
+      reset() {
+        for (const slot of slots) slot.cleanup?.();
+        slots = [];
+        layouts = [];
+        effects = [];
+      },
+    };
   };
-  const memo = <T,>(run: () => T, deps?: readonly unknown[]): T => {
-    const index = cursor++;
-    if (!slots[index] || !same(slots[index]?.deps, deps)) slots[index] = { value: run(), deps };
-    return slots[index]?.value as T;
-  };
-  const effect = (run: () => (() => void) | undefined, deps?: readonly unknown[], layout = false) => {
-    const index = cursor++;
-    const previous = slots[index];
-    if (previous && same(previous.deps, deps)) return;
-    (layout ? layouts : effects).push(() => {
-      previous?.cleanup?.();
-      slots[index] = { value: null, deps, cleanup: run() };
-    });
-  };
+  const app = createHost();
+  const library = createHost();
+  let current = app;
   return {
-    state,
-    memo,
-    effect,
-    ref: (initial: unknown) => state(() => ({ current: initial }))[0],
-    callback: <T,>(callback: T, deps?: readonly unknown[]) => memo(() => callback, deps),
-    begin() {
-      cursor = 0;
-      changed = false;
-    },
-    flush() {
-      const currentLayouts = layouts;
-      const currentEffects = effects;
-      layouts = [];
-      effects = [];
-      for (const run of currentLayouts) run();
-      for (const run of currentEffects) run();
-      return changed;
+    ...app,
+    state: (initial: unknown) => current.state(initial),
+    memo: <T,>(run: () => T, deps?: readonly unknown[]) => current.memo(run, deps),
+    effect: (run: () => (() => void) | undefined, deps?: readonly unknown[], layout = false) =>
+      current.effect(run, deps, layout),
+    ref: (initial: unknown) => current.ref(initial),
+    callback: <T,>(callback: T, deps?: readonly unknown[]) => current.callback(callback, deps),
+    library,
+    inLibrary<T>(run: () => T): T {
+      const previous = current;
+      current = library;
+      try {
+        return run();
+      } finally {
+        current = previous;
+      }
     },
     reset() {
-      for (const slot of slots) slot.cleanup?.();
-      slots = [];
-      layouts = [];
-      effects = [];
+      app.reset();
+      library.reset();
     },
   };
 });
@@ -185,7 +221,11 @@ vi.mock('./hooks/useNotices', () => ({
 }));
 vi.mock('./hooks/useImport', () => ({ useImport: () => ({ handleImport: vi.fn() }) }));
 vi.mock('./hooks/useLibraryWorkspace', () => ({
-  useLibraryNavigation: () => ({ libraryNavigation: { current: null } }),
+  useLibraryNavigation: () => ({
+    libraryNavigation: model.libraryNavigation,
+    enterLibrary: () => {},
+    returnFromLibrary: () => {},
+  }),
   useLibrarySurface: () => ({ libraryCounts: {}, librarySurface: {} }),
 }));
 vi.mock('./lib/admin', () => ({ useAdminChat: () => ({ busy: false }) }));
@@ -193,7 +233,7 @@ vi.mock('./lib/appearance', () => ({
   useAppearance: () => ({ value: { background: '', backgroundOpacity: 0, showIntent: false } }),
 }));
 vi.mock('./lib/archive', () => ({ useArchive: () => ({}) }));
-vi.mock('./lib/providers', () => ({ useProviders: () => ({ apiKey: '' }) }));
+vi.mock('./lib/providers', () => ({ useProviders: () => model.providers ?? { apiKey: '', active: null } }));
 vi.mock('./lib/storage', () => ({ useStorageStatus: () => ({ ratio: null }) }));
 vi.mock('./lib/sync', () => ({ useSync: () => ({ requestAutoSync: model.requestAutoSync }) }));
 vi.mock('./lib/usage', async (original) => ({
@@ -235,11 +275,13 @@ function findMainChat(node: ReactNode): ComponentProps<typeof MainChat> | null {
   if (node.type === MainChat) return node.props as ComponentProps<typeof MainChat>;
   return findMainChat(node.props.children);
 }
+let appTree: ReactNode;
 function renderApp() {
   let node: ReactNode;
   for (let i = 0; i < 10; i++) {
     host.begin();
     node = App();
+    appTree = node;
     if (!host.flush()) {
       const props = findMainChat(node);
       if (!props) throw new Error('App did not provide MainChat');
@@ -344,6 +386,7 @@ const analysis = JSON.stringify({
 beforeEach(() => {
   host.reset();
   model.db = null;
+  model.providers = null;
   model.session = null;
   model.runnerOptions = null;
   model.runnerApi = null;
@@ -351,6 +394,7 @@ beforeEach(() => {
   model.captureDelay = null;
   model.errors.length = 0;
   model.requestAutoSync.mockClear();
+  model.libraryNavigation.current = null;
   const values = new Map<string, string>();
   vi.stubGlobal('sessionStorage', {
     getItem: (key: string) => values.get(key) ?? null,
@@ -365,6 +409,107 @@ afterEach(() => {
 });
 
 describe('App bridge publication and operation ownership', () => {
+  function setupProviders(key = '') {
+    const active = createProviderProfile({ name: 'fixture', baseUrl: 'https://api.deepseek.com', model: 'fixture' });
+    model.providers = {
+      active,
+      activeId: active.id,
+      keyMode: 'device',
+      apiKey: key,
+      keyLoading: false,
+      keyError: null,
+      vaultLocked: false,
+      setupOwner: { profileId: active.id, keyMode: 'device', context: {}, token: {} },
+    } as ProvidersApi;
+  }
+  function findSetup(node: ReactNode): ComponentProps<typeof DeepSeekKeyDialog> | null {
+    if (Array.isArray(node)) return node.map(findSetup).find((item) => item !== null) ?? null;
+    if (!isValidElement<{ children?: ReactNode }>(node)) return null;
+    return node.type === DeepSeekKeyDialog
+      ? (node.props as ComponentProps<typeof DeepSeekKeyDialog>)
+      : findSetup(node.props.children);
+  }
+  function findLibrary(node: ReactNode): ComponentProps<typeof LibraryWorkspaceProvider> | null {
+    if (Array.isArray(node)) return node.map(findLibrary).find((item) => item !== null) ?? null;
+    if (!isValidElement<{ children?: ReactNode }>(node)) return null;
+    return node.type === LibraryWorkspaceProvider
+      ? (node.props as ComponentProps<typeof LibraryWorkspaceProvider>)
+      : findLibrary(node.props.children);
+  }
+  function renderLibrary() {
+    const props = findLibrary(appTree);
+    if (!props) throw new Error('App did not provide LibraryWorkspaceProvider');
+    host.inLibrary(() => {
+      host.library.begin();
+      LibraryWorkspaceProvider(props);
+      host.library.flush();
+    });
+  }
+  it('shows queued key setup when only the library child closes', async () => {
+    await fixture();
+    setupProviders();
+    if (!model.providers) throw new Error('Missing fixture providers');
+    model.providers = { ...model.providers, keyLoading: true };
+    vi.stubGlobal('window', {
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      matchMedia: () => ({ matches: false }),
+    });
+    vi.stubGlobal(
+      'requestAnimationFrame',
+      vi.fn(() => 1),
+    );
+    vi.stubGlobal('cancelAnimationFrame', vi.fn());
+    renderApp();
+    renderLibrary();
+    await model.libraryNavigation.current?.toggle('personas');
+    renderLibrary();
+    renderApp();
+    model.providers = { ...model.providers, keyLoading: false };
+    renderApp();
+    expect(findSetup(appTree)).toBeNull();
+    expect(host.pending()).toBe(false);
+
+    await model.libraryNavigation.current?.close();
+    renderLibrary();
+
+    // A child-only library close must schedule App itself; unrelated renders are unnecessary.
+    expect(host.pending()).toBe(true);
+    renderApp();
+    expect(findSetup(appTree)).not.toBeNull();
+  });
+  it('opens the key dialog for confirmed missing keys without replacing the current conversation', async () => {
+    const f = await fixture();
+    setupProviders();
+    renderApp();
+    expect(findSetup(appTree)).not.toBeNull();
+    expect(renderApp().conversation.id).toBe(f.world.conversation.id);
+    findSetup(appTree)?.onClose();
+    renderApp();
+    expect(findSetup(appTree)).toBeNull();
+    renderApp().onConfigureDeepSeekKey?.();
+    renderApp();
+    expect(findSetup(appTree)).not.toBeNull();
+  });
+  it('keeps a pending manual reply ahead of an automatic key prompt', async () => {
+    const f = await fixture();
+    setupProviders();
+    saveBridge('main', {
+      stage: 'reply',
+      turnId: f.scope.turnId,
+      speakerInstanceId: f.world.instance.id,
+      prompt: 'fixture pending',
+    });
+    renderApp();
+    expect(findSetup(appTree)).toBeNull();
+    expect(renderApp().bridge).not.toBeNull();
+  });
+  it('does not open setup over an existing readable key', async () => {
+    await fixture();
+    setupProviders('fixture-existing');
+    renderApp();
+    expect(findSetup(appTree)).toBeNull();
+  });
   it('passes restored bridge waiting state to the central send entry', async () => {
     const f = await fixture();
     saveBridge('main', {

@@ -3,9 +3,9 @@ import { buildAdminMessages } from '../admin/prompt.js';
 import { ADMIN_TOOLS, parseAdminToolCall } from '../admin/tools.js';
 import { buildAffectMessages, parseAffectUpdates } from '../memory/affect.js';
 import { buildExtractionMessages, parseExtraction } from '../memory/extract.js';
-import type { Card } from '../model/card.js';
+import type { Card, WorldBook } from '../model/card.js';
 import { createConversation } from '../model/conversation.js';
-import { cardId, instanceId, newId, nowIso, PLAYER, roomId, sceneId } from '../model/ids.js';
+import { cardId, instanceId, newId, nowIso, PLAYER, roomId, sceneId, worldBookId } from '../model/ids.js';
 import { type CharacterInstance, neutralTraits } from '../model/instance.js';
 import type { Room, Scene } from '../model/room.js';
 import { assemblePrompt } from '../prompt/assemble.js';
@@ -156,6 +156,42 @@ function printBlock(title: string, lines: readonly string[]): void {
   console.log(`\n${rule}\n${title}\n${rule}\n${lines.join('\n')}\n`);
 }
 
+function sampleWorldBook(id = worldBookId(newId())): WorldBook {
+  return {
+    id,
+    name: '旧城设定',
+    entries: [
+      {
+        id: newId(),
+        title: '旧城',
+        keys: ['旧城'],
+        secondaryKeys: [],
+        content: '旧城分东西两半，中间隔着一条河。',
+        constant: false,
+        selective: true,
+        selectiveLogic: 0,
+        order: 100,
+        position: 'before_char',
+        depth: 4,
+        probability: 100,
+        useProbability: true,
+        disabled: false,
+        caseSensitive: false,
+        matchWholeWords: false,
+        scanDepth: null,
+        preventRecursion: true,
+        excludeRecursion: false,
+        group: '',
+        extensions: {},
+      },
+    ],
+    extensions: {},
+    createdAt: nowIso(),
+    updatedAt: nowIso(),
+    deletedAt: null,
+  };
+}
+
 describe('真实模型验证取样器', () => {
   it('打印四条提示词，供贴进网页版模型人工看输出', () => {
     const { room, scene, alice, bob, aliceCard, bobCard, history } = fixture();
@@ -221,41 +257,7 @@ describe('真实模型验证取样器', () => {
       scene,
       instances: [alice, bob],
       cards: [aliceCard, bobCard],
-      worldBooks: [
-        {
-          id: newId() as never,
-          name: '旧城设定',
-          entries: [
-            {
-              id: newId(),
-              title: '旧城',
-              keys: ['旧城'],
-              secondaryKeys: [],
-              content: '旧城分东西两半，中间隔着一条河。',
-              constant: false,
-              selective: true,
-              selectiveLogic: 0,
-              order: 100,
-              position: 'before_char',
-              depth: 4,
-              probability: 100,
-              useProbability: true,
-              disabled: false,
-              caseSensitive: false,
-              matchWholeWords: false,
-              scanDepth: null,
-              preventRecursion: true,
-              excludeRecursion: false,
-              group: '',
-              extensions: {},
-            },
-          ],
-          extensions: {},
-          createdAt: nowIso(),
-          updatedAt: nowIso(),
-          deletedAt: null,
-        },
-      ],
+      worldBooks: [sampleWorldBook()],
       personas: [],
       history: [
         {
@@ -321,15 +323,26 @@ describe('真实模型验证取样器', () => {
       }
     }
 
+    const originalBook = sampleWorldBook(worldBookId('book-0003'));
     for (const [index, toolCall] of responses.toolCalls.entries()) {
-      const parsed = parseAdminToolCall({
-        id: `manual-check-${String(index)}`,
-        type: 'function',
-        // 接口里 arguments 是序列化后的字符串，这里照同样的形状喂进去
-        function: { name: toolCall.name, arguments: JSON.stringify(toolCall.arguments) },
-      });
+      const parsed = parseAdminToolCall(
+        {
+          id: `manual-check-${String(index)}`,
+          type: 'function',
+          // 接口里 arguments 是序列化后的字符串，这里照同样的形状喂进去
+          function: { name: toolCall.name, arguments: JSON.stringify(toolCall.arguments) },
+        },
+        { worldBooks: [originalBook] },
+      );
       if (!parsed.ok) throw new Error(`${toolCall.name} 没被接受：${parsed.error}`);
       expect(parsed.ok).toBe(true);
+      if (parsed.draft.kind === 'world-book') {
+        // 历史回答无 entryId；新版契约将这三项视为新增，保留完整原条目。
+        expect(parsed.draft.bookId).toBe(originalBook.id);
+        expect(parsed.draft.book.entries[0]).toEqual(originalBook.entries[0]);
+        expect(parsed.draft.book.entries).toHaveLength(originalBook.entries.length + 3);
+        expect(new Set(parsed.draft.book.entries.map((entry) => entry.id)).size).toBe(4);
+      }
     }
 
     const segments = renderMessageContent(responses.roleplay);

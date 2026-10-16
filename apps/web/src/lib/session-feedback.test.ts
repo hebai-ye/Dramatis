@@ -196,7 +196,7 @@ it('管理员场景已写而主对话关联失败时返回分段证据', async (
   const effects: AdminSceneEffect[] = [];
   vi.spyOn(h.repository, 'saveConversation').mockRejectedValueOnce(new Error('关联失败'));
   await expect(
-    render(() => useSession(h.db)).setWorldScene({ location: '露台' }, (e) => effects.push(e)),
+    render(() => useSession(h.db)).setWorldScene({ location: '露台' }, main.id, h.room.id, (e) => effects.push(e)),
   ).rejects.toThrow('关联失败');
   expect(effects).toHaveLength(1);
   expect(effects[0]).toMatchObject({ sceneWritten: true, activeLinked: false, target: { conversationId: main.id } });
@@ -216,7 +216,7 @@ it('管理员场景保存迟到不恢复旧对话快照', async () => {
     await release.promise;
     return original(scene);
   });
-  const pending = h.api.setWorldScene({ location: '露台' });
+  const pending = h.api.setWorldScene({ location: '露台' }, h.a.id, h.room.id);
   await started.promise;
   await h.api.openConversation(h.b.id);
   release.resolve();
@@ -263,7 +263,9 @@ describe('boot import recovery feedback', () => {
     await drain();
     const boot = render(useDatabase).boot;
     expect(boot?.recoveredImports).toBe(0);
-    expect(boot?.importRecoveryWarnings).toEqual([expect.stringContaining('未删除世界或素材')]);
+    expect(boot?.importRecoveryWarnings).toEqual([
+      expect.objectContaining({ message: expect.stringContaining('未删除世界或素材') }),
+    ]);
     expect(await h.repository.getRoom(h.room.id)).not.toBeNull();
   });
   it('exposes partial-deletion warnings even when no recovery counts as complete', async () => {
@@ -282,7 +284,9 @@ describe('boot import recovery feedback', () => {
     vi.spyOn(h.repository, 'deleteCard').mockRejectedValue(new Error('Synthetic disk failure'));
     render(useDatabase);
     await drain();
-    expect(render(useDatabase).boot?.importRecoveryWarnings).toEqual([expect.stringContaining('可能已有部分删除')]);
+    expect(render(useDatabase).boot?.importRecoveryWarnings).toEqual([
+      expect.objectContaining({ message: expect.stringContaining('可能已有部分删除') }),
+    ]);
   });
 });
 
@@ -455,6 +459,8 @@ describe('persisted single-affect reversion', () => {
     await h.repository.saveInstance({ ...saved, affect: { ...saved.affect, valence: 0.4 } });
     await h.repository.saveRoom({ ...h.room, title: 'Late world title' });
     await h.api.reloadWorld();
+    expect((await h.repository.getRoom(h.room.id))?.title).toBe('Late world title');
+    expect(render(() => useSession(h.db)).world?.title).toBe('Late world title');
     delay.release.resolve();
     await pending;
     const visible = render(() => useSession(h.db));

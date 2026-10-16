@@ -1,4 +1,4 @@
-import type { AdminArtifact, Conversation, Message, MessageId } from '@dramatis/core';
+import type { AdminArtifact, Conversation, ConversationId, Message, MessageId, WorldBook } from '@dramatis/core';
 import { memo, useCallback, useEffect, useRef, useState } from 'react';
 import { useAdminProcess } from '../hooks/useAdminProcess';
 import type { BridgeCommitOutcome } from '../lib/admin';
@@ -21,7 +21,7 @@ interface Props {
   busy: boolean;
   ready: boolean;
   archived: boolean;
-  onSend: ChatSend;
+  onSend: (text: string, targetConversationId?: ConversationId) => ReturnType<ChatSend>;
   draftScope?: string;
   onStop: () => void;
   onAdopt:
@@ -35,6 +35,9 @@ interface Props {
     | ((messageId: MessageId, artifact: AdminArtifact) => Promise<ArtifactActionResult>);
   onInspect?: (messageId: MessageId, artifact: AdminArtifact, action: ArtifactAction) => Promise<ArtifactActionResult>;
   onOpenTarget?: (artifact: AdminArtifact) => void;
+  onReverse?: (messageId: MessageId, artifact: AdminArtifact) => void | Promise<void>;
+  worldBooks?: readonly WorldBook[];
+  conversations?: readonly Conversation[];
   existingIds?: readonly string[];
   processScope?: AdminProcessScope | null;
   activeRunId?: string | null;
@@ -78,6 +81,9 @@ function SideChatImpl({
   canStop = true,
   needsInspection = false,
   onRunInspect,
+  onReverse,
+  worldBooks = [],
+  conversations = [],
   bridge = null,
   manualMode = false,
   onBridgeCommit,
@@ -96,7 +102,7 @@ function SideChatImpl({
     setInput,
     submit: submitDraft,
     notice: sendNotice,
-  } = useChatDraft(draftScope ?? conversation.id, onSend);
+  } = useChatDraft(draftScope ?? conversation.id, (text) => onSend(text, target?.id));
   const bottomRef = useRef<HTMLDivElement | null>(null),
     inputRef = useRef<HTMLTextAreaElement | null>(null),
     bodyRef = useRef<HTMLDivElement | null>(null),
@@ -159,8 +165,22 @@ function SideChatImpl({
       node.style.height = `${Math.min(node.scrollHeight, 200)}px`;
     }
   }, [input]);
-  const submit = () => {
-    if (ready && !busy && !archived && bridge === null && !needsInspection) void submitDraft();
+
+  const [selection, setSelection] = useState<{ roomId: string; id: ConversationId } | null>(null);
+  const mains = conversations.filter(
+    (item) =>
+      item.roomId === conversation.roomId &&
+      item.kind === 'main' &&
+      item.archivedAt === null &&
+      item.deletedAt === null,
+  );
+  const selected =
+    selection?.roomId === conversation.roomId ? mains.find((item) => item.id === selection.id) : undefined;
+  const target = selected ?? (mains.length === 1 ? mains[0] : undefined);
+
+  const submit = (): void => {
+    if (!ready || busy || archived || bridge !== null || needsInspection) return;
+    void submitDraft();
   };
   const freezeReading = () => {
     nearBottomRef.current = false;
@@ -184,6 +204,8 @@ function SideChatImpl({
             ? [target.worldTitle, target.conversationTitle, target.sceneTitle].join(' / ')
             : undefined
         }
+        currentBook={worldBooks.find((book) => book.id === (artifact.payload as { id?: unknown } | null)?.id) ?? null}
+        {...(onReverse ? { onReverse: () => onReverse(message.id, artifact) } : {})}
         onAdopt={() => onAdopt(message.id, artifact)}
         onDiscard={() => onDiscard(message.id, artifact)}
         {...(onRevoke ? { onRevoke: () => onRevoke(message.id, artifact) } : {})}
@@ -339,6 +361,37 @@ function SideChatImpl({
           {error}
         </p>
       ) : null}
+      <div className="admin-scene-target">
+        <label>
+          场景目标{' '}
+          <select
+            aria-label="场景目标"
+            value={target?.id ?? ''}
+            disabled={mains.length === 0 || busy || bridge !== null || needsInspection || archived}
+            onChange={(event) =>
+              setSelection(
+                event.target.value ? { roomId: conversation.roomId, id: event.target.value as ConversationId } : null,
+              )
+            }
+          >
+            <option value="">{mains.length === 0 ? '没有主对话，不能设置场景' : '请选择场景目标'}</option>
+            {mains.map((item) => (
+              <option key={item.id} value={item.id}>
+                {item.title}
+              </option>
+            ))}
+          </select>
+        </label>
+        {!target ? (
+          <p className="hint">
+            {mains.length === 0 ? '请先新建主对话。' : '多条主对话时需要明确选择。'}角色卡、世界书和身份仍可起草。
+          </p>
+        ) : (
+          <p className="hint">场景将即时修改「{target.title}」。本轮发送后固定目标。</p>
+        )}
+      </div>
+
+      {/* 与主对话同一个输入区形态（用户 2026-09-21 要求照 Codex 的样子） */}
       {sendNotice ? (
         <p className="notice error composer-notice" role="alert">
           {sendNotice}

@@ -2,6 +2,7 @@ import { createMemoryEntityStore, createProviderProfile, createVault, Repository
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DramatisDb } from './db';
 import { useProviders } from './providers';
+import type { SyncApi } from './sync';
 
 // Execute the real hook with controlled scheduling; only React scheduling and the
 // asynchronous keystore I/O are fixtures. Repository writes use the real core store.
@@ -115,7 +116,7 @@ vi.mock('./keystore', async (original) => {
   };
 });
 
-const sync = {
+const sync: Pick<SyncApi, 'config' | 'status' | 'requestAutoSync' | 'sealSecret' | 'openSecret'> = {
   config: null,
   status: 'off' as const,
   requestAutoSync: () => {},
@@ -143,6 +144,11 @@ async function settle() {
   return api;
 }
 
+function ownerOf(api: ReturnType<typeof useProviders>) {
+  if (api.setupOwner === null) throw new Error('Fixture provider owner is not ready');
+  return api.setupOwner;
+}
+
 function pause(mode: string, ref: string) {
   let resolve: (value: string | null) => void = () => {};
   let reject: (error: Error) => void = () => {};
@@ -163,6 +169,9 @@ beforeEach(async () => {
   keys.useActualDevice = false;
   keys.useActualSession = false;
   keys.useActualVault = false;
+  sync.config = null;
+  sync.status = 'off';
+  sync.sealSecret = async () => null;
   first = { ...createProviderProfile({ name: 'A', model: 'a', baseUrl: 'https://a.invalid/v1' }), active: true };
   second = createProviderProfile({ name: 'B', model: 'b', baseUrl: 'https://b.invalid/v1' });
   const repository = new Repository(createMemoryEntityStore());
@@ -177,6 +186,274 @@ beforeEach(async () => {
 afterEach(() => vi.unstubAllGlobals());
 
 describe('provider key readiness across configuration changes', () => {
+  it('saves only the key of an existing DeepSeek profile and preserves its custom parameters', async () => {
+    await db.repository.saveProviderProfile({ ...first, baseUrl: 'https://api.deepseek.com', model: 'custom-model' });
+    let api = await settle();
+    await api.saveDeepSeekKey('sk-fixture-new', ownerOf(api));
+    api = await settle();
+    expect(api.apiKey).toBe('sk-fixture-new');
+    expect(api.active?.model).toBe('custom-model');
+    expect(api.keyMode).toBe('device');
+  });
+  it('creates a separate DeepSeek target without changing another provider secret', async () => {
+    let api = await settle();
+    await api.setApiKey('');
+    api = await settle();
+    await api.saveDeepSeekKey('sk-fixture-deepseek', ownerOf(api));
+    api = await settle();
+    expect(api.active?.baseUrl).toBe('https://api.deepseek.com');
+    expect(api.active?.model).toBe('deepseek-flash');
+    expect(api.apiKey).toBe('sk-fixture-deepseek');
+    expect(keys.secrets.get(`device:${second.keyRef}`)).toBe('fixture-key-b');
+    expect((await db.repository.listProviderProfiles()).find((profile) => profile.id === first.id)?.baseUrl).toBe(
+      'https://a.invalid/v1',
+    );
+  });
+  it('rejects a draft whose opening owner changed before submission', async () => {
+    let api = await settle();
+    const owner = ownerOf(api);
+    await api.selectProfile(second.id);
+    api = await settle();
+    let rejected = false;
+    try {
+      await api.saveDeepSeekKey('sk-fixture-old', owner);
+    } catch {
+      rejected = true;
+    }
+    expect(rejected).toBe(true);
+    expect(keys.writes).toEqual([]);
+  });
+  it('rejects an old opening owner after the same profile changes its endpoint', async () => {
+    await db.repository.saveProviderProfile({ ...first, baseUrl: 'https://api.deepseek.com' });
+    let api = await settle();
+    const openingOwner = ownerOf(api);
+    await api.updateProfile(first.id, { baseUrl: 'https://changed.invalid/v1' });
+    api = await settle();
+    await expect(api.saveDeepSeekKey('sk-fixture-old-endpoint', openingOwner)).rejects.toThrow('配置目标已变化');
+    expect(keys.writes).toEqual([]);
+  });
+  it('restores the previous key when the endpoint changes while its key write is pending', async () => {
+    await db.repository.saveProviderProfile({ ...first, baseUrl: 'https://api.deepseek.com' });
+    let api = await settle();
+    let entered: () => void = () => {};
+    let finish: () => void = () => {};
+    const started = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    keys.pendingWrites.set(
+      first.keyRef,
+      new Promise<void>((resolve) => {
+        finish = resolve;
+      }),
+    );
+    // Observe entry into the asynchronous write without changing the stored value.
+    const originalGet = keys.pendingWrites.get.bind(keys.pendingWrites);
+    vi.spyOn(keys.pendingWrites, 'get').mockImplementation((ref) => {
+      entered();
+      return originalGet(ref);
+    });
+    const saving = api.saveDeepSeekKey('sk-fixture-pending-endpoint', ownerOf(api));
+    const rejected = expect(saving).rejects.toThrow('配置目标已变化');
+    await started;
+    await api.updateProfile(first.id, { baseUrl: 'https://changed.invalid/v1' });
+    api = await settle();
+    finish();
+    await rejected;
+    api = await settle();
+    expect(keys.secrets.get(`device:${first.keyRef}`)).toBe('fixture-key-a');
+    expect(api.apiKey).toBe('fixture-key-a');
+    expect(api.active?.baseUrl).toBe('https://changed.invalid/v1');
+    vi.restoreAllMocks();
+  });
+  it('checks the persisted endpoint even before a changed profile has rendered', async () => {
+    await db.repository.saveProviderProfile({ ...first, baseUrl: 'https://api.deepseek.com' });
+    const api = await settle();
+    await db.repository.saveProviderProfile({ ...first, baseUrl: 'https://changed.invalid/v1' });
+    await expect(api.saveDeepSeekKey('sk-fixture-stale-repository', ownerOf(api))).rejects.toThrow('配置目标已变化');
+    expect(keys.writes).toEqual([]);
+  });
+  it('checks selection and active flags in one repository transaction before activating a separate target', async () => {
+    const api = await settle();
+    const original = db.repository.atomic.bind(db.repository);
+    vi.spyOn(db.repository, 'atomic').mockImplementation(async (run) => {
+      await db.repository.saveProviderProfile({ ...first, baseUrl: 'https://changed.invalid/v1' });
+      return original(run);
+    });
+    await expect(api.saveDeepSeekKey('sk-fixture-selection-race', ownerOf(api))).rejects.toThrow('配置目标已变化');
+    expect((await db.repository.listProviderProfiles()).find((item) => item.id === first.id)?.baseUrl).toBe(
+      'https://changed.invalid/v1',
+    );
+    expect(await db.repository.getMeta('provider.activeId')).toBe(first.id);
+    expect([...keys.secrets.values()]).not.toContain('sk-fixture-selection-race');
+    vi.restoreAllMocks();
+  });
+  it('restores its own credential revision after the endpoint changes during credential persistence', async () => {
+    await db.repository.saveProviderProfile({ ...first, baseUrl: 'https://api.deepseek.com' });
+    let api = await settle();
+    sync.config = {
+      endpoint: 'https://sync.invalid',
+      userId: 'fixture',
+      spaceHandle: 'fixture',
+      keyMode: 'device',
+      createdAt: first.createdAt,
+      lastSyncAt: null,
+      lastReport: null,
+    };
+    sync.status = 'ready';
+    sync.sealSecret = async () => ({ algorithm: 'AES-256-GCM', iv: 'fixture', ciphertext: 'fixture' });
+    await vi.waitFor(async () => {
+      api = await settle();
+      expect((await db.repository.listProviderCredentials()).some((item) => item.id === first.keyRef)).toBe(true);
+    });
+    const previous = (await db.repository.listProviderCredentials()).find((item) => item.id === first.keyRef);
+    let entered: () => void = () => {};
+    let finish: () => void = () => {};
+    const started = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    const waiting = new Promise<void>((resolve) => {
+      finish = resolve;
+    });
+    const original = db.repository.saveProviderCredential.bind(db.repository);
+    vi.spyOn(db.repository, 'saveProviderCredential').mockImplementation(async (credential) => {
+      if (credential.id === first.keyRef && credential.revision !== previous?.revision) {
+        entered();
+        await waiting;
+      }
+      await original(credential);
+    });
+    const saving = api.saveDeepSeekKey('sk-fixture-credential-race', ownerOf(api));
+    const rejected = expect(saving).rejects.toThrow('配置目标已变化');
+    await started;
+    await api.updateProfile(first.id, { baseUrl: 'https://changed.invalid/v1' });
+    await settle();
+    finish();
+    await rejected;
+    expect(keys.secrets.get(`device:${first.keyRef}`)).toBe('fixture-key-a');
+    expect((await db.repository.listProviderCredentials()).find((item) => item.id === first.keyRef)?.revision).toBe(
+      previous?.revision,
+    );
+    vi.restoreAllMocks();
+  });
+  it('does not let an older alignment read recreate an aborted setup key credential', async () => {
+    await db.repository.saveProviderProfile({ ...first, baseUrl: 'https://api.deepseek.com' });
+    let api = await settle();
+    const alignmentRead = pause('device', first.keyRef);
+    sync.config = {
+      endpoint: 'https://sync.invalid',
+      userId: 'fixture',
+      spaceHandle: 'fixture',
+      keyMode: 'device',
+      createdAt: first.createdAt,
+      lastSyncAt: null,
+      lastReport: null,
+    };
+    sync.status = 'ready';
+    const sealed: string[] = [];
+    sync.sealSecret = async (_ref, _revision, secret) => {
+      sealed.push(secret);
+      return { algorithm: 'AES-256-GCM', iv: 'fixture', ciphertext: 'fixture' };
+    };
+    api = await settle();
+    keys.pending.delete(`device:${first.keyRef}`);
+    let entered: () => void = () => {};
+    let finish: () => void = () => {};
+    const started = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    keys.pendingWrites.set(
+      first.keyRef,
+      new Promise<void>((resolve) => {
+        finish = resolve;
+      }),
+    );
+    const originalGet = keys.pendingWrites.get.bind(keys.pendingWrites);
+    vi.spyOn(keys.pendingWrites, 'get').mockImplementation((ref) => {
+      entered();
+      return originalGet(ref);
+    });
+    const saving = api.saveDeepSeekKey('sk-fixture-late-alignment', ownerOf(api));
+    const rejected = expect(saving).rejects.toThrow('配置目标已变化');
+    await started;
+    await api.updateProfile(first.id, { baseUrl: 'https://changed.invalid/v1' });
+    await settle();
+    finish();
+    await rejected;
+    alignmentRead.resolve('sk-fixture-late-alignment');
+    await settle();
+    expect(sealed).not.toContain('sk-fixture-late-alignment');
+    expect(keys.secrets.get(`device:${first.keyRef}`)).toBe('fixture-key-a');
+    vi.restoreAllMocks();
+  });
+  it('does not confirm a write when the real key-store reread fails, and reuses the target on retry', async () => {
+    let api = await settle();
+    const owner = ownerOf(api);
+    const originalProfiles = await db.repository.listProviderProfiles();
+    const originalSave = db.repository.saveProviderProfile.bind(db.repository);
+    let targetRef = '';
+    vi.spyOn(db.repository, 'saveProviderProfile').mockImplementation(async (profile) => {
+      if (!originalProfiles.some((item) => item.id === profile.id)) {
+        targetRef = profile.keyRef;
+        keys.pending.set(`device:${targetRef}`, Promise.reject(new Error('fixture reread denied')));
+        keys.pending.get(`device:${targetRef}`)?.catch(() => {});
+      }
+      await originalSave(profile);
+    });
+    let rejected = false;
+    try {
+      await api.saveDeepSeekKey('sk-fixture-retry', owner);
+    } catch {
+      rejected = true;
+    }
+    expect(rejected).toBe(true);
+    expect(api.activeId).toBe(first.id);
+    keys.pending.delete(`device:${targetRef}`);
+    vi.restoreAllMocks();
+    await api.saveDeepSeekKey('sk-fixture-retry', owner);
+    api = await settle();
+    expect(api.apiKey).toBe('sk-fixture-retry');
+    expect((await db.repository.listProviderProfiles()).length).toBe(originalProfiles.length + 1);
+  });
+  it('saves in an unlocked encrypted store without requesting a second passphrase', async () => {
+    keys.useActualVault = true;
+    const values = new Map<string, string>();
+    vi.stubGlobal('localStorage', {
+      getItem: (key: string) => values.get(key) ?? null,
+      setItem: (key: string, value: string) => values.set(key, value),
+      removeItem: (key: string) => values.delete(key),
+    });
+    const keystore = await import('./keystore');
+    await createVault(keystore.browserVaultStorage(), 'fixture-passphrase');
+    await db.repository.saveProviderProfile({ ...first, baseUrl: 'https://api.deepseek.com' });
+    await db.repository.setMeta('provider.keyMode', 'encrypted');
+    let api = await settle();
+    await api.unlockVault('fixture-passphrase');
+    await vi.waitFor(async () => {
+      api = await settle();
+      expect(api.keyLoading).toBe(false);
+    });
+    await api.saveDeepSeekKey('sk-fixture-encrypted-new', ownerOf(api));
+    await vi.waitFor(async () => {
+      api = await settle();
+      expect(api.apiKey).toBe('sk-fixture-encrypted-new');
+    });
+    expect(api.keyMode).toBe('encrypted');
+    const opened = await keystore.openBrowserVault('fixture-passphrase');
+    expect(await opened.store.get(first.keyRef)).toBe('sk-fixture-encrypted-new');
+  });
+  it('keeps session storage when saving a separate DeepSeek target', async () => {
+    keys.useActualSession = true;
+    let api = await settle();
+    await api.setKeyMode('session');
+    api = await settle();
+    await api.saveDeepSeekKey('sk-fixture-session-deepseek', ownerOf(api));
+    api = await settle();
+    api.reloadApiKey();
+    api = await settle();
+    expect(api.keyMode).toBe('session');
+    expect(api.apiKey).toBe('sk-fixture-session-deepseek');
+    expect(keys.writes).toEqual([]);
+  });
   it('rejects invalid numeric config before writing the saved key or profile', async () => {
     const api = await settle();
     const savedProfiles = await db.repository.listProviderProfiles();

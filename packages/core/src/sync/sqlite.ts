@@ -30,6 +30,8 @@ export interface SqliteStatement {
   run(...params: readonly unknown[]): unknown;
 }
 
+// 匿名 ? 与下方参数按出现顺序一一对应；Node 22.13 不支持将 ?1 按位置绑定。
+
 export interface SqliteDatabase {
   exec(sql: string): void;
   prepare(sql: string): SqliteStatement;
@@ -208,14 +210,14 @@ export function createSqliteSyncStore(
   ensureSyncSchema(db);
 
   const getHead = (spaceHandle: string): number => {
-    const row = db.prepare('SELECT head FROM heads WHERE space_handle = ?1').get(spaceHandle) as
+    const row = db.prepare('SELECT head FROM heads WHERE space_handle = ?').get(spaceHandle) as
       | { head: number }
       | undefined;
     return row?.head ?? 0;
   };
 
   const readUsage = (spaceHandle: string): { records: number; bytes: number } => {
-    const row = db.prepare('SELECT record_count, byte_count FROM heads WHERE space_handle = ?1').get(spaceHandle) as
+    const row = db.prepare('SELECT record_count, byte_count FROM heads WHERE space_handle = ?').get(spaceHandle) as
       | { record_count: number | null; byte_count: number | null }
       | undefined;
     return { records: row?.record_count ?? 0, bytes: row?.byte_count ?? 0 };
@@ -230,13 +232,13 @@ export function createSqliteSyncStore(
     // 比较版本、实际用量、行与 head 必须在同一个写事务中，不能先查再 await 写。
     db.exec('BEGIN IMMEDIATE');
     try {
-      if (db.prepare('SELECT space_handle FROM spaces WHERE space_handle = ?1').get(spaceHandle) === undefined) {
+      if (db.prepare('SELECT space_handle FROM spaces WHERE space_handle = ?').get(spaceHandle) === undefined) {
         throw new CryptoError('空间不存在。');
       }
       const usage = readUsage(spaceHandle);
       const existing = db.prepare(
         `SELECT collection, id, server_rev, updated_at, deleted_at, sealed, device_id,
-          ${ROW_BYTES_SQL} AS bytes FROM records WHERE space_handle = ?1 AND collection = ?2 AND id = ?3`,
+          ${ROW_BYTES_SQL} AS bytes FROM records WHERE space_handle = ? AND collection = ? AND id = ?`,
       );
       const before = new Map<string, (RecordRow & { bytes: number }) | undefined>();
       const plan = planConditionalAppend(getHead(spaceHandle), records, (record) => {
@@ -256,7 +258,7 @@ export function createSqliteSyncStore(
         if (quota !== null) assertWithinQuota(projected, options.resolveQuota?.(spaceHandle, quota, usage) ?? quota);
         const upsert = db.prepare(
           `INSERT INTO records (space_handle, collection, id, server_rev, updated_at, deleted_at, sealed, device_id)
-           VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)
            ON CONFLICT(space_handle, collection, id)
            DO UPDATE SET server_rev = excluded.server_rev, updated_at = excluded.updated_at,
                          deleted_at = excluded.deleted_at, sealed = excluded.sealed,
@@ -275,7 +277,7 @@ export function createSqliteSyncStore(
           );
         }
         db.prepare(
-          `INSERT INTO heads (space_handle, head, record_count, byte_count) VALUES (?1, ?2, ?3, ?4)
+          `INSERT INTO heads (space_handle, head, record_count, byte_count) VALUES (?, ?, ?, ?)
            ON CONFLICT(space_handle) DO UPDATE SET head = excluded.head,
              record_count = excluded.record_count, byte_count = excluded.byte_count`,
         ).run(spaceHandle, plan.result.head, projected.records, projected.bytes);
@@ -290,7 +292,7 @@ export function createSqliteSyncStore(
 
   return {
     async getSpace(spaceHandle) {
-      return asSpace(db.prepare('SELECT * FROM spaces WHERE space_handle = ?1').get(spaceHandle));
+      return asSpace(db.prepare('SELECT * FROM spaces WHERE space_handle = ?').get(spaceHandle));
     },
 
     async createSpace(record) {
@@ -299,7 +301,7 @@ export function createSqliteSyncStore(
       const inserted = db
         .prepare(
           `INSERT INTO spaces (space_handle, credential_hash, recovery_credential_hash, key_wraps, created_at, epoch)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+         VALUES (?, ?, ?, ?, ?, ?)
          ON CONFLICT(space_handle) DO NOTHING`,
         )
         .run(
@@ -315,7 +317,7 @@ export function createSqliteSyncStore(
 
       // 新建的空间要有 heads 行，后面的号才从 1 开始
       db.prepare(
-        'INSERT INTO heads (space_handle, head, record_count, byte_count) VALUES (?1, 0, 0, 0) ON CONFLICT(space_handle) DO NOTHING',
+        'INSERT INTO heads (space_handle, head, record_count, byte_count) VALUES (?, 0, 0, 0) ON CONFLICT(space_handle) DO NOTHING',
       ).run(record.spaceHandle);
       return true;
     },
@@ -344,8 +346,8 @@ export function createSqliteSyncStore(
       const rows = db
         .prepare(
           `SELECT collection, id, server_rev, updated_at, deleted_at, sealed, device_id
-           FROM records WHERE space_handle = ?1 AND server_rev > ?2
-           ORDER BY server_rev ASC LIMIT ?3`,
+           FROM records WHERE space_handle = ? AND server_rev > ?
+           ORDER BY server_rev ASC LIMIT ?`,
         )
         .all(spaceHandle, options.since, options.limit);
       return rows.map(asPulledRecord);
@@ -367,7 +369,7 @@ export function createSqliteSyncStore(
         .prepare(
           `SELECT device_id, COUNT(*) AS records, MAX(updated_at) AS last_write_at
            FROM records
-           WHERE space_handle = ?1 AND device_id IS NOT NULL
+           WHERE space_handle = ? AND device_id IS NOT NULL
            GROUP BY device_id
            ORDER BY last_write_at DESC`,
         )
@@ -392,16 +394,16 @@ export function createSqliteSyncStore(
      * 它是「忘了密码」的等价凭证，换密码不该顺手废掉它。
      */
     async rotatePassword(spaceHandle, patch) {
-      const row = db.prepare('SELECT key_wraps FROM spaces WHERE space_handle = ?1').get(spaceHandle) as
+      const row = db.prepare('SELECT key_wraps FROM spaces WHERE space_handle = ?').get(spaceHandle) as
         | { key_wraps: string }
         | undefined;
       if (row === undefined) return false;
       const wraps = JSON.parse(row.key_wraps) as Record<string, unknown>;
       wraps.password = patch.passwordWrap;
-      db.prepare('UPDATE spaces SET credential_hash = ?2, key_wraps = ?3 WHERE space_handle = ?1').run(
-        spaceHandle,
+      db.prepare('UPDATE spaces SET credential_hash = ?, key_wraps = ? WHERE space_handle = ?').run(
         patch.credentialHash,
         JSON.stringify(wraps),
+        spaceHandle,
       );
       return true;
     },

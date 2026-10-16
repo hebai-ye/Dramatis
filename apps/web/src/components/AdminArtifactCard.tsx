@@ -1,8 +1,15 @@
-import type { AdminArtifact } from '@dramatis/core';
+import {
+  type AdminArtifact,
+  isCompleteWorldBook,
+  isModifiedWorldBookArtifact,
+  type WorldBook,
+  worldBookArtifactConflict,
+} from '@dramatis/core';
 import { useRef, useState } from 'react';
 import type { ArtifactAction, ArtifactActionResult } from '../lib/admin-artifact-actions';
 import { AdminDraftPreview } from './AdminDraftPreview';
 import { Modal } from './Modal';
+import { WorldBookDiff } from './WorldBookDiff';
 
 const KIND: Record<AdminArtifact['kind'], string> = {
   'character-card': '角色卡',
@@ -23,6 +30,8 @@ interface Props {
   exists: boolean;
   scopeKey: string;
   targetLabel?: string;
+  currentBook?: WorldBook | null;
+  onReverse?: () => void | Promise<void>;
   onAdopt: (() => void) | (() => Promise<ArtifactActionResult>);
   onDiscard: (() => void) | (() => Promise<ArtifactActionResult>);
   onRevoke?: (() => void) | (() => Promise<ArtifactActionResult>);
@@ -36,6 +45,8 @@ export function AdminArtifactCard({
   exists,
   scopeKey,
   targetLabel,
+  currentBook = null,
+  onReverse,
   onAdopt,
   onDiscard,
   onRevoke,
@@ -48,26 +59,31 @@ export function AdminArtifactCard({
   if (owner.current.key !== identity) owner.current = { key: identity, pending: false };
   const [feedback, setFeedback] = useState<{
     key: string;
+    basis: AdminArtifact;
     pending: ArtifactAction | null;
     action: ArtifactAction;
     result: ArtifactActionResult | null;
   } | null>(null);
   const [preview, setPreview] = useState<{ key: string; focus: HTMLElement | null } | null>(null);
+  const [reversePending, setReversePending] = useState<string | null>(null);
   const [confirm, setConfirm] = useState<{ key: string; kind: 'revoke' | 'delete' } | null>(null);
   const local = feedback?.key === identity ? feedback : null;
-  const result = local?.result;
+  const result = local?.result && 'artifact' in local.result && local.basis !== artifact ? null : local?.result;
   const shown = result && 'artifact' in result ? result.artifact : artifact;
+  const modifiedBook = isModifiedWorldBookArtifact(shown);
+  const conflict =
+    shown.conflict ?? (shown.status === 'pending' ? worldBookArtifactConflict(shown, currentBook) : null);
   const uncertain = result?.status === 'uncertain';
   const pending = local?.pending ?? null;
   const payload = shown.payload as { description?: unknown; entries?: unknown } | null;
   const summary = typeof payload?.description === 'string' ? payload.description : '';
   const count = Array.isArray(payload?.entries) ? payload.entries.length : 0;
-  const canWrite = !disabled && !pending && !uncertain;
+  const canWrite = !disabled && !pending && !uncertain && reversePending !== identity;
   const act = async (action: ArtifactAction, inspect = false) => {
     if (owner.current.pending || disabled || (!inspect && uncertain)) return;
     const token = owner.current;
     token.pending = true;
-    setFeedback({ key: identity, pending: action, action, result: null });
+    setFeedback({ key: identity, basis: artifact, pending: action, action, result: null });
     try {
       const response = inspect
         ? await onInspect?.(action)
@@ -75,6 +91,7 @@ export function AdminArtifactCard({
       if (owner.current === token)
         setFeedback({
           key: identity,
+          basis: artifact,
           pending: null,
           action,
           result: response ?? { status: 'uncertain', reason: '操作结果未确认，请先核对记录。' },
@@ -83,6 +100,7 @@ export function AdminArtifactCard({
       if (owner.current === token)
         setFeedback({
           key: identity,
+          basis: artifact,
           pending: null,
           action,
           result: {
@@ -123,7 +141,7 @@ export function AdminArtifactCard({
       {shown.kind === 'scene' ? (
         <p className="hint">
           {shown.status === 'pending'
-            ? '这个世界还没有可应用的主对话，请先新建主对话，再重新设置。'
+            ? '场景尚未应用，请选择有效的主对话，再重新设置。'
             : (targetLabel ?? '已生效于当时的主对话')}
         </p>
       ) : (
@@ -132,7 +150,15 @@ export function AdminArtifactCard({
       {shown.kind === 'world-book' && exists && shown.status === 'pending' ? (
         <p className="hint warn">采纳会整本替换目标世界书「{shown.title}」，不会追加条目。</p>
       ) : null}
-      {shown.conflict ? <p className="hint warn">{shown.conflict}</p> : null}
+      {shown.kind === 'world-book' &&
+      isCompleteWorldBook(shown.payload) &&
+      (!modifiedBook || isCompleteWorldBook(shown.previousPayload)) ? (
+        <WorldBookDiff
+          before={isCompleteWorldBook(shown.previousPayload) ? shown.previousPayload : null}
+          after={shown.payload}
+        />
+      ) : null}
+      {conflict ? <p className="hint warn">{conflict}</p> : null}
       {shown.kind === 'persona-delete' && shown.status === 'pending' ? (
         <p className="hint warn">确认后删除这份身份；此处不能撤回。</p>
       ) : null}
@@ -156,7 +182,7 @@ export function AdminArtifactCard({
           <>
             <button
               type="button"
-              disabled={!canWrite || shown.conflict !== undefined}
+              disabled={!canWrite || conflict != null}
               className={shown.kind === 'persona-delete' ? 'ghost danger' : undefined}
               onClick={() =>
                 shown.kind === 'persona-delete' ? setConfirm({ key: identity, kind: 'delete' }) : act('adopt')
@@ -174,7 +200,38 @@ export function AdminArtifactCard({
             丢弃
           </button>
         ) : null}
-        {shown.status === 'adopted' && onRevoke && shown.kind !== 'persona-delete' ? (
+        {shown.status === 'adopted' && modifiedBook ? (
+          <button
+            type="button"
+            className="ghost"
+            disabled={!canWrite || !onReverse}
+            onClick={async () => {
+              if (owner.current.pending || !canWrite || !onReverse) return;
+              const token = owner.current;
+              token.pending = true;
+              setReversePending(identity);
+              setFeedback(null);
+              try {
+                await onReverse();
+              } catch (error) {
+                if (owner.current === token)
+                  setFeedback({
+                    key: identity,
+                    basis: artifact,
+                    pending: null,
+                    action: 'adopt',
+                    result: { status: 'missing', reason: error instanceof Error ? error.message : String(error) },
+                  });
+              } finally {
+                token.pending = false;
+                if (owner.current === token) setReversePending(null);
+              }
+            }}
+          >
+            {reversePending === identity ? '正在起草反向修改…' : '起草反向修改'}
+          </button>
+        ) : null}
+        {shown.status === 'adopted' && !modifiedBook && onRevoke && shown.kind !== 'persona-delete' ? (
           <button
             type="button"
             className="ghost"

@@ -5,10 +5,15 @@ import {
   type KeyStore,
   newId,
   nowIso,
+  type ProviderCredential,
   type ProviderProfile,
 } from '@dramatis/core';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { DramatisDb } from './db';
+import { type DeepSeekSetupOwner, type DeepSeekSetupReceipt, isDeepSeekProfile } from './deepseek-setup';
+
+export { deepseekSetupState, isDeepSeekProfile } from './deepseek-setup';
+
 import {
   browserVaultStorage,
   createBrowserKeyStore,
@@ -96,6 +101,8 @@ function sameKeyStamp(left: KeyReadStamp | null | undefined, right: KeyReadStamp
 }
 
 export interface ProvidersApi {
+  setupOwner: DeepSeekSetupOwner | null;
+  saveDeepSeekKey: (apiKey: string, expectedOwner: DeepSeekSetupOwner) => Promise<DeepSeekSetupReceipt>;
   profiles: ProviderProfile[];
   activeId: string | null;
   active: ProviderProfile | null;
@@ -183,6 +190,20 @@ export function useProviders(
   const dedicated = profiles.find((profile) => profile.role === 'background') ?? null;
   const activeProfileId = active?.id ?? null;
   const activeKeyRef = active?.keyRef ?? null;
+  const activeBaseUrl = active?.baseUrl ?? null;
+  const setupContext = useMemo(() => ({ db, keyMode, vault }), [db, keyMode, vault]);
+  const setupOwner = useMemo<DeepSeekSetupOwner | null>(
+    () =>
+      activeProfileId === null || activeKeyRef === null || db === null
+        ? null
+        : { profileId: activeProfileId, keyMode, context: setupContext, token: { activeKeyRef, activeBaseUrl } },
+    [activeProfileId, activeKeyRef, activeBaseUrl, db, keyMode, setupContext],
+  );
+  const setupOwnerRef = useRef(setupOwner);
+  setupOwnerRef.current = setupOwner;
+  const setupTargetRef = useRef<{ owner: DeepSeekSetupOwner; target: ProviderProfile } | null>(null);
+  const setupSavingRef = useRef(false);
+  const setupRevisionRef = useRef(0);
   const backgroundProfileId = dedicated?.id ?? null;
   const backgroundKeyRef = dedicated?.keyRef ?? null;
   const activeStamp = useMemo<KeyReadStamp | null>(
@@ -364,7 +385,14 @@ export function useProviders(
   }, [backgroundStamp, providerKeyStore]);
 
   const syncCredential = useCallback(
-    async (profile: ProviderProfile, secret: string): Promise<void> => {
+    async (
+      profile: ProviderProfile,
+      secret: string,
+      guard?: {
+        assertCurrent: () => Promise<void>;
+        onWrite: (previous: ProviderCredential | undefined, next: ProviderCredential) => void;
+      },
+    ): Promise<void> => {
       if (db === null || sync.config === null || sync.status !== 'ready') return;
       if (secret.trim() === '') {
         await db.repository.deleteProviderCredential(profile.keyRef);
@@ -376,7 +404,8 @@ export function useProviders(
       const revision = newId();
       const encryptedSecret = await sync.sealSecret(profile.keyRef, revision, secret);
       if (encryptedSecret === null) return;
-      await db.repository.saveProviderCredential({
+      await guard?.assertCurrent();
+      const credential: ProviderCredential = {
         id: profile.keyRef,
         providerId: profile.id,
         revision,
@@ -384,7 +413,10 @@ export function useProviders(
         createdAt: existing?.createdAt ?? nowIso(),
         updatedAt: nowIso(),
         deletedAt: null,
-      });
+      };
+      guard?.onWrite(existing, credential);
+      await db.repository.saveProviderCredential(credential);
+      await guard?.assertCurrent();
       sync.requestAutoSync();
     },
     [db, sync.config, sync.requestAutoSync, sync.sealSecret, sync.status],
@@ -462,7 +494,12 @@ export function useProviders(
       const byId = new Map(credentials.map((credential) => [credential.id, credential]));
       for (const profile of profiles) {
         if (cancelled) return;
+        const setupRevision = setupRevisionRef.current;
         const local = await store.get(profile.keyRef);
+        if (cancelled) return;
+        if (setupRevision !== setupRevisionRef.current) continue;
+        // The setup operation owns this ref until its scope checks and reread finish.
+        if (setupSavingRef.current && setupTargetRef.current?.target.keyRef === profile.keyRef) continue;
         if (local !== null && local !== '') {
           if (!byId.has(profile.keyRef)) await syncCredential(profile, local);
           continue;
@@ -472,6 +509,11 @@ export function useProviders(
         if (credential === undefined) continue;
         const opened = await sync.openSecret(profile.keyRef, credential.revision, credential.encryptedSecret);
         if (cancelled) return;
+        if (
+          setupRevision !== setupRevisionRef.current ||
+          (setupSavingRef.current && setupTargetRef.current?.target.keyRef === profile.keyRef)
+        )
+          continue;
         if (opened === null || opened === '') continue;
         await store.set(profile.keyRef, opened);
         if (cancelled) return;
@@ -603,6 +645,132 @@ export function useProviders(
       await syncCredential(profile, value);
     },
     [activeId, activeStamp, profiles, syncCredential, requireKeyReady, publishActiveKey],
+  );
+
+  const saveDeepSeekKey = useCallback(
+    async (value: string, expectedOwner: DeepSeekSetupOwner) => {
+      const key = value.trim();
+      let scopeChanged = false;
+      const rejectScope = () => {
+        scopeChanged = true;
+        throw new Error('配置目标已变化，请关闭后重新配置。');
+      };
+      const assertOwner = () => {
+        if (!db || expectedOwner?.token !== setupOwnerRef.current?.token) rejectScope();
+      };
+      assertOwner();
+      requireKeyReady(activeStamp);
+      if (!key.startsWith('sk-') || key.length <= 3 || /\s/.test(key))
+        throw new Error('请粘贴完整的 DeepSeek API Key。');
+      if (setupSavingRef.current) throw new Error('正在保存 API Key，请等待完成。');
+      const source = profiles.find((profile) => profile.id === expectedOwner.profileId);
+      if (!db || !source) throw new Error('当前模型配置不可用，请重新读取。');
+      const database = db;
+      const store = keyStoreRef.current;
+      const target =
+        setupTargetRef.current?.owner.token === expectedOwner.token
+          ? setupTargetRef.current.target
+          : isDeepSeekProfile(source)
+            ? source
+            : { ...createProviderProfile(DEFAULT_PROFILE), active: false };
+      setupTargetRef.current = { owner: expectedOwner, target };
+      setupSavingRef.current = true;
+      setupRevisionRef.current += 1;
+      const assertProfiles = async (targetRequired = true, repository = database.repository) => {
+        assertOwner();
+        const current = await repository.listProviderProfiles();
+        assertOwner();
+        const savedSource = current.find((profile) => profile.id === source.id);
+        const savedTarget = current.find((profile) => profile.id === target.id);
+        if (
+          savedSource?.keyRef !== source.keyRef ||
+          savedSource.baseUrl !== source.baseUrl ||
+          (targetRequired && (savedTarget?.keyRef !== target.keyRef || savedTarget.baseUrl !== target.baseUrl))
+        )
+          rejectScope();
+        return current;
+      };
+      let previousKey: string | null = null;
+      let wroteKey = false;
+      let credentialWrite: { previous: ProviderCredential | undefined; next: ProviderCredential } | null = null;
+      try {
+        const initial = await assertProfiles(false);
+        if (target.id !== source.id && !initial.some((item) => item.id === target.id)) {
+          await database.repository.saveProviderProfile(target);
+        }
+        await assertProfiles();
+        previousKey = await store.get(target.keyRef);
+        await assertProfiles();
+        await store.set(target.keyRef, key);
+        wroteKey = true;
+        await assertProfiles();
+        if ((await store.get(target.keyRef)) !== key) throw new Error('API Key 保存结果未确认，请核对后重试。');
+        await assertProfiles();
+        await syncCredential(target, key, {
+          assertCurrent: async () => {
+            await assertProfiles();
+          },
+          onWrite: (previous, next) => {
+            credentialWrite = { previous, next };
+          },
+        });
+        await assertProfiles();
+        if (target.id === source.id) {
+          if (activeStamp !== null) publishActiveKey(activeStamp, key);
+        } else {
+          // Profile fields and active selection must come from the same storage snapshot.
+          const next = await database.repository.atomic(async (repository) => {
+            const current = await assertProfiles(true, repository);
+            const selected = current.map((profile) => ({ ...profile, active: profile.id === target.id }));
+            for (const profile of selected) {
+              assertOwner();
+              if (current.find((item) => item.id === profile.id)?.active !== profile.active)
+                await repository.saveProviderProfile(profile);
+            }
+            assertOwner();
+            await repository.setMeta(META_ACTIVE_PROFILE, target.id);
+            assertOwner();
+            return selected;
+          });
+          await assertProfiles();
+          invalidateKeyRead();
+          setProfiles(next);
+          setActiveId(target.id);
+        }
+        return { profileId: target.id, keyRef: target.keyRef, baseUrl: target.baseUrl };
+      } catch (reason) {
+        if (scopeChanged && wroteKey) {
+          try {
+            // Do not overwrite a newer write from another operation during cleanup.
+            if ((await store.get(target.keyRef)) === key) {
+              if (previousKey === null) await store.remove(target.keyRef);
+              else await store.set(target.keyRef, previousKey);
+            }
+            // The callback runs before the async credential write and captures its revision.
+            const attempted = credentialWrite as {
+              previous: ProviderCredential | undefined;
+              next: ProviderCredential;
+            } | null;
+            if (attempted !== null) {
+              const current = (await database.repository.listProviderCredentials()).find(
+                (item) => item.id === target.keyRef,
+              );
+              if (current?.revision === attempted.next.revision) {
+                if (attempted.previous) await database.repository.saveProviderCredential(attempted.previous);
+                else await database.repository.deleteProviderCredential(target.keyRef);
+              }
+            }
+          } catch {
+            throw new Error('配置目标已变化，保存未完成。请关闭后检查对应配置的密钥。');
+          }
+        }
+        throw reason;
+      } finally {
+        setupSavingRef.current = false;
+        setupRevisionRef.current += 1;
+      }
+    },
+    [db, activeStamp, profiles, requireKeyReady, syncCredential, publishActiveKey, invalidateKeyRead],
   );
 
   const setKeyMode = useCallback(
@@ -738,6 +906,8 @@ export function useProviders(
   return useMemo(
     () => ({
       profiles,
+      setupOwner,
+      saveDeepSeekKey,
       activeId,
       active: profiles.find((item) => item.id === activeId) ?? null,
       apiKey,
@@ -759,6 +929,8 @@ export function useProviders(
       commitConfig,
     }),
     [
+      setupOwner,
+      saveDeepSeekKey,
       activeId,
       addProfile,
       apiKey,

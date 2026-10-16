@@ -4364,3 +4364,42 @@ details summary {
     transition: none;
   }
 }
+
+/* DeepSeek first-use setup retains the existing dialog focus/close shell. */
+.deepseek-key-dialog {
+  width: min(28rem, calc(100vw - 2rem));
+}
+.deepseek-key-form {
+  display: grid;
+  align-content: start;
+  gap: 1rem;
+  padding: 1rem;
+}
+.deepseek-key-form .key-input-row {
+  display: flex;
+  gap: 0.35rem;
+}
+.deepseek-key-form .key-input-row input {
+  min-width: 0;
+  flex: 1;
+}
+.dialog.modal {
+  max-width: 560px;
+  background: var(--panel);
+}
+
+.world-book-diff pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font: inherit;
+}
+.world-book-diff details {
+  margin-block: 8px;
+}
+.world-book-entry-preview span {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.admin-scene-target {
+  padding: 8px 16px;
+}

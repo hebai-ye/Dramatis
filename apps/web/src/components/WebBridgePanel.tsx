@@ -82,8 +82,13 @@ async function copyText(text: string): Promise<boolean> {
 export function WebBridgePanel({ bridge, busy, disabled, onReply, onAnalysis, onAdmin, onInspect, onSkip }: Props) {
   const [paste, setPaste] = useState('');
   const [copied, setCopied] = useState(false);
-  const [copyFailed, setCopyFailed] = useState(false);
   const [invalidSource, setInvalidSource] = useState(false);
+  const [copyBusy, setCopyBusy] = useState(false);
+  const [copyError, setCopyError] = useState(false);
+  const copyBusyRef = useRef(false);
+  const copyRequestId = useRef(0);
+  const promptRef = useRef(bridge.prompt);
+  const promptDetailsRef = useRef<HTMLDetailsElement>(null);
   /** 本地助手（顺序 38）：没起进程就是 null，起了就是它的状态。 */
   const [helper, setHelper] = useState<LocalBridgeStatus | null>(null);
   const [helperBusy, setHelperBusy] = useState(false);
@@ -134,6 +139,7 @@ export function WebBridgePanel({ bridge, busy, disabled, onReply, onAnalysis, on
     bridge.stage,
     bridge.turnId,
     bridge.sourceKey,
+    bridge.prompt,
     bridge.speakerInstanceId,
     bridge.pendingTurn?.nextIndex ?? 0,
   ]);
@@ -154,15 +160,28 @@ export function WebBridgePanel({ bridge, busy, disabled, onReply, onAnalysis, on
     setStage(bridgeStep);
     setPaste('');
     setCopied(false);
+    copyRequestId.current += 1;
+    copyBusyRef.current = false;
+    setCopyBusy(false);
+    setCopyError(false);
+    setHelperBusy(false);
     setHelperError(null);
+  }
+  if (promptRef.current !== bridge.prompt) {
+    promptRef.current = bridge.prompt;
+    copyRequestId.current += 1;
+    copyBusyRef.current = false;
+    setCopied(false);
+    setCopyBusy(false);
+    setCopyError(false);
     setHelperBusy(false);
     setApplying(false);
     setUncertain(false);
-    setCopyFailed(false);
     setInvalidSource(false);
     setConfirmSkip(false);
     setClipboardFilled(false);
     setLateReply('');
+    setHelperError(null);
   }
 
   /**
@@ -257,6 +276,32 @@ export function WebBridgePanel({ bridge, busy, disabled, onReply, onAnalysis, on
     if (isReply) onReply(paste);
     else if (isAdmin) void applyAdmin();
     else onAnalysis(paste);
+  };
+
+  const copyPrompt = async (): Promise<void> => {
+    if (copyBusyRef.current) return;
+    copyBusyRef.current = true;
+    const requestId = ++copyRequestId.current;
+    const prompt = bridge.prompt;
+    setCopyBusy(true);
+    setCopied(false);
+    setCopyError(false);
+    try {
+      const ok = await copyText(prompt);
+      if (requestId !== copyRequestId.current) return;
+      if (ok) {
+        setCopied(true);
+      } else {
+        setCopyError(true);
+        // 展开已有提示词区，用户可以自行选择内容并按 Ctrl+C；不把焦点从当前控件移走。
+        if (promptDetailsRef.current) promptDetailsRef.current.open = true;
+      }
+    } finally {
+      if (requestId === copyRequestId.current) {
+        copyBusyRef.current = false;
+        setCopyBusy(false);
+      }
+    }
   };
 
   /**
@@ -363,21 +408,14 @@ export function WebBridgePanel({ bridge, busy, disabled, onReply, onAnalysis, on
             改用手动贴回
           </button>
         ) : null}
-        <button
-          type="button"
-          className="ghost"
-          disabled={disabled}
-          onClick={() => {
-            const generation = gate.current.generation;
-            void copyText(bridge.prompt).then((ok) => {
-              if (gate.current.mounted && generation === gate.current.generation) {
-                setCopied(ok);
-                setCopyFailed(!ok);
-              }
-            });
-          }}
-        >
-          {copied ? '已复制 ✓' : isReply || isAdmin ? '1. 复制提示词' : '1. 复制这一步的提示词'}
+        <button type="button" className="ghost" disabled={disabled || copyBusy} onClick={() => void copyPrompt()}>
+          {copyBusy
+            ? '正在复制…'
+            : copied
+              ? '已复制 ✓'
+              : isReply || isAdmin
+                ? '1. 复制提示词'
+                : '1. 复制这一步的提示词'}
         </button>
         <a className="bridge-link" href={WEB_BRIDGE_TARGET.url} target="_blank" rel="noreferrer">
           2. 打开 {WEB_BRIDGE_TARGET.name}
@@ -385,11 +423,15 @@ export function WebBridgePanel({ bridge, busy, disabled, onReply, onAnalysis, on
         <span className="hint">{WEB_BRIDGE_TARGET.hint}</span>
       </div>
 
-      {copyFailed ? <p className="hint warn">复制失败，请在下方展开的提示词中选择文字，手动复制。</p> : null}
-      <details className="bridge-prompt" {...(copyFailed ? { open: true } : {})}>
+      <details className="bridge-prompt" ref={promptDetailsRef} {...(copyError ? { open: true } : {})}>
         <summary>看一眼这段提示词（{bridge.prompt.length} 字）</summary>
         <pre>{bridge.prompt}</pre>
       </details>
+      {copyError ? (
+        <p className="notice error" role="status">
+          自动复制失败。提示词已展开；请手动选择上方内容并按 Ctrl+C（Mac 上按 ⌘C）。
+        </p>
+      ) : null}
 
       {/* 助手那条路的解释与报错都摆在这儿：它做的事越自动，越要说清它是什么 */}
       {helper?.attached === true ? (

@@ -90,6 +90,7 @@ async function fixture() {
   const session = {
     world,
     conversation: side,
+    conversations: [side, { ...main, activeSceneId: scene.id }],
     messages: [],
     instances: [],
     personas: [],
@@ -128,6 +129,7 @@ describe('副桥接来源和发送等待', () => {
         }),
     };
     const pending = render(f.options).send('delayed');
+    await vi.waitFor(() => expect(release).toBeTypeOf('function'));
     f.options.session = { ...original, world: { ...f.world, id: roomId('world-b') } };
     render(f.options);
     release();
@@ -147,6 +149,7 @@ describe('副桥接来源和发送等待', () => {
         }),
     };
     const pending = render(f.options).send('delayed');
+    await vi.waitFor(() => expect(release).toBeTypeOf('function'));
     setStreamState('admin', { text: '只属于 A', phase: 'writing' });
     f.options.session = { ...original, world: { ...f.world, id: roomId('world-b') } };
     expect(render(f.options).busy).toBe(false);
@@ -159,14 +162,14 @@ describe('副桥接来源和发送等待', () => {
     expect(render(f.options).busy).toBe(false);
     expect(render(f.options).canStop).toBe(false);
   });
-  it('API 场景写入后关联失败，即使模型正常结束也待核对且禁止重提', async () => {
+  it('API 场景部分写入后停止后续工具和模型请求，保存部分结果并先核对', async () => {
     const f = await fixture();
     f.options.providers = {
       active: { baseUrl: 'http://synthetic.invalid/v1', model: 'fake' },
       apiKey: 'synthetic-only',
     } as ProvidersApi;
     Object.assign(f.options.db, { ledger: { record: vi.fn(async () => {}) } });
-    f.options.session.setWorldScene = async (_patch, onEffect) => {
+    const setScene = vi.fn<SessionApi['setWorldScene']>(async (_patch, _target, _room, onEffect) => {
       if (!f.scene.conversationId) throw new Error('fixture must have a main conversation');
       onEffect?.({
         scene: f.scene,
@@ -182,7 +185,8 @@ describe('副桥接来源和发送等待', () => {
         },
       });
       throw new Error('Synthetic link receipt lost');
-    };
+    });
+    f.options.session.setWorldScene = setScene;
     const fetch = vi.fn(async (_url: unknown, init?: RequestInit) => {
       const request = JSON.parse(String(init?.body));
       const message =
@@ -196,6 +200,11 @@ describe('副桥接来源和发送等待', () => {
                   type: 'function',
                   function: { name: 'set_scene', arguments: '{"location":"synthetic"}' },
                 },
+                {
+                  id: 'scene-retry',
+                  type: 'function',
+                  function: { name: 'set_scene', arguments: '{"location":"must-not-write"}' },
+                },
               ],
             };
       return new Response(JSON.stringify({ choices: [{ message }] }), {
@@ -207,9 +216,139 @@ describe('副桥接来源和发送等待', () => {
     const api = render(f.options);
     if (!api.processScope || !api.activeRunId) throw new Error('missing run');
     expect(adminProcessStore.get(api.processScope, { runId: api.activeRunId })?.phase).toBe('uncertain');
+    expect(setScene).toHaveBeenCalledOnce();
+    expect(fetch).toHaveBeenCalledOnce();
+    const output = (await f.repository.listMessages(f.world.id)).find((m) => m.role === 'admin');
+    expect(output?.artifacts?.[0]).toMatchObject({ kind: 'scene', status: 'pending', targetId: f.scene.id });
     const count = fetch.mock.calls.length;
     expect((await api.send('scene again')).status).toBe('uncertain');
     expect(fetch).toHaveBeenCalledTimes(count);
+  });
+  it('同账户切换副对话后保留已生成但未保存的草稿，旧运行不污染新正文', async () => {
+    const f = await fixture(),
+      original = f.options.session;
+    f.options.providers = {
+      active: { baseUrl: 'http://synthetic.invalid/v1', model: 'fake' },
+      apiKey: 'synthetic-only',
+    } as ProvidersApi;
+    Object.assign(f.options.db, { ledger: { record: vi.fn(async () => {}) } });
+    let started!: () => void;
+    const waiting = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    const fetch = vi.fn(async (_url: unknown, init?: RequestInit): Promise<Response> => {
+      if (fetch.mock.calls.length === 1)
+        return new Response(
+          JSON.stringify({
+            choices: [
+              {
+                message: {
+                  content: '',
+                  tool_calls: [
+                    {
+                      id: 'draft',
+                      type: 'function',
+                      function: {
+                        name: 'upsert_character_card',
+                        arguments: '{"name":"切换前的草稿","description":"合成内容"}',
+                      },
+                    },
+                  ],
+                },
+              },
+            ],
+          }),
+          { headers: { 'Content-Type': 'application/json' } },
+        );
+      started();
+      return new Promise((_resolve, reject) => {
+        init?.signal?.addEventListener('abort', () => reject(new Error('synthetic aborted')), { once: true });
+      });
+    });
+    vi.stubGlobal('fetch', fetch);
+    const api = render(f.options),
+      scope = api.processScope;
+    const pending = api.send('draft');
+    await waiting;
+    const runId = render(f.options).activeRunId;
+    f.options.session = { ...original, conversation: { ...f.side, id: 'other-side' as typeof f.side.id } };
+    render(f.options);
+    setStreamState('admin', { text: '新副对话正文', phase: 'writing' });
+    await pending;
+    expect(getStreamState('admin').text).toBe('新副对话正文');
+    if (!scope || !runId) throw new Error('missing original run');
+    expect(adminProcessStore.get(scope, { runId })?.unsaved?.artifacts[0]?.title).toBe('切换前的草稿');
+    f.options.session = original;
+    expect(render(f.options).activeRunId).toBe(runId);
+    expect(render(f.options).busy).toBe(false);
+  });
+  it('只读核对确认场景未关联后说明部分结果并解除等待，不重放写入', async () => {
+    const f = await fixture();
+    const mainId = f.scene.conversationId;
+    if (!mainId) throw new Error('missing main');
+    const main = await f.repository.getConversation(mainId);
+    if (!main) throw new Error('missing main');
+    await f.repository.saveConversation({ ...main, activeSceneId: null });
+    const next = createSceneFor(f.world.id, main.id, [], { location: 'partial' });
+    f.options.providers = {
+      active: { baseUrl: 'http://synthetic.invalid/v1', model: 'fake' },
+      apiKey: 'synthetic-only',
+    } as ProvidersApi;
+    Object.assign(f.options.db, { ledger: { record: vi.fn(async () => {}) } });
+    f.options.session.setWorldScene = async (_patch, _target, _room, onEffect) => {
+      await f.repository.saveScene(next);
+      onEffect?.({
+        scene: next,
+        sceneWritten: true,
+        activeLinked: false,
+        target: {
+          roomId: f.world.id,
+          worldTitle: 'A',
+          conversationId: main.id,
+          conversationTitle: main.title,
+          sceneId: next.id,
+          sceneTitle: next.title,
+        },
+      });
+      throw new Error('link write failed');
+    };
+    vi.stubGlobal(
+      'fetch',
+      async () =>
+        new Response(
+          JSON.stringify({
+            choices: [
+              {
+                message: {
+                  content: '',
+                  tool_calls: [
+                    {
+                      id: 'partial',
+                      type: 'function',
+                      function: { name: 'set_scene', arguments: '{"location":"partial"}' },
+                    },
+                  ],
+                },
+              },
+            ],
+          }),
+          { headers: { 'Content-Type': 'application/json' } },
+        ),
+    );
+    await render(f.options).send('scene');
+    const api = render(f.options);
+    const saveScene = vi.spyOn(f.repository, 'saveScene'),
+      saveConversation = vi.spyOn(f.repository, 'saveConversation');
+    expect((await api.inspectRun()).status).toBe('confirmed');
+    const settled = render(f.options);
+    expect(settled.needsInspection).toBe(false);
+    if (!settled.processScope || !settled.activeRunId) throw new Error('missing run');
+    const run = adminProcessStore.get(settled.processScope, { runId: settled.activeRunId });
+    expect(run?.phase).toBe('partial');
+    expect(run?.issue?.text).toContain('未设为当前场景');
+    expect(saveScene).not.toHaveBeenCalled();
+    expect(saveConversation).not.toHaveBeenCalled();
+    expect((await f.repository.getConversation(main.id))?.activeSceneId).toBeNull();
   });
   it('API 输出回执未知保留正文并只读恢复，不重放模型', async () => {
     const f = await fixture(),

@@ -149,6 +149,16 @@ export function DialogShell({
     }
   }, [state.pending]);
 
+  // Removing or disabling the focused control can leave focus on body without a focusin event.
+  // Recheck after every committed render so Esc/Tab remain within this mounted dialog.
+  useLayoutEffect(() => {
+    const section = sectionRef.current;
+    const active = document.activeElement;
+    if (section === null || state.pending !== null) return;
+    if (!section.contains(active) || (active instanceof HTMLElement && active.matches(':disabled')))
+      closeRef.current?.focus();
+  });
+
   const requestClose = (): void => {
     if (controller.state().pending !== null) controller.cancel();
     else controller.request(onClose);

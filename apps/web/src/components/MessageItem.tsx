@@ -7,7 +7,7 @@ import {
   type MessageId,
   type SignatureOwner,
 } from '@dramatis/core';
-import { type MouseEvent, memo, type ReactNode, type TouchEvent, useMemo, useState } from 'react';
+import { type MouseEvent, memo, type ReactNode, type TouchEvent, useEffect, useMemo, useRef, useState } from 'react';
 import { useBusy } from '../lib/busy-context';
 import { countRender } from '../lib/render-count';
 import { Avatar, MessageBody } from './MessageBody';
@@ -32,7 +32,7 @@ export interface MessageHandlers {
   onClickCapture: (event: MouseEvent<HTMLElement>) => void;
   onStartEdit: (id: MessageId) => void;
   onCancelEdit: () => void;
-  onEdit: (id: MessageId, content: string) => void;
+  onEdit: (id: MessageId, content: string, latestContent?: () => string | null) => void | Promise<void>;
   onRegenerate: (id: MessageId) => void;
   onDelete: (id: MessageId) => void;
   onReassign: (id: MessageId, instanceId: InstanceId) => void;
@@ -149,18 +149,73 @@ function EditBox({
   onCancel,
 }: {
   message: Message;
-  onSave: (content: string) => void;
+  onSave: (content: string, latestContent: () => string | null) => void | Promise<void>;
   onCancel: () => void;
 }) {
   const [draft, setDraft] = useState(message.content);
+  const draftRef = useRef(draft);
+  const savedRef = useRef(message.content);
+  const pendingRef = useRef(false);
+  const composingRef = useRef(false);
+  const nativeComposingRef = useRef(false);
+  const activeRef = useRef(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    activeRef.current = true;
+    return () => {
+      activeRef.current = false;
+    };
+  }, []);
+  const save = async () => {
+    if (pendingRef.current || composingRef.current || nativeComposingRef.current) return;
+    pendingRef.current = true;
+    setSaving(true);
+    setError(null);
+    const submitted = draftRef.current;
+    try {
+      await onSave(submitted, () => (composingRef.current || nativeComposingRef.current ? null : draftRef.current));
+      savedRef.current = submitted;
+    } catch (reason) {
+      if (activeRef.current) setError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      pendingRef.current = false;
+      if (activeRef.current) setSaving(false);
+    }
+  };
   return (
     <>
-      <textarea rows={4} value={draft} onChange={(event) => setDraft(event.target.value)} />
+      <textarea
+        rows={4}
+        aria-label="编辑消息"
+        value={draft}
+        onChange={(event) => {
+          draftRef.current = event.target.value;
+          nativeComposingRef.current = (event.nativeEvent as InputEvent)?.isComposing === true;
+          setDraft(event.target.value);
+        }}
+        onCompositionStart={() => {
+          composingRef.current = true;
+        }}
+        onCompositionEnd={() => {
+          composingRef.current = false;
+          nativeComposingRef.current = false;
+        }}
+      />
+      <p className={error ? 'hint error' : 'hint'} role={error ? 'alert' : 'status'}>
+        {error
+          ? `消息保存未完成：${error}。草稿已保留，请重试。`
+          : saving
+            ? '消息保存中…可继续编辑。'
+            : draft !== savedRef.current
+              ? '消息待保存，编辑后点保存。'
+              : '编辑后点保存。'}
+      </p>
       <div className="bubble-actions">
-        <button type="button" onClick={() => onSave(draft)}>
-          保存
+        <button type="button" disabled={saving} onClick={save}>
+          {saving ? '保存中…' : error ? '重试保存' : '保存'}
         </button>
-        <button type="button" className="ghost" onClick={onCancel}>
+        <button type="button" className="ghost" disabled={saving} onClick={onCancel}>
           取消
         </button>
       </div>
@@ -332,7 +387,7 @@ export const MessageItem = memo(function MessageItem({
         {editing ? (
           <EditBox
             message={message}
-            onSave={(content) => handlers.onEdit(message.id, content)}
+            onSave={(content, latestContent) => handlers.onEdit(message.id, content, latestContent)}
             onCancel={handlers.onCancelEdit}
           />
         ) : (

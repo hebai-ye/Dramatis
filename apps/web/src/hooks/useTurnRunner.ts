@@ -40,6 +40,8 @@ import {
 } from '@dramatis/core';
 import { useCallback, useEffect, useRef } from 'react';
 import type { PendingBridgeTurn, WebBridgeState } from '../components/WebBridgePanel';
+import { saveBridge } from '../lib/bridge-store';
+import type { SubmitOutcome } from '../lib/chat-draft';
 import type { DramatisDb } from '../lib/db';
 import { replyTokenLimit } from '../lib/output-limit';
 import type { ProvidersApi } from '../lib/providers';
@@ -101,12 +103,14 @@ export interface TurnRunnerOptions {
   budgetReason: string | null;
   /** 这一轮生成是不是已经在跑（跑着的时候再点发送什么都不做）。 */
   busy: boolean;
+  accountKey: string;
+  bridgeOpen?: boolean;
   setBusy: (value: boolean) => void;
   setError: (message: string | null) => void;
   setWarnings: (next: Notice[]) => void;
   setBridge: (next: WebBridgeState | null) => void;
   /** 装配出来的提示词（运行时面板的「提示词」页要显示它）。 */
-  setLastPrompt: (prompt: AssembledPrompt | null) => void;
+  setLastPrompt: (prompt: AssembledPrompt | null, speakerName?: string) => void;
 }
 
 export interface TurnRunnerApi {
@@ -114,7 +118,7 @@ export interface TurnRunnerApi {
   makeCharacterLine: (speaker: CharacterInstance, content: string, turnId: string, sceneValue: Scene) => Message;
   /** 让后台看一眼这一场要不要压场记（换场时也要用，所以对外返回）。 */
   enqueueSceneSummary: (target: Scene, key: string) => Promise<void>;
-  handleSend: (text: string) => Promise<void>;
+  handleSend: (text: string, onAcceptance?: (outcome: SubmitOutcome) => void) => Promise<SubmitOutcome>;
   prepareBridgeReply: (input: { pendingTurn: PendingBridgeTurn; history: Message[] }) => Promise<string>;
   handleRegenerate: (id: MessageId) => Promise<void>;
   handleReassignMessage: (id: MessageId, instanceId: InstanceId) => Promise<void>;
@@ -152,6 +156,8 @@ export function useTurnRunner({
   burned,
   budgetReason,
   busy,
+  accountKey,
+  bridgeOpen = false,
   setBusy,
   setError,
   setWarnings,
@@ -159,6 +165,9 @@ export function useTurnRunner({
   setLastPrompt,
 }: TurnRunnerOptions): TurnRunnerApi {
   /** 这一轮生成的取消句柄（「停止」按钮按它）。 */
+  const sendingRef = useRef(false);
+  const bridgeOpenRef = useRef(bridgeOpen);
+  bridgeOpenRef.current = bridgeOpen;
   const abortRef = useRef<AbortController | null>(null);
   const stop = useCallback(() => abortRef.current?.abort(), []);
   const scopeRoomId = world?.id;
@@ -284,7 +293,7 @@ export function useTurnRunner({
         switch (event.type) {
           case 'prompt':
             assembled = event.prompt;
-            setLastPrompt(event.prompt);
+            setLastPrompt(event.prompt, options.speaker.displayName);
             break;
           case 'reasoning':
             reasoning += event.text;
@@ -543,7 +552,13 @@ export function useTurnRunner({
   );
 
   const handleSend = useCallback(
-    async (text: string) => {
+    async (text: string, onAcceptance?: (outcome: SubmitOutcome) => void): Promise<SubmitOutcome> => {
+      let outcome: SubmitOutcome = { status: 'rejected', reason: '未发送，请检查场景或模型设置；输入已保留。' };
+      const accept = () => {
+        outcome = { status: 'accepted' };
+        onAcceptance?.(outcome);
+      };
+
       /*
        * 以前这里是一句 `return`：世界/场景/对话还没加载完时点发送，**什么都不发生**，
        * 用户只会觉得「按钮坏了」（侧边浏览器真机测试里撞到过一次这种静默失败）。
@@ -553,14 +568,21 @@ export function useTurnRunner({
         setWarnings([
           { code: 'turn.not-ready', message: '这条世界线还在加载（世界 / 场景 / 对话），稍等一下再点一次。' },
         ]);
-        return;
+        return outcome;
       }
-      if (busy) return;
+      if (
+        conversation.kind !== 'main' ||
+        conversation.archivedAt !== null ||
+        busy ||
+        bridgeOpenRef.current ||
+        sendingRef.current
+      )
+        return { status: 'rejected', reason: '请先完成或放弃当前回合；输入已保留。' };
 
       const profile = providers.active;
       if (!profile) {
         setError('还没有模型配置');
-        return;
+        return outcome;
       }
       const eligibleCast = instances.filter(
         (instance) =>
@@ -572,7 +594,7 @@ export function useTurnRunner({
       const fallbackSpeaker = eligibleCast[0];
       if (!fallbackSpeaker) {
         setError('当前场景没有可回应的角色；请先把有角色卡且允许发言的角色加入场景。');
-        return;
+        return outcome;
       }
       const explicitNames = [...text.matchAll(/(?:^|[\s，,。.!！?？、:：;；])@([^\s，,。.!！?？、:：;；]+)/gu)]
         .map((match) => match[1])
@@ -582,7 +604,7 @@ export function useTurnRunner({
       );
       if (unavailableName !== undefined) {
         setError(`「${unavailableName}」不在当前场景，或目前不能发言；请检查场景名单。`);
-        return;
+        return outcome;
       }
       // 世界中的 onstage 不等于这场戏的 cast；句首叫到场外人也不能由场内人代答。
       const addressedInWorld = directAddressees(text, instances);
@@ -590,7 +612,7 @@ export function useTurnRunner({
       if (outside !== undefined) {
         const name = instances.find((instance) => instance.id === outside)?.displayName ?? '该角色';
         setError(`「${name}」不在当前场景，或目前不能发言；请检查场景名单。`);
-        return;
+        return outcome;
       }
       const maxSpeakers = speakerLimitOf(conversation.modes);
       const addressed = directAddressees(text, eligibleCast);
@@ -598,7 +620,7 @@ export function useTurnRunner({
         setError(
           `你直接叫到了 ${String(addressed.length)} 位角色，本轮上限为 ${String(maxSpeakers)} 位；请减少点名或调高上限。`,
         );
-        return;
+        return outcome;
       }
       const playerActionOnly = !hasSpeech(text);
       const actionsOnly =
@@ -611,6 +633,7 @@ export function useTurnRunner({
        */
       const manual = needsWebBridge(providers.apiKey);
 
+      sendingRef.current = true;
       setError(null);
       setBusy(true);
       setStreamState('main', {
@@ -650,8 +673,10 @@ export function useTurnRunner({
 
       try {
         if (!manual) {
-          await session.appendMessages([playerMessage]);
-          playerPersisted = true;
+          await session.appendMessages([playerMessage], () => {
+            playerPersisted = true;
+            accept();
+          });
         }
         // 只有真的说了话的那一轮才算「发言」：全程只做动作的角色不该被冷却压住
         const spokeHistory = history.filter((message) => message.role !== 'character' || hasSpeech(message.content));
@@ -793,13 +818,14 @@ export function useTurnRunner({
             if (generation.prompt === null) {
               throw new Error('提示词装配失败，这一轮没法转到网页版。');
             }
-            setBridge({
+            const prepared: WebBridgeState = {
               stage: 'reply',
               turnId,
               speakerInstanceId: speaker.id,
               speakerName: speaker.displayName,
               prompt: renderPromptForWeb(generation.prompt.messages),
               pendingTurn: {
+                accountKey,
                 roomId: world.id,
                 conversationId: conversation.id,
                 sceneId: scene.id,
@@ -810,8 +836,12 @@ export function useTurnRunner({
                 speakerPlans: selection.speakers.map((item) => ({ intent: item.intent, mode: item.mode })),
                 actionsOnly,
               },
-            });
-            return;
+            };
+            saveBridge('main', prepared, true);
+            bridgeOpenRef.current = true;
+            setBridge(prepared);
+            accept();
+            return outcome;
           }
 
           if (reply.trim() === '') {
@@ -867,7 +897,7 @@ export function useTurnRunner({
          * 网页版桥接下不排后台任务：这里没有模型可用，排进去只会变成一条失败记录。
          * 记忆与情绪的落库改由桥接的第二步承担（用户贴回来时当场写）。
          */
-        if (manual) return;
+        if (manual) return outcome;
         // 让后台看一眼这一场要不要压场记（够不够由后台判断，不够不会发调用）
         await enqueueSceneSummary(scene, turnId);
         // 再看一眼这一条对话的记忆该不该合并（顺序 27a；同样由后台判断阈值）
@@ -880,7 +910,7 @@ export function useTurnRunner({
               message: `${budgetReason ?? '已达本局上限'}——这一轮只生成回复，不做意图判断与后台记录。可在运行时的「用量」页调整上限。`,
             },
           ]);
-          return;
+          return outcome;
         }
         await enqueueTurnAnalysis(db, worker, {
           roomId: world.id,
@@ -890,6 +920,8 @@ export function useTurnRunner({
         });
       } catch (sendError) {
         const message = sendError instanceof Error ? sendError.message : String(sendError);
+        if (outcome.status !== 'accepted')
+          outcome = { status: manual ? 'rejected' : 'uncertain', reason: `${message}；输入已保留，请先核对消息记录。` };
         let reloadError = '';
         if (message.includes('显示确认超时')) {
           try {
@@ -915,6 +947,7 @@ export function useTurnRunner({
       } finally {
         resetStreamState('main');
         setBusy(false);
+        sendingRef.current = false;
         abortRef.current = null;
         /*
          * 一轮结束就排一次同步（节流 20 秒，见 lib/sync.ts）。
@@ -924,11 +957,13 @@ export function useTurnRunner({
          */
         sync.requestAutoSync();
       }
+      return outcome;
     },
     [
       budgetReason,
       burned,
       busy,
+      accountKey,
       conversation,
       db,
       enqueueSceneSummary,

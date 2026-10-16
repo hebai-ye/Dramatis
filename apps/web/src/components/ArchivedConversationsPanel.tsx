@@ -10,6 +10,7 @@ interface Result {
 interface Props {
   archivedConversations: Conversation[];
   activeConversationId: ConversationId | null;
+  worldTitle?: string | null;
   disabled: boolean;
   onOpenArchived: (id: ConversationId) => void;
   onDeleteArchived: (conversation: Conversation) => Promise<Result>;
@@ -54,12 +55,17 @@ export function ArchivedConversationsPanel(props: Props) {
   return (
     <section className="panel" aria-busy={action !== null}>
       <h2>已归档对话</h2>
+      <p className="settings-scope">
+        {props.worldTitle === null
+          ? '当前未打开世界。先从左栏选择一个世界查看其归档。'
+          : `当前世界「${props.worldTitle ?? '名称未提供'}」 · ${props.archivedConversations.length} 条归档对话`}
+      </p>
       <p className="hint">
         归档时，情绪、关系与记忆已回滚到这条对话开始前。正文保留在这里供回顾，无法取消归档；继续聊天需要开新对话。正文导出为
         Markdown，与可导入的封存备份不同。
       </p>
       {props.archivedConversations.length === 0 ? (
-        <p className="hint">还没有归档的对话。</p>
+        <p className="hint">当前范围还没有归档对话。需要结束一条时间线时，可从左栏对话列表选择「归档」。</p>
       ) : (
         <ul className="room-list">
           {props.archivedConversations.map((conversation) => (
@@ -71,6 +77,8 @@ export function ArchivedConversationsPanel(props: Props) {
                 type="button"
                 className="room-open"
                 disabled={controlsDisabled}
+                aria-current={conversation.id === props.activeConversationId ? 'page' : undefined}
+                title={`只读回顾「${conversation.title}」`}
                 onClick={() => requestAction(() => props.onOpenArchived(conversation.id))}
               >
                 <span className="room-title">{conversation.title}</span>

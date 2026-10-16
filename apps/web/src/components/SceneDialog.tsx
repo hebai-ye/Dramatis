@@ -5,17 +5,17 @@ import {
   type InstanceId,
   type Scene,
 } from '@dramatis/core';
-import { useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { CAST_POLICY_OPTIONS } from '../lib/labels';
 import { useDraftField } from '../lib/useDraftField';
-import { Modal } from './Modal';
+import { Modal, useModalSaves } from './Modal';
 
 interface Props {
   scene: Scene | null;
   instances: CharacterInstance[];
   disabled: boolean;
   onClose: () => void;
-  onSave: (patch: Partial<Scene>) => void;
+  onSave: (patch: Partial<Scene>) => void | Promise<void>;
   /** 结束本场、开新场；会写一条旁白式动作记录「谁跟谁去了哪里」。 */
   onStartNewScene: (input: {
     title: string;
@@ -23,7 +23,7 @@ interface Props {
     worldTime: string;
     /** 这次带谁走（T17）：没勾的人留在原地，自动转「在幕后」。 */
     cast: InstanceId[];
-  }) => void;
+  }) => void | Promise<void>;
 }
 
 /**
@@ -40,6 +40,30 @@ export function SceneDialog({ scene, instances, disabled, onClose, onSave, onSta
   const [worldTime, setWorldTime] = useState(scene?.worldTime ?? '');
   // 默认带走此刻在场上的人；换场前可以逐个取消（长跑里秦娘就是这样被误带走的）
   const [travelCast, setTravelCast] = useState<InstanceId[]>(() => defaultTravelCast(scene, instances));
+  // This dialog can intentionally create the next scene in the same conversation.
+  // Its writes remain owned by that conversation until the successful close.
+  const saves = useModalSaves(JSON.stringify([scene?.roomId, scene?.conversationId]));
+  const closingRef = useRef(false);
+  const discardCloseRef = useRef(false);
+  const [closing, setClosing] = useState(false);
+  const [initial] = useState(() => JSON.stringify([title, location, worldTime, travelCast]));
+  const dirty = initial !== JSON.stringify([title, location, worldTime, travelCast]);
+  const guard = useMemo(
+    () =>
+      saves.busy || closing
+        ? { kind: 'busy' as const, message: '正在保存场景，请等待完成。' }
+        : dirty || saves.error !== null
+          ? {
+              kind: 'dirty' as const,
+              message: '场景名、地点、时间或携带角色尚未保存，关闭会放弃这些更改；已自动保存的设定会保留。',
+              discard: () => {
+                discardCloseRef.current = saves.error !== null;
+              },
+            }
+          : null,
+    [saves.busy, saves.error, closing, dirty],
+  );
+  const editingDisabled = disabled || saves.busy || closing;
 
   /*
    * 「场景设定」是这里唯一的长文本字段，也是唯一会被手写/笔画输入法打断的那个（顺序 91①）。
@@ -49,17 +73,46 @@ export function SceneDialog({ scene, instances, disabled, onClose, onSave, onSta
    */
   const summaryField = useDraftField({
     value: scene?.summary ?? '',
-    commit: (next) => onSave({ summary: next }),
+    commit: (next) => {
+      void saves.save('summary', () => onSave({ summary: next }));
+    },
   });
 
   /**
    * 关掉弹窗的每一条通路（遮罩、关闭按钮、两个页脚按钮）都先把没到点的草稿交出去：
    * `useDraftField` 卸载时会清掉计时器（`useDraftField.ts:70`），不 flush 就丢掉最后几个字。
-   * Modal 没有 Esc 处理，关闭只有这几条路。
+   * Esc、遮罩与标题关闭经过统一守卫，获准关闭后同样等待设定落盘。
    */
-  const close = (): void => {
-    summaryField.flush();
-    onClose();
+  const close = async (): Promise<void> => {
+    if (closingRef.current) return;
+    if (discardCloseRef.current) {
+      onClose();
+      return;
+    }
+    closingRef.current = true;
+    setClosing(true);
+    try {
+      if (!(await summaryField.flush())) return;
+      if (await saves.flush()) onClose();
+    } finally {
+      closingRef.current = false;
+      setClosing(false);
+    }
+  };
+  const saveAndClose = async (key: string, action: () => void | Promise<void>): Promise<void> => {
+    if (disabled || saves.isBusy() || closingRef.current) return;
+    closingRef.current = true;
+    setClosing(true);
+    try {
+      // Flush into the current scene before switching so the old summary cannot
+      // be written to the newly created scene by a late close.
+      if (!(await summaryField.flush())) return;
+      if (!(await saves.flush())) return;
+      if (await saves.save(key, action, false)) onClose();
+    } finally {
+      closingRef.current = false;
+      setClosing(false);
+    }
   };
 
   const cast = scene === null ? [] : instances.filter((instance) => scene.cast.includes(instance.id));
@@ -68,6 +121,8 @@ export function SceneDialog({ scene, instances, disabled, onClose, onSave, onSta
     <Modal
       label="场景"
       onClose={close}
+      guard={guard}
+      initialFocus="[data-dialog-initial-focus]"
       head={
         <>
           <strong>场景</strong>
@@ -83,42 +138,50 @@ export function SceneDialog({ scene, instances, disabled, onClose, onSave, onSta
           <button
             type="button"
             className="ghost"
-            disabled={disabled}
-            onClick={() => {
-              onSave({ title, location, worldTime });
-              close();
-            }}
+            disabled={editingDisabled}
+            onClick={() => saveAndClose('scene', () => onSave({ title, location, worldTime }))}
           >
             保存当前场景
           </button>
           <button
             type="button"
-            disabled={disabled}
+            disabled={editingDisabled}
             title="结束本场、开一场新的，并留下一条「谁跟谁去了哪里」的旁白"
-            onClick={() => {
-              onStartNewScene({
-                title: title.trim() === '' ? '新场景' : title.trim(),
-                location,
-                worldTime,
-                cast: travelCast,
-              });
-              close();
-            }}
+            onClick={() =>
+              saveAndClose('scene', () =>
+                onStartNewScene({
+                  title: title.trim() === '' ? '新场景' : title.trim(),
+                  location,
+                  worldTime,
+                  cast: travelCast,
+                }),
+              )
+            }
           >
             从这里切换场景
           </button>
         </>
       }
     >
+      {saves.error === null ? null : (
+        <p className="notice error" role="alert">
+          场景保存未完成：{saves.error}。草稿已保留，请重试。
+        </p>
+      )}
       <label>
         场景名
-        <input value={title} disabled={disabled} onChange={(event) => setTitle(event.target.value)} />
+        <input
+          data-dialog-initial-focus
+          value={title}
+          disabled={editingDisabled}
+          onChange={(event) => setTitle(event.target.value)}
+        />
       </label>
       <label>
         地点
         <input
           value={location}
-          disabled={disabled}
+          disabled={editingDisabled}
           placeholder="例如：旧城东侧的夜间酒馆"
           onChange={(event) => setLocation(event.target.value)}
         />
@@ -127,7 +190,7 @@ export function SceneDialog({ scene, instances, disabled, onClose, onSave, onSta
         世界内时间
         <input
           value={worldTime}
-          disabled={disabled}
+          disabled={editingDisabled}
           placeholder="例如：第三日 · 黄昏"
           onChange={(event) => setWorldTime(event.target.value)}
         />
@@ -139,8 +202,11 @@ export function SceneDialog({ scene, instances, disabled, onClose, onSave, onSta
             入场策略
             <select
               value={scene.castPolicy}
-              disabled={disabled}
-              onChange={(event) => onSave({ castPolicy: event.target.value as CastPolicy })}
+              disabled={editingDisabled}
+              onChange={(event) => {
+                const castPolicy = event.target.value as CastPolicy;
+                void saves.save('policy', () => onSave({ castPolicy }));
+              }}
             >
               {CAST_POLICY_OPTIONS.map((option) => (
                 <option key={option.value} value={option.value}>
@@ -153,7 +219,7 @@ export function SceneDialog({ scene, instances, disabled, onClose, onSave, onSta
 
           <label>
             场景设定
-            <textarea rows={4} disabled={disabled} {...summaryField.bind} />
+            <textarea rows={4} disabled={editingDisabled} {...summaryField.bind} />
           </label>
         </>
       ) : null}
@@ -173,7 +239,7 @@ export function SceneDialog({ scene, instances, disabled, onClose, onSave, onSta
               <input
                 type="checkbox"
                 checked={travelCast.includes(instance.id)}
-                disabled={disabled}
+                disabled={editingDisabled}
                 onChange={() =>
                   setTravelCast((previous) =>
                     previous.includes(instance.id)

@@ -10,6 +10,7 @@ interface Result {
 }
 interface Props {
   activeConversationId: ConversationId | null;
+  worldTitle?: string | null;
   disabled: boolean;
   onExportArchive: () => Promise<Result | null>;
   onImportArchive: () => Promise<Result | null>;
@@ -53,10 +54,15 @@ export function DataSettingsPanel(props: Props) {
     <div className="settings-panel" aria-busy={action !== null}>
       <section className="panel">
         <h2>封存导出与导入</h2>
+        <p className="settings-scope">
+          {props.worldTitle === null ? '当前未打开世界' : `导出范围：当前世界「${props.worldTitle ?? '名称未提供'}」`}
+        </p>
         <p className="hint">
           封存是一整个世界的可导入备份，包含对话、角色、记忆、世界书与账单。导入会新建一条世界线，保留本机已有数据。
         </p>
-        {props.activeConversationId === null ? <p className="hint">先打开一个世界，再导出它的封存备份。</p> : null}
+        {props.activeConversationId === null ? (
+          <p className="hint">先从左栏打开世界中的一条对话，再导出该世界的封存备份；也可以直接导入已有封存。</p>
+        ) : null}
         <div className="save-bar">
           <button
             type="button"

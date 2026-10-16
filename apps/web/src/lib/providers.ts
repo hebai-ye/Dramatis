@@ -30,6 +30,29 @@ const DEFAULT_PROFILE: CreateProviderProfileInput = {
   role: 'main',
 };
 
+export type ProviderNumericField = 'temperature' | 'maxTokens' | 'reserveForReply' | 'priceInput' | 'priceOutput';
+
+/** Save-time validation only: never normalize stored profiles or historical usage. */
+export function providerNumericErrors(
+  profile: Pick<ProviderProfile, 'temperature' | 'maxTokens' | 'reserveForReply' | 'price'>,
+): Partial<Record<ProviderNumericField, string>> {
+  const errors: Partial<Record<ProviderNumericField, string>> = {};
+  if (!Number.isFinite(profile.temperature) || profile.temperature < 0 || profile.temperature > 2)
+    errors.temperature = '温度必须是 0–2 之间的有限数值。';
+  if (!Number.isSafeInteger(profile.maxTokens) || profile.maxTokens <= 0) errors.maxTokens = '上下文窗口必须是正整数。';
+  if (!Number.isSafeInteger(profile.reserveForReply) || profile.reserveForReply <= 0)
+    errors.reserveForReply = '预留回复必须是正整数。';
+  else if (Number.isFinite(profile.maxTokens) && profile.reserveForReply >= profile.maxTokens)
+    errors.reserveForReply = '预留回复必须小于上下文窗口。';
+  if (profile.price != null) {
+    if (!Number.isFinite(profile.price.inputPerMillion) || profile.price.inputPerMillion < 0)
+      errors.priceInput = '输入价 / 百万 token 必须是非负有限数值，也可以留空。';
+    if (!Number.isFinite(profile.price.outputPerMillion) || profile.price.outputPerMillion < 0)
+      errors.priceOutput = '输出价 / 百万 token 必须是非负有限数值，也可以留空。';
+  }
+  return errors;
+}
+
 /** 两份配置列表内容是否一致（审计 A10：一致就别 set，免得引用变化触发重渲染）。 */
 export function sameProfiles(a: readonly ProviderProfile[], b: readonly ProviderProfile[]): boolean {
   if (a.length !== b.length) return false;
@@ -603,6 +626,9 @@ export function useProviders(
       const profile = profiles.find((item) => item.id === activeId);
       if (!profile) return;
       requireKeyReady(activeStamp);
+
+      const errors = providerNumericErrors({ ...profile, ...input.profile });
+      if (Object.keys(errors).length > 0) throw new Error(Object.values(errors).join(' '));
 
       /*
        * 口令加密那一档（顺序 10）：先把库备好，再往里写。

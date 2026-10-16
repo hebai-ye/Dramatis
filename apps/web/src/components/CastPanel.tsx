@@ -1,14 +1,19 @@
 import { type CharacterInstance, type InstanceId, PLAYER, type Presence, type Scene } from '@dramatis/core';
+import { useCallback, useEffect, useRef } from 'react';
 import { PRESENCE_OPTIONS, signed } from '../lib/labels';
-import { useDraftField } from '../lib/useDraftField';
+import { type DraftField, type DraftFlush, flushDraftFields, useDraftField } from '../lib/useDraftField';
+import { useSerialSave } from '../lib/useSerialSave';
+import { DraftSaveFeedback } from './DraftSaveFeedback';
 
 interface Props {
   instances: CharacterInstance[];
   scene: Scene;
   disabled: boolean;
-  onSetPresence: (id: InstanceId, presence: Presence) => void;
-  onRename: (id: InstanceId, name: string) => void;
-  onRemove: (id: InstanceId) => void;
+  onSetPresence: (id: InstanceId, presence: Presence) => void | Promise<void>;
+  onRename: (id: InstanceId, name: string) => void | Promise<void>;
+  onRemove: (id: InstanceId) => void | Promise<void>;
+  onOpenDetail?: (id: InstanceId) => void;
+  onRegisterFlush?: (flush: DraftFlush | null) => void;
 }
 
 function describe(instance: CharacterInstance, scene: Scene): string {
@@ -55,55 +60,142 @@ function CastNameInput({
   instance,
   disabled,
   onRename,
+  onRegisterFlush,
 }: {
   instance: CharacterInstance;
   disabled: boolean;
-  onRename: (id: InstanceId, name: string) => void;
+  onRename: (id: InstanceId, name: string) => void | Promise<void>;
+  onRegisterFlush: (field: DraftField | null) => void;
 }) {
   const nameField = useDraftField({
     value: instance.displayName,
+    scope: JSON.stringify([instance.roomId, instance.id]),
     commit: (next) => {
-      if (next.trim() === '') return;
-      onRename(instance.id, next);
+      if (next.trim() === '') throw new Error('显示名不能为空。');
+      return onRename(instance.id, next);
     },
   });
-  return <input type="text" className="cast-name" disabled={disabled} aria-label="显示名" {...nameField.bind} />;
+  useEffect(() => {
+    onRegisterFlush(nameField);
+    return () => onRegisterFlush(null);
+  }, [onRegisterFlush, nameField]);
+  return (
+    <div className="cast-edit-field">
+      <input type="text" className="cast-name" disabled={disabled} aria-label="显示名" {...nameField.bind} />
+      <DraftSaveFeedback field={nameField} label="显示名" />
+    </div>
+  );
 }
 
-export function CastPanel({ instances, scene, disabled, onSetPresence, onRename, onRemove }: Props) {
+function CastPresenceInput({
+  instance,
+  scene,
+  disabled,
+  onSetPresence,
+  onRegisterFlush,
+}: {
+  instance: CharacterInstance;
+  scene: Scene;
+  disabled: boolean;
+  onSetPresence: Props['onSetPresence'];
+  onRegisterFlush: (field: DraftField | null) => void;
+}) {
+  const field = useDraftField({
+    value: instance.presence,
+    scope: JSON.stringify([scene.id, instance.id]),
+    delay: 0,
+    commit: (next) => onSetPresence(instance.id, next as Presence),
+  });
+  useEffect(() => {
+    onRegisterFlush(field);
+    return () => onRegisterFlush(null);
+  }, [onRegisterFlush, field]);
+  return (
+    <div className="cast-edit-field">
+      <select aria-label={`「${instance.displayName}」的在场状态`} disabled={disabled} {...field.bind}>
+        {PRESENCE_OPTIONS.map((option) => (
+          <option key={option.value} value={option.value}>
+            {option.label}
+          </option>
+        ))}
+      </select>
+      <DraftSaveFeedback field={field} label="在场状态" />
+    </div>
+  );
+}
+
+export function CastPanel({
+  instances,
+  scene,
+  disabled,
+  onSetPresence,
+  onRename,
+  onRemove,
+  onOpenDetail,
+  onRegisterFlush,
+}: Props) {
+  const saves = useSerialSave(scene.id);
+  const fields = useRef(new Map<string, DraftField>());
+  const flush = useCallback(async () => {
+    return flushDraftFields([...fields.current.values()], saves.flush);
+  }, [saves.flush]);
+  useEffect(() => {
+    onRegisterFlush?.(flush);
+    return () => onRegisterFlush?.(null);
+  }, [onRegisterFlush, flush]);
+  const register = (key: string, save: DraftField | null) => {
+    if (save) fields.current.set(key, save);
+    else fields.current.delete(key);
+  };
   if (instances.length === 0) return null;
 
   return (
     <section className="panel">
       <h2>阵容</h2>
       <p className="hint">
-        入场策略「{scene.castPolicy === 'locked' ? '锁定名单' : scene.castPolicy}」决定 AI 能否自行引入新角色；
-        这里决定已有角色此刻在不在场。
+        名称和在场状态修改后自动保存。 入场策略「{scene.castPolicy === 'locked' ? '锁定名单' : scene.castPolicy}」决定
+        AI 能否自行引入新角色； 这里决定已有角色此刻在不在场。
       </p>
 
       <ul className="cast-list">
         {instances.map((instance) => (
           <li key={instance.id}>
             <div className="cast-row">
-              <CastNameInput instance={instance} disabled={disabled} onRename={onRename} />
-              <select
-                value={instance.presence}
+              <CastNameInput
+                instance={instance}
                 disabled={disabled}
-                onChange={(event) => onSetPresence(instance.id, event.target.value as Presence)}
-              >
-                {PRESENCE_OPTIONS.map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
+                onRename={(id, name) => saves.run(() => onRename(id, name))}
+                onRegisterFlush={(save) => register(`name:${instance.id}`, save)}
+              />
+              <CastPresenceInput
+                instance={instance}
+                scene={scene}
+                disabled={disabled}
+                onSetPresence={(id, presence) => saves.run(() => onSetPresence(id, presence))}
+                onRegisterFlush={(save) => register(`presence:${instance.id}`, save)}
+              />
+              {onOpenDetail === undefined ? null : (
+                <button
+                  type="button"
+                  className="ghost"
+                  aria-label={`查看「${instance.displayName}」的角色详情`}
+                  onClick={() => onOpenDetail(instance.id)}
+                >
+                  详情
+                </button>
+              )}
               <button
                 type="button"
                 className="ghost danger"
-                disabled={disabled || instances.length <= 1}
+                disabled={disabled || saves.busy || instances.length <= 1}
                 title="把这个角色移出这个世界（角色卡会保留）"
-                onClick={() => {
-                  if (window.confirm(`把「${instance.displayName}」移出这个房间？`)) onRemove(instance.id);
+                onClick={async () => {
+                  if (!window.confirm(`把「${instance.displayName}」移出这个房间？`) || !(await flush())) return;
+                  try {
+                    await saves.run(() => onRemove(instance.id));
+                  } catch {
+                    /* The local queue displays the failure. */
+                  }
                 }}
               >
                 移除
@@ -130,6 +222,11 @@ export function CastPanel({ instances, scene, disabled, onSetPresence, onRename,
           </li>
         ))}
       </ul>
+      {saves.error ? (
+        <p className="hint error" role="alert">
+          角色操作未完成：{saves.error}
+        </p>
+      ) : null}
     </section>
   );
 }

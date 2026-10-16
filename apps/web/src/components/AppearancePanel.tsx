@@ -50,7 +50,19 @@ export function AppearancePanel({ api, disabled }: Props) {
     <>
       <section className="panel">
         <h2>色调</h2>
-        <p className="hint">外观修改即时生效，无需保存；只影响这台设备。选哪套都随时能换回来。</p>
+        <p className="hint">外观修改即时预览，并自动保存在这台设备。选哪套都随时能换回来。</p>
+        {api.persistenceError === null ? (
+          <p className="hint" role="status">
+            {api.hasSavedChanges ? '当前外观已保存在这台设备。' : '修改外观后会自动保存到这台设备。'}
+          </p>
+        ) : (
+          <div className="notice error" role="alert">
+            <p>外观保存失败，当前预览仅本次会话有效；重新打开时会使用此前保存的外观。{api.persistenceError}</p>
+            <button type="button" disabled={controlsDisabled} onClick={api.retryPersist}>
+              重试保存外观
+            </button>
+          </div>
+        )}
         <div className="theme-grid">
           {(Object.keys(THEME_LABELS) as ThemeName[]).map((name) => {
             const meta = THEME_LABELS[name];

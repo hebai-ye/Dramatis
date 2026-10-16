@@ -13,7 +13,9 @@ function looksLikeWorldBook(value: unknown): boolean {
   return typeof value === 'object' && value !== null && 'entries' in value;
 }
 
-export type LibraryImportResult = { ok: true; kind: LibraryItemKind; id: string } | { ok: false; error: string };
+export type LibraryImportResult =
+  | { ok: true; kind: LibraryItemKind; id: string; warnings: Notice[] }
+  | { ok: false; error: string };
 export interface UseImportOptions {
   session: SessionApi;
   activePersona: Persona | null;
@@ -42,7 +44,7 @@ export function useImport({ session, activePersona, setError, setWarnings, onImp
           if (native?.kind === 'personas') {
             await session.savePersona(native.item);
             setWarnings([]);
-            return { ok: true, kind: native.kind, id: native.item.id };
+            return { ok: true, kind: native.kind, id: native.item.id, warnings: [] };
           }
           if (native?.kind === 'worldbooks' || (native === null && looksLikeWorldBook(parsed))) {
             const result =
@@ -51,7 +53,7 @@ export function useImport({ session, activePersona, setError, setWarnings, onImp
                 : parseWorldBook(parsed, file.name.replace(/\.json$/i, ''));
             await session.saveWorldBook(result.book);
             setWarnings(result.warnings);
-            return { ok: true, kind: 'worldbooks', id: result.book.id };
+            return { ok: true, kind: 'worldbooks', id: result.book.id, warnings: result.warnings };
           }
           cardResult =
             native?.kind === 'cards' ? { card: native.item, warnings: [] } : importCardFromJson(text, file.name);
@@ -72,7 +74,7 @@ export function useImport({ session, activePersona, setError, setWarnings, onImp
           await session.saveWorldBook(book);
           if (mode === 'conversation') await session.attachWorldBook(book);
         }
-        return { ok: true, kind: 'cards', id: cardResult.card.id };
+        return { ok: true, kind: 'cards', id: cardResult.card.id, warnings: cardResult.warnings };
       } catch (importError) {
         const error = importError instanceof Error ? importError.message : String(importError);
         setError(error);

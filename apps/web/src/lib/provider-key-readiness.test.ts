@@ -177,6 +177,19 @@ beforeEach(async () => {
 afterEach(() => vi.unstubAllGlobals());
 
 describe('provider key readiness across configuration changes', () => {
+  it('rejects invalid numeric config before writing the saved key or profile', async () => {
+    const api = await settle();
+    const savedProfiles = await db.repository.listProviderProfiles();
+    await expect(
+      api.commitConfig({
+        profile: { price: { inputPerMillion: -1, outputPerMillion: 0, currency: '¥' } },
+        apiKey: 'replacement',
+        keyMode: 'device',
+      }),
+    ).rejects.toThrow('输入价');
+    expect(keys.secrets.get(`device:${first.keyRef}`)).toBe('fixture-key-a');
+    expect(await db.repository.listProviderProfiles()).toEqual(savedProfiles);
+  });
   it('protects a real encrypted key until unlocking and reading it', async () => {
     keys.useActualVault = true;
     const values = new Map<string, string>();

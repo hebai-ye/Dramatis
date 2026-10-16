@@ -147,6 +147,8 @@ export interface LibraryEditorProps<T> {
   onSave: (draft: T) => void | Promise<void>;
   pending?: () => string | null;
   discard?: () => void;
+  /** Normalize component-local text drafts before the existing coordinated flush. */
+  prepare?: (draft: T | null) => T | undefined;
 }
 
 export function useLibraryEditor<T extends { id: string }>(props: LibraryEditorProps<T>) {
@@ -177,6 +179,10 @@ export function useLibraryEditor<T extends { id: string }>(props: LibraryEditorP
     }
   };
   const flush = async () => {
+    if (!editor.composing) {
+      const prepared = latest.current.prepare?.(editor.draft);
+      if (prepared) editor.replace(prepared);
+    }
     clearTimer();
     await editor.flush();
     setError(null);
@@ -191,7 +197,7 @@ export function useLibraryEditor<T extends { id: string }>(props: LibraryEditorP
   };
   const queueSave = () => {
     clearTimer();
-    if (editor.composing) return;
+    if (editor.composing || !editor.dirty) return;
     timer.current = setTimeout(() => {
       timer.current = null;
       void commit();
@@ -281,6 +287,9 @@ export function useLibraryEditor<T extends { id: string }>(props: LibraryEditorP
     selectedId,
     error,
     writeDisabled,
+    dirty: editor.dirty,
+    busy: editor.busy || requestBusy,
+    composing: editor.composing,
     patch(changes: Partial<T>, nativeComposing = false) {
       if (latest.current.disabled || editor.busy || requesting.current) return;
       if (nativeComposing) editor.beginComposition();

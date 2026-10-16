@@ -1,7 +1,11 @@
 import type { AssembledPrompt } from '@dramatis/core';
+import { useEffect, useState } from 'react';
+import { formatTime } from '../lib/format';
 
 interface Props {
   prompt: AssembledPrompt | null;
+  sourceLabel?: string;
+  preparedAt?: string;
 }
 
 const STAGE_LABELS: Record<string, string> = {
@@ -23,22 +27,47 @@ const PLACEMENT_LABELS: Record<string, string> = {
 };
 
 /** M0 的调试面板：让预算守卫的行为可见，而不是一个黑盒。 */
-export function PromptInspector({ prompt }: Props) {
+export function PromptInspector({ prompt, sourceLabel, preparedAt }: Props) {
+  const [query, setQuery] = useState('');
+  const [copyNotice, setCopyNotice] = useState<{ ok: boolean; message: string } | null>(null);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: 来源或上下文改变后，不沿用上一次复制反馈。
+  useEffect(() => {
+    setCopyNotice(null);
+  }, [prompt, sourceLabel, preparedAt]);
+  const copy = async (content: string, label: string): Promise<void> => {
+    try {
+      await navigator.clipboard.writeText(content);
+      setCopyNotice({ ok: true, message: `已复制「${label}」` });
+    } catch {
+      setCopyNotice({ ok: false, message: '复制失败。请展开正文，选中文本后手动复制。' });
+    }
+  };
   if (!prompt) {
     return (
       <section className="panel">
         <h2>Prompt 检查器</h2>
-        <p className="hint">发出第一条消息后，这里会显示本次装配的实际内容与降级情况。</p>
+        <p className="hint">先在对话中准备或发送一轮消息，再打开这里查看对应的模型上下文。</p>
       </section>
     );
   }
 
   const { report, messages, blocks, memoryStats, historyStats } = prompt;
   const memoryTotal = memoryStats.recall + memoryStats.mention + memoryStats.source;
+  const term = query.trim().toLocaleLowerCase();
+  const matchingBlocks = blocks.filter((block) =>
+    `${block.label}\n${block.content}`.toLocaleLowerCase().includes(term),
+  );
+  const matchingMessages = messages
+    .map((message, index) => ({ message, index }))
+    .filter(({ message }) => message.content.toLocaleLowerCase().includes(term));
 
   return (
     <section className="panel">
       <h2>Prompt 检查器</h2>
+      <p className="hint">
+        来源：{sourceLabel ?? '未记录来源'}
+        {preparedAt === undefined ? '' : ` · 准备于 ${formatTime(preparedAt)}`}
+      </p>
       <div className="stats">
         <span>
           约 <strong>{report.usedTokens}</strong> / {report.maxTokens} token
@@ -77,8 +106,20 @@ export function PromptInspector({ prompt }: Props) {
 
       <details>
         <summary>各区块（按装配顺序）</summary>
+        <label>
+          搜索上下文文本
+          <input
+            type="search"
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="区块名称或正文"
+          />
+        </label>
+        {term !== '' && matchingBlocks.length === 0 && matchingMessages.length === 0 ? (
+          <p className="hint">没有匹配文本。清空搜索查看全部。</p>
+        ) : null}
         <ol className="blocks">
-          {blocks.map((block) => (
+          {matchingBlocks.map((block) => (
             <li key={block.id} title={block.id}>
               <span className="tag">{block.kind}</span>
               <strong>{block.label}</strong>
@@ -90,19 +131,41 @@ export function PromptInspector({ prompt }: Props) {
                 </span>
               )}
               <span className="hint">{block.content.length} 字符</span>
+              <details>
+                <summary>展开「{block.label}」正文</summary>
+                <button type="button" className="ghost" onClick={() => void copy(block.content, block.label)}>
+                  复制区块
+                </button>
+                <pre className="raw">{block.content}</pre>
+              </details>
             </li>
           ))}
         </ol>
       </details>
 
       <details>
-        <summary>最终发给模型的 messages</summary>
-        {messages.map((message, index) => (
-          <pre key={`${message.role}-${String(index)}`} className="raw">
-            {`[${message.role}]\n${message.content}`}
-          </pre>
+        <summary>模型消息正文（{matchingMessages.length} 条）</summary>
+        {matchingMessages.map(({ message, index }) => (
+          <details key={`${message.role}-${String(index)}`}>
+            <summary>
+              第 {index + 1} 条 · {message.role} · {message.content.length} 字符
+            </summary>
+            <button
+              type="button"
+              className="ghost"
+              onClick={() => void copy(message.content, `第 ${index + 1} 条消息`)}
+            >
+              复制消息
+            </button>
+            <pre className="raw">{`[${message.role}]\n${message.content}`}</pre>
+          </details>
         ))}
       </details>
+      {copyNotice === null ? null : (
+        <p className={copyNotice.ok ? 'hint' : 'notice error'} role={copyNotice.ok ? 'status' : 'alert'}>
+          {copyNotice.message}
+        </p>
+      )}
     </section>
   );
 }

@@ -1,57 +1,70 @@
 import type { CastPolicy, Scene } from '@dramatis/core';
+import { useCallback, useEffect } from 'react';
 import { CAST_POLICY_OPTIONS } from '../lib/labels';
-import { useDraftField } from '../lib/useDraftField';
+import { type DraftFlush, flushDraftFields, useDraftField } from '../lib/useDraftField';
+import { useSerialSave } from '../lib/useSerialSave';
+import { DraftSaveFeedback } from './DraftSaveFeedback';
 
 interface Props {
   scene: Scene;
-  onChange: (patch: Partial<Scene>) => void;
-  onStartNewScene: (title: string) => void;
+  onChange: (patch: Partial<Scene>) => void | Promise<void>;
+  onStartNewScene: (title: string) => void | Promise<void>;
   disabled: boolean;
+  onRegisterFlush?: (flush: DraftFlush | null) => void;
 }
 
-export function ScenePanel({ scene, onChange, onStartNewScene, disabled }: Props) {
-  const current = CAST_POLICY_OPTIONS.find((option) => option.value === scene.castPolicy);
-  /*
-   * 三个文本字段都用草稿 hook（顺序 63）：打字只改本地草稿，停手 300ms 或失焦才落库。
-   * 以前每敲一个字就 `onChange` 写一次库，输入法还会被打断。
-   */
+export function ScenePanel({ scene, onChange, onStartNewScene, disabled, onRegisterFlush }: Props) {
+  const saves = useSerialSave(scene.id);
   const locationField = useDraftField({
     value: scene.location,
-    commit: (next) => onChange({ location: next }),
+    scope: scene.id,
+    commit: (next) => saves.run(() => onChange({ location: next })),
   });
   const timeField = useDraftField({
     value: scene.worldTime,
-    commit: (next) => onChange({ worldTime: next }),
+    scope: scene.id,
+    commit: (next) => saves.run(() => onChange({ worldTime: next })),
   });
   const summaryField = useDraftField({
     value: scene.summary,
-    commit: (next) => onChange({ summary: next }),
+    scope: scene.id,
+    commit: (next) => saves.run(() => onChange({ summary: next })),
   });
+  const policyField = useDraftField({
+    value: scene.castPolicy,
+    scope: scene.id,
+    delay: 0,
+    commit: (next) => saves.run(() => onChange({ castPolicy: next as CastPolicy })),
+  });
+  const current = CAST_POLICY_OPTIONS.find((option) => option.value === policyField.bind.value);
+  const flush = useCallback(async () => {
+    return flushDraftFields([locationField, timeField, summaryField, policyField], saves.flush);
+  }, [locationField, timeField, summaryField, policyField, saves.flush]);
+  useEffect(() => {
+    onRegisterFlush?.(flush);
+    return () => onRegisterFlush?.(null);
+  }, [onRegisterFlush, flush]);
 
   return (
     <section className="panel">
       <h2>场景</h2>
-      <p className="hint">
-        M0 只有一名角色，入场策略的作用是让模型明确知道「现在不能拉人进来」——它会作为导演指令写进 prompt。
-      </p>
+      <p className="hint">修改后自动保存。入场策略决定角色能否自行加入当前场景。</p>
 
       <label>
         地点
         <input type="text" disabled={disabled} placeholder="例如：旧城东侧的夜间酒馆" {...locationField.bind} />
       </label>
+      <DraftSaveFeedback field={locationField} label="地点" />
 
       <label>
         世界内时间
         <input type="text" disabled={disabled} placeholder="例如：第三日 · 黄昏" {...timeField.bind} />
       </label>
+      <DraftSaveFeedback field={timeField} label="世界内时间" />
 
       <label>
         入场策略
-        <select
-          value={scene.castPolicy}
-          disabled={disabled}
-          onChange={(event) => onChange({ castPolicy: event.target.value as CastPolicy })}
-        >
+        <select disabled={disabled} {...policyField.bind}>
           {CAST_POLICY_OPTIONS.map((option) => (
             <option key={option.value} value={option.value}>
               {option.label}
@@ -59,30 +72,33 @@ export function ScenePanel({ scene, onChange, onStartNewScene, disabled }: Props
           ))}
         </select>
       </label>
+      <DraftSaveFeedback field={policyField} label="入场策略" />
       {current ? <p className="hint">{current.note}</p> : null}
 
       <label>
         场景设定
         <textarea rows={4} disabled={disabled} {...summaryField.bind} />
       </label>
-
-      {/*
-        场记（P1-5 的场景层）：后台自动整理，只读。
-        它不是「场景设定」——那是人写的简介，这是这一段实际发生了什么。
-
-        顺序 90（用户裁定「整块不显示」）：场记仍在后台照常整理、仍在提示词里
-        代表较早的经过，只是**不在面板上展开**了——面板太繁杂，而它本身不需要人管。
-        要回看原文随时可以在消息列表里往上翻。
-      */}
+      <DraftSaveFeedback field={summaryField} label="场景设定" />
+      {saves.error ? (
+        <p className="hint error" role="alert">
+          场景操作未完成：{saves.error}
+        </p>
+      ) : null}
 
       <button
         type="button"
         className="ghost"
-        disabled={disabled}
+        disabled={disabled || saves.busy}
         title="结束当前场景并开一个新的，过去的场景会被保留"
-        onClick={() => {
+        onClick={async () => {
           const title = window.prompt('新场景的名字', '新场景');
-          if (title !== null) onStartNewScene(title.trim() === '' ? '新场景' : title.trim());
+          if (title === null || !(await flush())) return;
+          try {
+            await saves.run(() => onStartNewScene(title.trim() === '' ? '新场景' : title.trim()));
+          } catch {
+            /* The local queue displays the error. */
+          }
         }}
       >
         结束本场，开新场景

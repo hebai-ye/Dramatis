@@ -5,7 +5,7 @@ import {
   type WorldBookEntry,
   type WorldBookId,
 } from '@dramatis/core';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useLibraryEditor } from '../lib/library-editor';
 
 interface Props {
@@ -51,6 +51,11 @@ export function WorldDesigner({
   hideSelector = false,
 }: Props) {
   const [expandedEntry, setExpandedEntry] = useState<string | null>(null);
+  const [focusEntry, setFocusEntry] = useState<{ bookId: string; entryId: string } | null>(null);
+  const entryButtons = useRef<Record<string, HTMLButtonElement | null>>({});
+  const addEntryButton = useRef<HTMLButtonElement | null>(null);
+  const [keyText, setKeyText] = useState<{ bookId: string; entries: Record<string, string> } | null>(null);
+  const rawKeys = useRef(keyText);
   const editor = useLibraryEditor({
     items: books,
     view: 'worldbooks',
@@ -58,9 +63,40 @@ export function WorldDesigner({
     onSelectionChange,
     disabled,
     onSave,
+    prepare: (current) => {
+      const raw = rawKeys.current;
+      if (!raw || !current || raw.bookId !== current.id) return;
+      const next = {
+        ...current,
+        entries: current.entries.map((entry) =>
+          raw.entries[entry.id] === undefined ? entry : { ...entry, keys: parseKeys(raw.entries[entry.id] ?? '') },
+        ),
+      };
+      rawKeys.current = null;
+      setKeyText(null);
+      return next;
+    },
   });
   const draft = editor.draft;
   const writeDisabled = editor.writeDisabled;
+  useEffect(() => {
+    if (rawKeys.current && rawKeys.current.bookId !== draft?.id) {
+      rawKeys.current = null;
+      setKeyText(null);
+    }
+  }, [draft?.id]);
+  useEffect(() => {
+    if (focusEntry === null) return;
+    if (focusEntry.bookId !== draft?.id) {
+      setFocusEntry(null);
+      return;
+    }
+    if (focusEntry.entryId === '' && writeDisabled) return;
+    const target = focusEntry.entryId === '' ? addEntryButton.current : entryButtons.current[focusEntry.entryId];
+    if (!target || target.disabled) return;
+    target.focus();
+    setFocusEntry(null);
+  }, [focusEntry, writeDisabled, draft?.id]);
   const commit = (next: WorldBook): void => {
     editor.replace(next);
     void editor.commit();
@@ -118,6 +154,12 @@ export function WorldDesigner({
           </button>
         </p>
       ) : null}
+      {draft && !editor.error ? (
+        <p role="status" className="hint" aria-live="polite">
+          {editor.busy ? '保存中…' : editor.dirty || keyText?.bookId === draft.id ? '待保存' : '已保存'}
+          {' · 普通字段自动保存；关键词失焦或离开时提交。'}
+        </p>
+      ) : null}
       {draft === null ? (
         <p className="hint">
           世界书只在关键词命中时插入对话，适合放地名、组织、历史这类「需要时才提起」的设定。
@@ -138,6 +180,7 @@ export function WorldDesigner({
 
           <div className="inline">
             <button
+              ref={addEntryButton}
               type="button"
               className="ghost"
               disabled={writeDisabled}
@@ -166,14 +209,19 @@ export function WorldDesigner({
             <p className="hint">还没有条目。常驻条目每轮都会插入；带关键词的条目只在命中时插入。</p>
           ) : (
             <ul className="entry-list">
-              {draft.entries.map((entry) => {
+              {draft.entries.map((entry, entryIndex) => {
                 const expanded = expandedEntry === entry.id;
                 return (
                   <li key={entry.id}>
                     <div className="entry-head">
                       <button
+                        ref={(button) => {
+                          if (button) entryButtons.current[entry.id] = button;
+                          else delete entryButtons.current[entry.id];
+                        }}
                         type="button"
                         className="room-open"
+                        aria-expanded={expanded}
                         onClick={() => setExpandedEntry(expanded ? null : entry.id)}
                       >
                         <span className="room-title">{entry.title || '未命名条目'}</span>
@@ -198,9 +246,20 @@ export function WorldDesigner({
                         type="button"
                         className="ghost danger"
                         disabled={writeDisabled}
-                        onClick={() =>
-                          commit({ ...draft, entries: draft.entries.filter((item) => item.id !== entry.id) })
-                        }
+                        onClick={() => {
+                          const raw = rawKeys.current?.bookId === draft.id ? rawKeys.current.entries[entry.id] : '';
+                          if (
+                            (entry.title.trim() || entry.content.trim() || entry.keys.length || raw?.trim()) &&
+                            !window.confirm(`删除条目「${entry.title || '未命名条目'}」？条目内容和关键词将一并移除。`)
+                          )
+                            return;
+                          commit({ ...draft, entries: draft.entries.filter((item) => item.id !== entry.id) });
+                          setFocusEntry({
+                            bookId: draft.id,
+                            entryId: draft.entries[entryIndex + 1]?.id ?? draft.entries[entryIndex - 1]?.id ?? '',
+                          });
+                          if (expanded) setExpandedEntry(null);
+                        }}
                       >
                         删
                       </button>
@@ -233,10 +292,24 @@ export function WorldDesigner({
                           关键词（用逗号分隔）
                           <input
                             type="text"
-                            value={entry.keys.join('、')}
+                            value={
+                              keyText?.bookId === draft.id
+                                ? (keyText.entries[entry.id] ?? entry.keys.join('、'))
+                                : entry.keys.join('、')
+                            }
                             disabled={writeDisabled || entry.constant}
                             placeholder="酒馆、旧城、老板"
-                            onChange={(event) => patchEntryLocal(entry.id, { keys: parseKeys(event.target.value) })}
+                            onChange={(event) => {
+                              const raw = {
+                                bookId: draft.id,
+                                entries: {
+                                  ...(rawKeys.current?.bookId === draft.id ? rawKeys.current.entries : {}),
+                                  [entry.id]: event.target.value,
+                                },
+                              };
+                              rawKeys.current = raw;
+                              setKeyText(raw);
+                            }}
                             onBlur={editor.commit}
                           />
                         </label>

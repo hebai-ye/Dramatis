@@ -1,6 +1,6 @@
 import type { Card, CardId, WorldBook, WorldBookId } from '@dramatis/core';
-import { useState } from 'react';
-import { Modal } from './Modal';
+import { useMemo, useState } from 'react';
+import { Modal, useModalSaves } from './Modal';
 
 interface Props {
   mode: 'new-world' | 'in-world';
@@ -20,7 +20,7 @@ interface Props {
     sceneTitle: string;
     location: string;
     worldTime: string;
-  }) => void;
+  }) => void | Promise<void>;
 }
 
 /**
@@ -46,6 +46,21 @@ export function NewConversationDialog({
   const [worldTime, setWorldTime] = useState('');
   const [cardIds, setCardIds] = useState<CardId[]>(defaultCardIds);
   const [bookIds, setBookIds] = useState<WorldBookId[]>(attachedBookIds);
+  const saves = useModalSaves('new-conversation');
+  const [initial] = useState(() =>
+    JSON.stringify([worldTitle, conversationTitle, sceneTitle, location, worldTime, cardIds, bookIds]),
+  );
+  const dirty =
+    initial !== JSON.stringify([worldTitle, conversationTitle, sceneTitle, location, worldTime, cardIds, bookIds]);
+  const guard = useMemo(
+    () =>
+      saves.busy
+        ? { kind: 'busy' as const, message: '正在创建对话，请等待保存完成。' }
+        : dirty
+          ? { kind: 'dirty' as const, message: '新对话的填写内容尚未保存，关闭会放弃这份草稿。' }
+          : null,
+    [saves.busy, dirty],
+  );
 
   const toggle = <T,>(list: T[], value: T): T[] =>
     list.includes(value) ? list.filter((item) => item !== value) : [...list, value];
@@ -55,6 +70,8 @@ export function NewConversationDialog({
       label={mode === 'new-world' ? '新对话与新世界' : '新一轮对话'}
       closeLabel="取消"
       onClose={onClose}
+      guard={guard}
+      initialFocus="[data-dialog-initial-focus]"
       head={
         <>
           <strong>{mode === 'new-world' ? '新对话' : '新一轮对话'}</strong>
@@ -65,46 +82,68 @@ export function NewConversationDialog({
           </span>
         </>
       }
-      footer={
+      footer={(requestClose) => (
         <>
-          <button type="button" className="ghost" onClick={onClose}>
+          <button type="button" className="ghost" onClick={requestClose}>
             取消
           </button>
           <button
             type="button"
-            disabled={disabled}
-            onClick={() =>
-              onSubmit({
-                worldTitle: worldTitle.trim() === '' ? '新世界' : worldTitle.trim(),
-                conversationTitle:
-                  conversationTitle.trim() === ''
-                    ? mode === 'new-world'
-                      ? '开场'
-                      : '新对话'
-                    : conversationTitle.trim(),
-                cardIds,
-                worldBookIds: bookIds,
-                sceneTitle: sceneTitle.trim() === '' ? '开场' : sceneTitle.trim(),
-                location,
-                worldTime,
-              })
-            }
+            disabled={disabled || saves.busy}
+            onClick={async () => {
+              if (disabled || saves.isBusy()) return;
+              if (
+                await saves.save(
+                  'create',
+                  () =>
+                    onSubmit({
+                      worldTitle: worldTitle.trim() === '' ? '新世界' : worldTitle.trim(),
+                      conversationTitle:
+                        conversationTitle.trim() === ''
+                          ? mode === 'new-world'
+                            ? '开场'
+                            : '新对话'
+                          : conversationTitle.trim(),
+                      cardIds,
+                      worldBookIds: bookIds,
+                      sceneTitle: sceneTitle.trim() === '' ? '开场' : sceneTitle.trim(),
+                      location,
+                      worldTime,
+                    }),
+                  false,
+                )
+              )
+                onClose();
+            }}
           >
             开始
           </button>
         </>
-      }
+      )}
     >
+      {saves.error === null ? null : (
+        <p className="notice error" role="alert">
+          创建未完成：{saves.error}。填写内容已保留，请重试。
+        </p>
+      )}
       {mode === 'new-world' ? (
         <label>
           世界名
-          <input value={worldTitle} onChange={(event) => setWorldTitle(event.target.value)} placeholder="例如：旧城" />
+          <input
+            data-dialog-initial-focus
+            value={worldTitle}
+            disabled={disabled || saves.busy}
+            onChange={(event) => setWorldTitle(event.target.value)}
+            placeholder="例如：旧城"
+          />
         </label>
       ) : null}
 
       <label>
         {mode === 'new-world' ? '首条对话名' : '对话名'}
         <input
+          data-dialog-initial-focus={mode === 'in-world' ? '' : undefined}
+          disabled={disabled || saves.busy}
           value={conversationTitle}
           onChange={(event) => setConversationTitle(event.target.value)}
           placeholder="例如：雨夜之后"
@@ -113,17 +152,32 @@ export function NewConversationDialog({
 
       <label>
         这个场景叫什么
-        <input value={sceneTitle} onChange={(event) => setSceneTitle(event.target.value)} placeholder="开场" />
+        <input
+          value={sceneTitle}
+          disabled={disabled || saves.busy}
+          onChange={(event) => setSceneTitle(event.target.value)}
+          placeholder="开场"
+        />
       </label>
 
       <div className="grid-2">
         <label>
           地点
-          <input value={location} onChange={(event) => setLocation(event.target.value)} placeholder="旧城东侧" />
+          <input
+            value={location}
+            disabled={disabled || saves.busy}
+            onChange={(event) => setLocation(event.target.value)}
+            placeholder="旧城东侧"
+          />
         </label>
         <label>
           世界内时间
-          <input value={worldTime} onChange={(event) => setWorldTime(event.target.value)} placeholder="第三日 · 黄昏" />
+          <input
+            value={worldTime}
+            disabled={disabled || saves.busy}
+            onChange={(event) => setWorldTime(event.target.value)}
+            placeholder="第三日 · 黄昏"
+          />
         </label>
       </div>
 
@@ -135,6 +189,7 @@ export function NewConversationDialog({
             <input
               type="checkbox"
               checked={cardIds.includes(card.id)}
+              disabled={disabled || saves.busy}
               onChange={() => setCardIds((previous) => toggle(previous, card.id))}
             />
             <span>{card.name}</span>
@@ -152,7 +207,7 @@ export function NewConversationDialog({
             <input
               type="checkbox"
               checked={bookIds.includes(book.id)}
-              disabled={mode === 'in-world' && attachedBookIds.includes(book.id)}
+              disabled={disabled || saves.busy || (mode === 'in-world' && attachedBookIds.includes(book.id))}
               onChange={() => setBookIds((previous) => toggle(previous, book.id))}
             />
             <span>{book.name}</span>

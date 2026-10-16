@@ -13,6 +13,7 @@ import {
   type SceneId,
 } from '@dramatis/core';
 import { createHttpSyncTransport, createRemoteSpace, fetchRemoteSpace } from '../src/lib/sync-transport';
+import { createProbeReporter } from './probe-reporter';
 
 /**
  * 同步探针 · 走 HTTP（P2-6 第四步，开发用页面，不进应用构建）。
@@ -31,16 +32,11 @@ import { createHttpSyncTransport, createRemoteSpace, fetchRemoteSpace } from '..
  * 5. 直接看服务端返回的原始 JSON：里面只有密文。
  */
 
-const lines: string[] = [];
-const out = document.querySelector('#out');
-
-function say(text: string): void {
-  lines.push(text);
-  if (out) out.textContent = lines.join('\n');
-}
+const report = createProbeReporter('假数据 · 内存客户端；仅用于隔离开发后端（HTTP 服务端会持久写入）');
+const say = report.log;
 
 function check(label: string, ok: boolean): void {
-  say(`${ok ? '✅' : '❌'} ${label}`);
+  report.check(label, ok);
 }
 
 const delay = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
@@ -215,6 +211,4 @@ async function main(): Promise<void> {
   say(`全部检查结束，用时 ${(performance.now() - started).toFixed(0)} ms。`);
 }
 
-void main().catch((error: unknown) => {
-  say(`探针跑挂了：${error instanceof Error ? error.message : String(error)}`);
-});
+void main().then(() => report.finish(), report.fail);

@@ -24,6 +24,20 @@ export function describeToolExecution(execution: AdminToolExecution): string {
   return `调用失败：${execution.toolName}`;
 }
 
+export interface AdminExecutionObservation {
+  requestIndex: number;
+  toolIndex: number;
+  call: ChatToolCall;
+  markStarted(): void;
+}
+export type AdminTurnObservation =
+  | { type: 'request-start'; requestIndex: number }
+  | { type: 'reasoning'; requestIndex: number; delta: string }
+  | { type: 'request-end'; requestIndex: number; outcome: 'completed' | 'failed' | 'stopped' }
+  | { type: 'tool-received'; requestIndex: number; toolIndex: number; call: ChatToolCall }
+  | { type: 'tool-start'; requestIndex: number; toolIndex: number; callId: string }
+  | { type: 'tool-end'; requestIndex: number; toolIndex: number; execution: AdminToolExecution };
+
 export type AdminTurnEvent =
   | { type: 'text'; text: string }
   | { type: 'tool'; execution: AdminToolExecution }
@@ -50,7 +64,8 @@ export interface AdminTurnOptions {
   maxRounds?: number;
   context?: AdminToolContext;
   /** 模型点名的工具由调用方真正执行（落库 / 应用场景设置），返回给模型的文本。 */
-  execute: (draft: AdminDraft) => Promise<string>;
+  execute: (draft: AdminDraft, observation?: AdminExecutionObservation) => Promise<string>;
+  onObservation?: (event: AdminTurnObservation) => void;
   /**
    * 顺序 104：正文的增量回调，用来让副对话逐字显示。
    *
@@ -86,9 +101,21 @@ export async function* runAdminTurn(
   let completionTokens = 0;
   let sawUsage = false;
   let calls = 0;
+  const observe = (event: AdminTurnObservation) => {
+    try {
+      options.onObservation?.(event);
+    } catch {
+      /* An observer is never part of the tool transaction. */
+    }
+  };
+  const checkStopped = () => {
+    if (options.signal?.aborted) throw new Error('已停止生成');
+  };
 
   for (let round = 0; round < maxRounds; round += 1) {
     const isLastRound = round === maxRounds - 1;
+    checkStopped();
+    observe({ type: 'request-start', requestIndex: round });
     const completion = await collectCompletionWithTools(
       provider,
       conversation,
@@ -100,6 +127,16 @@ export async function* runAdminTurn(
       },
       options.signal,
       options.onDelta,
+      (event) => observe({ type: 'reasoning', requestIndex: round, delta: event.delta }),
+    ).then(
+      (result) => {
+        observe({ type: 'request-end', requestIndex: round, outcome: 'completed' });
+        return result;
+      },
+      (error) => {
+        observe({ type: 'request-end', requestIndex: round, outcome: options.signal?.aborted ? 'stopped' : 'failed' });
+        throw error;
+      },
     );
     const { text, toolCalls } = completion;
     calls += 1;
@@ -118,8 +155,23 @@ export async function* runAdminTurn(
 
     conversation.push({ role: 'assistant', content: text, toolCalls });
 
-    for (const call of toolCalls) {
-      const execution = await runToolCall(call, context, options.execute);
+    toolCalls.forEach((call, toolIndex) => {
+      observe({ type: 'tool-received', requestIndex: round, toolIndex, call });
+    });
+    for (const [toolIndex, call] of toolCalls.entries()) {
+      checkStopped();
+      let started = false;
+      const execution = await runToolCall(call, context, options.execute, {
+        requestIndex: round,
+        toolIndex,
+        call,
+        markStarted() {
+          if (started) return;
+          started = true;
+          observe({ type: 'tool-start', requestIndex: round, toolIndex, callId: call.id });
+        },
+      });
+      observe({ type: 'tool-end', requestIndex: round, toolIndex, execution });
       executions.push(execution);
       conversation.push({ role: 'tool', toolCallId: call.id, content: execution.result });
       yield { type: 'tool', execution };
@@ -133,7 +185,8 @@ export async function* runAdminTurn(
 async function runToolCall(
   call: ChatToolCall,
   context: AdminToolContext,
-  execute: (draft: AdminDraft) => Promise<string>,
+  execute: AdminTurnOptions['execute'],
+  observation: AdminExecutionObservation,
 ): Promise<AdminToolExecution> {
   const parsed = parseAdminToolCall(call, context);
 
@@ -148,7 +201,7 @@ async function runToolCall(
   }
 
   try {
-    const result = await execute(parsed.draft);
+    const result = await execute(parsed.draft, observation);
     /*
      * 模型多写的参数（顺序 67）：回填给它，让它下一轮自己改。
      * 静默丢掉的话，它会一直以为那个字段生效了。

@@ -18,6 +18,7 @@ export interface ComposerProps {
   /** 没准备好（世界/对话还没加载）或已归档时不让人打字。 */
   disabled: boolean;
   busy: boolean;
+  canStop?: boolean;
   /** 桥接正等着贴回来：这时不让再发一句，否则那一步会被冲掉。 */
   bridgeOpen: boolean;
   /** 没配 Key：那颗键不是「发送」而是「生成提示词」。 */
@@ -37,6 +38,7 @@ export function Composer({
   placeholder,
   disabled,
   busy,
+  canStop = true,
   bridgeOpen,
   manualMode,
   onSend,
@@ -65,7 +67,7 @@ export function Composer({
             if (event.key !== 'Enter' || event.shiftKey || event.nativeEvent.isComposing) return;
             if (coarsePointer) return;
             event.preventDefault();
-            onSend();
+            if (!disabled && !busy && !bridgeOpen && value.trim() !== '') onSend();
           }}
         />
 
@@ -74,7 +76,7 @@ export function Composer({
 
           <div className="topbar-spacer" />
 
-          {busy ? (
+          {busy && canStop ? (
             <button
               type="button"
               className="composer-action stop"
@@ -87,7 +89,7 @@ export function Composer({
           ) : (
             <button
               type="button"
-              disabled={disabled || value.trim() === '' || bridgeOpen}
+              disabled={busy || disabled || value.trim() === '' || bridgeOpen}
               title={bridgeOpen ? bridgeTitle : undefined}
               aria-label={sendLabel}
               className={manualMode ? 'composer-action labelled' : 'composer-action'}

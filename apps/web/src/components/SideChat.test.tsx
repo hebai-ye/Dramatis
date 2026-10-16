@@ -86,4 +86,11 @@ describe('副对话的流式与工具调用可见（顺序 104）', () => {
     expect(html).not.toContain('streaming');
     expect(html.match(/草稿放在下面了。/gu)?.length).toBe(1);
   });
+  it('交接消息后有新同步记录也不重复显示流式正文', () => {
+    const message = adminMessage('唯一的流式正文', 'handoff');
+    setStreamState('admin', { text: '唯一的流式正文', phase: 'writing' });
+    handoffStreamState('admin', message.id);
+    const html = render([message, adminMessage('另一条同步记录', 'newer')]);
+    expect(html.match(/唯一的流式正文/gu)).toHaveLength(1);
+  });
 });

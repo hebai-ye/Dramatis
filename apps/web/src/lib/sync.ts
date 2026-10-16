@@ -243,6 +243,40 @@ export function useSync(db: DramatisDb | null, options: { onChanged?: () => void
   const configRef = useRef<SyncConfig | null>(null);
   const keyModeRef = useRef<KeyStorageMode>('session');
   const passwordRef = syncPasswordKeyRef(readActiveAccount().id);
+  const accountRef = useRef({ db, passwordRef });
+  const connectionRevisionRef = useRef(0);
+  const autoRef = useRef<ReturnType<typeof createAutoSync> | null>(null);
+
+  // Account changes must invalidate callbacks before the next paint/effect.
+  if (accountRef.current.db !== db || accountRef.current.passwordRef !== passwordRef) {
+    accountRef.current = { db, passwordRef };
+    connectionRevisionRef.current++;
+    autoRef.current?.cancel();
+    autoRef.current = null;
+    sessionRef.current = null;
+    configRef.current = null;
+    setConfig(null);
+    setStatus('off');
+    setError(null);
+    setErrorStatus(null);
+    setRecoveryCode(null);
+    setSpaceFull(false);
+    setBusy(false);
+    setAutoSyncPending(false);
+  }
+  const account = accountRef.current;
+  const isCurrentConnection = useCallback(
+    (revision: number): boolean => accountRef.current === account && connectionRevisionRef.current === revision,
+    [account],
+  );
+  useEffect(
+    () => () => {
+      if (accountRef.current !== account) return;
+      connectionRevisionRef.current++;
+      autoRef.current?.cancel();
+    },
+    [account],
+  );
 
   /**
    * 所有会碰同步游标 / 推送点的操作都排进这一条队（审计 B1）：启动、连接、立即同步、
@@ -279,12 +313,17 @@ export function useSync(db: DramatisDb | null, options: { onChanged?: () => void
   onChangedRef.current = options.onChanged;
 
   const remember = useCallback(
-    async (next: SyncConfig, secret: string | null): Promise<void> => {
+    async (next: SyncConfig, secret: string | null, isCurrent?: () => boolean): Promise<void> => {
+      if (isCurrent && !isCurrent()) return;
+      if (db !== null) {
+        await db.repository.setMeta(META_CONFIG, next);
+        if (isCurrent && !isCurrent()) return;
+        if (secret !== null) await createBrowserKeyStore(next.keyMode).set(passwordRef, secret);
+      }
+      if (isCurrent && !isCurrent()) return;
+      // Publish a success report only after its persistence succeeds.
       configRef.current = next;
       setConfig(next);
-      if (db === null) return;
-      await db.repository.setMeta(META_CONFIG, next);
-      if (secret !== null) await createBrowserKeyStore(next.keyMode).set(passwordRef, secret);
     },
     [db, passwordRef],
   );
@@ -293,37 +332,42 @@ export function useSync(db: DramatisDb | null, options: { onChanged?: () => void
    * 真正推拉一趟（**必须经过 `doSync` 排队**，别直接调它）。
    */
   const syncOnce = useCallback(
-    async (current: SyncConfig, session: SyncSession): Promise<SyncReport> => {
+    async (current: SyncConfig, session: SyncSession, isCurrent: () => boolean): Promise<SyncReport> => {
       if (db === null) throw new Error('数据库还没准备好。');
-      const report = await runSync({
-        repository: db.repository,
-        transport: createHttpSyncTransport({ endpoint: current.endpoint }),
-        spaceHandle: current.spaceHandle,
-        credential: session.credential,
-        encKey: session.encKey,
-      }).catch((error: unknown) => {
+      try {
+        const report = await runSync({
+          repository: db.repository,
+          transport: createHttpSyncTransport({ endpoint: current.endpoint }),
+          spaceHandle: current.spaceHandle,
+          credential: session.credential,
+          encKey: session.encKey,
+        });
+        if (!isCurrent()) return report;
+        if (report.pushed > 0) setSpaceFull(false);
+        await remember({ ...current, lastSyncAt: new Date().toISOString(), lastReport: report }, null, isCurrent);
+        return report;
+      } catch (error) {
         // 撞上服务端护栏：记下来，界面会一直提示到真的恢复为止
         /*
          * 判据是**机器可读的 code**，不是文案（顺序 61）。
          * 以前这里写的是 `message.includes('存满')`：服务端把那句话改一个字，
          * 「空间满了」这个状态就静默失效，用户会以为一切正常而数据推不上去。
          */
-        if (error instanceof SyncHttpError && error.code === 'space-full') {
+        if (isCurrent() && error instanceof SyncHttpError && error.code === 'space-full') {
           setSpaceFull(true);
         }
         throw error;
-      });
-
-      if (report.pushed > 0) setSpaceFull(false);
-
-      const updated: SyncConfig = {
-        ...current,
-        lastSyncAt: new Date().toISOString(),
-        lastReport: report,
-      };
-      await remember(updated, null);
-      onChangedRef.current?.();
-      return report;
+      } finally {
+        // A failed round may already have merged pages or rejection winners.
+        // Refresh errors must never replace the original sync failure.
+        if (isCurrent()) {
+          try {
+            void Promise.resolve(onChangedRef.current?.()).catch(() => undefined);
+          } catch {
+            // The next reload can retry the UI refresh independently of syncing.
+          }
+        }
+      }
     },
     [db, remember],
   );
@@ -335,28 +379,56 @@ export function useSync(db: DramatisDb | null, options: { onChanged?: () => void
    * 对不上就跳过这一轮——否则「断开」会被排在后面的那一趟悄悄复活。
    */
   const doSync = useCallback(
-    (current: SyncConfig): Promise<SyncReport> =>
-      runExclusive(async () => {
+    (current: SyncConfig): Promise<SyncReport> => {
+      const revision = connectionRevisionRef.current;
+      return runExclusive(async () => {
         const latest = configRef.current;
         const latestSession = sessionRef.current;
-        if (latest === null || latestSession === null || latest.spaceHandle !== current.spaceHandle) {
+        if (
+          !isCurrentConnection(revision) ||
+          latest === null ||
+          latestSession === null ||
+          latest.spaceHandle !== current.spaceHandle ||
+          latest.endpoint !== current.endpoint
+        ) {
           throw new Error('同步已断开或换了空间，这一轮跳过。');
         }
+        const isCurrent = () =>
+          isCurrentConnection(revision) &&
+          sessionRef.current === latestSession &&
+          configRef.current?.spaceHandle === latest.spaceHandle &&
+          configRef.current.endpoint === latest.endpoint;
         // 换密码可能刚在前一项完成，不能沿用排队前捕获的旧凭证。
-        return syncOnce(latest, latestSession);
-      }),
-    [runExclusive, syncOnce],
+        try {
+          const report = await syncOnce(latest, latestSession, isCurrent);
+          if (isCurrent()) {
+            setStatus('ready');
+            reportError(null);
+          }
+          return report;
+        } catch (failure) {
+          if (isCurrent()) {
+            setStatus('error');
+            reportError(failure);
+          }
+          throw failure;
+        }
+      });
+    },
+    [isCurrentConnection, reportError, runExclusive, syncOnce],
   );
 
   // ---- 启动：读配置，能自动登录就自动同步一次 ----
   useEffect(() => {
     if (db === null) return;
     let cancelled = false;
+    const revision = connectionRevisionRef.current;
+    const inactive = () => cancelled || !isCurrentConnection(revision);
 
     void (async () => {
       try {
         const stored = await db.repository.getMeta<SyncConfig>(META_CONFIG);
-        if (stored === null || cancelled) return;
+        if (stored === null || inactive()) return;
 
         keyModeRef.current = stored.keyMode;
         configRef.current = stored;
@@ -377,24 +449,25 @@ export function useSync(db: DramatisDb | null, options: { onChanged?: () => void
             secret = legacy;
           }
         }
-        if (cancelled) return;
+        if (inactive()) return;
         setConfig(stored);
         if (secret === null) {
           // 密码没存（用户选了"仅本次会话"，或者换了设备）
-          if (!cancelled) setStatus('needs-secret');
+          if (!inactive()) setStatus('needs-secret');
           return;
         }
 
         const meta = await fetchRemoteSpace({ endpoint: stored.endpoint }, stored.spaceHandle);
-        if (meta === null) throw new Error('服务端上没有这个空间了（也许数据被清过）。');
+        if (meta === null)
+          throw new SyncHttpError(404, 'space-not-found', '服务端上没有这个空间了（也许数据被清过）。');
         const session = await openWithSecret(meta, secret);
-        if (cancelled) return;
+        if (inactive()) return;
 
         sessionRef.current = session;
         setStatus('ready');
         await doSync(stored);
       } catch (syncError) {
-        if (cancelled) return;
+        if (inactive()) return;
         setStatus('error');
         reportError(syncError);
       }
@@ -403,11 +476,13 @@ export function useSync(db: DramatisDb | null, options: { onChanged?: () => void
     return () => {
       cancelled = true;
     };
-  }, [db, doSync, passwordRef, reportError]);
+  }, [db, doSync, isCurrentConnection, passwordRef, reportError]);
 
   const connect = useCallback(
     async (input: SyncConnectInput): Promise<void> => {
       if (db === null) throw new Error('数据库还没准备好。');
+      if (!isCurrentConnection(connectionRevisionRef.current)) throw new Error('同步所属账户已变化。');
+      const revision = ++connectionRevisionRef.current;
       setBusy(true);
       reportError(null);
       try {
@@ -454,6 +529,7 @@ export function useSync(db: DramatisDb | null, options: { onChanged?: () => void
           session = await openWithSecret(meta, secret);
         }
 
+        if (!isCurrentConnection(revision)) throw new Error('同步连接已被后续操作替换。');
         keyModeRef.current = input.keyMode;
         const next: SyncConfig = {
           endpoint,
@@ -464,7 +540,8 @@ export function useSync(db: DramatisDb | null, options: { onChanged?: () => void
           lastSyncAt: configRef.current?.lastSyncAt ?? null,
           lastReport: configRef.current?.lastReport ?? null,
         };
-        await remember(next, secret);
+        await remember(next, secret, () => isCurrentConnection(revision));
+        if (!isCurrentConnection(revision)) throw new Error('同步连接已被后续操作替换。');
         /*
          * 刚新建的空间 head 从 0 开始（审计 A4）：本地若还留着上一个空间（或服务端重建前）
          * 的游标与推送点，就会一条都不推、前 N 条永远拉不到。清零让它完整推拉一遍。
@@ -473,23 +550,28 @@ export function useSync(db: DramatisDb | null, options: { onChanged?: () => void
          * 该清」的判据写在 loop.ts 里、`docs/SYNC.md` §4.12.2 也点了名，只有一处。
          */
         if (freshSpace) await runExclusive(() => resetSyncState(db.repository, spaceHandle));
+        if (!isCurrentConnection(revision)) throw new Error('同步连接已被后续操作替换。');
 
         sessionRef.current = session;
         setRecoveryCode(createdCode);
         setStatus('ready');
         await doSync(next);
       } catch (connectError) {
-        setStatus('error');
-        reportError(connectError);
+        if (isCurrentConnection(revision)) {
+          setStatus('error');
+          reportError(connectError);
+        }
         throw connectError;
       } finally {
-        setBusy(false);
+        if (isCurrentConnection(revision)) setBusy(false);
       }
     },
-    [db, doSync, remember, reportError, runExclusive],
+    [db, doSync, isCurrentConnection, remember, reportError, runExclusive],
   );
 
   const syncNow = useCallback(async (): Promise<void> => {
+    const revision = connectionRevisionRef.current;
+    if (!isCurrentConnection(revision)) throw new Error('同步所属账户已变化。');
     const current = configRef.current;
     const session = sessionRef.current;
     setBusy(true);
@@ -500,27 +582,34 @@ export function useSync(db: DramatisDb | null, options: { onChanged?: () => void
         throw new Error('需要先填同步密码（或恢复码）再同步一次。');
       }
       await doSync(current);
-      setStatus('ready');
     } catch (syncError) {
-      setStatus('error');
-      reportError(syncError);
+      if (isCurrentConnection(revision)) {
+        setStatus('error');
+        reportError(syncError);
+      }
       throw syncError;
     } finally {
-      setBusy(false);
+      if (isCurrentConnection(revision)) setBusy(false);
     }
-  }, [doSync, reportError]);
+  }, [doSync, isCurrentConnection, reportError]);
 
   const disconnect = useCallback(async (): Promise<void> => {
     if (db === null) return;
+    if (!isCurrentConnection(connectionRevisionRef.current)) return;
+    const revision = ++connectionRevisionRef.current;
+    autoRef.current?.cancel();
     await db.repository.setMeta(META_CONFIG, null);
+    if (!isCurrentConnection(revision)) return;
     await createBrowserKeyStore(keyModeRef.current).remove(passwordRef);
+    if (!isCurrentConnection(revision)) return;
     sessionRef.current = null;
     configRef.current = null;
     setConfig(null);
     setStatus('off');
+    setBusy(false);
     reportError(null);
     setRecoveryCode(null);
-  }, [db, passwordRef, reportError]);
+  }, [db, isCurrentConnection, passwordRef, reportError]);
 
   const setKeyMode = useCallback(
     async (mode: KeyStorageMode): Promise<void> => {
@@ -751,20 +840,13 @@ export function useSync(db: DramatisDb | null, options: { onChanged?: () => void
    * 「上次结果」，让用户看得见并自己决定要不要重试。
    */
   const quietRunRef = useRef<() => Promise<void>>(async () => {});
-  const autoRef = useRef<ReturnType<typeof createAutoSync> | null>(null);
 
   quietRunRef.current = async (): Promise<void> => {
     const current = configRef.current;
     const session = sessionRef.current;
     if (db === null || current === null || session === null) return;
-    try {
-      await doSync(current);
-      reportError(null);
-    } catch (autoError) {
-      // 自动同步不把错抛给调度器，但**失败要留痕**：文案与状态码一起记（顺序 61）
-      reportError(autoError);
-      throw autoError;
-    }
+    // doSync publishes both status and error, guarded by the connection revision.
+    await doSync(current);
   };
 
   if (autoRef.current === null) {
@@ -775,11 +857,9 @@ export function useSync(db: DramatisDb | null, options: { onChanged?: () => void
         await quietRunRef.current();
       },
       intervalMs: AUTO_SYNC_INTERVAL_MS,
-      // 失败那条路上面已经记好了（含状态码），这里只在成功时把提示清掉
-      onResult: (result) => {
-        if (result.ok) reportError(null);
+      onBusyChange: (pending) => {
+        if (accountRef.current === account) setAutoSyncPending(pending);
       },
-      onBusyChange: setAutoSyncPending,
     });
   }
 

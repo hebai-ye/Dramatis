@@ -154,8 +154,9 @@ function harness(
       chapters: [],
       allChapters: [],
       scenes: [scene],
-      appendMessages: async (batch: Message[]) => {
+      appendMessages: async (batch: Message[], onPersisted?: () => void) => {
         saved.push(...batch);
+        onPersisted?.();
       },
       updateMessage: async (id: string, patch: Record<string, unknown>) => {
         runtime.updates.push({ id, patch });
@@ -217,6 +218,8 @@ function harness(
     sync: { requestAutoSync: () => {} },
     world: { id: room, playerName: '旅人', playerPersona: '' },
     conversation: {
+      kind: 'main',
+      archivedAt: null,
       id: 'conversation-1',
       modes: { playerFirst: false, silent: false, intentFirst: true, maxSpeakers: 2 },
     },
@@ -226,6 +229,7 @@ function harness(
     burned: false,
     budgetReason: null,
     busy: false,
+    accountKey: 'fixture-runner',
     setBusy: (value: boolean) => {
       busy.push(value);
     },
@@ -268,6 +272,7 @@ function harness(
 }
 
 beforeEach(() => {
+  vi.stubGlobal('sessionStorage', { getItem: () => null, setItem: () => {}, removeItem: () => {} });
   runtime.plan =
     '{"speakers":[{"key":"C1","name":"秦娘","intent":"先回答","mode":"reply"},{"key":"C2","name":"陈九","intent":"补充","mode":"reply"}]}';
   runtime.failFirst = false;
@@ -410,7 +415,7 @@ describe('一轮多人自动生成', () => {
     runtime.timeoutHandoff = true;
     runtime.reloadFails = true;
     const { api, saved, errors, busy } = harness();
-    await expect(api.handleSend('你们觉得呢？')).resolves.toBeUndefined();
+    await expect(api.handleSend('你们觉得呢？')).resolves.toEqual({ status: 'accepted' });
     expect(saved.map((message) => message.role)).toEqual(['player', 'character']);
     expect(runtime.generationSpeakers).toEqual(['秦娘']);
     expect(runtime.reloads).toBe(1);
@@ -604,5 +609,28 @@ describe('改归属：与重抽同一个事务（顺序 77）', () => {
     expect(updates).toEqual([]);
     expect(reverted).toEqual([]);
     expect(errors).toEqual([]);
+  });
+});
+
+describe('发送接受与生成完成分离', () => {
+  it('无可回应角色返回拒绝且不落玩家消息', async () => {
+    const f = harness();
+    f.options.instances.length = 0;
+    const outcome = await f.api.handleSend('keep');
+    expect(outcome).toMatchObject({ status: 'rejected' });
+    expect(f.saved).toHaveLength(0);
+  });
+  it('玩家落盘后先回传接受，不等待导演请求结束', async () => {
+    runtime.hangDirector = true;
+    const f = harness(true);
+    const accepted = vi.fn();
+    void (f.api.handleSend as unknown as (text: string, done: (outcome: unknown) => void) => Promise<unknown>)(
+      'hello',
+      accepted,
+    );
+    for (let i = 0; i < 40; i++) await Promise.resolve();
+    expect(accepted).toHaveBeenCalledWith({ status: 'accepted' });
+    expect(f.saved.some((message) => message.role === 'player')).toBe(true);
+    f.api.stop();
   });
 });

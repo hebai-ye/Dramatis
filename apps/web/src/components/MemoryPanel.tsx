@@ -82,6 +82,11 @@ interface Props {
 
 type View = 'list' | 'contrast';
 
+/** Consolidated observer impressions store their subjective prose in summary. */
+export function memorySummaryLabel(memory: Pick<MemoryEvent, 'observerId' | 'supersedes'>): string {
+  return memory.observerId !== null && isImpressionMemory(memory) ? '这个角色的主观印象' : '客观经过';
+}
+
 /**
  * 记忆面板（ROADMAP P1-4）。
  *
@@ -210,7 +215,7 @@ export function MemoryPanel({
       <header className="memory-header">
         <h2>记忆</h2>
         <span className="hint">
-          {memories.length} 条{pending > 0 ? ` · 排队 ${pending}` : ''}
+          当前筛选 {filtered.length} / {memories.length} 条{pending > 0 ? ` · 排队 ${pending}` : ''}
           {extraCalls > 0 ? ` · 额外调用 ${extraCalls} 次` : ''}
         </span>
       </header>
@@ -232,8 +237,8 @@ export function MemoryPanel({
       ) : null}
 
       {attachments.length > 0 ? (
-        <section className="attachment-block">
-          <h3>记忆附件</h3>
+        <details className="attachment-block">
+          <summary>附件（{attachments.length} 张角色卡）</summary>
           <p className="hint">挂在角色卡上的跨对话索引。正文只在对话命中关键词或问起过去时按需展开。</p>
           {attachments.map(({ card, attachment }) => {
             const dropped = attachment.stats.dropped.timeline + attachment.stats.dropped.memories;
@@ -252,7 +257,7 @@ export function MemoryPanel({
               </details>
             );
           })}
-        </section>
+        </details>
       ) : null}
       {/*
         两个筛选维度（T11）：**哪条对话** × **谁的视角**。分开的两个下拉比
@@ -298,6 +303,7 @@ export function MemoryPanel({
         <button
           type="button"
           className={view === 'list' ? 'ghost active' : 'ghost'}
+          aria-pressed={view === 'list'}
           disabled={disabled}
           onClick={() => setView('list')}
         >
@@ -306,6 +312,7 @@ export function MemoryPanel({
         <button
           type="button"
           className={view === 'contrast' ? 'ghost active' : 'ghost'}
+          aria-pressed={view === 'contrast'}
           disabled={disabled}
           title="同一件事：客观经过与各角色的视角摆在一起"
           onClick={() => setView('contrast')}
@@ -315,8 +322,8 @@ export function MemoryPanel({
       </div>
 
       {chapters.length === 0 ? null : (
-        <section className="chapter-block">
-          <h3>前情提要</h3>
+        <details className="chapter-block">
+          <summary>章节 · 前情提要（{chapters.length} 章）</summary>
           <p className="hint">几场戏滚成的一章。原文一条都没删，只是不再占着 prompt 的位置。</p>
           <ul className="chapter-list">
             {chapters.map((chapter) => (
@@ -332,16 +339,16 @@ export function MemoryPanel({
               </li>
             ))}
           </ul>
-        </section>
+        </details>
       )}
 
       {filtered.length === 0 ? (
         <p className="hint">
           {memories.length === 0
-            ? '还没有记忆。聊过一轮之后，后台会自动抽取；需要配置好模型与 Key。'
+            ? '还没有记忆。先到「设置 → 模型配置」配置可用接口，再在主对话聊一轮，后台会自动抽取。'
             : conversationFilter !== ALL && (counts.get(conversationFilter) ?? 0) === 0
               ? '这条对话下还没有记忆——副对话只有起草，不会产生剧情记忆；要横向看整个世界，把「对话」切到全部。'
-              : '这个筛选下没有条目。'}
+              : '这个筛选下没有条目。把「视角」切到全部，或把「对话」切到全部对话查看。'}
         </p>
       ) : view === 'contrast' ? (
         /*
@@ -391,127 +398,149 @@ export function MemoryPanel({
               ))}
 
               <div className="memory-actions">
-                {(group.objective === null ? [] : [group.objective, ...group.observations])
-                  .slice(0, 6)
-                  .map((memory) => (
-                    <button
-                      key={memory.id}
-                      type="button"
-                      className="ghost"
-                      disabled={disabled}
-                      title={memory.observerId === null ? '编辑客观经过' : '编辑这个角色的视角'}
-                      onClick={() => {
-                        setView('list');
-                        setExpandedId(memory.id);
-                      }}
-                    >
-                      改{memory.observerId === null ? '客观' : (nameOf.get(memory.observerId) ?? '视角')}
-                    </button>
-                  ))}
+                {[...(group.objective === null ? [] : [group.objective]), ...group.observations].map((memory) => (
+                  <button
+                    key={memory.id}
+                    type="button"
+                    className="ghost"
+                    disabled={disabled}
+                    title={memory.observerId === null ? '编辑客观经过' : '编辑这个角色的视角'}
+                    onClick={() => {
+                      setView('list');
+                      setExpandedId(memory.id);
+                    }}
+                  >
+                    改{memory.observerId === null ? '客观' : (nameOf.get(memory.observerId) ?? '视角')}
+                  </button>
+                ))}
               </div>
             </li>
           ))}
         </ul>
       ) : (
-        <ul className="memory-list">
-          {filtered.map((memory) => (
-            <li key={memory.id} className={memory.pinned ? 'pinned' : ''}>
-              <div className="memory-head">
-                <span className="tag">
-                  {memory.observerId === null ? '客观经过' : `${nameOf.get(memory.observerId) ?? '未知角色'} 眼中的事`}
-                </span>
-                {conversationTag(memory) === null ? null : <span className="tag">{conversationTag(memory)}</span>}
-                <span className="hint">{formatTime(memory.createdAt)}</span>
-                {memory.pinned ? <span className="tag accent">置顶</span> : null}
-              </div>
-
-              <p className="memory-summary">{memory.summary}</p>
-              {memory.perception !== '' ? <p className="memory-perception">他的感受：{memory.perception}</p> : null}
-
-              <div className="memory-actions">
-                <button
-                  type="button"
-                  className="ghost"
-                  disabled={disabled}
-                  onClick={() => setExpandedId(expandedId === memory.id ? null : memory.id)}
-                >
-                  {expandedId === memory.id ? '收起' : '编辑'}
-                </button>
-                <button
-                  type="button"
-                  className="ghost"
-                  disabled={disabled}
-                  onClick={() => onUpdate(memory.id, { pinned: !memory.pinned })}
-                >
-                  {memory.pinned ? '取消置顶' : '置顶'}
-                </button>
-                <button type="button" className="ghost danger" disabled={disabled} onClick={() => onDelete(memory.id)}>
-                  删除
-                </button>
-                {onLocate === undefined || memory.sourceTurnIds[0] === undefined ? null : (
-                  <button
-                    type="button"
-                    className="ghost"
-                    disabled={disabled}
-                    title="切回产生这条记忆的那条对话，并跳到原句"
-                    onClick={() => onLocate(memory.sourceTurnIds[0] as string)}
-                  >
-                    跳到原句
-                  </button>
-                )}
-                <span className="hint">重要度 {memory.importance.toFixed(2)}</span>
-                {memory.recallCount > 0 ? <span className="hint">回想 {memory.recallCount} 次</span> : null}
-              </div>
-
-              {renderSourceChain(memory)}
-
-              {expandedId === memory.id ? (
-                <div className="memory-editor">
-                  <div className="field">
-                    客观经过
-                    <MemoryDraftArea
-                      value={memory.summary}
-                      disabled={disabled}
-                      label="客观经过"
-                      onCommit={(next) => onUpdate(memory.id, { summary: next })}
-                    />
-                  </div>
-                  {memory.observerId !== null ? (
-                    <div className="field">
-                      这个角色的感受
-                      <MemoryDraftArea
-                        value={memory.perception}
-                        disabled={disabled}
-                        label="这个角色的感受"
-                        onCommit={(next) => onUpdate(memory.id, { perception: next })}
-                      />
+        [
+          { title: '情景记忆', items: filtered.filter((memory) => !isImpressionMemory(memory)) },
+          { title: '印象与来源', items: filtered.filter(isImpressionMemory) },
+        ]
+          .filter((section) => section.items.length > 0)
+          .map((section) => (
+            <details key={section.title} className="memory-section" open>
+              <summary>
+                {section.title}（{section.items.length} 条）
+              </summary>
+              <ul className="memory-list">
+                {section.items.map((memory) => (
+                  <li key={memory.id} className={memory.pinned ? 'pinned' : ''}>
+                    <div className="memory-head">
+                      <span className="tag">
+                        {memory.observerId === null
+                          ? '客观经过'
+                          : `${nameOf.get(memory.observerId) ?? '未知角色'} 眼中的事`}
+                      </span>
+                      {conversationTag(memory) === null ? null : <span className="tag">{conversationTag(memory)}</span>}
+                      <span className="hint">{formatTime(memory.createdAt)}</span>
+                      {memory.pinned ? <span className="tag accent">置顶</span> : null}
                     </div>
-                  ) : null}
-                  <label>
-                    重要度（改了之后不再自动衰减）
-                    <input
-                      type="number"
-                      min="0"
-                      max="1"
-                      step="0.05"
-                      value={memory.importance}
-                      disabled={disabled}
-                      onChange={(event) => {
-                        const value = Number(event.target.value);
-                        if (!Number.isFinite(value)) return;
-                        onUpdate(memory.id, {
-                          importance: Math.max(0, Math.min(1, value)),
-                          importanceLocked: true,
-                        });
-                      }}
-                    />
-                  </label>
-                  <p className="hint">产生这条记忆的对话：{titleOf.get(memory.conversationId ?? '') ?? '未归属'}</p>
-                </div>
-              ) : null}
-            </li>
-          ))}
-        </ul>
+
+                    <p className="memory-summary">{memory.summary}</p>
+                    {memory.perception !== '' ? (
+                      <p className="memory-perception">他的感受：{memory.perception}</p>
+                    ) : null}
+
+                    <div className="memory-actions">
+                      <button
+                        type="button"
+                        className="ghost"
+                        disabled={disabled}
+                        aria-expanded={expandedId === memory.id}
+                        onClick={() => setExpandedId(expandedId === memory.id ? null : memory.id)}
+                      >
+                        {expandedId === memory.id ? '收起' : '编辑'}
+                      </button>
+                      <button
+                        type="button"
+                        className="ghost"
+                        disabled={disabled}
+                        onClick={() => onUpdate(memory.id, { pinned: !memory.pinned })}
+                      >
+                        {memory.pinned ? '取消置顶' : '置顶'}
+                      </button>
+                      <button
+                        type="button"
+                        className="ghost danger"
+                        disabled={disabled}
+                        onClick={() => onDelete(memory.id)}
+                      >
+                        删除
+                      </button>
+                      {onLocate === undefined || memory.sourceTurnIds[0] === undefined ? null : (
+                        <button
+                          type="button"
+                          className="ghost"
+                          disabled={disabled}
+                          title="切回产生这条记忆的那条对话，并跳到原句"
+                          onClick={() => onLocate(memory.sourceTurnIds[0] as string)}
+                        >
+                          跳到原句
+                        </button>
+                      )}
+                      <span className="hint">重要度 {memory.importance.toFixed(2)}</span>
+                      {memory.recallCount > 0 ? <span className="hint">回想 {memory.recallCount} 次</span> : null}
+                    </div>
+
+                    {renderSourceChain(memory)}
+
+                    {expandedId === memory.id ? (
+                      <div className="memory-editor">
+                        <div className="field">
+                          {memorySummaryLabel(memory)}
+                          <MemoryDraftArea
+                            value={memory.summary}
+                            disabled={disabled}
+                            label={memorySummaryLabel(memory)}
+                            onCommit={(next) => onUpdate(memory.id, { summary: next })}
+                          />
+                        </div>
+                        {memory.observerId !== null ? (
+                          <div className="field">
+                            这个角色的感受
+                            <MemoryDraftArea
+                              value={memory.perception}
+                              disabled={disabled}
+                              label="这个角色的感受"
+                              onCommit={(next) => onUpdate(memory.id, { perception: next })}
+                            />
+                          </div>
+                        ) : null}
+                        <label>
+                          重要度（改了之后不再自动衰减）
+                          <input
+                            type="number"
+                            min="0"
+                            max="1"
+                            step="0.05"
+                            value={memory.importance}
+                            disabled={disabled}
+                            onChange={(event) => {
+                              const value = Number(event.target.value);
+                              if (!Number.isFinite(value)) return;
+                              onUpdate(memory.id, {
+                                importance: Math.max(0, Math.min(1, value)),
+                                importanceLocked: true,
+                              });
+                            }}
+                          />
+                        </label>
+                        <p className="hint">
+                          产生这条记忆的对话：{titleOf.get(memory.conversationId ?? '') ?? '未归属'}
+                        </p>
+                      </div>
+                    ) : null}
+                  </li>
+                ))}
+              </ul>
+            </details>
+          ))
       )}
     </section>
   );

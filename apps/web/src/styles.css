@@ -20,6 +20,11 @@
   --shadow-panel: 0 18px 48px rgb(0 0 0 / 18%);
   --motion-fast: 160ms;
   --motion-normal: 220ms;
+  --font-body: 15px;
+  --font-support: 13px;
+  --font-title: 18px;
+  --space-control: 8px;
+  --space-section: 16px;
   /* 强调色上的文字按底色明度分别设定，保持主按钮可读 */
   --on-accent: #241b0b;
   --danger: #d9705f;
@@ -105,7 +110,7 @@ body {
   background: var(--bg);
   color: var(--text);
   font-family: "PingFang SC", "Microsoft YaHei", "Segoe UI", system-ui, sans-serif;
-  font-size: 15px;
+  font-size: var(--font-body, 15px);
   line-height: 1.65;
   overflow: hidden;
 }
@@ -716,6 +721,89 @@ button.ghost:focus-visible {
   white-space: nowrap;
 }
 
+.runtime-panel .usage-list li {
+  flex-wrap: wrap;
+}
+
+.runtime-panel .usage-name {
+  overflow: visible;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+.runtime-panel .usage-figure {
+  flex: 1 1 100%;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  text-align: left;
+  white-space: normal;
+}
+
+.budget-editor {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.budget-editor .grid-2 {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.budget-editor input {
+  min-width: 0;
+}
+
+.budget-editor .save-bar {
+  flex-wrap: wrap;
+}
+
+.budget-editor .save-bar .hint {
+  flex: 1 1 100%;
+  text-align: left;
+}
+
+.budget-usage-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.budget-usage-list li {
+  border-bottom: 1px dashed var(--line);
+  min-width: 0;
+  padding-bottom: 8px;
+}
+
+.budget-currency-label {
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.budget-metrics {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 6px 0 0;
+}
+
+.budget-metrics > div {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: 5em minmax(0, 1fr);
+}
+
+.budget-metrics dt {
+  color: var(--muted-text);
+}
+
+.budget-metrics dd {
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
 .account-list {
   display: flex;
   flex-direction: column;
@@ -830,6 +918,18 @@ button.ghost:focus-visible {
 }
 
 .account-card-id {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.account-facts {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 4px 12px;
+  margin: 0;
+}
+
+.account-facts dd {
   margin: 0;
   overflow-wrap: anywhere;
 }
@@ -2570,8 +2670,15 @@ details summary {
     transition: none;
   }
 
-  .mode-menu {
+  .mode-menu,
+  .pending-dot,
+  .message-row.highlighted {
     animation: none;
+  }
+
+  .message-row.highlighted {
+    background: color-mix(in srgb, var(--accent) 22%, transparent);
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 35%, transparent);
   }
 }
 
@@ -3923,5 +4030,337 @@ details summary {
     .library-overlay {
       transition: none;
     }
+  }
+}
+
+/* UI optimization: available workspace width, shared dialog geometry and readable hierarchy. */
+.modal-head,
+.modal-foot {
+  flex-shrink: 0;
+}
+
+.cast-row {
+  flex-wrap: wrap;
+  align-items: flex-start;
+}
+.cast-edit-field {
+  flex: 1 1 120px;
+  min-width: 0;
+}
+.cast-edit-field input,
+.cast-edit-field select {
+  width: 100%;
+}
+.edit-save-feedback {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.edit-save-feedback .hint {
+  margin: 4px 0;
+  font-size: var(--font-support);
+}
+.modal-head-content {
+  display: flex;
+  align-items: center;
+  gap: var(--space-control);
+  flex: 1;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+.modal-head-content h2 {
+  margin: 0;
+  font-size: var(--font-title);
+  overflow-wrap: anywhere;
+}
+.modal-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overscroll-behavior: contain;
+}
+.modal-foot {
+  flex-wrap: wrap;
+}
+.modal input,
+.modal textarea,
+.modal select {
+  min-width: 0;
+}
+.world-search {
+  display: block;
+  margin: 0 0 12px;
+  font-size: var(--font-support);
+}
+.world-search input {
+  width: 100%;
+  min-width: 0;
+}
+.rail-section-title {
+  font-size: var(--font-support);
+  color: var(--muted-text);
+  margin: 8px 0;
+}
+.world-title span,
+.conversation-title span {
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
+.memory-section,
+.chapter-block,
+.attachment-block {
+  border-top: 1px solid var(--line);
+  padding-top: 10px;
+  margin-top: var(--space-section);
+}
+.memory-section > summary,
+.chapter-block > summary,
+.attachment-block > summary {
+  cursor: pointer;
+  font-weight: 600;
+  padding: 8px 0;
+}
+.settings-scope {
+  padding: 10px 12px;
+  background: var(--panel-soft);
+  border-radius: var(--radius);
+  font-size: var(--font-support);
+  overflow-wrap: anywhere;
+}
+.library-detail {
+  container-type: inline-size;
+}
+.library-import-result {
+  overflow-wrap: anywhere;
+}
+.library-browser.compact-layout {
+  height: auto;
+  min-height: 100%;
+}
+.compact-layout .library-columns {
+  display: block;
+  overflow: visible;
+}
+.compact-layout .library-list,
+.compact-layout .library-detail {
+  overflow: visible;
+}
+.compact-layout .library-detail {
+  display: none;
+}
+.compact-layout.showing-detail .library-list {
+  display: none;
+}
+.compact-layout.showing-detail .library-detail {
+  display: block;
+}
+.compact-layout .library-mobile-back,
+.compact-layout .library-mobile-create {
+  display: block;
+  min-height: 44px;
+  margin-bottom: 12px;
+}
+.compact-layout .library-mobile-create {
+  margin-top: 12px;
+}
+@container (max-width: 420px) {
+  .grid-2 {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  input,
+  textarea,
+  select,
+  label {
+    min-width: 0;
+  }
+}
+.plan-shell {
+  height: 100%;
+  overflow: auto;
+}
+.plan-shell > nav {
+  padding: 8px 16px;
+  position: sticky;
+  top: 0;
+  background: var(--panel);
+  z-index: 1;
+}
+.plan-toolbar {
+  flex-wrap: wrap;
+}
+.plan-report textarea {
+  width: 100%;
+  min-height: 160px;
+}
+@media (max-width: 640px) {
+  .plan-page,
+  .plan-frame,
+  .plan-body,
+  .plan-left,
+  .plan-right,
+  .plan-main-header,
+  .plan-main-area,
+  .plan-main {
+    display: block;
+    height: auto;
+    min-height: 0;
+  }
+  .plan-region,
+  .plan-icon-slot,
+  .plan-composer,
+  .plan-rail {
+    min-height: 120px;
+    margin-bottom: 12px;
+  }
+  .plan-page textarea {
+    width: 100%;
+    min-width: 0;
+  }
+}
+@media (pointer: coarse) {
+  .world-title,
+  .conversation-title,
+  .row-menu-trigger,
+  .message-actions button,
+  .cast-details-button {
+    min-height: 44px;
+    min-width: 44px;
+  }
+}
+
+/* Administrator process stays in the conversation, before the reply. */
+.chat-surface.side {
+  container-type: inline-size;
+}
+.admin-flow {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  min-width: 0;
+  width: 100%;
+}
+.admin-process-wrap {
+  min-width: 0;
+}
+.admin-process > summary {
+  color: var(--muted-text);
+  cursor: pointer;
+  padding: 7px 0;
+}
+.admin-process-detail {
+  font-size: 12px;
+  margin-left: 10px;
+}
+.admin-process-content {
+  border-left: 1px solid var(--line);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin: 6px 0 8px 5px;
+  max-height: 360px;
+  overflow-y: auto;
+  padding: 4px 10px 6px 14px;
+  overflow-wrap: anywhere;
+}
+.admin-thinking {
+  white-space: pre-wrap;
+}
+.admin-thinking > .hint {
+  display: block;
+  margin-bottom: 5px;
+}
+.admin-tool-row {
+  min-width: 0;
+}
+.admin-tool-row > summary {
+  cursor: pointer;
+  padding: 6px 0;
+}
+.admin-tool-row > summary > .hint {
+  margin-left: 6px;
+}
+.admin-tool-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding: 8px 0 8px 14px;
+}
+.admin-tool-detail pre,
+.admin-draft-preview pre,
+.admin-flow .artifact pre {
+  font: inherit;
+  margin: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+.admin-process-wrap > .notice {
+  margin: 6px 0;
+}
+.admin-artifact-actions {
+  flex-wrap: wrap;
+}
+.admin-back-latest {
+  align-self: center;
+  margin: 5px 10px;
+}
+.admin-next-draft {
+  border-top: 1px solid var(--line);
+}
+.admin-next-draft > summary {
+  color: var(--muted-text);
+  cursor: pointer;
+  padding: 10px 16px;
+}
+.admin-next-draft .composer {
+  border-top: 0;
+}
+.admin-flow .web-bridge {
+  max-height: none;
+  overflow: visible;
+}
+.admin-draft-preview {
+  width: min(720px, 100%);
+}
+.admin-draft-preview dl {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.admin-draft-preview dt {
+  color: var(--muted-text);
+  font-size: 12px;
+  margin-bottom: 4px;
+}
+.admin-draft-preview dd {
+  margin: 0;
+}
+@container (max-width: 600px) {
+  .admin-process-content {
+    max-height: min(360px, 50dvh);
+    padding-left: 10px;
+  }
+  .admin-process summary,
+  .admin-tool-row summary {
+    min-height: 44px;
+  }
+  .admin-tool-row > summary > .hint {
+    display: block;
+    margin-left: 15px;
+  }
+  .admin-artifact-actions > button {
+    min-height: 44px;
+  }
+  .artifact-head {
+    align-items: flex-start;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .admin-process *,
+  .admin-flow,
+  .admin-draft-preview {
+    animation: none;
+    scroll-behavior: auto;
+    transition: none;
   }
 }

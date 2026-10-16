@@ -12,6 +12,31 @@
 > 第二～五节的时间表是 23:05 的快照（当时仓库里还没有 T17/T18/T2/T2c 这些提交），
 > 之后新增或改过的文件统一记在第七节，以**提交时间**为准。
 
+<!-- ui-fixes-20261010-owned:begin -->
+## UI01–UI10 修复文件（2026-10-10–11，本分支自有表）
+
+| 文件 | 动作 | 本批内容 |
+| --- | --- | --- |
+| apps/web/src/App.tsx | 修改 | 桥接来源/改归属入口、操作代次与忙态释放，恢复警告、账单错误/重试、真实撤销 Promise 接线 |
+| apps/web/src/lib/bridge-store.ts | 修改 | 分析提示词从已落盘回合准备；仅持久化来源指纹；应用前账户/范围/修订核验并传 core source |
+| apps/web/src/lib/session.ts | 修改 | BootReport 传恢复警告；撤销读取事务内最新角色、核验归属及历史、提交后读回并合并 |
+| apps/web/src/lib/sync.ts | 修改 | 自动与手动结果一致；账户/连接迟到守卫；失败通知刷新；成功报告持久化后发布 |
+| apps/web/src/components/CastDetail.tsx | 修改 | 防重复点击、等待及 inline 错误，切角色/世界后隔离迟到结果 |
+| apps/web/src/components/RuntimePanel.tsx | 修改 | 透传账单读取错误及重试回调 |
+| apps/web/src/components/UsagePanel.tsx | 修改 | 初次读取失败及旧数字标识、重试等待，逐币种定义列表、标签原空格 |
+| apps/web/src/components/MemoryPanel.tsx | 修改 | 仅角色合并印象使用主观标签 |
+| apps/web/src/components/MainChat.tsx | 修改 | 三处滚动按当前减少动效偏好选择行为 |
+| apps/web/src/styles.css | 修改 | 预算详情换行；减少动效时停止脉冲/闪烁，保留静态定位高亮 |
+| tools/sync-admin/web/app.js | 修改 | 三类操作预览/成功/失败保留编号与摘要，提交中断及刷新失败可核验，不展示原确认票据 |
+| apps/web/src/App.bridge.test.tsx | 新增 | 真实 App/useWebBridge 与 memory Repository：准备绑定、切账户/场景迟到、历史场景改归属及旧 runner 回调回归 |
+| apps/web/src/lib/bridge-analysis.test.ts、session-feedback.test.ts、sync-state.test.tsx | 新增 | 来源、恢复、持久撤销、同步失败/迟到回归 |
+| apps/web/src/components/CastDetail.test.tsx、MainChat.test.tsx、MemoryPanel.test.tsx、UsagePanel-retry.test.tsx | 新增 | 撤销与重试等待/失败/迟到、主观文案与减少动效滚动回归 |
+| apps/web/src/components/UsagePanel.test.tsx | 修改 | 账单读取反馈、布局结构与精确币种标签回归 |
+| tools/sync-admin/operation-ui.test.mjs | 新增 | 真实管理脚本 VM：HTTP/网络/响应体失败、成功后刷新及会话/详情迟到回归 |
+| docs/TASKS.md、STATUS.md、EVAL.md、FILE-LOG.md | 仅新增自有记录 | 范围授权、发现、实现、证据与交付状态；不重写其他任务历史节 |
+
+<!-- ui-fixes-20261010-owned:end -->
+
 <!-- task-120-owned:begin -->
 ## 顺序120：预算持久保存闭环、原生验收与 B12 仅量化补齐（2026-10-08，授权内已收口）
 
@@ -1964,3 +1989,113 @@ Windows 本机临时库／真实浏览器完成同意登记、不登记注册、
    git log --name-only --pretty=format:'%h %ad %s' --date=short -5
    git status --short
    ```
+
+
+<!-- ui-optimization-20261012-owned:begin -->
+## 顺序121：UI推荐方案实施文件（2026-10-14，本批独立表）
+
+此表按复制候选基线SHA256区分本轮新增/修改；未变化的UI01–UI10文件不重复记为新增工作。相同文件承载的原UI修复保留。所有修改在managed worktree ui-optimization-20261012，未提交。源码职责与D/E矩阵见 [实施报告](./UI-OPTIMIZATION-IMPLEMENTATION-2026-10-14.md)，ignored build保存日志/fixture/评审/预算证据。原候选637文件变化0。
+
+| 文件（仓库相对路径） | 本批动作 | 内容 |
+| --- | --- | --- |
+| apps/web/src/App.bridge.test.tsx | 修改 | 对应真实行为、失败/迟到/范围/保存反例；保留已复制UI01–UI10回归 |
+| apps/web/src/App.tsx | 修改 | 来源绑定、持久/草稿、真实Promise、状态/分包接线；逐项见实施报告 |
+| apps/web/src/components/AccountPanel.tsx | 修改 | 该界面的范围、可访问性、保存/布局或局部反馈；逐项见实施报告 |
+| apps/web/src/components/AppearancePanel.tsx | 修改 | 该界面的范围、可访问性、保存/布局或局部反馈；逐项见实施报告 |
+| apps/web/src/components/ArchivedConversationsPanel.tsx | 修改 | 该界面的范围、可访问性、保存/布局或局部反馈；逐项见实施报告 |
+| apps/web/src/components/AvatarCropper.tsx | 修改 | 该界面的范围、可访问性、保存/布局或局部反馈；逐项见实施报告 |
+| apps/web/src/components/CardDesigner.tsx | 修改 | 该界面的范围、可访问性、保存/布局或局部反馈；逐项见实施报告 |
+| apps/web/src/components/CastDetail.test.tsx | 修改 | 对应真实行为、失败/迟到/范围/保存反例；保留已复制UI01–UI10回归 |
+| apps/web/src/components/CastDetail.tsx | 修改 | 该界面的范围、可访问性、保存/布局或局部反馈；逐项见实施报告 |
+| apps/web/src/components/CastPanel.tsx | 修改 | 该界面的范围、可访问性、保存/布局或局部反馈；逐项见实施报告 |
+| apps/web/src/components/Composer-send.test.tsx | 新增 | 对应真实行为、失败/迟到/范围/保存反例；保留已复制UI01–UI10回归 |
+| apps/web/src/components/Composer.tsx | 修改 | 该界面的范围、可访问性、保存/布局或局部反馈；逐项见实施报告 |
+| apps/web/src/components/DataSettingsPanel.tsx | 修改 | 该界面的范围、可访问性、保存/布局或局部反馈；逐项见实施报告 |
+| apps/web/src/components/DialogShell.tsx | 修改 | 该界面的范围、可访问性、保存/布局或局部反馈；逐项见实施报告 |
+| apps/web/src/components/DraftSaveFeedback.tsx | 新增 | 该界面的范围、可访问性、保存/布局或局部反馈；逐项见实施报告 |
+| apps/web/src/components/LeftRail.tsx | 修改 | 该界面的范围、可访问性、保存/布局或局部反馈；逐项见实施报告 |
+| apps/web/src/components/LibrarySurface-layout-feedback.test.tsx | 新增 | 对应真实行为、失败/迟到/范围/保存反例；保留已复制UI01–UI10回归 |
+| apps/web/src/components/LibrarySurface.tsx | 修改 | 该界面的范围、可访问性、保存/布局或局部反馈；逐项见实施报告 |
+| apps/web/src/components/MainChat-focus.test.tsx | 新增 | 对应真实行为、失败/迟到/范围/保存反例；保留已复制UI01–UI10回归 |
+| apps/web/src/components/MainChat.tsx | 修改 | 该界面的范围、可访问性、保存/布局或局部反馈；逐项见实施报告 |
+| apps/web/src/components/MemoryPanel.tsx | 修改 | 该界面的范围、可访问性、保存/布局或局部反馈；逐项见实施报告 |
+| apps/web/src/components/MessageItem.tsx | 修改 | 该界面的范围、可访问性、保存/布局或局部反馈；逐项见实施报告 |
+| apps/web/src/components/Modal.tsx | 修改 | 该界面的范围、可访问性、保存/布局或局部反馈；逐项见实施报告 |
+| apps/web/src/components/NewConversationDialog.tsx | 修改 | 该界面的范围、可访问性、保存/布局或局部反馈；逐项见实施报告 |
+| apps/web/src/components/PersonaLibrary.tsx | 修改 | 该界面的范围、可访问性、保存/布局或局部反馈；逐项见实施报告 |
+| apps/web/src/components/PromptInspector.tsx | 修改 | 该界面的范围、可访问性、保存/布局或局部反馈；逐项见实施报告 |
+| apps/web/src/components/ProviderPanel.tsx | 修改 | 该界面的范围、可访问性、保存/布局或局部反馈；逐项见实施报告 |
+| apps/web/src/components/RuntimePanel.tsx | 修改 | 该界面的范围、可访问性、保存/布局或局部反馈；逐项见实施报告 |
+| apps/web/src/components/SceneDialog.tsx | 修改 | 该界面的范围、可访问性、保存/布局或局部反馈；逐项见实施报告 |
+| apps/web/src/components/ScenePanel.tsx | 修改 | 该界面的范围、可访问性、保存/布局或局部反馈；逐项见实施报告 |
+| apps/web/src/components/SettingsDialog.tsx | 修改 | 该界面的范围、可访问性、保存/布局或局部反馈；逐项见实施报告 |
+| apps/web/src/components/SideChat.tsx | 修改 | 该界面的范围、可访问性、保存/布局或局部反馈；逐项见实施报告 |
+| apps/web/src/components/SyncPanel.tsx | 修改 | 该界面的范围、可访问性、保存/布局或局部反馈；逐项见实施报告 |
+| apps/web/src/components/TopBar.tsx | 修改 | 该界面的范围、可访问性、保存/布局或局部反馈；逐项见实施报告 |
+| apps/web/src/components/UsagePanel.test.tsx | 修改 | 对应真实行为、失败/迟到/范围/保存反例；保留已复制UI01–UI10回归 |
+| apps/web/src/components/UsagePanel.tsx | 修改 | 该界面的范围、可访问性、保存/布局或局部反馈；逐项见实施报告 |
+| apps/web/src/components/WebBridgePanel.tsx | 修改 | 该界面的范围、可访问性、保存/布局或局部反馈；逐项见实施报告 |
+| apps/web/src/components/WorldDesigner.tsx | 修改 | 该界面的范围、可访问性、保存/布局或局部反馈；逐项见实施报告 |
+| apps/web/src/components/WorldTree.tsx | 修改 | 该界面的范围、可访问性、保存/布局或局部反馈；逐项见实施报告 |
+| apps/web/src/components/chat-submission.test.tsx | 新增 | 对应真实行为、失败/迟到/范围/保存反例；保留已复制UI01–UI10回归 |
+| apps/web/src/components/library-reliability.test.tsx | 新增 | 对应真实行为、失败/迟到/范围/保存反例；保留已复制UI01–UI10回归 |
+| apps/web/src/components/modal-behavior.test.tsx | 新增 | 对应真实行为、失败/迟到/范围/保存反例；保留已复制UI01–UI10回归 |
+| apps/web/src/components/ordinary-message-save.test.tsx | 新增 | 对应真实行为、失败/迟到/范围/保存反例；保留已复制UI01–UI10回归 |
+| apps/web/src/components/reading-navigation.test.tsx | 新增 | 对应真实行为、失败/迟到/范围/保存反例；保留已复制UI01–UI10回归 |
+| apps/web/src/components/settings-panels.test.tsx | 修改 | 对应真实行为、失败/迟到/范围/保存反例；保留已复制UI01–UI10回归 |
+| apps/web/src/components/sync-panel-ui.test.tsx | 新增 | 对应真实行为、失败/迟到/范围/保存反例；保留已复制UI01–UI10回归 |
+| apps/web/src/hooks/layout-budget-memory.test.tsx | 新增 | 对应真实行为、失败/迟到/范围/保存反例；保留已复制UI01–UI10回归 |
+| apps/web/src/hooks/useBudgetDraftMemory.ts | 新增 | 实际可用宽度、预算草稿、导航flush或发送接受/守卫 |
+| apps/web/src/hooks/useContainerCompact.ts | 新增 | 实际可用宽度、预算草稿、导航flush或发送接受/守卫 |
+| apps/web/src/hooks/useImport.test.tsx | 修改 | 对应真实行为、失败/迟到/范围/保存反例；保留已复制UI01–UI10回归 |
+| apps/web/src/hooks/useImport.ts | 修改 | 实际可用宽度、预算草稿、导航flush或发送接受/守卫 |
+| apps/web/src/hooks/useLibraryWorkspace-guard.test.tsx | 新增 | 对应真实行为、失败/迟到/范围/保存反例；保留已复制UI01–UI10回归 |
+| apps/web/src/hooks/useLibraryWorkspace.ts | 修改 | 实际可用宽度、预算草稿、导航flush或发送接受/守卫 |
+| apps/web/src/hooks/useTurnRunner.test.tsx | 修改 | 对应真实行为、失败/迟到/范围/保存反例；保留已复制UI01–UI10回归 |
+| apps/web/src/hooks/useTurnRunner.ts | 修改 | 实际可用宽度、预算草稿、导航flush或发送接受/守卫 |
+| apps/web/src/lib/admin-bridge.test.ts | 新增 | 对应真实行为、失败/迟到/范围/保存反例；保留已复制UI01–UI10回归 |
+| apps/web/src/lib/admin-engine.ts | 新增 | 来源绑定、持久/草稿、真实Promise、状态/分包接线；逐项见实施报告 |
+| apps/web/src/lib/admin-source.ts | 新增 | 来源绑定、持久/草稿、真实Promise、状态/分包接线；逐项见实施报告 |
+| apps/web/src/lib/admin.ts | 修改 | 来源绑定、持久/草稿、真实Promise、状态/分包接线；逐项见实施报告 |
+| apps/web/src/lib/appearance-persistence.test.ts | 新增 | 对应真实行为、失败/迟到/范围/保存反例；保留已复制UI01–UI10回归 |
+| apps/web/src/lib/appearance.ts | 修改 | 来源绑定、持久/草稿、真实Promise、状态/分包接线；逐项见实施报告 |
+| apps/web/src/lib/archive-codec.ts | 新增 | 来源绑定、持久/草稿、真实Promise、状态/分包接线；逐项见实施报告 |
+| apps/web/src/lib/archive.ts | 修改 | 来源绑定、持久/草稿、真实Promise、状态/分包接线；逐项见实施报告 |
+| apps/web/src/lib/bridge-store.ts | 修改 | 来源绑定、持久/草稿、真实Promise、状态/分包接线；逐项见实施报告 |
+| apps/web/src/lib/chat-draft.tsx | 新增 | 来源绑定、持久/草稿、真实Promise、状态/分包接线；逐项见实施报告 |
+| apps/web/src/lib/library-editor.ts | 修改 | 来源绑定、持久/草稿、真实Promise、状态/分包接线；逐项见实施报告 |
+| apps/web/src/lib/provider-key-readiness.test.ts | 修改 | 对应真实行为、失败/迟到/范围/保存反例；保留已复制UI01–UI10回归 |
+| apps/web/src/lib/providers.ts | 修改 | 来源绑定、持久/草稿、真实Promise、状态/分包接线；逐项见实施报告 |
+| apps/web/src/lib/session-feedback.test.ts | 修改 | 对应真实行为、失败/迟到/范围/保存反例；保留已复制UI01–UI10回归 |
+| apps/web/src/lib/session.ts | 修改 | 来源绑定、持久/草稿、真实Promise、状态/分包接线；逐项见实施报告 |
+| apps/web/src/lib/sync-state.test.tsx | 修改 | 对应真实行为、失败/迟到/范围/保存反例；保留已复制UI01–UI10回归 |
+| apps/web/src/lib/sync.ts | 修改 | 来源绑定、持久/草稿、真实Promise、状态/分包接线；逐项见实施报告 |
+| apps/web/src/lib/useDraftField.test.ts | 新增 | 对应真实行为、失败/迟到/范围/保存反例；保留已复制UI01–UI10回归 |
+| apps/web/src/lib/useDraftField.ts | 修改 | 来源绑定、持久/草稿、真实Promise、状态/分包接线；逐项见实施报告 |
+| apps/web/src/lib/useSerialSave.ts | 新增 | 来源绑定、持久/草稿、真实Promise、状态/分包接线；逐项见实施报告 |
+| apps/web/src/main.tsx | 修改 | 来源绑定、持久/草稿、真实Promise、状态/分包接线；逐项见实施报告 |
+| apps/web/src/plan/PlanPage.tsx | 修改 | 来源绑定、持久/草稿、真实Promise、状态/分包接线；逐项见实施报告 |
+| apps/web/src/styles.css | 修改 | 来源绑定、持久/草稿、真实Promise、状态/分包接线；逐项见实施报告 |
+| apps/web/tools/crypto-probe.html | 修改 | 合成探针状态或独立可复现基准 |
+| apps/web/tools/crypto-probe.ts | 修改 | 合成探针状态或独立可复现基准 |
+| apps/web/tools/probe-feedback.test.ts | 新增 | 对应真实行为、失败/迟到/范围/保存反例；保留已复制UI01–UI10回归 |
+| apps/web/tools/probe-reporter.test.ts | 新增 | 对应真实行为、失败/迟到/范围/保存反例；保留已复制UI01–UI10回归 |
+| apps/web/tools/probe-reporter.ts | 新增 | 合成探针状态或独立可复现基准 |
+| apps/web/tools/sync-http-probe.html | 修改 | 合成探针状态或独立可复现基准 |
+| apps/web/tools/sync-http-probe.ts | 修改 | 合成探针状态或独立可复现基准 |
+| apps/web/tools/sync-probe.html | 修改 | 合成探针状态或独立可复现基准 |
+| apps/web/tools/sync-probe.ts | 修改 | 合成探针状态或独立可复现基准 |
+| apps/web/tools/ui-synthetic-benchmark.mjs | 新增 | 合成探针状态或独立可复现基准 |
+| docs/EVAL.md | 修改 | 本批方案、实现或新增自有历史记录 |
+| docs/STATUS.md | 修改 | 本批方案、实现或新增自有历史记录 |
+| docs/TASKS.md | 修改 | 本批方案、实现或新增自有历史记录 |
+| docs/UI-OPTIMIZATION-IMPLEMENTATION-2026-10-14.md | 新增 | 本批方案、实现或新增自有历史记录 |
+| docs/UI-OPTIMIZATION-REVIEW-AND-PLAN-2026-10-12.md | 新增 | 本批方案、实现或新增自有历史记录 |
+| packages/core/src/storage/runtime-budget.test.ts | 修改 | 对应真实行为、失败/迟到/范围/保存反例；保留已复制UI01–UI10回归 |
+| tools/sync-admin/README.md | 修改 | 操作号、分页、局部状态与核对文档；资金/票据语义保留 |
+| tools/sync-admin/history-query-ui.test.mjs | 新增 | 对应真实行为、失败/迟到/范围/保存反例；保留已复制UI01–UI10回归 |
+| tools/sync-admin/web/app.js | 修改 | 操作号、分页、局部状态与核对文档；资金/票据语义保留 |
+| tools/sync-admin/web/index.html | 修改 | 操作号、分页、局部状态与核对文档；资金/票据语义保留 |
+| tools/sync-admin/web/style.css | 修改 | 操作号、分页、局部状态与核对文档；资金/票据语义保留 |
+
+<!-- ui-optimization-20261012-owned:end -->

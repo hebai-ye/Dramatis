@@ -1,7 +1,9 @@
 import { Profiler, StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { App } from './App';
-import { PlanPage } from './plan/PlanPage';
+import { LazyPanel } from './components/LazyPanel';
+import { createLazyModule } from './lib/lazy-module';
+import planAddress from './plan/PlanPage.tsx?lazy-module-url';
 import './styles.css';
 
 const container = document.getElementById('root');
@@ -24,7 +26,20 @@ if (isProfileMode) {
   window.__dramatisCommits = [];
 }
 
-const tree = isPlanMode ? <PlanPage /> : <App />;
+const loadPlanPage = createLazyModule<typeof import('./plan/PlanPage'), typeof import('./plan/PlanPage').PlanPage>(
+  planAddress,
+  (module) => module.PlanPage,
+);
+const tree = isPlanMode ? (
+  <main className="plan-shell">
+    <nav aria-label="规划工具导航">
+      <a href="/">回到应用</a>
+    </nav>
+    <LazyPanel load={loadPlanPage} label="布局规划" panelProps={{}} />
+  </main>
+) : (
+  <App />
+);
 createRoot(container).render(
   <StrictMode>
     {isProfileMode ? (

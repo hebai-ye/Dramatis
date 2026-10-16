@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 /**
  * 布局规划页。
@@ -31,14 +31,21 @@ const STORAGE_KEY = 'dramatis.plan.v1';
 
 const FALLBACK_REGION: RegionSpec = { id: 'unknown', label: '未命名区域', hint: '' };
 
-function loadNotes(): Record<string, string> {
+function loadNotes(): { notes: Record<string, string>; error: string | null } {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    if (raw === null) return {};
+    if (raw === null) return { notes: {}, error: null };
     const parsed = JSON.parse(raw) as unknown;
-    return typeof parsed === 'object' && parsed !== null ? (parsed as Record<string, string>) : {};
+    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) throw new Error('规划格式无效');
+    const notes = Object.fromEntries(
+      REGIONS.flatMap(({ id }) => {
+        const value = (parsed as Record<string, unknown>)[id];
+        return typeof value === 'string' ? [[id, value]] : [];
+      }),
+    );
+    return { notes, error: null };
   } catch {
-    return {};
+    return { notes: {}, error: '本机规划读取失败。原存储尚未覆盖；请检查浏览器存储，或重新填写后复制文本留存。' };
   }
 }
 
@@ -55,8 +62,11 @@ function Region({
 }) {
   return (
     <div className={`plan-region ${className ?? ''}`}>
-      <span className="plan-label">{spec.label}</span>
+      <label className="plan-label" htmlFor={`plan-${spec.id}`}>
+        {spec.label}
+      </label>
       <textarea
+        id={`plan-${spec.id}`}
         value={value}
         placeholder={spec.hint}
         spellCheck={false}
@@ -67,19 +77,25 @@ function Region({
 }
 
 export function PlanPage() {
-  const [notes, setNotes] = useState<Record<string, string>>(() => loadNotes());
-  const [copied, setCopied] = useState(false);
+  const [initial] = useState(loadNotes);
+  const [notes, setNotes] = useState<Record<string, string>>(initial.notes);
+  const [storageError, setStorageError] = useState<string | null>(initial.error);
+  const [copyNotice, setCopyNotice] = useState<{ ok: boolean; message: string } | null>(null);
+  const reportRef = useRef<HTMLTextAreaElement | null>(null);
 
   useEffect(() => {
+    if (initial.error !== null && notes === initial.notes) return;
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(notes));
+      setStorageError(null);
     } catch {
-      // 隐私模式下存不了，不影响填写与复制
+      setStorageError('本机保存失败。内容仍在当前页面，请先复制规划文本或手动选中文本留存，再关闭页面。');
     }
-  }, [notes]);
+  }, [notes, initial]);
 
   const set = useCallback((id: string, value: string) => {
     setNotes((previous) => ({ ...previous, [id]: value }));
+    setCopyNotice(null);
   }, []);
 
   const report = useMemo(() => {
@@ -89,11 +105,15 @@ export function PlanPage() {
     return sections.length === 0 ? '（还没有填写任何内容）' : ['# 布局规划', '', ...sections].join('\n\n');
   }, [notes]);
 
-  const copy = (): void => {
-    void navigator.clipboard.writeText(report).then(() => {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    });
+  const copy = async (): Promise<void> => {
+    try {
+      await navigator.clipboard.writeText(report);
+      setCopyNotice({ ok: true, message: '已复制规划文本。' });
+    } catch {
+      setCopyNotice({ ok: false, message: '复制失败。请点击「手动选择规划文本」，再使用系统复制操作。' });
+      reportRef.current?.focus();
+      reportRef.current?.select();
+    }
   };
 
   const region = (id: string): RegionSpec => REGIONS.find((spec) => spec.id === id) ?? FALLBACK_REGION;
@@ -102,18 +122,39 @@ export function PlanPage() {
     <div className="plan-page">
       <div className="plan-toolbar">
         <strong>布局规划</strong>
-        <span className="hint">在对应位置写下它负责什么。内容自动保存在本机。</span>
+        <span className="hint">
+          在对应位置写下它负责什么。{storageError === null ? '内容已保存在本机。' : '本机存储暂不可用。'}
+        </span>
         <div className="topbar-spacer" />
         <button type="button" onClick={copy}>
-          {copied ? '已复制' : '复制规划文本'}
+          复制规划文本
         </button>
-        <button type="button" className="ghost" onClick={() => setNotes({})}>
+        <button
+          type="button"
+          className="ghost"
+          onClick={() => {
+            if (window.confirm('清空全部规划内容及本机保存？此操作无法撤销。')) {
+              setNotes({});
+              setCopyNotice(null);
+            }
+          }}
+        >
           清空
         </button>
         <button type="button" className="ghost" onClick={() => window.location.assign('/')}>
           回到应用
         </button>
       </div>
+      {storageError === null ? null : (
+        <p className="notice error" role="alert">
+          {storageError}
+        </p>
+      )}
+      {copyNotice === null ? null : (
+        <p className={copyNotice.ok ? 'hint' : 'notice error'} role={copyNotice.ok ? 'status' : 'alert'}>
+          {copyNotice.message}
+        </p>
+      )}
 
       {/* 骨架按草图的线条与比例还原：窄顶栏、左栏分三段、主区带自己的标题栏、底部输入框 */}
       <div className="plan-frame">
@@ -198,10 +239,20 @@ export function PlanPage() {
         <Region spec={region('other')} value={notes.other ?? ''} onChange={(value) => set('other', value)} />
       </div>
 
-      <details className="plan-report">
-        <summary>规划文本预览（也可以直接从这里复制）</summary>
-        <pre>{report}</pre>
-      </details>
+      <section className="plan-report">
+        <label htmlFor="plan-report-text">规划文本预览（可手动复制）</label>
+        <textarea id="plan-report-text" ref={reportRef} readOnly value={report} rows={10} />
+        <button
+          type="button"
+          className="ghost"
+          onClick={() => {
+            reportRef.current?.focus();
+            reportRef.current?.select();
+          }}
+        >
+          手动选择规划文本
+        </button>
+      </section>
     </div>
   );
 }

@@ -35,6 +35,7 @@ interface Props {
   appearance: AppearanceApi;
   archivedConversations: Conversation[];
   activeConversationId: ConversationId | null;
+  worldTitle?: string | null;
   disabled: boolean;
   onOpenArchived: (id: ConversationId) => void;
   onDeleteArchived: (conversation: Conversation) => Promise<{ ok: boolean; message: string }>;
@@ -93,6 +94,7 @@ export function SettingsDialog(props: Props) {
             label="数据与备份"
             panelProps={{
               activeConversationId: props.activeConversationId,
+              worldTitle: props.worldTitle,
               disabled: props.disabled,
               onExportArchive: props.onExportArchive,
               onImportArchive: props.onImportArchive,
@@ -108,6 +110,7 @@ export function SettingsDialog(props: Props) {
             label="已归档对话"
             panelProps={{
               archivedConversations: props.archivedConversations,
+              worldTitle: props.worldTitle,
               activeConversationId: props.activeConversationId,
               disabled: props.disabled,
               onOpenArchived: props.onOpenArchived,

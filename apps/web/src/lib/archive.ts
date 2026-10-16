@@ -1,16 +1,12 @@
-import {
-  buildConversationTranscript,
-  buildWorldArchive,
-  countArchive,
-  importWorldArchive,
-  parseWorldArchive,
-  type RoomId,
-  suggestTranscriptName,
-} from '@dramatis/core';
+import type { RoomId } from '@dramatis/core';
 import { useCallback, useMemo } from 'react';
+import codecAddress from './archive-codec?lazy-module-url';
 import type { DramatisDb } from './db';
 import { createBrowserFileIO } from './fileio';
+import { createLazyModule } from './lazy-module';
 import type { ConversationBundle } from './session';
+
+const loadCodec = createLazyModule(codecAddress, (module: typeof import('./archive-codec')) => module);
 
 /** 导出/导入的结果，交给界面如实显示。 */
 export interface ArchiveOutcome {
@@ -77,6 +73,7 @@ export function useArchive(options: {
       const snapshot = await db.repository.loadRoom(roomId);
       if (!snapshot) return { ok: false, message: '找不到这个世界。' };
 
+      const { buildWorldArchive, countArchive } = (await loadCodec()).default;
       const archive = buildWorldArchive({
         room: snapshot.room,
         conversations: snapshot.conversations,
@@ -113,6 +110,7 @@ export function useArchive(options: {
     async (bundle: ConversationBundle | null, worldTitle: string): Promise<ArchiveOutcome | null> => {
       if (bundle === null) return { ok: false, message: '找不到这条对话（也许它已经被删掉了）。' };
 
+      const { buildConversationTranscript, suggestTranscriptName } = (await loadCodec()).default;
       const text = buildConversationTranscript({
         conversation: bundle.conversation,
         scenes: bundle.scenes,
@@ -142,6 +140,7 @@ export function useArchive(options: {
     const opened = await fileIO.open({ accept: '.json,application/json' });
     if (opened === null) return null;
 
+    const { parseWorldArchive, importWorldArchive } = (await loadCodec()).default;
     const parsed = parseWorldArchive(new TextDecoder().decode(opened.data));
     if (!parsed.ok) return { ok: false, message: parsed.error };
 

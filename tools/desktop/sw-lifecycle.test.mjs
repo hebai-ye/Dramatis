@@ -441,6 +441,121 @@ test('stable images revalidate with no-store: errors, non-images and opaque resp
   );
 });
 
+const backgroundPaths = ['/backgrounds/v1/quiet-library.webp', '/backgrounds/v1/thumbs/quiet-library.webp'];
+
+for (const path of backgroundPaths) {
+  // Removing the whitelist entry or sending backgrounds to the shell cache must
+  // break these first-load/offline cases. Installation must not fetch the gallery.
+  test(`background is stored on first use and survives offline: ${path}`, async () => {
+    const env = environment();
+    for (const available of backgroundPaths) env.version.set(available, response('background A', 'image/webp'));
+    const worker = env.worker();
+    await worker.install();
+    await worker.activate();
+    assert.equal(
+      env.requests.some((item) => item.path.startsWith('/backgrounds/')),
+      false,
+    );
+
+    const first = worker.fetch(path, 'cors');
+    assert.ok(first.response, 'background requests must be handled by the worker');
+    assert.equal(await (await first.response).text(), 'background A');
+    await first.settled;
+    assert.equal(await env.read(runtime, path), 'background A');
+    assert.equal(await env.read('dramatis-static-runtime-v1', path), undefined);
+    const unused = backgroundPaths.find((available) => available !== path);
+    assert.equal(await env.read(runtime, unused), undefined);
+
+    env.offline = true;
+    const offline = env.worker('restarted-offline').fetch(path, 'cors');
+    assert.equal(await (await offline.response).text(), 'background A');
+    await offline.settled;
+    assert.equal(await env.read(runtime, path), 'background A');
+  });
+
+  // Returning only the cached static response would miss the new background.
+  test(`background cache hit returns the old image while refreshing it: ${path}`, { timeout: 5_000 }, async () => {
+    const env = environment();
+    env.version.set(path, response('background A', 'image/webp'));
+    const worker = env.worker();
+    const first = worker.fetch(path, 'cors');
+    assert.ok(first.response, 'background requests must be handled by the worker');
+    assert.equal(await (await first.response).text(), 'background A');
+    await first.settled;
+
+    env.version.set(path, response('background B', 'image/webp'));
+    const gate = deferred();
+    const fetched = deferred();
+    env.beforeFetch = async ({ path: requested }) => {
+      if (requested !== path) return;
+      fetched.resolve();
+      await gate.promise;
+    };
+    const update = worker.fetch(path, 'cors');
+    try {
+      await fetched.promise;
+      assert.equal(await (await update.response).text(), 'background A');
+      assert.equal(await env.read(runtime, path), 'background A');
+    } finally {
+      gate.resolve();
+      await update.settled;
+    }
+    assert.equal(await env.read(runtime, path), 'background B');
+    assert.equal(
+      env.requests.filter((item) => item.path === path).every((item) => item.options.cache === 'no-store'),
+      true,
+    );
+  });
+
+  // Accepting an error, HTML fallback or opaque response must not replace A.
+  test(`failed background refresh preserves the cached image: ${path}`, async () => {
+    const env = environment();
+    env.version.set(path, response('background A', 'image/webp'));
+    const worker = env.worker();
+    const first = worker.fetch(path, 'cors');
+    assert.ok(first.response, 'background requests must be handled by the worker');
+    assert.equal(await (await first.response).text(), 'background A');
+    await first.settled;
+
+    for (const invalid of [
+      response('unavailable', 'image/webp', 503),
+      response('<html>fallback</html>', 'text/html'),
+      new OpaqueResponse('opaque', { headers: { 'content-type': 'image/webp' } }),
+    ]) {
+      env.version.set(path, invalid);
+      const update = worker.fetch(path, 'cors');
+      assert.equal(await (await update.response).text(), 'background A');
+      await update.settled;
+      assert.equal(await env.read(runtime, path), 'background A');
+    }
+    env.offline = true;
+    const failed = worker.fetch(path, 'cors');
+    assert.equal(await (await failed.response).text(), 'background A');
+    await failed.settled;
+    assert.equal(await env.read(runtime, path), 'background A');
+  });
+
+  // A bad first response must not become an offline image merely because its URL
+  // has a .webp extension.
+  test(`invalid first background response leaves no cached image: ${path}`, async () => {
+    for (const invalid of [
+      response('unavailable', 'image/webp', 503),
+      response('<html>fallback</html>', 'text/html'),
+    ]) {
+      const env = environment();
+      env.version.set(path, invalid);
+      const event = env.worker().fetch(path, 'cors');
+      assert.ok(event.response, 'background requests must be handled by the worker');
+      const result = await event.response;
+      assert.equal(result.status, invalid.status);
+      assert.equal(await result.text(), await invalid.clone().text());
+      await event.settled;
+      assert.equal(await env.read(runtime, path), undefined);
+      assert.equal(await env.read('dramatis-static-runtime-v1', path), undefined);
+    }
+  });
+}
+
 test('two simultaneous controlled navigations share refresh; successful refresh is throttled', async () => {
   const env = environment();
   const worker = env.worker();

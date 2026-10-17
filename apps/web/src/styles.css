@@ -3228,6 +3228,136 @@ details summary {
   width: 100%;
 }
 
+.background-subjects,
+.background-scenes {
+  border: 0;
+  margin: 0;
+  min-width: 0;
+  padding: 0;
+}
+
+.background-picker {
+  display: grid;
+  gap: 12px;
+}
+
+.background-subjects {
+  display: grid;
+  gap: 6px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.background-subject {
+  background: var(--panel-soft);
+  border: 1px solid var(--line);
+  color: var(--muted-text);
+  font-size: 12px;
+  min-height: 44px;
+  padding: 8px 4px;
+}
+
+.background-subject.active {
+  background: color-mix(in srgb, var(--accent) 14%, var(--panel-soft));
+  border-color: var(--accent);
+  color: var(--text);
+}
+
+.background-scenes {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.background-scene {
+  background: var(--panel-soft);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  color: var(--text);
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  overflow: hidden;
+  padding: 0;
+  text-align: left;
+}
+
+.background-scene.active {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+
+.background-scene img {
+  aspect-ratio: 16 / 9;
+  background: var(--bg);
+  display: block;
+  height: auto;
+  object-fit: cover;
+  width: 100%;
+}
+
+.background-scene-copy {
+  display: grid;
+  gap: 4px;
+  padding: 8px;
+  width: 100%;
+}
+
+.background-scene-title {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  justify-content: space-between;
+}
+
+.background-scene-title strong {
+  font-size: 13px;
+}
+
+.background-scene-selected {
+  color: var(--accent);
+  font-size: 11px;
+}
+
+.background-scene-copy .hint {
+  font-size: 11px;
+  font-weight: 400;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.background-subject:hover:not(:disabled),
+.background-scene:hover:not(:disabled) {
+  border-color: var(--accent);
+}
+
+@media (max-width: 480px) {
+  .background-subjects {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .background-scenes {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .background-scene {
+    align-items: stretch;
+    flex-direction: row;
+  }
+
+  .background-scene img {
+    flex: 0 0 38%;
+    max-width: 38%;
+    min-height: 82px;
+    object-fit: cover;
+  }
+
+  .background-scene-copy {
+    align-content: center;
+    flex: 1;
+    min-width: 0;
+  }
+}
 .bg-preview {
   background-position: center;
   background-size: cover;

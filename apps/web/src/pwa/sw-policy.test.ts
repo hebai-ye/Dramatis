@@ -63,6 +63,17 @@ describe('sw.js 缓存策略（审计 A2）', () => {
     expect(get('/portraits/../secret.json')).toBe('pass');
   });
 
+  it('版本化背景原图与缩略图按需缓存，目录之外继续放行', () => {
+    expect(get('/backgrounds/v1/quiet-library.webp')).toBe('cache');
+    expect(get('/backgrounds/v1/thumbs/quiet-library.webp')).toBe('cache');
+    expect(get('/backgrounds')).toBe('pass');
+    expect(get('/backgrounds/v1')).toBe('pass');
+    expect(get('/backgrounds-private/quiet-library.webp')).toBe('pass');
+    expect(get('/backgrounds/v1/../../private.webp')).toBe('pass');
+    expect(classifyRequest('POST', `${origin}/backgrounds/v1/quiet-library.webp`, 'cors', origin)).toBe('pass');
+    expect(classifyRequest('GET', 'https://other.test/backgrounds/v1/quiet-library.webp', 'cors', origin)).toBe('pass');
+  });
+
   it('导航请求网络优先并以外壳兜底', () => {
     expect(get('/', 'navigate')).toBe('navigate');
     expect(get('/some/deep/link', 'navigate')).toBe('navigate');

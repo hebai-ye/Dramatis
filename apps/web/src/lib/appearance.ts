@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { getBackgroundPreset } from './background-presets';
 
 /**
  * 外观偏好（主题 / 对话区背景 / 意图是否默认展开）。
@@ -13,7 +14,7 @@ export type ThemeName = 'tavern' | 'light' | 'dark';
 export interface Appearance {
   /** `tavern` 是原来的酒馆色调；`light` / `dark` 是白底蓝、黑底蓝。 */
   theme: ThemeName;
-  /** 对话区背景图（data URL）。空串表示纯色。 */
+  /** 对话区背景图（内置路径或上传的 data URL）。空串表示纯色。 */
   background: string;
   /** 背景强度（0~1）：图太亮会压住字，所以给个可调的旋钮。 */
   backgroundOpacity: number;
@@ -39,6 +40,12 @@ export const THEME_LABELS: Record<ThemeName, { label: string; hint: string; swat
   dark: { label: '深色', hint: '深色阅读与蓝色强调', swatch: ['#0e1117', '#8fa8ff'] },
 };
 
+function normalizeBackground(background: unknown): string {
+  if (typeof background !== 'string') return '';
+  if (background.startsWith('/backgrounds/') && !getBackgroundPreset(background)) return '';
+  return background;
+}
+
 function read(): Appearance {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
@@ -46,7 +53,7 @@ function read(): Appearance {
     const parsed = JSON.parse(raw) as Partial<Appearance>;
     return {
       theme: parsed.theme === 'light' || parsed.theme === 'dark' ? parsed.theme : 'tavern',
-      background: typeof parsed.background === 'string' ? parsed.background : '',
+      background: normalizeBackground(parsed.background),
       backgroundOpacity:
         typeof parsed.backgroundOpacity === 'number' && parsed.backgroundOpacity >= 0 && parsed.backgroundOpacity <= 1
           ? parsed.backgroundOpacity
@@ -96,7 +103,11 @@ export function useAppearance(): AppearanceApi {
 
   const patch = useCallback(
     (values: Partial<Appearance>) => {
-      persist({ ...valueRef.current, ...values });
+      persist({
+        ...valueRef.current,
+        ...values,
+        background: normalizeBackground(values.background ?? valueRef.current.background),
+      });
     },
     [persist],
   );

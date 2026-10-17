@@ -64,16 +64,17 @@ const STATIC_FILES = new Set([
 ]);
 
 /**
- * 可以进缓存的**目录前缀**（2026-09-26 补：头像与立绘）。
+ * 可以进缓存的**目录前缀**：头像、立绘、品牌与版本化内置背景。
  *
  * `/portraits/**`（立绘 / 缩略图 / 头像）与 `/brand/**` 是**运行时按需加载**的：
  * 它们不出现在 index.html 里，`discoverShell` 抓不到，只能在第一次用到时顺手存下来。
  * 不写进白名单的后果很具体——装到桌面之后断网打开，所有头像与立绘都变成破图。
  *
  * 这些名字是**稳定**的（`/portraits/01.webp`，不是带哈希的构建产物），所以顺手存下来
- * 通过独立运行时图片缓存与 no-store 后台更新保持新鲜，换外壳不会删除头像。
+ * 通过独立运行时图片缓存与 no-store 后台更新保持新鲜，换外壳不会删除已加载的图片。
  */
-const STATIC_PREFIXES = ['/assets/', '/portraits/', '/brand/'];
+// 内置背景原图与缩略图同样按需加载；版本目录限定在已发布的 v1。
+const STATIC_PREFIXES = ['/assets/', '/portraits/', '/brand/', '/backgrounds/v1/'];
 
 /** 路径是否属于可缓存的静态外壳：构建产物 `/assets/*`、头像立绘 `/portraits/*`、`/brand/*`，以及上面列出的文件。 */
 function isCacheablePath(pathname) {
@@ -139,7 +140,7 @@ async function discoverShell(html) {
 }
 
 function isRuntimeImage(path) {
-  return path.startsWith('/portraits/') || path.startsWith('/brand/');
+  return path.startsWith('/portraits/') || path.startsWith('/brand/') || path.startsWith('/backgrounds/v1/');
 }
 
 function validNetworkResponse(response) {

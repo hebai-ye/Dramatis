@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { type AppearanceApi, THEME_LABELS, type ThemeName } from '../lib/appearance';
+import { BACKGROUND_GROUPS, getBackgroundPreset } from '../lib/background-presets';
 import { useDialogActions } from './DialogShell';
 
 interface Props {
@@ -10,19 +11,23 @@ interface Props {
 /**
  * 个性化（设置弹窗里的一个大类）。
  *
- * 三件事都在这里：**色调**（酒馆 / 浅色 / 深色）、**对话区背景**（自己选图，滑动时固定）、
+ * 三件事都在这里：**色调**（酒馆 / 浅色 / 深色）、**对话区背景**（内置场景或自己选图，滑动时固定）、
  * 以及**心理活动要不要默认摊开**。
  *
- * 都只影响这台设备：图片与偏好存在 localStorage，不进同步、不进封存。
+ * 都只影响这台设备：偏好与自选图片在本机保存，不进同步、不进封存。
  */
 export function AppearancePanel({ api, disabled }: Props) {
   const { setGuard } = useDialogActions();
   const [error, setError] = useState<string | null>(null);
   const [backgroundBusy, setBackgroundBusy] = useState(false);
+  const [backgroundGroup, setBackgroundGroup] = useState(
+    () => getBackgroundPreset(api.value.background)?.category ?? 'tavern',
+  );
   const busyRef = useRef(false);
   const fileRef = useRef<HTMLInputElement | null>(null);
   const { value } = api;
   const controlsDisabled = disabled || backgroundBusy;
+  const activeGroup = BACKGROUND_GROUPS.find((group) => group.id === backgroundGroup);
 
   useEffect(() => {
     setGuard(backgroundBusy ? { kind: 'busy', message: '背景图片正在读取，请等待完成。' } : null);
@@ -89,10 +94,59 @@ export function AppearancePanel({ api, disabled }: Props) {
 
       <section className="panel">
         <h2>对话区背景</h2>
-        <p className="hint">
-          可以放一张自己的图。<strong>滑动时背景固定，只有对话在滚</strong>
-          。图片只存在这台设备上——不同步、不上传，导出封存时也不带它。
-        </p>
+        <p className="hint">先选题材，再选场景，可与任意色调搭配。内置图选用加载后可离线使用。</p>
+        <p className="hint">背景随外观保存在这台设备。自选图片不会上传；滑动时背景固定。</p>
+
+        <div className="background-picker">
+          <fieldset className="background-subjects" aria-label="背景题材">
+            {BACKGROUND_GROUPS.map((group) => (
+              <button
+                key={group.id}
+                type="button"
+                className={backgroundGroup === group.id ? 'background-subject active' : 'background-subject'}
+                aria-pressed={backgroundGroup === group.id}
+                disabled={controlsDisabled}
+                onClick={() => setBackgroundGroup(group.id)}
+              >
+                {group.label}
+              </button>
+            ))}
+          </fieldset>
+          {activeGroup ? (
+            <fieldset className="background-scenes" aria-label={`${activeGroup.label}场景`}>
+              {activeGroup.presets.map((preset) => {
+                const selected = value.background === preset.image;
+                return (
+                  <button
+                    key={preset.id}
+                    type="button"
+                    className={selected ? 'background-scene active' : 'background-scene'}
+                    aria-label={preset.label}
+                    aria-pressed={selected}
+                    disabled={controlsDisabled}
+                    onClick={() => {
+                      setError(null);
+                      api.patch({ background: preset.image });
+                    }}
+                  >
+                    <img src={preset.thumbnail} alt="" loading="lazy" decoding="async" width="320" height="180" />
+                    <span className="background-scene-copy">
+                      <span className="background-scene-title">
+                        <strong>{preset.label}</strong>
+                        {selected ? (
+                          <span className="background-scene-selected" aria-hidden="true">
+                            已选
+                          </span>
+                        ) : null}
+                      </span>
+                      <span className="hint">{preset.description}</span>
+                    </span>
+                  </button>
+                );
+              })}
+            </fieldset>
+          ) : null}
+        </div>
 
         <input
           ref={fileRef}

@@ -1,7 +1,7 @@
 import { createConversation, createProviderProfile, roomId } from '@dramatis/core';
 import type { ReactElement, ReactNode } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { DEFAULT_APPEARANCE } from '../lib/appearance';
+import { type AppearanceApi, DEFAULT_APPEARANCE } from '../lib/appearance';
 import { createDialogController, type DialogGuard } from '../lib/dialog-controller';
 import type { ProvidersApi } from '../lib/providers';
 import type { StorageApi } from '../lib/storage';
@@ -519,6 +519,14 @@ describe('settings panel behavior', () => {
     expect(controller.state().guard?.kind).toBe('busy');
     tree = render(() => AppearancePanel({ api, disabled: false }));
     expect(button(tree, '读取中…').props.disabled).toBe(true);
+    const subjects = nodes(tree).find((node) => node.props['aria-label'] === '背景题材');
+    const subjectButtons = nodes(subjects).filter((node) => node.type === 'button');
+    expect(subjectButtons).toHaveLength(12);
+    expect(subjectButtons.every((node) => node.props.disabled === true)).toBe(true);
+    const scenes = nodes(tree).find((node) => node.props['aria-label'] === '酒馆场景');
+    const sceneButtons = nodes(scenes).filter((node) => node.type === 'button');
+    expect(sceneButtons).toHaveLength(3);
+    expect(sceneButtons.every((node) => node.props.disabled === true)).toBe(true);
     rejectLoad(new Error('fixture image failed'));
     await pending;
     tree = render(() => AppearancePanel({ api, disabled: false }));
@@ -696,6 +704,87 @@ describe('settings panel behavior', () => {
     expect(textOf(tree)).not.toContain('fixture deletion failed');
   });
 
+  it('shows only the three thumbnails for the chosen background subject without changing the saved background', () => {
+    const api: AppearanceApi = fixtureSettings().appearance;
+    api.value = { ...DEFAULT_APPEARANCE, background: 'data:image/png;base64,fixture' };
+    api.patch = (patch) => {
+      api.value = { ...api.value, ...patch };
+    };
+    let tree = render(() => AppearancePanel({ api, disabled: false }));
+    const subjects = nodes(tree).find((node) => node.props['aria-label'] === '背景题材');
+    expect(
+      nodes(subjects)
+        .filter((node) => node.type === 'button')
+        .map((node) => textOf(node)),
+    ).toEqual([
+      '酒馆',
+      '玄幻',
+      '仙侠',
+      '武侠',
+      '西方奇幻',
+      '太空科幻',
+      '赛博朋克',
+      '末日废土',
+      '都市日常',
+      '校园青春',
+      '古风宫廷',
+      '悬疑诡秘',
+    ]);
+    expect(button(subjects, '酒馆').props['aria-pressed']).toBe(true);
+    click(button(subjects, '太空科幻'));
+    tree = render(() => AppearancePanel({ api, disabled: false }));
+    expect(button(tree, '太空科幻').props['aria-pressed']).toBe(true);
+    expect(api.value.background).toBe('data:image/png;base64,fixture');
+    const scenes = nodes(tree).find((node) => node.props['aria-label'] === '太空科幻场景');
+    const images = nodes(scenes).filter((node) => node.type === 'img');
+    expect(images.map((node) => node.props.src)).toEqual([
+      '/backgrounds/v1/thumbs/space-bridge.webp',
+      '/backgrounds/v1/thumbs/space-station.webp',
+      '/backgrounds/v1/thumbs/space-outpost.webp',
+    ]);
+    expect(images.every((node) => node.props.loading === 'lazy' && node.props.decoding === 'async')).toBe(true);
+  });
+
+  it('previews a selected built-in scene immediately, keeps the chosen theme, and can return to solid color', () => {
+    const api: AppearanceApi = fixtureSettings().appearance;
+    api.value = { ...DEFAULT_APPEARANCE, theme: 'light' };
+    api.patch = (patch) => {
+      api.value = { ...api.value, ...patch };
+    };
+    let tree = render(() => AppearancePanel({ api, disabled: false }));
+    const hearth = nodes(tree).find((node) => node.type === 'button' && node.props['aria-label'] === '炉火大厅');
+    expect(hearth).toBeDefined();
+    if (!hearth) throw new Error('Missing built-in background scene');
+    click(hearth);
+    tree = render(() => AppearancePanel({ api, disabled: false }));
+    expect(api.value.background).toBe('/backgrounds/v1/tavern-hearth.webp');
+    expect(api.value.theme).toBe('light');
+    expect(nodes(tree).find((node) => node.props['aria-label'] === '炉火大厅')?.props['aria-pressed']).toBe(true);
+    expect(nodes(tree).find((node) => node.props.className === 'bg-preview')?.props.style).toEqual({
+      backgroundImage: 'url("/backgrounds/v1/tavern-hearth.webp")',
+      opacity: 0.85,
+    });
+    click(button(tree, '清除背景'));
+    tree = render(() => AppearancePanel({ api, disabled: false }));
+    expect(api.value.background).toBe('');
+    expect(nodes(tree).find((node) => node.props['aria-label'] === '炉火大厅')?.props['aria-pressed']).toBe(false);
+    expect(textOf(tree)).toContain('现在是纯色背景');
+  });
+
+  it.each([
+    ['/backgrounds/v1/space-station.webp', '太空科幻'],
+    ['data:image/png;base64,fixture', '酒馆'],
+    ['', '酒馆'],
+  ])('opens the background subject that matches the saved background (%s)', (background, subject) => {
+    const api: AppearanceApi = fixtureSettings().appearance;
+    api.value = { ...DEFAULT_APPEARANCE, background };
+    const tree = render(() => AppearancePanel({ api, disabled: false }));
+    const subjects = nodes(tree).find((node) => node.props['aria-label'] === '背景题材');
+    expect(button(subjects, subject).props['aria-pressed']).toBe(true);
+    if (background === '/backgrounds/v1/space-station.webp') {
+      expect(nodes(tree).find((node) => node.props['aria-label'] === '轨道空间站')?.props['aria-pressed']).toBe(true);
+    }
+  });
   it('exposes the selected theme with pressed semantics', () => {
     const tree = render(() =>
       AppearancePanel({

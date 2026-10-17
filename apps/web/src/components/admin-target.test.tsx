@@ -110,7 +110,7 @@ describe('admin captured targets', () => {
       expect((await repository.getScene(main?.activeSceneId as never))?.location).toBe('酒馆');
       expect((await repository.getConversation(m2.id))?.activeSceneId).toBeNull();
     } else {
-      expect(writes).toEqual([[{ location: '酒馆' }, m1.id, world.room.id]]);
+      expect(writes).toEqual([[{ location: '酒馆' }, m1.id, world.room.id, expect.any(Function)]]);
     }
     const messages = await repository.listMessages(world.room.id);
     expect(messages.at(-1)?.artifacts?.[0]?.summary).toContain('目标一');
@@ -137,9 +137,9 @@ describe('admin captured targets', () => {
     const { render, m1, m2, repository, world } = await setup();
     await render().send('改场景', m1.id);
     await repository.deleteConversation(m1.id);
-    await render().commitBridge('{"tool":"set_scene","arguments":{"location":"旧目标"}}');
+    const result = await render().commitBridge('{"tool":"set_scene","arguments":{"location":"旧目标"}}');
     expect(render().bridge).not.toBeNull();
-    expect(render().error).toContain('目标');
+    expect(result).toMatchObject({ status: 'rejected', reason: expect.stringContaining('目标') });
     expect((await repository.getConversation(m2.id))?.activeSceneId).toBeNull();
     expect(await repository.listScenes(world.room.id)).toEqual([]);
     expect(await repository.listMessages(world.room.id)).toHaveLength(1);

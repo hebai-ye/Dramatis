@@ -213,7 +213,10 @@ function renderSide(node: ReturnType<typeof animatedViewport>) {
 beforeEach(() => {
   hooks.reset();
   resetStreamState('admin');
-  vi.stubGlobal('window', { matchMedia: () => ({ matches: false, addEventListener() {}, removeEventListener() {} }) });
+  vi.stubGlobal('window', {
+    getSelection: () => null,
+    matchMedia: () => ({ matches: false, addEventListener() {}, removeEventListener() {} }),
+  });
 });
 afterEach(() => {
   hooks.reset();

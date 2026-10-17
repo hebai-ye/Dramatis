@@ -8,6 +8,7 @@ import {
 } from '@dramatis/core';
 import { useEffect, useRef, useState } from 'react';
 import { askLocalBridge, type LocalBridgeStatus, probeLocalBridge } from '../lib/local-bridge';
+import { Modal } from './Modal';
 
 /**
  * 网页版桥接面板（没有 API Key 时的第一条路）。
@@ -63,7 +64,8 @@ interface Props {
   onReply: (text: string) => void;
   onAnalysis: (text: string) => void;
   /** 世界管理员（副对话）那一种：收下的是要解析成素材草稿的文本。 */
-  onAdmin?: (text: string) => void;
+  onAdmin?: ((text: string) => void) | ((text: string) => Promise<import('../lib/admin').BridgeCommitOutcome>);
+  onInspect?: () => Promise<import('../lib/admin').BridgeCommitOutcome>;
   onSkip: () => void;
 }
 
@@ -77,9 +79,10 @@ async function copyText(text: string): Promise<boolean> {
   }
 }
 
-export function WebBridgePanel({ bridge, busy, disabled, onReply, onAnalysis, onAdmin, onSkip }: Props) {
+export function WebBridgePanel({ bridge, busy, disabled, onReply, onAnalysis, onAdmin, onInspect, onSkip }: Props) {
   const [paste, setPaste] = useState('');
   const [copied, setCopied] = useState(false);
+  const [invalidSource, setInvalidSource] = useState(false);
   const [copyBusy, setCopyBusy] = useState(false);
   const [copyError, setCopyError] = useState(false);
   const copyBusyRef = useRef(false);
@@ -90,20 +93,27 @@ export function WebBridgePanel({ bridge, busy, disabled, onReply, onAnalysis, on
   const [helper, setHelper] = useState<LocalBridgeStatus | null>(null);
   const [helperBusy, setHelperBusy] = useState(false);
   const [helperError, setHelperError] = useState<string | null>(null);
-  const helperBusyRef = useRef(false);
-  const helperRequestId = useRef(0);
-  const bridgeStageRef = useRef(bridge.stage);
-  if (bridgeStageRef.current !== bridge.stage) bridgeStageRef.current = bridge.stage;
-
-  useEffect(
-    () => () => {
-      copyRequestId.current += 1;
-      copyBusyRef.current = false;
-      helperRequestId.current += 1;
-      helperBusyRef.current = false;
-    },
-    [],
-  );
+  const [confirmSkip, setConfirmSkip] = useState(false);
+  const [applying, setApplying] = useState(false);
+  const [uncertain, setUncertain] = useState(false);
+  const [clipboardFilled, setClipboardFilled] = useState(false);
+  const [lateReply, setLateReply] = useState('');
+  const gate = useRef({
+    step: '',
+    mode: 'idle' as 'idle' | 'helper' | 'applying' | 'uncertain',
+    generation: 0,
+    revision: 0,
+    helperUsed: false,
+    mounted: true,
+    invalid: false,
+  });
+  useEffect(() => {
+    gate.current.mounted = true;
+    return () => {
+      gate.current.mounted = false;
+      gate.current.generation++;
+    };
+  }, []);
 
   /*
    * 打开面板时问一次本机有没有助手在跑（一次请求，不轮询）。
@@ -129,11 +139,22 @@ export function WebBridgePanel({ bridge, busy, disabled, onReply, onAnalysis, on
     bridge.stage,
     bridge.turnId,
     bridge.sourceKey,
+    bridge.prompt,
     bridge.speakerInstanceId,
     bridge.pendingTurn?.nextIndex ?? 0,
   ]);
   const stepRef = useRef(bridgeStep);
   stepRef.current = bridgeStep;
+  if (gate.current.step !== bridgeStep)
+    gate.current = {
+      step: bridgeStep,
+      mode: 'idle',
+      generation: gate.current.generation + 1,
+      revision: 0,
+      helperUsed: false,
+      mounted: true,
+      invalid: false,
+    };
   const [stage, setStage] = useState(bridgeStep);
   if (stage !== bridgeStep) {
     setStage(bridgeStep);
@@ -143,8 +164,6 @@ export function WebBridgePanel({ bridge, busy, disabled, onReply, onAnalysis, on
     copyBusyRef.current = false;
     setCopyBusy(false);
     setCopyError(false);
-    helperRequestId.current += 1;
-    helperBusyRef.current = false;
     setHelperBusy(false);
     setHelperError(null);
   }
@@ -155,9 +174,13 @@ export function WebBridgePanel({ bridge, busy, disabled, onReply, onAnalysis, on
     setCopied(false);
     setCopyBusy(false);
     setCopyError(false);
-    helperRequestId.current += 1;
-    helperBusyRef.current = false;
     setHelperBusy(false);
+    setApplying(false);
+    setUncertain(false);
+    setInvalidSource(false);
+    setConfirmSkip(false);
+    setClipboardFilled(false);
+    setLateReply('');
     setHelperError(null);
   }
 
@@ -181,7 +204,13 @@ export function WebBridgePanel({ bridge, busy, disabled, onReply, onAnalysis, on
           if (cancelled || stepRef.current !== step) return;
           const trimmed = text.trim();
           if (trimmed === '') return;
-          setPaste((latest) => (latest.trim() === '' ? trimmed : latest));
+          setPaste((latest) => {
+            if (latest.trim() !== '' || gate.current.mode === 'applying' || gate.current.mode === 'uncertain')
+              return latest;
+            gate.current.revision++;
+            setClipboardFilled(true);
+            return trimmed;
+          });
         })
         .catch(() => {
           // 没给剪贴板权限：什么都不说，用户手动粘贴即可
@@ -203,10 +232,49 @@ export function WebBridgePanel({ bridge, busy, disabled, onReply, onAnalysis, on
 
   const isReply = bridge.stage === 'reply';
   const isAdmin = bridge.stage === 'admin';
+  const applyAdmin = async (inspect = false): Promise<void> => {
+    if (
+      busy ||
+      disabled ||
+      gate.current.mode === 'applying' ||
+      gate.current.mode === 'helper' ||
+      (!inspect && (gate.current.mode === 'uncertain' || gate.current.invalid))
+    )
+      return;
+    if (!inspect && paste.trim() === '') return;
+    const generation = gate.current.generation;
+    gate.current.mode = 'applying';
+    setApplying(true);
+    setHelperError(null);
+    try {
+      const result = await (inspect ? onInspect?.() : onAdmin?.(paste));
+      if (!gate.current.mounted || generation !== gate.current.generation) return;
+      const unknown = !result || result.status === 'uncertain';
+      gate.current.mode = unknown ? 'uncertain' : 'idle';
+      setUncertain(unknown);
+      if (result?.status === 'rejected' && /来源|变化|旧起草|原世界|有效来源/.test(result.reason)) {
+        gate.current.invalid = true;
+        setInvalidSource(true);
+      }
+      if (
+        result &&
+        (result.status === 'uncertain' || result.status === 'rejected' || result.status === 'saved-read-failed')
+      )
+        setHelperError(result.reason);
+    } catch (error) {
+      if (gate.current.mounted && generation === gate.current.generation) {
+        gate.current.mode = 'uncertain';
+        setUncertain(true);
+        setHelperError(error instanceof Error ? error.message : String(error));
+      }
+    } finally {
+      if (gate.current.mounted && generation === gate.current.generation) setApplying(false);
+    }
+  };
   const submit = (): void => {
-    if (paste.trim() === '' || busy || disabled || helperBusyRef.current) return;
+    if (paste.trim() === '' || busy || disabled || gate.current.mode !== 'idle' || gate.current.invalid) return;
     if (isReply) onReply(paste);
-    else if (isAdmin) onAdmin?.(paste);
+    else if (isAdmin) void applyAdmin();
     else onAnalysis(paste);
   };
 
@@ -242,43 +310,44 @@ export function WebBridgePanel({ bridge, busy, disabled, onReply, onAnalysis, on
    * 收下路径（`submit` 用的那几个 handler），所以解析、落盘、校验一份都不少。
    */
   const askHelper = async (): Promise<void> => {
-    if (helperBusyRef.current || busy || disabled) return;
-    helperBusyRef.current = true;
-    const requestId = ++helperRequestId.current;
-    const prompt = bridge.prompt;
-    const requestStage = bridge.stage;
+    if (
+      gate.current.mode !== 'idle' ||
+      gate.current.invalid ||
+      (isAdmin && gate.current.helperUsed) ||
+      busy ||
+      disabled
+    )
+      return;
+    gate.current.mode = 'helper';
+    gate.current.helperUsed = true;
     setHelperError(null);
     setHelperBusy(true);
     const step = bridgeStep;
+    const generation = gate.current.generation,
+      revision = gate.current.revision;
     try {
-      const text = await askLocalBridge(prompt);
-      if (
-        requestId !== helperRequestId.current ||
-        prompt !== promptRef.current ||
-        requestStage !== bridgeStageRef.current ||
-        stepRef.current !== step
-      )
-        return;
-      setPaste(text);
+      const text = await askLocalBridge(bridge.prompt);
+      if (stepRef.current !== step || !gate.current.mounted || generation !== gate.current.generation) return;
       if (text.trim() === '') throw new Error('助手回来了，但没读到回复内容（页面结构可能变了）。');
-      if (requestStage === 'reply') onReply(text);
-      else if (requestStage === 'admin') onAdmin?.(text);
+      if (isAdmin) {
+        if (gate.current.revision === revision) {
+          setPaste(text);
+          setClipboardFilled(false);
+        } else setLateReply(text);
+        return;
+      }
+      setPaste(text);
+      if (isReply) onReply(text);
       else onAnalysis(text);
     } catch (error) {
-      if (requestId === helperRequestId.current) {
+      if (stepRef.current === step && gate.current.mounted && generation === gate.current.generation)
         setHelperError(error instanceof Error ? error.message : String(error));
-      }
     } finally {
-      if (requestId === helperRequestId.current) {
-        helperBusyRef.current = false;
+      if (stepRef.current === step && gate.current.mounted && generation === gate.current.generation) {
+        gate.current.mode = 'idle';
         setHelperBusy(false);
       }
     }
-  };
-
-  const skip = (): void => {
-    if (helperBusyRef.current) return;
-    onSkip();
   };
 
   return (
@@ -286,14 +355,14 @@ export function WebBridgePanel({ bridge, busy, disabled, onReply, onAnalysis, on
       <header className="bridge-head">
         <strong>
           {isAdmin
-            ? `让 ${WEB_BRIDGE_TARGET.name} 协助世界管理员`
+            ? '等待网页版回复'
             : isReply
               ? `① 让 ${WEB_BRIDGE_TARGET.name} 写「${bridge.speakerName ?? ''}」（第 ${String((bridge.pendingTurn?.nextIndex ?? 0) + 1)}/${String(bridge.pendingTurn?.speakerIds.length ?? 1)} 位）`
               : '② 顺手把这一轮的记忆也写一下'}
         </strong>
         <span className="hint">
           {isAdmin
-            ? '没配 API Key，所以起草这一步由你手动转一手：贴回后，角色卡和世界书等素材先成为待采纳草稿；场景修改会立即应用到本轮选定的主对话。'
+            ? '贴回后请先核对，再应用回复。角色卡、世界书和身份会生成待采纳草稿；场景更改会直接生效。'
             : isReply
               ? '没配 API Key，所以这一轮由你手动转一手：贴过去、贴回来，剩下的交给应用。'
               : '可选。贴回来之后，这一轮就会被谁记住、谁对谁起了变化——不贴也能接着聊。'}
@@ -310,11 +379,33 @@ export function WebBridgePanel({ bridge, busy, disabled, onReply, onAnalysis, on
           <button
             type="button"
             className="ghost bridge-helper"
-            disabled={disabled || busy || helperBusy}
+            disabled={
+              disabled ||
+              busy ||
+              helperBusy ||
+              applying ||
+              uncertain ||
+              invalidSource ||
+              (isAdmin && gate.current.helperUsed)
+            }
             title="让本机的助手替你打开的那一页发送、等回复、再交回来（它驱动的是网页本身，不是官方接口）"
             onClick={() => void askHelper()}
           >
             {helperBusy ? '本地助手正在等它写完…' : '一键用本地助手（免复制粘贴）'}
+          </button>
+        ) : null}
+        {isAdmin && helperBusy ? (
+          <button
+            type="button"
+            className="ghost"
+            onClick={() => {
+              gate.current.generation++;
+              gate.current.mode = 'idle';
+              setHelperBusy(false);
+              setHelperError('已改用手动贴回。网页请求可能仍在运行，本次不再重复发送。');
+            }}
+          >
+            改用手动贴回
           </button>
         ) : null}
         <button type="button" className="ghost" disabled={disabled || copyBusy} onClick={() => void copyPrompt()}>
@@ -332,7 +423,7 @@ export function WebBridgePanel({ bridge, busy, disabled, onReply, onAnalysis, on
         <span className="hint">{WEB_BRIDGE_TARGET.hint}</span>
       </div>
 
-      <details className="bridge-prompt" ref={promptDetailsRef}>
+      <details className="bridge-prompt" ref={promptDetailsRef} {...(copyError ? { open: true } : {})}>
         <summary>看一眼这段提示词（{bridge.prompt.length} 字）</summary>
         <pre>{bridge.prompt}</pre>
       </details>
@@ -360,13 +451,20 @@ export function WebBridgePanel({ bridge, busy, disabled, onReply, onAnalysis, on
           <p>{helperError}</p>
         </div>
       )}
+      {clipboardFilled ? <p className="hint">已从剪贴板填入，请核对后应用。</p> : null}
+      {lateReply ? (
+        <details>
+          <summary>助手返回了回复；已保留你正在编辑的内容</summary>
+          <pre>{lateReply}</pre>
+        </details>
+      ) : null}
 
       <label>
         3. 把网页版的回复整段贴回这里
         <textarea
           rows={6}
           value={paste}
-          disabled={disabled}
+          disabled={disabled || applying || uncertain}
           placeholder={
             isAdmin
               ? '整段贴回来（含 ```json 代码块）：它写着有点乱也没关系，解析是宽容的'
@@ -374,15 +472,37 @@ export function WebBridgePanel({ bridge, busy, disabled, onReply, onAnalysis, on
                 ? '「……」他/她说了什么，就贴什么'
                 : '贴那段 JSON；它写着有点乱也没关系，解析是宽容的'
           }
-          onChange={(event) => setPaste(event.target.value)}
+          onChange={(event) => {
+            gate.current.revision++;
+            setClipboardFilled(false);
+            setPaste(event.target.value);
+          }}
         />
       </label>
 
       <div className="save-bar">
-        <button type="button" disabled={disabled || busy || helperBusy || paste.trim() === ''} onClick={submit}>
-          {busy ? '处理中…' : isAdmin ? '收下这次起草' : isReply ? '收下这条回复' : '收下这段记忆'}
+        <button
+          type="button"
+          disabled={disabled || busy || helperBusy || applying || uncertain || invalidSource || paste.trim() === ''}
+          onClick={submit}
+        >
+          {busy || applying ? '处理中…' : isAdmin ? '应用回复' : isReply ? '收下这条回复' : '收下这段记忆'}
         </button>
-        <button type="button" className="ghost" disabled={disabled || busy || helperBusy} onClick={skip}>
+        {isAdmin && uncertain && onInspect ? (
+          <button type="button" disabled={busy || disabled || applying} onClick={() => void applyAdmin(true)}>
+            只读核对保存结果
+          </button>
+        ) : null}
+        <button
+          type="button"
+          className="ghost"
+          disabled={disabled || busy || helperBusy || applying || uncertain}
+          onClick={() => {
+            if (gate.current.mode !== 'idle') return;
+            if (isAdmin && paste.trim() !== '') setConfirmSkip(true);
+            else onSkip();
+          }}
+        >
           {isAdmin
             ? '放弃这次起草'
             : isReply
@@ -392,6 +512,28 @@ export function WebBridgePanel({ bridge, busy, disabled, onReply, onAnalysis, on
               : '跳过（这一轮先不记）'}
         </button>
       </div>
+      {confirmSkip ? (
+        <Modal
+          label="放弃这次起草"
+          head={<strong>放弃这次起草？</strong>}
+          onClose={() => setConfirmSkip(false)}
+          footer={
+            <button
+              type="button"
+              onClick={() => {
+                if (gate.current.mode === 'idle') {
+                  setConfirmSkip(false);
+                  onSkip();
+                }
+              }}
+            >
+              确认放弃
+            </button>
+          }
+        >
+          <p>粘贴框中的回复将被丢弃。尚未应用的回复不会写入世界。</p>
+        </Modal>
+      ) : null}
     </section>
   );
 }

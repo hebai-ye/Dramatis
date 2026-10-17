@@ -15,6 +15,23 @@ function find(node: unknown, type: string): ReactElement<Record<string, unknown>
   return undefined;
 }
 describe('发送按钮和键盘采用相同守卫', () => {
+  it('忙碌但不可取消时不显示无效停止按钮', () => {
+    const tree = Composer({
+      value: '',
+      onChange: vi.fn(),
+      placeholder: '',
+      disabled: false,
+      busy: true,
+      canStop: false,
+      bridgeOpen: true,
+      manualMode: false,
+      onSend: vi.fn(),
+      onStop: vi.fn(),
+    });
+    const button = find(tree, 'button');
+    expect(button?.props['aria-label']).not.toBe('停止');
+    expect(button?.props.disabled).toBe(true);
+  });
   for (const state of [
     { bridgeOpen: true, busy: false, disabled: false },
     { bridgeOpen: false, busy: true, disabled: false },

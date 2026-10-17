@@ -5,6 +5,8 @@ import { Composer } from './Composer';
 import { type FocusRequest, MainChat } from './MainChat';
 import { SideChat } from './SideChat';
 
+vi.mock('../hooks/useAdminProcess', () => ({ useAdminProcess: () => null }));
+
 const hooks = vi.hoisted(() => {
   let values: unknown[] = [];
   let effects: { deps?: readonly unknown[]; cleanup?: () => void }[] = [];

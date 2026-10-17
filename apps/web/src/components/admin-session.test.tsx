@@ -82,13 +82,13 @@ describe('admin session boundaries', () => {
     expect(await api.setWorldScene({ location: '酒馆' }, m1.id, 'other-room' as never)).toBeNull();
   });
   it('blocks direct revoke of an adopted modified book at the API boundary', async () => {
-    const { api, repository, snapshot, world, m1 } = await setup();
+    const { api, repository, snapshot, world } = await setup();
     const book = createBlankWorldBook('保留');
     await repository.saveWorldBook(book);
     const message = {
       ...createPlayerMessage({
         roomId: world.room.id,
-        conversationId: m1.id,
+        conversationId: required(snapshot.room.activeConversationId),
         sceneId: null,
         turnId: 'turn',
         speakerName: '管理员',
@@ -96,6 +96,7 @@ describe('admin session boundaries', () => {
         audience: [],
       }),
       id: messageId('artifact-message'),
+      role: 'admin' as const,
       artifacts: [
         {
           id: 'a',
@@ -113,25 +114,26 @@ describe('admin session boundaries', () => {
     };
     await repository.appendMessages(world.room.id, [message]);
     snapshot.messages = [message];
-    await api.revokeArtifact(message.id, 'a');
+    const outcome = await api.revokeArtifact(message.id, 'a');
     expect(await repository.getWorldBook(book.id)).not.toBeNull();
-    expect(hooks.states.some((value) => typeof value === 'string' && value.includes('反向'))).toBe(true);
+    expect(outcome).toMatchObject({ status: 'blocked', reason: expect.stringContaining('反向') });
   });
   it('rejects an old modifying draft without before even through direct adopt', async () => {
-    const { api, repository, snapshot, world, m1 } = await setup();
+    const { api, repository, snapshot, world } = await setup();
     const seed = createBlankWorldBook('原书');
     await repository.saveWorldBook(seed);
     const book = required(await repository.getWorldBook(seed.id));
     const message = {
       ...createPlayerMessage({
         roomId: world.room.id,
-        conversationId: m1.id,
+        conversationId: required(snapshot.room.activeConversationId),
         sceneId: null,
         turnId: 't',
         speakerName: '管理员',
         content: '',
         audience: [],
       }),
+      role: 'admin' as const,
       artifacts: [
         {
           id: 'old',
@@ -153,7 +155,7 @@ describe('admin session boundaries', () => {
     expect((await repository.listMessages(world.room.id))[0]?.artifacts?.[0]?.conflict).toContain('重新起草');
   });
   it('creates a fresh reverse draft preserving unrelated edits and rejects its later stale adoption', async () => {
-    const { api, repository, snapshot, world, m1 } = await setup();
+    const { api, repository, snapshot, world } = await setup();
     const seed = {
       ...createBlankWorldBook('原书'),
       entries: [
@@ -170,13 +172,14 @@ describe('admin session boundaries', () => {
     const message = {
       ...createPlayerMessage({
         roomId: world.room.id,
-        conversationId: m1.id,
+        conversationId: required(snapshot.room.activeConversationId),
         sceneId: null,
         turnId: 't',
         speakerName: '管理员',
         content: '',
         audience: [],
       }),
+      role: 'admin' as const,
       artifacts: [
         {
           id: 'forward',

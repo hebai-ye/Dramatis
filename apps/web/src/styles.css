@@ -4357,6 +4357,144 @@ details summary {
     min-width: 44px;
   }
 }
+
+/* Administrator process stays in the conversation, before the reply. */
+.chat-surface.side {
+  container-type: inline-size;
+}
+.admin-flow {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  min-width: 0;
+  width: 100%;
+}
+.admin-process-wrap {
+  min-width: 0;
+}
+.admin-process > summary {
+  color: var(--muted-text);
+  cursor: pointer;
+  padding: 7px 0;
+}
+.admin-process-detail {
+  font-size: 12px;
+  margin-left: 10px;
+}
+.admin-process-content {
+  border-left: 1px solid var(--line);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin: 6px 0 8px 5px;
+  max-height: 360px;
+  overflow-y: auto;
+  padding: 4px 10px 6px 14px;
+  overflow-wrap: anywhere;
+}
+.admin-thinking {
+  white-space: pre-wrap;
+}
+.admin-thinking > .hint {
+  display: block;
+  margin-bottom: 5px;
+}
+.admin-tool-row {
+  min-width: 0;
+}
+.admin-tool-row > summary {
+  cursor: pointer;
+  padding: 6px 0;
+}
+.admin-tool-row > summary > .hint {
+  margin-left: 6px;
+}
+.admin-tool-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding: 8px 0 8px 14px;
+}
+.admin-tool-detail pre,
+.admin-draft-preview pre,
+.admin-flow .artifact pre {
+  font: inherit;
+  margin: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+.admin-process-wrap > .notice {
+  margin: 6px 0;
+}
+.admin-artifact-actions {
+  flex-wrap: wrap;
+}
+.admin-back-latest {
+  align-self: center;
+  margin: 5px 10px;
+}
+.admin-next-draft {
+  border-top: 1px solid var(--line);
+}
+.admin-next-draft > summary {
+  color: var(--muted-text);
+  cursor: pointer;
+  padding: 10px 16px;
+}
+.admin-next-draft .composer {
+  border-top: 0;
+}
+.admin-flow .web-bridge {
+  max-height: none;
+  overflow: visible;
+}
+.admin-draft-preview {
+  width: min(720px, 100%);
+}
+.admin-draft-preview dl {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.admin-draft-preview dt {
+  color: var(--muted-text);
+  font-size: 12px;
+  margin-bottom: 4px;
+}
+.admin-draft-preview dd {
+  margin: 0;
+}
+@container (max-width: 600px) {
+  .admin-process-content {
+    max-height: min(360px, 50dvh);
+    padding-left: 10px;
+  }
+  .admin-process summary,
+  .admin-tool-row summary {
+    min-height: 44px;
+  }
+  .admin-tool-row > summary > .hint {
+    display: block;
+    margin-left: 15px;
+  }
+  .admin-artifact-actions > button {
+    min-height: 44px;
+  }
+  .artifact-head {
+    align-items: flex-start;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .admin-process *,
+  .admin-flow,
+  .admin-draft-preview {
+    animation: none;
+    scroll-behavior: auto;
+    transition: none;
+  }
+}
+
 /* DeepSeek first-use setup retains the existing dialog focus/close shell. */
 .deepseek-key-dialog {
   width: min(28rem, calc(100vw - 2rem));

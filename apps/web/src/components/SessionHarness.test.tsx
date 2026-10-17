@@ -471,6 +471,7 @@ describe('useSession async snapshot selection', () => {
     const [message] = await repository.appendMessages(a.room.id, [
       {
         ...messageFor(a, 'before'),
+        role: 'admin',
         artifacts: [
           {
             id: 'discard-during-edit',

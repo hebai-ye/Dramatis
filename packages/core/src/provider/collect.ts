@@ -8,6 +8,8 @@ export interface CompletionResult {
   usage: TokenUsage | null;
 }
 
+export type CompletionObservation = { type: 'reasoning'; delta: string };
+
 /**
  * 收集一次完整回复，包括它请求调用的工具。
  *
@@ -26,12 +28,20 @@ export async function collectCompletionWithTools(
    * 不传就是原来的行为（整段收完再返回），`collectCompletion` 与既有调用方一字不改。
    */
   onDelta?: (delta: string) => void,
+  onObservation?: (event: CompletionObservation) => void,
 ): Promise<CompletionResult> {
   let text = '';
   let toolCalls: ChatToolCall[] = [];
   let usage: TokenUsage | null = null;
 
   for await (const event of provider.chat([...messages], params, signal)) {
+    if (event.type === 'reasoning') {
+      try {
+        onObservation?.({ type: 'reasoning', delta: event.text });
+      } catch {
+        /* Display observers cannot change execution. */
+      }
+    }
     if (event.type === 'text') {
       text += event.text;
       onDelta?.(event.text);

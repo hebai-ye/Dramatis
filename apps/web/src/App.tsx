@@ -1238,40 +1238,49 @@ export function App() {
       }),
     [admin],
   );
-  const handleAdminBridgeCommit = useCallback((text: string) => void admin.commitBridge(text), [admin]);
-  const artifactOperationsRef = useRef(new Map<string, Promise<void>>());
-  const runArtifactAction = useCallback(
-    (id: MessageId, artifact: AdminArtifact, action: () => Promise<void>): Promise<void> => {
-      const key = JSON.stringify([world?.id, id, artifact.id]);
-      const existing = artifactOperationsRef.current.get(key);
-      if (existing) return existing;
-      const operation = action().finally(() => {
-        artifactOperationsRef.current.delete(key);
-      });
-      artifactOperationsRef.current.set(key, operation);
-      return operation;
+  const handleAdminBridgeCommit = useCallback((text: string) => admin.commitBridge(text), [admin]);
+  const handleAdminBridgeInspect = useCallback(() => admin.inspectBridge(), [admin]);
+  const handleAdminRunInspect = useCallback(() => admin.inspectRun(), [admin]);
+  const handleInspectArtifact = useCallback(
+    (id: MessageId, artifact: AdminArtifact, action: import('./lib/admin-artifact-actions').ArtifactAction) =>
+      session.inspectArtifact(id, artifact.id, action),
+    [session],
+  );
+  const handleOpenAdminTarget = useCallback(
+    (artifact: AdminArtifact) => {
+      const view =
+        artifact.kind === 'character-card' ? 'cards' : artifact.kind === 'world-book' ? 'worldbooks' : 'personas';
+      const navigation = libraryNavigation.current;
+      if (navigation && navigation.activeView !== view) void navigation.toggle(view);
+      enterLibrary();
     },
-    [world?.id],
+    [libraryNavigation, enterLibrary],
   );
   const handleAdoptArtifact = useCallback(
-    (id: MessageId, artifact: AdminArtifact) =>
-      runArtifactAction(id, artifact, () => session.adoptArtifact(id, artifact.id)),
-    [session, runArtifactAction],
+    (id: MessageId, artifact: AdminArtifact) => session.adoptArtifact(id, artifact.id),
+    [session],
   );
   const handleDiscardArtifact = useCallback(
-    (id: MessageId, artifact: AdminArtifact) =>
-      runArtifactAction(id, artifact, () => session.discardArtifact(id, artifact.id)),
-    [session, runArtifactAction],
+    (id: MessageId, artifact: AdminArtifact) => session.discardArtifact(id, artifact.id),
+    [session],
   );
   const handleRevokeArtifact = useCallback(
-    (id: MessageId, artifact: AdminArtifact) =>
-      runArtifactAction(id, artifact, () => session.revokeArtifact(id, artifact.id)),
-    [session, runArtifactAction],
+    (id: MessageId, artifact: AdminArtifact) => session.revokeArtifact(id, artifact.id),
+    [session],
   );
+  const reverseOperationsRef = useRef(new Map<string, Promise<void>>());
   const handleReverseArtifact = useCallback(
-    (id: MessageId, artifact: AdminArtifact) =>
-      runArtifactAction(id, artifact, () => session.reverseArtifact(id, artifact.id)),
-    [session, runArtifactAction],
+    (id: MessageId, artifact: AdminArtifact) => {
+      const key = JSON.stringify([accountKey, world?.id, id, artifact.id]);
+      const existing = reverseOperationsRef.current.get(key);
+      if (existing) return existing;
+      const operation = session
+        .reverseArtifact(id, artifact.id)
+        .finally(() => reverseOperationsRef.current.delete(key));
+      reverseOperationsRef.current.set(key, operation);
+      return operation;
+    },
+    [accountKey, world?.id, session],
   );
   /** 素材库 id 清单：每次渲染新造一个数组会让 `SideChat` 的 memo 失效。 */
   const adminExistingIds = useMemo(
@@ -1490,18 +1499,26 @@ export function App() {
                         conversation: conversation,
                         messages: messages,
                         busy: admin.busy,
+                        processScope: admin.processScope,
+                        activeRunId: admin.activeRunId,
+                        canStop: admin.canStop,
+                        needsInspection: admin.needsInspection,
+                        onRunInspect: handleAdminRunInspect,
                         ready: ready,
                         archived: archived,
                         bridge: admin.bridge,
                         manualMode: needsWebBridge(providers.apiKey),
                         error: admin.error,
                         onBridgeCommit: handleAdminBridgeCommit,
+                        onBridgeInspect: handleAdminBridgeInspect,
                         onBridgeCancel: admin.cancelBridge,
                         onSend: handleAdminSend,
                         onStop: admin.stop,
                         onAdopt: handleAdoptArtifact,
                         onDiscard: handleDiscardArtifact,
                         onRevoke: handleRevokeArtifact,
+                        onInspect: handleInspectArtifact,
+                        onOpenTarget: handleOpenAdminTarget,
                         onReverse: handleReverseArtifact,
                         conversations: session.conversations,
                         worldBooks: session.library.worldBooks,

@@ -45,6 +45,7 @@ vi.mock('react', async (original) => ({
 }));
 vi.mock('../lib/viewport', () => ({ useCoarsePointer: () => false }));
 vi.mock('../lib/render-count', () => ({ countRender: () => {} }));
+vi.mock('../hooks/useAdminProcess', () => ({ useAdminProcess: () => null }));
 vi.mock('../lib/chat-visibility', () => ({
   useChatViewportVisibility: () => ({ visible: true, visibleRef: { current: true }, scrollVisibility: {} }),
 }));

@@ -15,6 +15,7 @@ import {
   roomId,
 } from '@dramatis/core';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { AdminSceneEffect } from './admin-scene-effect';
 import type { DramatisDb } from './db';
 import { useDatabase, useSession } from './session';
 import { createTaskQueueExtras } from './task-queue';
@@ -183,6 +184,46 @@ async function sessionFixture() {
   await api.openWorld(h.room.id);
   return { ...h, api: render(() => useSession(h.db)) };
 }
+
+it('管理员场景已写而主对话关联失败时返回分段证据', async () => {
+  const h = await sessionFixture();
+  const main = createConversation({ roomId: h.room.id, title: '主对话' });
+  await h.repository.saveConversation(main);
+  const currentRoom = await h.repository.getRoom(h.room.id);
+  if (!currentRoom) throw new Error('missing room');
+  await h.repository.saveRoom({ ...currentRoom, activeConversationId: main.id });
+  await h.api.reloadWorld();
+  const effects: AdminSceneEffect[] = [];
+  vi.spyOn(h.repository, 'saveConversation').mockRejectedValueOnce(new Error('关联失败'));
+  await expect(
+    render(() => useSession(h.db)).setWorldScene({ location: '露台' }, main.id, h.room.id, (e) => effects.push(e)),
+  ).rejects.toThrow('关联失败');
+  expect(effects).toHaveLength(1);
+  expect(effects[0]).toMatchObject({ sceneWritten: true, activeLinked: false, target: { conversationId: main.id } });
+  const effect = effects[0];
+  if (!effect) throw new Error('missing scene effect');
+  expect(await h.repository.getScene(effect.target.sceneId)).not.toBeNull();
+  expect((await h.repository.getConversation(main.id))?.activeSceneId).toBeNull();
+});
+
+it('管理员场景保存迟到不恢复旧对话快照', async () => {
+  const h = await conversationSwitchFixture();
+  const started = gate(),
+    release = gate();
+  const original = h.repository.saveScene.bind(h.repository);
+  vi.spyOn(h.repository, 'saveScene').mockImplementation(async (scene) => {
+    started.resolve();
+    await release.promise;
+    return original(scene);
+  });
+  const pending = h.api.setWorldScene({ location: '露台' }, h.a.id, h.room.id);
+  await started.promise;
+  await h.api.openConversation(h.b.id);
+  release.resolve();
+  await pending;
+  expect(render(() => useSession(h.db)).conversation?.id).toBe(h.b.id);
+  expect((await h.repository.getScene(h.sceneA.id))?.location).toBe('露台');
+});
 function delayAtomic(repository: Repository, after = false) {
   const original = repository.atomic.bind(repository);
   const started = gate(),

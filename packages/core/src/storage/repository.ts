@@ -1553,6 +1553,12 @@ export class Repository {
   }
 
   /** 读一条消息（软删除的不返回），老记录在这里归一。 */
+  /** Read a persisted administrator receipt without executing an artifact action. */
+  async readAdminMessage(id: MessageId): Promise<Message | null> {
+    const message = await this.getMessage(id);
+    return message?.role === 'admin' ? message : null;
+  }
+
   private async getMessage(id: MessageId): Promise<Message | null> {
     const raw = await this.store.get<StoredMessage>(COLLECTIONS.messages, id);
     if (raw === null || !isAlive(raw)) return null;

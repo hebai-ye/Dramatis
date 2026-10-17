@@ -15,6 +15,13 @@ import {
   type RoomId,
   renderPromptForWeb,
 } from '@dramatis/core';
+import type { AdminSceneTarget } from './admin-scene-effect';
+
+export interface AdminSourceCommitResult {
+  message: import('@dramatis/core').Message;
+  sceneTargets: { artifactId: string; target: AdminSceneTarget }[];
+  notes: string[];
+}
 
 interface AdminScope {
   accountKey: string;
@@ -156,9 +163,11 @@ export async function commitAdminSource(input: {
   bridge: ScopedAdminBridge;
   current: AdminScope;
   raw: string;
+  messageId?: MessageId;
+  onCommitStart?: () => void;
   isCurrent: () => boolean;
   artifactFor: (draft: AdminDraft) => AdminArtifact;
-}) {
+}): Promise<AdminSourceCommitResult> {
   const binding = input.bridge.binding;
   if (binding?.version !== 1 || !/^[a-f0-9]{64}$/.test(binding.revision))
     throw stale('这份旧起草缺少有效来源，请放弃旧进度并重新准备。');
@@ -189,12 +198,14 @@ export async function commitAdminSource(input: {
     if (result.unknownArgs?.length) notes.push(`未使用参数：${result.unknownArgs.join('、')}。`);
     drafts.push(result.draft);
   }
-  const id = messageId(newId());
+  const id = input.messageId ?? messageId(newId());
   const at = nowIso();
+  input.onCommitStart?.();
   return input.repository.atomic(async (tx) => {
     const latest = await readSource(tx, binding, binding.targetConversationId);
     if (!matches() || latest.source !== before.source) throw stale();
     const artifacts: AdminArtifact[] = [];
+    const sceneTargets: AdminSourceCommitResult['sceneTargets'] = [];
     let activeScene = latest.scene;
     for (const draft of drafts) {
       if (!matches()) throw stale();
@@ -222,6 +233,17 @@ export async function commitAdminSource(input: {
           status: 'applied',
           summary: `目标「${latest.main.title}」：${artifact.summary}`,
           targetId: next.id,
+        });
+        sceneTargets.push({
+          artifactId: artifact.id,
+          target: {
+            roomId: latest.room.id,
+            worldTitle: latest.room.title,
+            conversationId: latest.main.id,
+            conversationTitle: latest.main.title,
+            sceneId: next.id,
+            sceneTitle: next.title,
+          },
         });
       } else {
         if (draft.kind === 'scene') notes.push('场景未设置：请先选择一条主对话作为目标。');
@@ -254,6 +276,8 @@ export async function commitAdminSource(input: {
         deletedAt: null,
       },
     ]);
-    return messages[0];
+    const message = messages[0];
+    if (!message) throw new Error('管理员回复保存未确认');
+    return { message, sceneTargets, notes };
   });
 }
